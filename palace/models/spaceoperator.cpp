@@ -110,6 +110,103 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     Mpi::Print("\nConfiguring Dirichlet PEC BC at attributes:\n");
     utils::PrettyPrintMarker(dbc_marker);
   }
+
+  // XX TODO WIP DEBUG
+  nd_fespaces.GetFinestFESpace().Dof_TrueDof_Matrix()->Print("mat_P_ND");
+  {
+    hypre_CSRMatrix *P_seq = hypre_ParCSRMatrixToCSRMatrixAll(*nd_fespaces.GetFinestFESpace().Dof_TrueDof_Matrix());
+    hypre_CSRMatrixPrintIJ(P_seq, 0, 0, "mat_P_ND");
+    hypre_CSRMatrixDestroy(P_seq);
+  }
+  nd_fespaces.GetFESpaceAtLevel(0).Dof_TrueDof_Matrix()->Print("mat_P_ND0");
+  {
+    hypre_CSRMatrix *P_seq = hypre_ParCSRMatrixToCSRMatrixAll(*nd_fespaces.GetFESpaceAtLevel(0).Dof_TrueDof_Matrix());
+    hypre_CSRMatrixPrintIJ(P_seq, 0, 0, "mat_P_ND0");
+    hypre_CSRMatrixDestroy(P_seq);
+  }
+  h1_fespaces.GetFinestFESpace().Dof_TrueDof_Matrix()->Print("mat_P_H1");
+  {
+    hypre_CSRMatrix *P_seq = hypre_ParCSRMatrixToCSRMatrixAll(*h1_fespaces.GetFinestFESpace().Dof_TrueDof_Matrix());
+    hypre_CSRMatrixPrintIJ(P_seq, 0, 0, "mat_P_H1");
+    hypre_CSRMatrixDestroy(P_seq);
+  }
+  h1_fespaces.GetFESpaceAtLevel(0).Dof_TrueDof_Matrix()->Print("mat_P_H10");
+  {
+    hypre_CSRMatrix *P_seq = hypre_ParCSRMatrixToCSRMatrixAll(*h1_fespaces.GetFESpaceAtLevel(0).Dof_TrueDof_Matrix());
+    hypre_CSRMatrixPrintIJ(P_seq, 0, 0, "mat_P_H10");
+    hypre_CSRMatrixDestroy(P_seq);
+  }
+
+  {
+    std::string pfile =
+        mfem::MakeParFilename("mat_R_ND_", Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    nd_fespaces.GetFinestFESpace().GetRestrictionMatrix()->Print(fo);
+  }
+  {
+    std::string pfile =
+        mfem::MakeParFilename("mat_R_ND0_", Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    nd_fespaces.GetFESpaceAtLevel(0).GetRestrictionMatrix()->Print(fo);
+  }
+  {
+    std::string pfile =
+        mfem::MakeParFilename("mat_R_H1_", Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    h1_fespaces.GetFinestFESpace().GetRestrictionMatrix()->Print(fo);
+  }
+  {
+    std::string pfile =
+        mfem::MakeParFilename("mat_R_H10_", Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    h1_fespaces.GetFESpaceAtLevel(0).GetRestrictionMatrix()->Print(fo);
+  }
+
+  // XX TODO WIP DEBUG
+  {
+    std::string pfile = mfem::MakeParFilename("ldof_sign_ND_",
+                                              Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    const auto &fespace = nd_fespaces.GetFinestFESpace();
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      fo << i << " " << fespace.GetDofSign(i) << "\n";
+    }
+    fo << "\n";
+  }
+  {
+    std::string pfile = mfem::MakeParFilename("ldof_sign_ND0_",
+                                              Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    const auto &fespace = nd_fespaces.GetFESpaceAtLevel(0);
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      fo << i << " " << fespace.GetDofSign(i) << "\n";
+    }
+    fo << "\n";
+  }
+  {
+    std::string pfile = mfem::MakeParFilename("ldof_sign_H1_",
+                                              Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    const auto &fespace = h1_fespaces.GetFinestFESpace();
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      fo << i << " " << fespace.GetDofSign(i) << "\n";
+    }
+    fo << "\n";
+  }
+  {
+    std::string pfile = mfem::MakeParFilename("ldof_sign_H10_",
+                                              Mpi::Rank(mesh.back()->GetComm()), ".out", 3);
+    std::ofstream fo(pfile);
+    const auto &fespace = h1_fespaces.GetFESpaceAtLevel(0);
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      fo << i << " " << fespace.GetDofSign(i) << "\n";
+    }
+    fo << "\n";
+  }
 }
 
 void SpaceOperator::CheckBoundaryProperties()
@@ -715,12 +812,13 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros)
                  : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros);
       }
-      if (!fi.empty() || !dfbi.empty() || !fbi.empty())
-      {
-        bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
-                 : BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi, l,
-                                 skip_zeros);
-      }
+      // if (!fi.empty() || !dfbi.empty() || !fbi.empty())  //XX TODO WIP
+      // {
+      //   bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
+      //            : BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
+      //            l,
+      //                            skip_zeros);
+      // }
       if (print_prec_hdr)
       {
         if (const auto *br_spm = dynamic_cast<const mfem::SparseMatrix *>(br.get()))
@@ -736,6 +834,23 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       }
       auto B_l = BuildLevelOperator(*B, std::move(br), std::move(bi), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+
+      // XX TODO DEBUG
+      if constexpr (std::is_same<OperType, ComplexOperator>::value)
+      {
+        auto hB_l = dynamic_cast<ParOperator *>(B_l->Real())->ParallelAssemble();
+        std::string name = "mat_B_";
+        name += (aux ? "H1" : "ND");
+        name += std::to_string(l);
+        hB_l.Print(name.c_str());
+
+        //XX TODO WIP
+        hypre_CSRMatrix *hB_l_seq = hypre_ParCSRMatrixToCSRMatrixAll(hB_l);
+        hypre_CSRMatrixPrintIJ(hB_l_seq, 0, 0, const_cast<char *>(name.c_str()));
+        hypre_CSRMatrixDestroy(hB_l_seq);
+
+      }
+
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));

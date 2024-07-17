@@ -75,7 +75,7 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
 template <typename OperType>
 void JacobiSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
-  MFEM_ASSERT(!this->initial_guess, "JacobiSmoother does not use initial guess!");
+  MFEM_VERIFY(!this->initial_guess, "JacobiSmoother does not use initial guess!");
   Apply(dinv, x, y);
 }
 

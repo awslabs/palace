@@ -360,7 +360,6 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_partitioner_dev.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pncmesh_update_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_getnodalvalues_device_fix.diff"
 )

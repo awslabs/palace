@@ -165,7 +165,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
                                                            omega);
       ksp.SetOperators(*A, *P);
     }
-    spaceop.GetExcitationVector(omega, RHS);
+
+    // spaceop.GetExcitationVector(omega, RHS);  //XX TODO WIP...
+    // spaceop.GetRandomInitialVector(RHS);
+    spaceop.GetConstantInitialVector(RHS);
+
 
     // Solve the linear system.
     BlockTimer bt1(Timer::SOLVE);

@@ -237,6 +237,8 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Eigenmode problem type does not support wave port boundary conditions!\n");
     }
+
+    // XX TODO WAVE PORTS? SURFACE CURRENTS? LUMPED PORT EXCITATIONS?
   }
   else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
   {

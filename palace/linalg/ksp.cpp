@@ -7,6 +7,8 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/chebyshev.hpp"
+#include "linalg/distrelaxation.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
@@ -175,6 +177,34 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
     case config::LinearSolverData::Type::JACOBI:
       pc = std::make_unique<JacobiSmoother<OperType>>();
       break;
+
+    case config::LinearSolverData::Type::CHEBYSHEV:
+      if (iodata.solver.linear.mg_smooth_cheby_4th)
+      {
+        pc = std::make_unique<ChebyshevSmoother<OperType>>(
+            (fespaces.GetNumLevels() > 1) ? 1 : iodata.solver.linear.mg_smooth_it,
+            iodata.solver.linear.mg_smooth_order, iodata.solver.linear.mg_smooth_sf_max);
+      }
+      else
+      {
+        pc = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+            (fespaces.GetNumLevels() > 1) ? 1 : iodata.solver.linear.mg_smooth_it,
+            iodata.solver.linear.mg_smooth_order, iodata.solver.linear.mg_smooth_sf_max,
+            iodata.solver.linear.mg_smooth_sf_min);
+      }
+      break;
+    case config::LinearSolverData::Type::DIST_RELAXATION:
+      {
+        MFEM_VERIFY(aux_fespaces, "Auxiliary space smoother requires both "
+                                  "primary space and auxiliary spaces for construction!");
+        const auto G = aux_fespaces->GetDiscreteInterpolators();
+        pc = std::make_unique<DistRelaxationSmoother<OperType>>(
+            *G[0], (fespaces.GetNumLevels() > 1) ? 1 : iodata.solver.linear.mg_smooth_it, 1,
+            iodata.solver.linear.mg_smooth_order, iodata.solver.linear.mg_smooth_sf_max,
+            iodata.solver.linear.mg_smooth_sf_min,
+            iodata.solver.linear.mg_smooth_cheby_4th);
+      }
+      break;
     case config::LinearSolverData::Type::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
@@ -238,8 +268,17 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 {
   ksp->SetOperator(op);
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
-  const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
-  if (mg_op && !mg_pc)
+  auto *mg_pc = dynamic_cast<GeometricMultigridSolver<OperType> *>(pc.get());
+  auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(pc.get());
+  if (mg_op && dist_smoother)
+  {
+    MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
+                "Distributive relaxation smoother relies on both primary space and "
+                "auxiliary space operators for multigrid smoothing!");
+    dist_smoother->SetOperators(mg_op->GetFinestOperator(),
+                                mg_op->GetFinestAuxiliaryOperator());
+  }
+  else if (mg_op && !mg_pc)
   {
     pc->SetOperator(mg_op->GetFinestOperator());
   }

@@ -572,8 +572,12 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    // if (beta < eps)
+    if (true)
     {
+      x = r;  //XX TODO RETURN....
+
+
       converged = true;
       break;
     }

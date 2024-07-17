@@ -1644,7 +1644,9 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
                             {LinearSolverData::Type::SUPERLU, "SuperLU"},
                             {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
                             {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"},
-                            {LinearSolverData::Type::JACOBI, "Jacobi"}})
+                            {LinearSolverData::Type::JACOBI, "Jacobi"},
+                            {LinearSolverData::Type::CHEBYSHEV, "Chebyshev"},
+                            {LinearSolverData::Type::DIST_RELAXATION, "DistRelaxation"}})
 PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
                            {{LinearSolverData::KspType::DEFAULT, "Default"},
                             {LinearSolverData::KspType::CG, "CG"},

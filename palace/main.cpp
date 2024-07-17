@@ -125,7 +125,7 @@ static std::string ConfigureDeviceAndBackend(config::SolverData::Device device,
   if (backend.compare(0, backend.length(), ceed_resource, 0, backend.length()))
   {
     Mpi::Warning(
-        "libCEED is not using the requested backend (requested \"{}\", got \"{}\")!\n",
+        "libCEED is not using the requested backend,\nrequested \"{}\", got \"{}\"!\n",
         backend, ceed_resource);
   }
 

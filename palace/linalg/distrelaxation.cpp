@@ -4,6 +4,7 @@
 #include "distrelaxation.hpp"
 
 #include <mfem.hpp>
+#include "linalg/jacobi.hpp"   //XX TODO WIP
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 
@@ -18,6 +19,11 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     dbc_tdof_list_G(nullptr)
 {
   // Initialize smoothers.
+
+  // //XX TODO WIP DEBUG
+  // B = std::make_unique<JacobiSmoother<OperType>>();
+  // B_G = std::make_unique<JacobiSmoother<OperType>>();
+
   if (cheby_4th_kind)
   {
     B = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,

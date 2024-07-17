@@ -723,7 +723,9 @@ public:
     SUPERLU,
     STRUMPACK,
     STRUMPACK_MP,
-    JACOBI
+    JACOBI,
+    CHEBYSHEV,
+    DIST_RELAXATION
   };
   Type type = Type::DEFAULT;
 

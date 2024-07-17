@@ -330,8 +330,9 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
       if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
       {
-        Mpi::Warning("Electrostatic problem type does not account for material "
-                     "permeability, electrical conductivity, or London depth!\n");
+        Mpi::Warning(
+            "Electrostatic problem type does not account for material permeability\n"
+            "electrical conductivity, or London depth!\n");
       }
     }
     else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -341,8 +342,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
           std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
-            "Magnetostatic problem type does not account for material permittivity, loss "
-            "tangent, electrical conductivity, or London depth!\n");
+            "Magnetostatic problem type does not account for material permittivity,\n"
+            "loss tangent, electrical conductivity, or London depth!\n");
       }
     }
     else

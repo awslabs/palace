@@ -66,7 +66,7 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
 }
 
 template <bool Transpose = false>
-inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
+inline void ApplyOrder0(const double sr, const Vector &dinv, const Vector &r, Vector &d)
 {
   const int N = d.Size();
   const auto *DI = dinv.Read();
@@ -155,7 +155,7 @@ ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order, do
   : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), lambda_max(0.0),
     sf_max(sf_max)
 {
-  MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  MFEM_VERIFY(order >= 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
 template <typename OperType>
@@ -201,17 +201,20 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
       y = 0.0;
     }
 
-    // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
-    // shift due to 1-based indexing).
-    ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);
-    for (int k = 1; k < order; k++)
-    {
-      y += d;
-      ApplyOp(*A, d, r, -1.0);
-      const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
-      const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
-      ApplyOrderK(sd, sr, dinv, r, d);
-    }
+    //XX TODO WIP
+    d = r;
+
+    // // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
+    // // shift due to 1-based indexing).
+    // ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);
+    // for (int k = 1; k < order; k++)
+    // {
+    //   y += d;
+    //   ApplyOp(*A, d, r, -1.0);
+    //   const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
+    //   const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
+    //   ApplyOrderK(sd, sr, dinv, r, d);
+    // }
     y += d;
   }
 }
@@ -222,7 +225,7 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(int smooth_it, int 
   : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), theta(0.0),
     sf_max(sf_max), sf_min(sf_min)
 {
-  MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  MFEM_VERIFY(order >= 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
 template <typename OperType>
