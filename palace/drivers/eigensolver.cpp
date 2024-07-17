@@ -157,7 +157,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.linear.divfree_max_it > 0)
   {
     Mpi::Print(" Configuring divergence-free projection\n");
-    constexpr int divfree_verbose = 0;
+    constexpr int divfree_verbose = 2;  //XX TODO WIP DEBUG
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,

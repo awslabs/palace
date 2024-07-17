@@ -146,8 +146,26 @@ void SpaceOperator::CheckBoundaryProperties()
   //                      // As tested, this does not eliminate all DC modes!
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    GetH1Spaces().GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(
-        aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
+    if (aux_bdr_attr.Size() == 0)
+    {
+
+      //XX TODO WIP DEBUG
+      std::cout << "ADDING DBC TDOF FOR AUX SPACE\n";
+
+
+      //XX TODO: SHOULD ONLY HAPPEN ON SMALLEST RANK WITH h1_fespace.GetTrueDofSize() > 0 (AND ONLY ON FINEST SPACE?)
+      auto &tdof_list = aux_bdr_tdof_lists.emplace_back();
+      if (Mpi::Root(GetComm()) && l == GetH1Spaces().GetNumLevels() - 1)
+      {
+        tdof_list.SetSize(1);
+        tdof_list[0] = 0;
+      }
+    }
+    else
+    {
+      GetH1Spaces().GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(
+          aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
+    }
   }
 
   // A final check that no boundary attribute is assigned multiple boundary conditions.

@@ -274,8 +274,10 @@ auto BuildCeedGeomFactorData(
   }
 
   // Then boundary elements (no support for boundary integrators on meshes embedded in
-  // higher dimensional space for now).
-  if (mesh.Dimension() == mesh.SpaceDimension())
+  // higher dimensional space for now). Skip periodic meshes (discontinuous nodal space has
+  // no boundary elements, must be accessed from the trace space).
+  if (mesh.Dimension() == mesh.SpaceDimension() &&
+      !dynamic_cast<const mfem::L2_FECollection *>(mesh.GetNodalFESpace()->FEColl()))
   {
     const int nbe = mesh.GetNBE();
     const int stride = (nbe + nt - 1) / nt;
@@ -294,6 +296,12 @@ auto BuildCeedGeomFactorData(
     };
     for (auto &[geom, indices] : element_indices)
     {
+
+
+      //XX TODO WIP....
+      std::cout << "element_indices: " << mfem::Geometry::Name[geom] << " " << indices.size() << "\n";
+
+
       Vector elem_attr(indices.size());
       for (std::size_t k = 0; k < indices.size(); k++)
       {
