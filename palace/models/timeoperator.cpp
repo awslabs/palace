@@ -40,7 +40,7 @@ public:
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
-  std::function<void(double a0, double a1)> ConfigureLinearSolver;
+  std::function<void(double, double)> ConfigureLinearSolver;
 
 public:
   TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &space_op,

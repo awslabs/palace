@@ -79,7 +79,6 @@ private:
   // objects for computing functions of the port modes for use as an excitation or in
   // postprocessing.
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
-  std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
 public:
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,
