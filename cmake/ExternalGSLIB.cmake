@@ -48,7 +48,7 @@ list(APPEND GSLIB_OPTIONS
   "BLAS=0"
 )
 
-# Configure BLAS dependency
+# # Configure BLAS dependency
 # if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
 #   foreach(INCLUDE_DIR IN LISTS BLAS_LAPACK_INCLUDE_DIRS)
 #     set(GSLIB_CFLAGS "${GSLIB_CFLAGS} -I${INCLUDE_DIR}")

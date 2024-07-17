@@ -14,7 +14,7 @@ list(APPEND MUMPS_OPTIONS
   "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
   "-DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}"
   "-DCMAKE_Fortran_FLAGS=${CMAKE_Fortran_FLAGS}"
-  "-Dparallel=ON"
+  "-DMUMPS_parallel=ON"
   "-Dopenmp=${PALACE_WITH_OPENMP}"
   "-Dintsize64=OFF"
   "-DBUILD_SINGLE=OFF"

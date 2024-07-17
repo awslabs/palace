@@ -62,7 +62,7 @@ type and stored in an ASCII file named `port-S.csv`, in the directory specified 
 ``\text{dB}`` magnitude (``20\log_{10}(|S_{ij}|)``) and the phase ``\angle(S_{ij})``
 (in degrees) are written to the file. In the case that more than a single lumped or wave
 port is excited or surface current excitations are used, scattering parameter output will
-be disabled for the simulation(though other quantities of interest are still
+be disabled for the simulation (though other quantities of interest are still
 postprocessed). When lumped ports are present, the peak complex lumped port voltages and
 currents computed for each excitation frequency are written to ASCII files named
 `port-V.csv` and `port-I.csv`, respectively, Additionally, the surface current excitations

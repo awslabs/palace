@@ -12,7 +12,7 @@ Fetch most recent commit from dependency repositories
 Options:
   -h, --help                       Show this help message and exit
   -v, --verbose                    Verbose log output
-  -update, --update-tags           Update tags in ExternalGitTags.cmake after checking for updates
+  -u, --update                     Update tags in ExternalGitTags.cmake after checking for updates
   -p, --package <PACKAGE_NAME>     Check for updates for a specified package (may be repeated)
 "
 }
@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         VERBOSE="true"
         shift
         ;;
-        -update|--update-tags)
+        -u|--update|--update-tags)
         UPDATE_TAGS="true"
         shift
         ;;

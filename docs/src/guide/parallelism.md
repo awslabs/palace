@@ -20,7 +20,7 @@ Lastly, *Palace* supports GPU-acceleration using NVIDIA and AMD GPUs, activated 
 build options `-DPALACE_WITH_CUDA=ON` and `-DPALACE_WITH_HIP=ON`, respectively. At runtime,
 the [`config["Solver"]["Device"]`](../config/solver.md#config%5B%22Solver%22%5D) parameter
 in the configuration file can be set to `"CPU"` (the default) or `"GPU"` in order to
-configure *Palace* and MFEM to use the available GPU(s). The
+configure *Palace* and MFEM to use the available GPU device or devices. The
 [`config["Solver"]["Backend"]`](../config/solver.md#config%5B%22Solver%22%5D) parameter, on
 the other hand, controls the
 [libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends). Users typically

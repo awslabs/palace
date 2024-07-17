@@ -26,47 +26,6 @@ index d06f6078..7b505340 100755
  	    /* CASE OF SERIAL SYMBOLIC */
    	    /* Apply column permutation to the original distributed A */
  	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
-diff --git a/SRC/include/superlu_dist_config.h b/SRC/include/superlu_dist_config.h
-index e4b31ab6..ed45f683 100644
---- a/SRC/include/superlu_dist_config.h
-+++ b/SRC/include/superlu_dist_config.h
-@@ -1,10 +1,10 @@
- /* superlu_dist_config.h.in */
- 
- /* Enable CUDA */
--#define HAVE_CUDA TRUE
-+/* #undef HAVE_CUDA */
- 
- /* Enable NVSHMEM */
--#define HAVE_NVSHMEM TRUE
-+/* #undef HAVE_NVSHMEM */
- 
- /* Enable HIP */
- /* #undef HAVE_HIP */
-@@ -25,7 +25,7 @@
- /* #undef HAVE_MAGMA */
- 
- /* enable 64bit index mode */
--#define XSDK_INDEX_SIZE 64
-+/* #undef XSDK_INDEX_SIZE */
- 
- #if defined(XSDK_INDEX_SIZE) && (XSDK_INDEX_SIZE == 64)
- #define _LONGINT 1
-diff --git a/SRC/include/superlu_enum_consts.h b/SRC/include/superlu_enum_consts.h
-index 311e068e..824c93ad 100755
---- a/SRC/include/superlu_enum_consts.h
-+++ b/SRC/include/superlu_enum_consts.h
-@@ -34,8 +34,8 @@ typedef enum {NATURAL, MMD_ATA, MMD_AT_PLUS_A, COLAMD,
- typedef enum {NOTRANS, TRANS, CONJ}                             trans_t;
- typedef enum {NOEQUIL, ROW, COL, BOTH}                          DiagScale_t;
- typedef enum {NOREFINE, SLU_SINGLE=1, SLU_DOUBLE, SLU_EXTRA}    IterRefine_t;
--typedef enum {LUSUP, UCOL, LSUB, USUB, LLVL, ULVL, NO_MEMTYPE}  MemType;
--//typedef enum {USUB, LSUB, UCOL, LUSUP, LLVL, ULVL, NO_MEMTYPE}  MemType;
-+// typedef enum {LUSUP, UCOL, LSUB, USUB, LLVL, ULVL, NO_MEMTYPE}  MemType;
-+typedef enum {USUB, LSUB, UCOL, LUSUP, LLVL, ULVL, NO_MEMTYPE}  MemType;
- typedef enum {HEAD, TAIL}                                       stack_end_t;
- typedef enum {SYSTEM, USER}                                     LU_space_t;
- typedef enum {ONE_NORM, TWO_NORM, INF_NORM}			norm_t;
 diff --git a/SRC/single/psgssvx.c b/SRC/single/psgssvx.c
 index aa2b5025..79d48927 100755
 --- a/SRC/single/psgssvx.c
