@@ -3,7 +3,7 @@
 
 #include "coefficient.hpp"
 
-#include <mfem.hpp>
+#include <mfem/linalg/dtensor.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "models/materialoperator.hpp"
 
@@ -126,6 +126,112 @@ PopulateCoefficientContext(int dim_mass, const MaterialPropertyCoefficient *Q_ma
   auto ctx = PopulateCoefficientContext(dim, Q, a);
   ctx_mass.insert(ctx_mass.end(), ctx.begin(), ctx.end());
   return ctx_mass;
+}
+
+QuadratureCoefficient InitCoefficient(mfem::Coefficient &Q, mfem::ParMesh &mesh,
+                                      const mfem::IntegrationRule &ir,
+                                      const std::vector<int> &indices, bool use_bdr)
+{
+  const auto ne = indices.size();
+  const auto nqpts = ir.GetNPoints();
+  QuadratureCoefficient coeff(1, ne * nqpts);
+  auto C = mfem::Reshape(coeff.data.HostWrite(), nqpts, ne);
+  mfem::IsoparametricTransformation T;
+  for (std::size_t i = 0; i < ne; ++i)
+  {
+    const auto e = indices[i];
+    if (use_bdr)
+    {
+      mesh.GetBdrElementTransformation(e, &T);
+    }
+    else
+    {
+      mesh.GetElementTransformation(e, &T);
+    }
+    for (int q = 0; q < nqpts; ++q)
+    {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      C(q, i) = Q.Eval(T, ip);
+    }
+  }
+  return coeff;
+}
+
+QuadratureCoefficient InitCoefficient(mfem::VectorCoefficient &VQ, mfem::ParMesh &mesh,
+                                      const mfem::IntegrationRule &ir,
+                                      const std::vector<int> &indices, bool use_bdr)
+{
+  const auto ne = indices.size();
+  const auto vdim = VQ.GetVDim();
+  const auto nqpts = ir.GetNPoints();
+  QuadratureCoefficient coeff(vdim, ne * nqpts * vdim);
+  auto C = mfem::Reshape(coeff.data.HostWrite(), vdim, nqpts, ne);
+  mfem::IsoparametricTransformation T;
+  mfem::DenseMatrix Q_ip(vdim, nqpts);
+  for (std::size_t i = 0; i < ne; ++i)
+  {
+    const auto e = indices[i];
+    if (use_bdr)
+    {
+      mesh.GetBdrElementTransformation(e, &T);
+    }
+    else
+    {
+      mesh.GetElementTransformation(e, &T);
+    }
+    VQ.Eval(Q_ip, T, ir);
+    for (int q = 0; q < nqpts; ++q)
+    {
+      for (int d = 0; d < vdim; ++d)
+      {
+        C(d, q, i) = Q_ip(d, q);
+      }
+    }
+  }
+  return coeff;
+}
+
+QuadratureCoefficient InitCoefficient(mfem::MatrixCoefficient &MQ, mfem::ParMesh &mesh,
+                                      const mfem::IntegrationRule &ir,
+                                      const std::vector<int> &indices, bool use_bdr)
+{
+  // Assumes matrix coefficient is symmetric.
+  const auto ne = indices.size();
+  const auto vdim = MQ.GetVDim();
+  const auto ncomp = (vdim * (vdim + 1)) / 2;
+  const auto nqpts = ir.GetNPoints();
+  QuadratureCoefficient coeff(ncomp, ne * nqpts * ncomp);
+  auto C = mfem::Reshape(coeff.data.HostWrite(), ncomp, nqpts, ne);
+  mfem::IsoparametricTransformation T;
+  mfem::DenseMatrix Q_ip(vdim);
+  for (std::size_t i = 0; i < ne; ++i)
+  {
+    const auto e = indices[i];
+    if (use_bdr)
+    {
+      mesh.GetBdrElementTransformation(e, &T);
+    }
+    else
+    {
+      mesh.GetElementTransformation(e, &T);
+    }
+    for (int q = 0; q < nqpts; ++q)
+    {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      MQ.Eval(Q_ip, T, ip);
+      for (int dj = 0; dj < vdim; ++dj)
+      {
+        for (int di = dj; di < vdim; ++di)
+        {
+          const int idx = (dj * vdim) - (((dj - 1) * dj) / 2) + di - dj;
+          C(idx, q, i) = Q_ip(di, dj);  // Column-major
+        }
+      }
+    }
+  }
+  return coeff;
 }
 
 }  // namespace palace::ceed
