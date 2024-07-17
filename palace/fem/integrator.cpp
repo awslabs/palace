@@ -56,6 +56,10 @@ double IntegrateFunctionLocal(
     mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
 {
+
+  // XX TODO THREAD SAFETY FOR COEFFICIENTS?
+  // XX TODO LIBCEED QUADRATURE DATA FOR JACOBIANS?
+
   auto ElementIntegral = [&Q, &GetQuadratureOrder](mfem::ElementTransformation &T)
   {
     double sum = 0.0;

@@ -38,6 +38,9 @@ auto GetBdrNeighborAttribute(int i, const mfem::ParMesh &mesh,
 {
   // For internal boundaries, use the element which corresponds to the domain with lower
   // attribute number (ensures all boundary elements are aligned).
+
+  //XX TODO THREADING IMPROVEMENT
+
   BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
   return (FET.Elem2 && FET.Elem2->Attribute < FET.Elem1->Attribute) ? FET.Elem2->Attribute
                                                                     : FET.Elem1->Attribute;
@@ -90,6 +93,11 @@ auto BuildCeedBdrAttributes(const mfem::ParMesh &mesh)
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);
+
+
+    //XX TODO THREADING IMPROVEMENT
+
+
     const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
     auto &bdr_attr_map = loc_bdr_attr[attr];
     if (bdr_attr_map.find(nbr_attr) == bdr_attr_map.end())

@@ -11,6 +11,8 @@ namespace palace
 
 class FiniteElementSpace;
 
+// XX TODO: GetValue/GetVectorValue functions which use Mesh::GetCeedGeomFactorData?
+
 //
 // A real- or complex-valued grid function represented as two real grid functions, one for
 // each component. This unifies mfem::ParGridFunction and mfem::ParComplexGridFunction, and

@@ -12,6 +12,7 @@
 #include "fem/gridfunction.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
+#include "utils/omp.hpp"
 
 // XX TODO: Add bulk element Eval() overrides to speed up postprocessing (also needed in
 //          mfem::DataCollection classes.
@@ -32,11 +33,25 @@ namespace palace
 class BdrGridFunctionCoefficient
 {
 protected:
+  const mfem::ParMesh &mesh;
+
+
+
   // XX TODO: For thread-safety (multiple threads evaluating a coefficient simultaneously),
   //          the FET, FET.Elem1, and FET.Elem2 objects cannot be shared
-  const mfem::ParMesh &mesh;
-  mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2;
+  static inline mfem::FaceElementTransformations FET;
+  static inline mfem::IsoparametricTransformation T1, T2;
+  static inline mfem::DofTransformation dof_trans;   //XX TODO DOFTRANS && GetVEctorValue...
+  PalacePragmaOmp(threadprivate(FET, T1, T2, dof_trans))
+
+
+
+  //XX TODO... utils::GetNumActiveThreads() ??
+  //XX TODO MIGHT NEED A GRIDFUNCTION EVAL HERE FOR OPTIMIZED...
+
+
+
+
 
   bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip)
   {

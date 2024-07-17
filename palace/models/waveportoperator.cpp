@@ -388,6 +388,10 @@ public:
     BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
     if constexpr (Type == ValueType::REAL)
     {
+
+      //XX TODO EFFICIENT AND THREAD-SAFE GET VALUE/GETVECTOR VALUE WITH DOFTRANS....
+
+
       Et.Real().GetVectorValue(*T_submesh, ip, V);
       auto Vn = En.Real().GetValue(*T_submesh, ip);
       V.Add(-Vn, normal);
@@ -497,6 +501,9 @@ public:
     mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
     {
+
+      //XX TODO EFFICIENT AND THREAD-SAFE GET VALUE/GETVECTOR VALUE WITH DOFTRANS....
+
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
