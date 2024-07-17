@@ -202,6 +202,17 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   // Construct the actual solver, which has the right value type.
   if (fespaces.GetNumLevels() > 1)
   {
+
+    // XX TODO: COARSE SOLVER WRAPPED IN A FIXED NUMBER OF KRYLOV ITERATIONS? FOR ROBUSTNESS
+
+    // // XX TODO...
+    // auto pcg =
+    //     std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), 0);
+    // pcg->SetInitialGuess(false);
+    // pcg->SetRelTol(0.0);
+    // pcg->SetAbsTol(0.0);
+    // pcg->SetMaxIter(2);
+
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary

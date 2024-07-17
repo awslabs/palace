@@ -289,6 +289,44 @@ public:
   void Mult(const VecType &b, VecType &x) const override;
 };
 
+// This is a container class for an iterative solver which owns an (optional) associated
+// preconditioner.
+template <typename OperType>
+class IterativeWrapperSolver : public Solver<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+
+private:
+  // The actual solver and preconditioner objects.
+  std::unique_ptr<IterativeSolver<OperType>> ksp;
+  std::unique_ptr<Solver<OperType>> pc;
+
+public:
+  IterativeWrapperSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                         std::unique_ptr<Solver<OperType>> &&pc)
+    : Solver<OperType>(), ksp(std::move(ksp)), pc(std::move(pc))
+  {
+    MFEM_VERIFY(this->ksp, "Missing solver object in WrapperSolver constructor!");
+    if (this->pc)
+    {
+      this->ksp->SetPreconditioner(*this->pc);
+    }
+  }
+
+  void SetInitialGuess(bool guess) override { ksp->SetInitialGuess(guess); }
+
+  void SetOperator(const OperType &op) override
+  {
+    ksp->SetOperator(op);
+    if (pc)
+    {
+      pc->SetOperator(op);
+    }
+  }
+
+  void Mult(const VecType &x, VecType &y) const override { ksp->Mult(x, y); }
+};
+
 }  // namespace palace
 
 #endif  // PALACE_LINALG_ITERATIVE_HPP

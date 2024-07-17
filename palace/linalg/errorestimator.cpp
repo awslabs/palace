@@ -66,6 +66,10 @@ template <typename OperType>
 auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
                            int max_it, int print, bool use_mg)
 {
+
+  // // XX TODO
+  // print = 1;
+
   // The system matrix for the projection is real, SPD and diagonally dominant.
   std::unique_ptr<Solver<OperType>> pc;
   if (!use_mg)
@@ -77,13 +81,33 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   else
   {
     auto amg = std::make_unique<BoomerAmgSolver>(1, 1, true, 0);
+
+    // // XX TODO
+    // amg->SetRelaxType(18);
+
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
     if (fespaces.GetNumLevels() > 1)
     {
+
+      // // XX TODO...
+      // auto pcg =
+      //     std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), 0);
+      // pcg->SetInitialGuess(false);
+      // pcg->SetRelTol(0.0);
+      // pcg->SetAbsTol(0.0);
+      // pcg->SetMaxIter(2);
+      // auto coarse_ksp = std::make_unique<IterativeWrapperSolver<OperType>>(
+      //     std::move(pcg), std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg)));
+
+      // const int mg_smooth_order = 1;  // XX TODO
       const int mg_smooth_order = 2;  // Smooth order independent of FE space order
+
       pc = std::make_unique<GeometricMultigridSolver<OperType>>(
           fespaces.GetFinestFESpace().GetComm(),
+
           std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg)),
+          // std::move(coarse_ksp),  // XX TODO
+
           fespaces.GetProlongationOperators(), nullptr, 1, 1, mg_smooth_order, 1.0, 0.0,
           true);
     }
@@ -148,6 +172,9 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
 template <typename VecType>
 void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 {
+
+  // XX TODO INITIAL GUESS: LocalL2Projection_ND/LocalL2Projection_RT
+
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == rhs.Size(),
               "Invalid vector dimensions for FluxProjector::Mult!");

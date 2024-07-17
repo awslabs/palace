@@ -262,6 +262,11 @@ int main(int argc, char *argv[])
   // Initialize the MFEM device and configure libCEED backend.
   int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
   mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
+
+  // XX TODO MFEM MEMORY MANAER CONFIGURE
+  //  FORCE host_mem_type == HOST for OpenMP compatibility
+  //  THEN, CAN ALLOW BACKEND TO BE MANAGED, UMPIRE, ETC.
+
   ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(HYPRE_WITH_GPU_AWARE_MPI)
   device.SetGPUAwareMPI(true);
@@ -309,6 +314,14 @@ int main(int argc, char *argv[])
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     mfem_mesh.push_back(mesh::ReadMesh(world_comm, iodata));
+
+    //     // XX TODO WIP VALGRIND AND MONDAY-> RUN RELEASE SO DON'T TRIGGER ORIENTATION
+    //     CHECK?? ceed::Finalize();
+    // #if defined(PALACE_WITH_SLEPC)
+    //     slepc::Finalize();
+    // #endif
+    //     return 0;
+
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
     for (auto &m : mfem_mesh)
