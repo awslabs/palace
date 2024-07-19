@@ -67,7 +67,7 @@ inline void PrettyPrint(const Container<T, U...> &data, T scale,
   auto i = data.begin();
   while (i != data.end())
   {
-    if constexpr (std::is_integral<T>::value)
+    if constexpr (std::is_integral_v<T>)
     {
       auto j = i;
       if (scale == 1)

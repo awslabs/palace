@@ -33,8 +33,8 @@ class TimeDependentFluxErrorEstimator;
 template <typename VecType>
 class FluxProjector
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
+  using OperType = typename std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                               ComplexOperator, Operator>;
 
 private:
   // Operator for the mass matrix inversion.

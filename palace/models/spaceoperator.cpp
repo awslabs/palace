@@ -576,9 +576,8 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *K, const OperType *C, const OperType *M,
                                const OperType *A2)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
+  using ParOperType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                  ComplexParOperator, ParOperator>;
 
   const auto *PtAP_K = (K) ? dynamic_cast<const ParOperType *>(K) : nullptr;
   const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;

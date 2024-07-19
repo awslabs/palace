@@ -120,14 +120,14 @@ auto MakeWrapperSolver(U &&...args)
   // parallel assembled operator.
   constexpr bool save_assembled = !(false ||
 #if defined(MFEM_USE_SUPERLU)
-                                    std::is_same<T, SuperLUSolver>::value ||
+                                    std::is_same_v<T, SuperLUSolver> ||
 #endif
 #if defined(MFEM_USE_STRUMPACK)
-                                    std::is_same<T, StrumpackSolver>::value ||
-                                    std::is_same<T, StrumpackMixedPrecisionSolver>::value ||
+                                    std::is_same_v<T, StrumpackSolver> ||
+                                    std::is_same_v<T, StrumpackMixedPrecisionSolver> ||
 #endif
 #if defined(MFEM_USE_MUMPS)
-                                    std::is_same<T, MumpsSolver>::value ||
+                                    std::is_same_v<T, MumpsSolver> ||
 #endif
                                     false);
   return std::make_unique<MfemWrapperSolver<OperType>>(

@@ -28,8 +28,8 @@ ConstructFECollections(int p, int dim, int mg_max_levels,
 {
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
   // type.
-  constexpr int pmin = (std::is_base_of<mfem::H1_FECollection, FECollection>::value ||
-                        std::is_base_of<mfem::ND_FECollection, FECollection>::value)
+  constexpr int pmin = (std::is_base_of_v<mfem::H1_FECollection, FECollection> ||
+                        std::is_base_of_v<mfem::ND_FECollection, FECollection>)
                            ? 1
                            : 0;
   MFEM_VERIFY(p >= pmin, "FE space order must not be less than " << pmin << "!");
@@ -44,8 +44,8 @@ ConstructFECollections(int p, int dim, int mg_max_levels,
   std::vector<std::unique_ptr<FECollection>> fecs;
   for (int l = 0; l < std::max(1, mg_max_levels); l++)
   {
-    if constexpr (std::is_base_of<mfem::ND_FECollection, FECollection>::value ||
-                  std::is_base_of<mfem::RT_FECollection, FECollection>::value)
+    if constexpr (std::is_base_of_v<mfem::ND_FECollection, FECollection> ||
+                  std::is_base_of_v<mfem::RT_FECollection, FECollection>)
     {
       fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
     }

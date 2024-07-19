@@ -39,9 +39,8 @@ template <typename OperType>
 void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
                                                     const OperType &op_G)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
+  using ParOperType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                  ComplexParOperator, ParOperator>;
 
   MFEM_VERIFY(op.Height() == G->Height() && op.Width() == G->Height() &&
                   op_G.Height() == G->Width() && op_G.Width() == G->Width(),
