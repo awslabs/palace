@@ -58,13 +58,13 @@ public:
   virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const;
 
   virtual void AddMult(const ComplexVector &x, ComplexVector &y,
-                       const std::complex<double> a = 1.0) const;
+                       std::complex<double> a = 1.0) const;
 
   virtual void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                const std::complex<double> a = 1.0) const;
+                                std::complex<double> a = 1.0) const;
 
   virtual void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                         const std::complex<double> a = 1.0) const;
+                                         std::complex<double> a = 1.0) const;
 };
 
 // A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
@@ -103,13 +103,13 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMult(const ComplexVector &x, ComplexVector &y,
-               const std::complex<double> a = 1.0) const override;
+               std::complex<double> a = 1.0) const override;
 
   void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                        const std::complex<double> a = 1.0) const override;
+                        std::complex<double> a = 1.0) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 std::complex<double> a = 1.0) const override;
 };
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
@@ -130,9 +130,9 @@ public:
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMult(const Vector &x, Vector &y, double a = 1.0) const override;
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMultTranspose(const Vector &x, Vector &y, double a = 1.0) const override;
 };
 
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
@@ -210,14 +210,13 @@ public:
     B.MultTranspose(z, y);
   }
 
-  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override
+  void AddMult(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     B.Mult(x, z);
     A.AddMult(z, y, a);
   }
 
-  void AddMultTranspose(const VecType &x, VecType &y,
-                        const ScalarType a = 1.0) const override
+  void AddMultTranspose(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     A.MultTranspose(x, z);
     B.AddMultTranspose(z, y, a);
@@ -249,7 +248,7 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 std::complex<double> a = 1.0) const override;
 };
 
 template <typename OperType>
@@ -276,10 +275,9 @@ public:
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
 
-  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override;
+  void AddMult(const VecType &x, VecType &y, ScalarType a = 1.0) const override;
 
-  void AddMultTranspose(const VecType &x, VecType &y,
-                        const ScalarType a = 1.0) const override
+  void AddMultTranspose(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     AddMult(x, y, a);
   }
