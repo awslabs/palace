@@ -40,7 +40,7 @@ private:
 
   // System matrix and its projection GᵀAG (not owned).
   const OperType *A, *A_G;
-  const mfem::Array<int> *dbc_tdof_list_G;
+    const mfem::Array<int> *dbc_tdof_list_G{nullptr};
 
   // Point smoother objects for each matrix.
   mutable std::unique_ptr<Solver<OperType>> B;

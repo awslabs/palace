@@ -38,7 +38,7 @@ private:
   VecType dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
-  double lambda_max, sf_max;
+  double lambda_max, sf_max; // NOLINT
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
@@ -102,7 +102,7 @@ private:
 
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
   // polynomial smoothing.
-  double theta, delta, sf_max, sf_min;
+  double theta, delta, sf_max, sf_min;  // NOLINT
 
   // Temporary vector for smoother application.
   mutable VecType d, r;

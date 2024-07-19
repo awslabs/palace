@@ -32,8 +32,8 @@ public:
 
 private:
   // Characteristic reference length [m] and time [ns] for nondimensionalization.
-  double Lc, tc;
-  bool init;
+    double Lc{1.0}, tc{1.0};
+    bool init{false};
 
   // Check configuration file options and compatibility with requested problem type.
   void CheckConfiguration();
@@ -51,7 +51,7 @@ public:
   // Redimensionalize values for output. Outputs which depend on the fields assume a
   // characteristic reference magnetic field strength Hc such that Pc = 1 W, where Pc is the
   // characteristic reference power.
-  enum class ValueType :  std::uint8_t
+  enum class ValueType : std::uint8_t
   {
     TIME,          // [ns]
     FREQUENCY,     // [GHz]
