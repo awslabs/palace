@@ -24,7 +24,7 @@ public:
   using Duration = std::chrono::duration<double>;
   using TimePoint = typename Clock::time_point;
 
-  enum Index
+  enum Index : std::uint8_t
   {
     INIT = 0,
     CONSTRUCT,            // Space and operator construction

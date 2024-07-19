@@ -145,14 +145,14 @@ public:
 class GmresSolverBase
 {
 public:
-  enum class OrthogType
+  enum class OrthogType : std::uint8_t
   {
     MGS,
     CGS,
     CGS2
   };
 
-  enum class PrecSide
+  enum class PrecSide : std::uint8_t
   {
     LEFT,
     RIGHT

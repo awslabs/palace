@@ -52,7 +52,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
 class SlepcEigenvalueSolver : public EigenvalueSolver
 {
 public:
-  enum class ProblemType
+  enum class ProblemType : std::uint8_t
   {
     HERMITIAN,
     NON_HERMITIAN,
@@ -63,7 +63,7 @@ public:
     GYROSCOPIC
   };
 
-  enum class Type
+  enum class Type : std::uint8_t
   {
     KRYLOVSCHUR,
     POWER,

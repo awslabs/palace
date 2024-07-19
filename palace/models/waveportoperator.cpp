@@ -310,7 +310,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
-enum class ValueType
+enum class ValueType : std::uint8_t
 {
   REAL,
   IMAG

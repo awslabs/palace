@@ -12,7 +12,7 @@ namespace palace::ceed
 {
 
 // Evaluation modes for CeedOperator fields for various integrators.
-enum EvalMode : unsigned int
+enum EvalMode : unsigned int  // NOLINT
 {
   Weight = 1 << 0,
   None = 1 << 1,

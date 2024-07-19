@@ -168,7 +168,7 @@ public:
 };
 
 // Helper for BdrSurfaceFluxCoefficient.
-enum class SurfaceFluxType
+enum class SurfaceFluxType : std::uint8_t
 {
   ELECTRIC,
   MAGNETIC,
@@ -292,7 +292,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
 }
 
 // Helper for InterfaceDielectricCoefficient.
-enum class InterfaceDielectricType
+enum class InterfaceDielectricType : std::uint8_t
 {
   DEFAULT,
   MA,
@@ -467,7 +467,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
 }
 
 // Helper for EnergyDensityCoefficient.
-enum class EnergyDensityType
+enum class EnergyDensityType : std::uint8_t
 {
   ELECTRIC,
   MAGNETIC

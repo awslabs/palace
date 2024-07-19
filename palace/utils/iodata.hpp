@@ -51,7 +51,7 @@ public:
   // Redimensionalize values for output. Outputs which depend on the fields assume a
   // characteristic reference magnetic field strength Hc such that Pc = 1 W, where Pc is the
   // characteristic reference power.
-  enum class ValueType
+  enum class ValueType :  std::uint8_t
   {
     TIME,          // [ns]
     FREQUENCY,     // [GHz]
