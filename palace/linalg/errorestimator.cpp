@@ -108,6 +108,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       const FiniteElementSpaceHierarchy &smooth_fespaces,
                                       const FiniteElementSpace &rhs_fespace, double tol,
                                       int max_it, int print, bool use_mg)
+  : ksp{ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg)}
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
@@ -139,7 +140,6 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
-  ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
   rhs.SetSize(smooth_fespace.GetTrueVSize());
   rhs.UseDevice(true);

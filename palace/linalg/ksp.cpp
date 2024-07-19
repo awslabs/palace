@@ -242,7 +242,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
                                                 iodata, fespaces, aux_fespaces))
 {
-  use_timer = true;
+
+  use_timer = true; //NOLINT
 }
 
 template <typename OperType>

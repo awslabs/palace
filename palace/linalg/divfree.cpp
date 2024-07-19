@@ -47,6 +47,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     FiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
     int print)
+  : Grad(&nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace()))
 {
   BlockTimer bt(Timer::DIV_FREE);
 
@@ -114,7 +115,6 @@ DivFreeSolver<VecType>::DivFreeSolver(
     WeakDiv = std::make_unique<ParOperator>(weakdiv.PartialAssemble(), nd_fespace,
                                             h1_fespaces.GetFinestFESpace(), false);
   }
-  Grad = &nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace());
 
   // The system matrix for the projection is real and SPD.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
