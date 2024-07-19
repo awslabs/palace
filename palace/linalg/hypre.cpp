@@ -36,9 +36,9 @@ void HypreVector::Update(const Vector &x)
 }
 
 HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz)
-  : palace::Operator(h, w), hypre_own_I(true)
+  : palace::Operator(h, w), mat(hypre_CSRMatrixCreate(h, w, nnz)), hypre_own_I(true)
 {
-  mat = hypre_CSRMatrixCreate(h, w, nnz);
+
   hypre_CSRMatrixInitialize(mat);
 }
 

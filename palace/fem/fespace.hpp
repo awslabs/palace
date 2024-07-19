@@ -35,7 +35,7 @@ private:
   mutable ComplexVector tx, lx, ly;
 
   // Members for discrete interpolators from an auxiliary space to a primal space.
-  mutable const FiniteElementSpace *aux_fespace;
+  mutable const FiniteElementSpace *aux_fespace{nullptr};
   mutable std::unique_ptr<Operator> G;
 
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
@@ -66,7 +66,7 @@ private:
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh), aux_fespace(nullptr)
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
     ResetCeedObjects();
     tx.UseDevice(true);

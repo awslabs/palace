@@ -21,13 +21,13 @@ namespace palace
 template <typename OperType>
 class Solver : public OperType
 {
-  static_assert(std::is_same<OperType, Operator>::value ||
-                    std::is_same<OperType, ComplexOperator>::value,
+  static_assert(std::is_same_v<OperType, Operator> ||
+                    std::is_same_v<OperType, ComplexOperator>,
                 "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
 protected:
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
+  using VecType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                              ComplexVector, Vector>;
 
   // Whether or not to use the second argument of Mult() as an initial guess.
   bool initial_guess;

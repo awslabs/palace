@@ -155,7 +155,7 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
-IoData::IoData(const char *filename, bool print) : Lc(1.0), tc(1.0), init(false)
+IoData::IoData(const char *filename, bool print)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
   // ranges.

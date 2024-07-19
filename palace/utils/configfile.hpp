@@ -76,7 +76,7 @@ struct ElementData
   std::array<double, 3> direction{{0.0, 0.0, 0.0}};
 
   // Coordinate system that the normal vector is expressed in.
-  enum class CoordinateSystem
+  enum class CoordinateSystem : std::uint8_t
   {
     CARTESIAN,
     CYLINDRICAL
@@ -93,7 +93,7 @@ struct ProblemData
 {
 public:
   // Simulation type.
-  enum class Type
+  enum class Type : std::uint8_t
   {
     DRIVEN,
     EIGENMODE,
@@ -465,7 +465,7 @@ public:
   double d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
-  enum class EigenSolverType
+  enum class EigenSolverType : std::uint8_t
   {
     DEFAULT,
     SLEPC,
@@ -507,7 +507,7 @@ struct SurfaceFluxData
 {
 public:
   // Surface flux type.
-  enum class Type
+  enum class Type : std::uint8_t
   {
     ELECTRIC,
     MAGNETIC,
@@ -540,7 +540,7 @@ struct InterfaceDielectricData
 {
 public:
   // Type of interface dielectric for computing electric field energy participation ratios.
-  enum class Type
+  enum class Type : std::uint8_t
   {
     DEFAULT,
     MA,
@@ -559,7 +559,7 @@ public:
   double tandelta = 0.0;
 
   // Side of internal boundaries on which to evaluate discontinuous field quantities.
-  enum class Side
+  enum class Side : std::uint8_t
   {
     SMALLER_REF_INDEX,
     LARGER_REF_INDEX
@@ -709,7 +709,7 @@ struct TransientSolverData
 {
 public:
   // Time integration scheme type.
-  enum class Type
+  enum class Type : std::uint8_t
   {
     DEFAULT,
     GEN_ALPHA,
@@ -719,7 +719,7 @@ public:
   Type type = Type::DEFAULT;
 
   // Excitation type for port excitation.
-  enum class ExcitationType
+  enum class ExcitationType : std::uint8_t
   {
     SINUSOIDAL,
     GAUSSIAN,
@@ -750,7 +750,7 @@ struct LinearSolverData
 {
 public:
   // Solver type.
-  enum class Type
+  enum class Type : std::uint8_t
   {
     DEFAULT,
     AMS,
@@ -764,7 +764,7 @@ public:
   Type type = Type::DEFAULT;
 
   // Krylov solver type.
-  enum class KspType
+  enum class KspType : std::uint8_t
   {
     DEFAULT,
     CG,
@@ -791,7 +791,7 @@ public:
   int mg_max_levels = 100;
 
   // Type of coarsening for p-multigrid.
-  enum class MultigridCoarsenType
+  enum class MultigridCoarsenType : std::uint8_t
   {
     LINEAR,
     LOGARITHMIC
@@ -834,7 +834,7 @@ public:
   int pc_mat_shifted = -1;
 
   // Choose left or right preconditioning.
-  enum class SideType
+  enum class SideType : std::uint8_t
   {
     DEFAULT,
     RIGHT,
@@ -844,7 +844,7 @@ public:
 
   // Specify details for the column ordering method in the symbolic factorization for sparse
   // direct solvers.
-  enum class SymFactType
+  enum class SymFactType : std::uint8_t
   {
     DEFAULT,
     METIS,
@@ -859,7 +859,7 @@ public:
 
   // Low-rank and butterfly compression parameters for sparse direct solvers which support
   // it (mainly STRUMPACK).
-  enum class CompressionType
+  enum class CompressionType : std::uint8_t
   {
     NONE,
     BLR,
@@ -906,7 +906,7 @@ public:
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
-  enum class OrthogType
+  enum class OrthogType : std::uint8_t
   {
     MGS,
     CGS,
@@ -934,7 +934,7 @@ public:
   int q_order_extra = 0;
 
   // Device used to configure MFEM.
-  enum class Device
+  enum class Device : std::uint8_t
   {
     CPU,
     GPU,

@@ -104,9 +104,9 @@ public:
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMult(const Vector &x, Vector &y, double a = 1.0) const override;
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMultTranspose(const Vector &x, Vector &y, double a = 1.0) const override;
 };
 
 // Complex-valued RAP operator.
@@ -191,13 +191,13 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMult(const ComplexVector &x, ComplexVector &y,
-               const std::complex<double> a = 1.0) const override;
+               std::complex<double> a = 1.0) const override;
 
   void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                        const std::complex<double> a = 1.0) const override;
+                        std::complex<double> a = 1.0) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 std::complex<double> a = 1.0) const override;
 };
 
 }  // namespace palace

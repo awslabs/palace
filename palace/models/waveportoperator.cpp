@@ -310,7 +310,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
-enum class ValueType
+enum class ValueType : std::uint8_t
 {
   REAL,
   IMAG
@@ -521,14 +521,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op)
+  : mat_op(mat_op), mode_idx(data.mode_idx), d_offset(data.d_offset), excitation(data.excitation),
+    active(data.active), kn0(0.0), omega0(0.0)
 {
-  mode_idx = data.mode_idx;
-  d_offset = data.d_offset;
-  excitation = data.excitation;
-  active = data.active;
-  kn0 = 0.0;
-  omega0 = 0.0;
 
   // Construct the SubMesh.
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");

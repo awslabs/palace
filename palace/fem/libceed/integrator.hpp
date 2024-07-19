@@ -12,7 +12,7 @@ namespace palace::ceed
 {
 
 // Evaluation modes for CeedOperator fields for various integrators.
-enum EvalMode : unsigned int
+enum EvalMode : unsigned int  // NOLINT
 {
   Weight = 1 << 0,
   None = 1 << 1,
@@ -26,23 +26,18 @@ enum EvalMode : unsigned int
 struct CeedQFunctionInfo
 {
   // QFunctions for operator construction and application.
-  CeedQFunctionUser apply_qf;
+  CeedQFunctionUser apply_qf{nullptr};
 
   // Path and name of the QFunctions for operator construction and application.
   std::string apply_qf_path;
 
   // Evaluation modes for the test and trial basis.
-  unsigned int trial_ops, test_ops;
+  unsigned int trial_ops{0}, test_ops{0};
 
   // Control whether or not to pre-assemble the quadrature data or compute it during
   // operator application in true matrix-free fashion.
-  bool assemble_q_data;
+  bool assemble_q_data{false};
 
-  CeedQFunctionInfo()
-    : apply_qf(nullptr), apply_qf_path(""), trial_ops(0), test_ops(0),
-      assemble_q_data(false)
-  {
-  }
 };
 
 // Helper function to get the geometry space dimension.

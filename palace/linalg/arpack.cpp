@@ -160,21 +160,15 @@ namespace palace::arpack
 // Base class methods
 
 ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
-  : comm(comm), print(print)
+  : comm(comm), print(print), info(0), rtol(0.0), arpack_it(0),
+    which_type(WhichType::LARGEST_MAGNITUDE), sinvert(false), sigma(0.0), opInv(nullptr),
+    opProj(nullptr), opB(nullptr)
 {
   // Initialization.
-  info = 0;
-  nev = ncv = n = 0;
-  rtol = 0.0;
-  arpack_it = 0;
-  which_type = WhichType::LARGEST_MAGNITUDE;
-  gamma = delta = 1.0;
-  sinvert = false;
-  sigma = 0.0;
 
-  opInv = nullptr;
-  opProj = nullptr;
-  opB = nullptr;
+  nev = ncv = n = 0;
+
+  gamma = delta = 1.0;
 
   // Configure debugging output.
   a_int logfill = 6, ndigit = -6, mgetv0 = 0;

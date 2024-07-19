@@ -33,8 +33,8 @@ class MaterialOperator;
 template <typename VecType>
 class DivFreeSolver
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
+  using OperType = typename std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                               ComplexOperator, Operator>;
 
 private:
   // Operators for the divergence-free projection.

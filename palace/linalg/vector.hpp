@@ -226,8 +226,8 @@ inline auto Sum(MPI_Comm comm, const VecType &x)
 template <typename VecType>
 inline auto Mean(MPI_Comm comm, const VecType &x)
 {
-  using ScalarType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                               std::complex<double>, double>::type;
+  using ScalarType = typename std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                                 std::complex<double>, double>;
   ScalarType sum[2] = {LocalSum(x), ScalarType(x.Size())};
   Mpi::GlobalSum(2, sum, comm);
   return sum[0] / sum[1];

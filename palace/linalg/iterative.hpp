@@ -26,9 +26,8 @@ class IterativeSolver : public Solver<OperType>
 {
 protected:
   using RealType = double;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<RealType>, RealType>::type;
+  using ScalarType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                 std::complex<RealType>, RealType>;
 
   // MPI communicator associated with the solver.
   MPI_Comm comm;
@@ -146,14 +145,14 @@ public:
 class GmresSolverBase
 {
 public:
-  enum class OrthogType
+  enum class OrthogType : std::uint8_t
   {
     MGS,
     CGS,
     CGS2
   };
 
-  enum class PrecSide
+  enum class PrecSide : std::uint8_t
   {
     LEFT,
     RIGHT
@@ -188,14 +187,14 @@ protected:
   using IterativeSolver<OperType>::final_it;
 
   // Maximum subspace dimension for restarted GMRES.
-  mutable int max_dim;
+  mutable int max_dim{-1};
 
   // Orthogonalization method for orthonormalizing a newly computed vector against a basis
   // at each iteration.
-  OrthogType orthog_type;
+  OrthogType orthog_type{OrthogType::MGS};
 
   // Use left or right preconditioning.
-  PrecSide pc_side;
+  PrecSide pc_side{PrecSide::LEFT};
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> V;
@@ -210,8 +209,7 @@ protected:
 
 public:
   GmresSolver(MPI_Comm comm, int print)
-    : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
-      pc_side(PrecSide::LEFT)
+    : IterativeSolver<OperType>(comm, print)
   {
   }
 

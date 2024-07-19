@@ -14,8 +14,7 @@ template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
     double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
-  : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr),
-    dbc_tdof_list_G(nullptr)
+  : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr)
 {
   // Initialize smoothers.
   if (cheby_4th_kind)
@@ -39,9 +38,8 @@ template <typename OperType>
 void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
                                                     const OperType &op_G)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
+  using ParOperType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                  ComplexParOperator, ParOperator>;
 
   MFEM_VERIFY(op.Height() == G->Height() && op.Width() == G->Height() &&
                   op_G.Height() == G->Width() && op_G.Width() == G->Width(),

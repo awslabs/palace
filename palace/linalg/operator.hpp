@@ -58,13 +58,13 @@ public:
   virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const;
 
   virtual void AddMult(const ComplexVector &x, ComplexVector &y,
-                       const std::complex<double> a = 1.0) const;
+                       std::complex<double> a = 1.0) const;
 
   virtual void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                const std::complex<double> a = 1.0) const;
+                                std::complex<double> a = 1.0) const;
 
   virtual void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                         const std::complex<double> a = 1.0) const;
+                                         std::complex<double> a = 1.0) const;
 };
 
 // A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
@@ -103,13 +103,13 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMult(const ComplexVector &x, ComplexVector &y,
-               const std::complex<double> a = 1.0) const override;
+               std::complex<double> a = 1.0) const override;
 
   void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                        const std::complex<double> a = 1.0) const override;
+                        std::complex<double> a = 1.0) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 std::complex<double> a = 1.0) const override;
 };
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
@@ -130,9 +130,9 @@ public:
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMult(const Vector &x, Vector &y, double a = 1.0) const override;
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMultTranspose(const Vector &x, Vector &y, double a = 1.0) const override;
 };
 
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
@@ -181,11 +181,10 @@ class BaseProductOperator
 {
   friend class ProductOperatorHelper<BaseProductOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                              ComplexVector, Vector>;
+  using ScalarType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                 std::complex<double>, double>;
 
 private:
   const OperType &A, &B;
@@ -211,14 +210,13 @@ public:
     B.MultTranspose(z, y);
   }
 
-  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override
+  void AddMult(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     B.Mult(x, z);
     A.AddMult(z, y, a);
   }
 
-  void AddMultTranspose(const VecType &x, VecType &y,
-                        const ScalarType a = 1.0) const override
+  void AddMultTranspose(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     A.MultTranspose(x, z);
     B.AddMultTranspose(z, y, a);
@@ -250,7 +248,7 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 std::complex<double> a = 1.0) const override;
 };
 
 template <typename OperType>
@@ -259,11 +257,10 @@ class BaseDiagonalOperator
 {
   friend class DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                              ComplexVector, Vector>;
+  using ScalarType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                 std::complex<double>, double>;
 
 private:
   const VecType &d;
@@ -278,10 +275,9 @@ public:
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
 
-  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override;
+  void AddMult(const VecType &x, VecType &y, ScalarType a = 1.0) const override;
 
-  void AddMultTranspose(const VecType &x, VecType &y,
-                        const ScalarType a = 1.0) const override
+  void AddMultTranspose(const VecType &x, VecType &y, ScalarType a = 1.0) const override
   {
     AddMult(x, y, a);
   }
@@ -297,11 +293,10 @@ using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 template <typename OperType>
 class BaseMultigridOperator : public OperType
 {
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                              ComplexVector, Vector>;
+  using ScalarType = typename std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                                 std::complex<double>, double>;
 
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;

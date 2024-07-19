@@ -30,8 +30,8 @@ class MaterialOperator;
 template <typename VecType>
 class WeightedHCurlNormSolver
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
+  using OperType = typename std::conditional_t<std::is_same_v<VecType, ComplexVector>,
+                                               ComplexOperator, Operator>;
 
 private:
   // H(curl) norm operator A = K + M and its projection Gᵀ A G.

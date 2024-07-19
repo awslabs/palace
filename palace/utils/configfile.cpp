@@ -14,7 +14,7 @@
   template <typename BasicJsonType>                                                 \
   inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)                         \
   {                                                                                 \
-    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");  \
+    static_assert(std::is_enum_v<ENUM_TYPE>, #ENUM_TYPE " must be an enum!");       \
     static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;             \
     auto it = std::find_if(std::begin(m), std::end(m),                              \
                            [e](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)  \
@@ -26,7 +26,7 @@
   template <typename BasicJsonType>                                                 \
   inline void from_json(const BasicJsonType &j, ENUM_TYPE &e)                       \
   {                                                                                 \
-    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");  \
+    static_assert(std::is_enum_v<ENUM_TYPE>, #ENUM_TYPE " must be an enum!");       \
     static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;             \
     auto it = std::find_if(std::begin(m), std::end(m),                              \
                            [j](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)  \

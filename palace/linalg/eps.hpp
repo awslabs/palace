@@ -22,13 +22,13 @@ class DivFreeSolver;
 class EigenvalueSolver
 {
 public:
-  enum class ScaleType
+  enum class ScaleType : std::uint8_t
   {
     NONE,
     NORM_2
   };
 
-  enum class WhichType
+  enum class WhichType : std::uint8_t
   {
     LARGEST_MAGNITUDE,
     SMALLEST_MAGNITUDE,
@@ -41,7 +41,7 @@ public:
     TARGET_IMAGINARY
   };
 
-  enum class ErrorType
+  enum class ErrorType : std::uint8_t
   {
     ABSOLUTE,
     RELATIVE,
