@@ -243,7 +243,7 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                                 iodata, fespaces, aux_fespaces))
 {
 
-  use_timer = true; //NOLINT
+  use_timer = true;  // NOLINT
 }
 
 template <typename OperType>

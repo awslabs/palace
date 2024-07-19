@@ -91,7 +91,7 @@ void HypreCSRMatrix::AssembleDiagonal(Vector &diag) const
 namespace
 {
 
-static HypreVector X, Y;
+static HypreVector X, Y;  // NOLINT
 
 }  // namespace
 

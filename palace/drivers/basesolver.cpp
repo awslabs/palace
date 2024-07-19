@@ -33,7 +33,7 @@ namespace
 
 std::string GetPostDir(const std::string &output)
 {
-  return (output.length() > 0 && output.back() != '/') ? output + '/' : output;
+  return (!output.empty() && output.back() != '/') ? output + '/' : output;
 }
 
 std::string GetIterationPostDir(const std::string &output, int step, int width)
@@ -118,7 +118,7 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 
   // Initialize simulation metadata for this simulation.
-  if (root && post_dir.length() > 0)
+  if (root && !post_dir.empty())
   {
     json meta;
     if (git_tag)
@@ -259,7 +259,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -284,7 +284,7 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 template <typename SolverType>
 void BaseSolver::SaveMetadata(const SolverType &ksp) const
 {
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -299,7 +299,7 @@ void BaseSolver::SaveMetadata(const SolverType &ksp) const
 
 void BaseSolver::SaveMetadata(const Timer &timer) const
 {
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -355,7 +355,7 @@ void BaseSolver::PostprocessDomains(const PostOperator &post_op, const std::stri
 {
   // If domains have been specified for postprocessing, compute the corresponding values
   // and write out to disk.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -434,7 +434,7 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::str
   // If surfaces have been specified for postprocessing, compute the corresponding values
   // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
   // capacitor energies, and E_mag is the same for the B-field and lumped inductors.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -581,13 +581,13 @@ void BaseSolver::PostprocessProbes(const PostOperator &post_op, const std::strin
 #if defined(MFEM_USE_GSLIB)
   // If probe locations have been specified for postprocessing, compute the corresponding
   // field values and write out to disk.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
 
   // Write the computed field values at probe locations.
-  if (post_op.GetProbes().size() == 0)
+  if (post_op.GetProbes().empty())
   {
     return;
   }
@@ -749,7 +749,7 @@ void BaseSolver::PostprocessFields(const PostOperator &post_op, int step, double
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   BlockTimer bt(Timer::IO);
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     Mpi::Warning(post_op.GetComm(),
                  "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
@@ -765,7 +765,7 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &post_op,
                                            bool fields) const
 {
   // Write the indicator statistics.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }

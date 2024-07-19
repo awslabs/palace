@@ -14,10 +14,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
-namespace palace
-{
-
-namespace arpack
+namespace palace::arpack
 {
 
 //
@@ -242,9 +239,7 @@ public:
   int Solve() override;
 };
 
-}  // namespace arpack
-
-}  // namespace palace
+}  // namespace palace::arpack
 
 #endif
 

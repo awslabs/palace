@@ -414,7 +414,7 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
   }
 
   // Print table to file.
-  if (root && post_dir.length() > 0)
+  if (root && !post_dir.empty())
   {
     std::string path = post_dir + "eig.csv";
     auto output = OutputFile(path, (i > 0));
@@ -447,7 +447,7 @@ void EigenSolver::PostprocessPorts(const PostOperator &post_op,
 {
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -538,7 +538,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &post_op,
 {
   // If ports have been specified in the model, compute the corresponding energy-
   // participation ratios (EPR) and write out to disk.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }

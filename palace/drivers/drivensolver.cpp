@@ -465,7 +465,7 @@ void DrivenSolver::PostprocessCurrents(const PostOperator &post_op,
                                        double omega) const
 {
   // Postprocess the frequency domain surface current excitations.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -516,7 +516,7 @@ void DrivenSolver::PostprocessPorts(const PostOperator &post_op,
 {
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -725,7 +725,7 @@ void DrivenSolver::PostprocessSParameters(const PostOperator &post_op,
   }
 
   // Print table to file.
-  if (root && post_dir.length() > 0)
+  if (root && !post_dir.empty())
   {
     std::string path = post_dir + "port-S.csv";
     auto output = OutputFile(path, (step > 0));

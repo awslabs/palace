@@ -208,10 +208,7 @@ protected:
   virtual void Update(int j) const;
 
 public:
-  GmresSolver(MPI_Comm comm, int print)
-    : IterativeSolver<OperType>(comm, print)
-  {
-  }
+  GmresSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
 
   // Set the dimension for restart.
   void SetRestartDim(int dim) { max_dim = dim; }

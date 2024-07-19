@@ -298,11 +298,11 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
   bdr_attr_mat = -1;
   for (const auto &[attr, bdr_attr_map] : mesh.GetCeedBdrAttributes())
   {
-    for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
+    for (const auto &it : bdr_attr_map)
     {
-      MFEM_ASSERT(it->second > 0 && it->second <= bdr_attr_mat.Size(),
-                  "Invalid libCEED boundary attribute " << it->second << "!");
-      bdr_attr_mat[it->second - 1] = AttrToMat(it->first);
+      MFEM_ASSERT(it.second > 0 && it.second <= bdr_attr_mat.Size(),
+                  "Invalid libCEED boundary attribute " << it.second << "!");
+      bdr_attr_mat[it.second - 1] = AttrToMat(it.first);
     }
   }
   return bdr_attr_mat;

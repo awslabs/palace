@@ -171,7 +171,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
 
   // Only root writes to disk (every process has full matrices).
-  if (!root || post_dir.length() == 0)
+  if (!root || post_dir.empty())
   {
     return;
   }

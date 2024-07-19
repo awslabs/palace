@@ -42,8 +42,7 @@ private:
   {
     // For interpolation operators and tensor-product elements, we need native (not
     // lexicographic) ordering.
-    const mfem::TensorBasisElement *tfe =
-        dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+    const auto *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
     return (tfe && tfe->GetDofMap().Size() > 0 &&
             fe.GetRangeType() != mfem::FiniteElement::VECTOR);
   }

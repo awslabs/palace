@@ -32,8 +32,8 @@ public:
 
 private:
   // Characteristic reference length [m] and time [ns] for nondimensionalization.
-    double Lc{1.0}, tc{1.0};
-    bool init{false};
+  double Lc{1.0}, tc{1.0};
+  bool init{false};
 
   // Check configuration file options and compatibility with requested problem type.
   void CheckConfiguration();

@@ -667,7 +667,7 @@ auto BuildLevelParOperator(std::unique_ptr<Operator> &&br, std::unique_ptr<Opera
 
 template <>
 auto BuildLevelParOperator<Operator>(std::unique_ptr<Operator> &&br,
-                                     std::unique_ptr<Operator> &&bi,
+                                     std::unique_ptr<Operator> &&bi,  // NOLINT
                                      const FiniteElementSpace &fespace)
 {
   MFEM_VERIFY(

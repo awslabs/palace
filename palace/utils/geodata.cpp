@@ -1718,7 +1718,7 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
 {
   MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
                                         << size << " vs. " << mesh.GetNE() << ")!");
-  if (partition.length() == 0)
+  if (partition.empty())
   {
     const int part_method = 1;
     std::unique_ptr<int[]> partitioning(

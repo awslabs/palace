@@ -261,7 +261,7 @@ inline std::string ReadStringComsolBinary(std::istream &input)
   input.read(reinterpret_cast<char *>(&n), sizeof(int));
   std::vector<int> vstr(n);
   input.read(reinterpret_cast<char *>(vstr.data()), (std::streamsize)(n * sizeof(int)));
-  return std::string(vstr.begin(), vstr.end());
+  return {vstr.begin(), vstr.end()};
 }
 
 // Nastran has a special floating point format: "-7.-1" instead of "-7.E-01" or "2.3+2"
@@ -284,7 +284,7 @@ inline double ConvertDoubleNastran(const std::string &str)
     {
       fstr.replace(pos, 1, "E+");
     }
-    else if ((pos = fstr.find('-', 1)) != std::string::npos)
+    else if ((pos = fstr.find('-', 1)) != std::string::npos)  // NOLINT
     {
       fstr.replace(pos, 1, "E-");
     }
@@ -936,7 +936,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   while (true)
   {
     auto line = GetLineNastran(input);
-    if (line.length() > 0)
+    if (!line.empty())
     {
       if (!line.compare("BEGIN BULK"))
       {
@@ -954,7 +954,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   while (true)
   {
     auto line = GetLineNastran(input);
-    if (line.length() > 0)
+    if (!line.empty())
     {
       if (!line.compare("ENDDATA"))
       {
@@ -1007,7 +1007,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
                ConvertDoubleNastran(line.substr(5 * NASTRAN_CHUNK, NASTRAN_CHUNK))});
         }
       }
-      else if ((elem_type = ElemTypeNastran(line)))
+      else if ((elem_type = ElemTypeNastran(line)))  // NOLINT
       {
         // Prepare to parse the element ID and nodes.
         const bool free = (line.find_first_of(',') != std::string::npos);

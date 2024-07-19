@@ -10,15 +10,27 @@ Checks: >
     -modernize-use-using,
     cppcoreguidelines-*,
     -cppcoreguidelines-avoid-c-arrays,
+    -cppcoreguidelines-avoid-const-or-ref-data-members,
+    -cppcoreguidelines-avoid-do-while,
     -cppcoreguidelines-avoid-magic-numbers,
     -cppcoreguidelines-init-variables,
     -cppcoreguidelines-macro-usage,
     -cppcoreguidelines-non-private-member-variables-in-classes,
     -cppcoreguidelines-pro-*,
+    -cppcoreguidelines-special-member-functions,
+    -cppcoreguidelines-owning-memory,
+    -cppcoreguidelines-use-default-member-init,
+    -cppcoreguidelines-narrowing-conversions,
     bugprone-*,
     -bugprone-easily-swappable-parameters,
     -bugprone-reserved-identifier,
+    -bugprone-implicit-widening-of-multiplication-result,
+    -bugprone-multi-level-implicit-pointer-conversion,
+    -bugprone-branch-clone,
+    -bugprone-narrowing-conversions,
     readability-*,
+    -readability-avoid-unconditional-preprocessor-if,
+    -readability-avoid-nested-conditional-operator,
     -readability-convert-member-functions-to-static,
     -readability-else-after-return,
     -readability-function-cognitive-complexity,
@@ -29,10 +41,13 @@ Checks: >
     -readability-named-parameter,
     -readability-redundant-*,
     -readability-string-compare,
+    -readability-simplify-boolean-expr,
     performance-*,
+    -performance-inefficient-string-concatenation,
+    -performance-unnecessary-value-param,
     mpi-*,
     openmp-*'
 WarningsAsErrors: >-
-  performance-enum-size
-HeaderFilterRegex: 'palace/drivers|palace/fem|palace/linalg|palace/utils'
+    performance-enum-size
+HeaderFilterRegex: "palace/(drivers|fem|linalg|utils)"
 FormatStyle: 'file'

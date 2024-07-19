@@ -34,7 +34,7 @@ protected:
 
 public:
   Solver(bool initial_guess = false) : OperType(), initial_guess(initial_guess) {}
-  virtual ~Solver() = default;
+  ~Solver() override = default;
 
   // Configure whether or not to use an initial guess when applying the solver.
   virtual void SetInitialGuess(bool guess) { initial_guess = guess; }

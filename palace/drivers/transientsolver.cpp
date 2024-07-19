@@ -304,7 +304,7 @@ void TransientSolver::PostprocessCurrents(const PostOperator &post_op,
                                           double t, double J_coef) const
 {
   // Postprocess the time domain surface current excitations.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }
@@ -355,7 +355,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &post_op,
 {
   // Postprocess the time domain lumped port voltages and currents, which can then be used
   // to compute S- or Z-parameters.
-  if (post_dir.length() == 0)
+  if (post_dir.empty())
   {
     return;
   }

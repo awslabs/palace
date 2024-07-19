@@ -230,7 +230,7 @@ namespace
 
 int CeedInternalCallocArray(size_t n, size_t unit, void *p)
 {
-  *(void **)p = calloc(n, unit);
+  *(void **)p = calloc(n, unit);  // NOLINT
   MFEM_ASSERT(!n || !unit || *(void **)p,
               "calloc failed to allocate " << n << " members of size " << unit << "!");
   return 0;
@@ -238,7 +238,7 @@ int CeedInternalCallocArray(size_t n, size_t unit, void *p)
 
 int CeedInternalFree(void *p)
 {
-  free(*(void **)p);
+  free(*(void **)p);  // NOLINT
   *(void **)p = nullptr;
   return 0;
 }

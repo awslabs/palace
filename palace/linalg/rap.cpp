@@ -111,7 +111,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   }
   else
   {
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+    auto *hR = new mfem::HypreParMatrix(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
         test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));

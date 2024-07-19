@@ -12,7 +12,7 @@ namespace palace::ceed
 namespace internal
 {
 
-static std::vector<Ceed> ceeds;
+static std::vector<Ceed> ceeds;  // NOLINT
 
 const std::vector<Ceed> &GetCeedObjects()
 {
@@ -37,11 +37,10 @@ void Initialize(const char *resource, const char *jit_source_dir)
 
   // Master thread initializes all Ceed objects (ineherently sequential anyway due to shared
   // resources).
-  for (std::size_t i = 0; i < internal::ceeds.size(); i++)
+  for (auto &ceed : internal::ceeds)
   {
-    int ierr = CeedInit(resource, &internal::ceeds[i]);
+    int ierr = CeedInit(resource, &ceed);
     MFEM_VERIFY(!ierr, "Failed to initialize libCEED with resource " << resource << "!");
-    Ceed ceed = internal::ceeds[i];
 
     // Configure error handling (allow errors to be handled by PalaceCeedCallBackend or
     // PalaceCeedCall).
@@ -58,7 +57,7 @@ void Initialize(const char *resource, const char *jit_source_dir)
 void Finalize()
 {
   // Destroy Ceed context(s).
-  for (std::size_t i = 0; i < internal::ceeds.size(); i++)
+  for (std::size_t i = 0; i < internal::ceeds.size(); i++)  // NOLINT
   {
     int ierr = CeedDestroy(&internal::ceeds[i]);
     MFEM_VERIFY(!ierr, "Failed to finalize libCEED!");
@@ -68,12 +67,12 @@ void Finalize()
 
 std::string Print()
 {
-  MFEM_VERIFY(internal::GetCeedObjects().size() > 0,
+  MFEM_VERIFY(!internal::GetCeedObjects().empty(),
               "libCEED must be initialized before querying the active backend!");
   Ceed ceed = internal::GetCeedObjects()[0];
   const char *ceed_resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
-  return std::string(ceed_resource);
+  return {ceed_resource};
 }
 
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init)

@@ -167,7 +167,7 @@ static void PrintPalaceBanner(MPI_Comm comm)
 
 static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Device &device)
 {
-  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN") != 0)
   {
     Mpi::Print(comm, "Git changeset ID: {}\n", GetPalaceGitTag());
   }

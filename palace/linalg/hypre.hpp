@@ -56,7 +56,7 @@ public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);
   HypreCSRMatrix(const mfem::SparseMatrix &m);
-  ~HypreCSRMatrix();
+  ~HypreCSRMatrix() override;
 
   auto NNZ() const { return hypre_CSRMatrixNumNonzeros(mat); }
 

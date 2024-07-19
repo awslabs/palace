@@ -20,7 +20,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const int P = fe.GetDof();
-  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+  const auto *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
   const mfem::Array<int> &dof_map = tfe->GetDofMap();
   const CeedInt comp_stride =
       (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
@@ -260,7 +260,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   }
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+  const auto *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
   const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
   const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
   if (lexico)

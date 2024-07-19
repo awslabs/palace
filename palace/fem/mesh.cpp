@@ -121,10 +121,10 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
   // Populate the indices arrays for each element geometry.
   std::unordered_map<mfem::Geometry::Type, int> offsets;
   std::unordered_map<mfem::Geometry::Type, std::vector<int>> element_indices;
-  for (auto it = counts.begin(); it != counts.end(); ++it)
+  for (const auto &it : counts)
   {
-    offsets[it->first] = 0;
-    element_indices[it->first].resize(it->second);
+    offsets[it.first] = 0;
+    element_indices[it.first].resize(it.second);
   }
   for (int i = start; i < stop; i++)
   {
@@ -335,9 +335,8 @@ void Mesh::ResetCeedObjects()
     }
   }
   geom_data.clear();
-  for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
+  for (const auto &ceed : ceed::internal::GetCeedObjects())
   {
-    Ceed ceed = ceed::internal::GetCeedObjects()[i];
     geom_data.emplace(ceed, ceed::GeometryObjectMap<ceed::CeedGeomFactorData>());
   }
 }

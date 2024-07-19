@@ -218,7 +218,7 @@ public:
         }
         // clang-format off
         Mpi::Print(comm, "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
-                   timer.descriptions[i], h,
+                   timer.descriptions[i], h, //NOLINT
                    data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p);
         // clang-format on
       }

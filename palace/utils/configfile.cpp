@@ -109,12 +109,12 @@ void ParseElementData(json &elem, const std::string &name, bool required,
     direction = elem.value(name, direction);
     for (auto &c : direction)
     {
-      c = std::tolower(c);
+      c = std::tolower(c);  // NOLINT
     }
-    const auto xpos = direction.find("x");
-    const auto ypos = direction.find("y");
-    const auto zpos = direction.find("z");
-    const auto rpos = direction.find("r");
+    const auto xpos = direction.find('x');
+    const auto ypos = direction.find('y');
+    const auto zpos = direction.find('z');
+    const auto rpos = direction.find('r');
     const bool xfound = xpos != std::string::npos;
     const bool yfound = ypos != std::string::npos;
     const bool zfound = zpos != std::string::npos;
