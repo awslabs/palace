@@ -358,7 +358,7 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution.
+  // Get single-sided solution. Don't use lightspeed detection for differentiating side.
   auto GetLocalVectorValueDefault = [this](const mfem::ParGridFunction &U, mfem::Vector &V)
   {
     U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
@@ -390,7 +390,7 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution on air side and neighboring element attribute.
+  // Get single-sided solution on air (vacuum) side and neighboring element attribute.
   double V_data[3], normal_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
@@ -479,8 +479,8 @@ enum class EnergyDensityType
 };
 
 // Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Hᴴ B for real-valued
-// material coefficients. For internal boundary elements, the solution is taken on the side
-// of the element with the larger-valued speed of light.
+// material coefficients. For internal boundary elements, the solution is averaged across
+// the interface.
 template <EnergyDensityType Type>
 class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {
@@ -559,8 +559,7 @@ inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEne
 }
 
 // Compute time-averaged Poynting vector Re{E x H⋆}, without the typical factor of 1/2. For
-// internal boundary elements, the solution is taken on the side of the element with the
-// larger-valued speed of light.
+// internal boundary elements, the solution is taken as the average.
 class PoyntingVectorCoefficient : public mfem::VectorCoefficient,
                                   public BdrGridFunctionCoefficient
 {
@@ -624,8 +623,7 @@ public:
 };
 
 // Returns the local vector field evaluated on a boundary element. For internal boundary
-// elements, the solution is taken on the side of the element with the larger-valued speed
-// of light.
+// elements the solution is the average.
 class BdrFieldVectorCoefficient : public mfem::VectorCoefficient,
                                   public BdrGridFunctionCoefficient
 {
@@ -648,7 +646,7 @@ public:
                 "Unexpected element type in BdrFieldVectorCoefficient!");
     GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-    // For interior faces, compute the value on the desired side.
+    // For interior faces, compute the average.
     U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
     if (FET.Elem2)
     {
@@ -661,8 +659,7 @@ public:
 };
 
 // Returns the local scalar field evaluated on a boundary element. For internal boundary
-// elements, the solution is taken on the side of the element with the larger-valued speed
-// of light.
+// elements the solution is the average.
 class BdrFieldCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {
 private:
@@ -681,7 +678,7 @@ public:
                 "Unexpected element type in BdrFieldCoefficient!");
     GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-    // For interior faces, compute the value on the desired side.
+    // For interior faces, compute the average.
     if (FET.Elem2)
     {
       return 0.5 * (U.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint()),

@@ -632,12 +632,8 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
   if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
   {
     Mpi::GlobalAnd(1, &marked, pmesh->GetComm());
-    return marked;
   }
-  else
-  {
-    return marked;
-  }
+  return marked;
 }
 
 void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
@@ -2365,7 +2361,8 @@ private:
     // for the first refinement. We hack this marking here in order to prioritize refinement
     // of edges which are part of internal boundary faces being marked for refinement. This
     // should hopefully limit the amount of extra refinement required to ensure conformity
-    // after the marked elements are refined.
+    // after the marked elements are refined. Marking will then discover only the longest
+    // edges, which are those within the boundary to be cracked.
     mfem::Array<mfem::real_t> lengths;
     GetEdgeLengths2(v_to_v, lengths);
     const auto min_length = 0.01 * lengths.Min();
@@ -2629,6 +2626,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           ++it;
         }
       }
+      // Static reporting variables so can persist across retries.
       static int new_ne_ref = 0;
       static int new_ref_its = 0;
       if (!coarse_crack_edge_to_be.empty())
@@ -2807,7 +2805,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
       }
     }
 
-    // Renumber the domain elements.
+    // Renumber the duplicated vertex in the domain elements.
     for (const auto &[orig_v, vert_components] : crack_vert_duplicates)
     {
       if (vert_components.empty())
@@ -3009,7 +3007,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         nodes ? nodes->FESpace()->GetOrdering() : mfem::Ordering::byNODES;
     int sdim = new_mesh->SpaceDimension();
     int nv = nodes ? nodes->Size() / sdim : new_mesh->GetNV();
-    auto Index = [&](int v, int d)
+    auto Index = [ordering, sdim, nv](int v, int d)
     { return (ordering == mfem::Ordering::byVDIM) ? sdim * v + d : d * nv + v; };
     mfem::Vector normal(sdim);
     mfem::IsoparametricTransformation T;
