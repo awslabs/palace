@@ -219,6 +219,18 @@ public:
   // which do not have any material properties specified.
   bool clean_unused_elements = true;
 
+  // Split, or "crack", boundary elements lying on internal boundaries to decouple the
+  // elements on either side.
+  bool crack_bdr_elements = true;
+
+  // When required, refine elements neighboring a split or crack in order to enable the
+  // decoupling.
+  bool refine_crack_elements = true;
+
+  // Factor for displacing duplicated interior boundary elements, usually added just for
+  // visualization.
+  double crack_displ_factor = 1.0e-3;
+
   // Add new boundary elements for faces are on the computational domain boundary or which
   // have attached elements on either side with different domain attributes.
   bool add_bdr_elements = true;
@@ -312,7 +324,7 @@ public:
 struct DomainPostData
 {
 public:
-  // Set of all postprocessing domain attributes.
+  // List of all postprocessing domain attributes.
   std::vector<int> attributes = {};
 
   // Domain postprocessing objects.
@@ -325,7 +337,7 @@ public:
 struct DomainData
 {
 public:
-  // Set of all domain attributes.
+  // List of all domain attributes (excluding postprocessing).
   std::vector<int> attributes = {};
 
   // Domain objects.
@@ -558,14 +570,6 @@ public:
   // Loss tangent.
   double tandelta = 0.0;
 
-  // Side of internal boundaries on which to evaluate discontinuous field quantities.
-  enum class Side
-  {
-    SMALLER_REF_INDEX,
-    LARGER_REF_INDEX
-  };
-  InterfaceDielectricData::Side side = InterfaceDielectricData::Side::SMALLER_REF_INDEX;
-
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
 };
@@ -579,11 +583,7 @@ public:
 struct BoundaryPostData
 {
 public:
-  // Side of internal boundaries on which to evaluate discontinuous field quantities.
-  using Side = InterfaceDielectricData::Side;
-  Side side = Side::SMALLER_REF_INDEX;
-
-  // Set of all postprocessing boundary attributes.
+  // List of all postprocessing boundary attributes.
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
@@ -596,7 +596,7 @@ public:
 struct BoundaryData
 {
 public:
-  // Set of all boundary attributes.
+  // List of all boundary attributes (excluding postprocessing).
   std::vector<int> attributes = {};
 
   // Boundary objects.
