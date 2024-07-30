@@ -1026,6 +1026,62 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   }
 }
 
+void PeriodicBoundaryData::SetUp(json &boundaries)
+{
+  auto periodic = boundaries.find("Periodic");
+  if (periodic == boundaries.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(
+      periodic->is_array(),
+      "\"Periodic\" should specify an array in the configuration file!");
+  for (auto it = periodic->begin(); it != periodic->end(); ++it)
+  {
+    MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
+                "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
+                "configuration file!");
+    MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
+                "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
+                "configuration file!");
+    PeriodicData &data = vecdata.emplace_back();
+    data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
+    data.receiver_attributes = it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    auto direction = it->at("Direction").get<std::string>(); // Required (TODO: the user can provide the vectors)
+    auto distance = it->at("Distance").get<double>(); // Required
+    for (auto &c : direction)
+    {
+      c = std::tolower(c);
+    }
+    const auto xpos = direction.find("x");
+    const auto ypos = direction.find("y");
+    const auto zpos = direction.find("z");
+    const bool xfound = xpos != std::string::npos;
+    const bool yfound = ypos != std::string::npos;
+    const bool zfound = zpos != std::string::npos;
+    if (xfound) data.translation[0] = distance;
+    if (yfound) data.translation[1] = distance;
+    if (zfound) data.translation[2] = distance;
+
+    // Cleanup
+    it->erase("DonorAttributes");
+    it->erase("ReceiverAttributes");
+    it->erase("Direction");
+    it->erase("Distance");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"Periodic\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
+      std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
+      std::cout << "DonorAttributes: " << data.translation << '\n';
+    }
+  }
+}
+
 // Helper for converting string keys to enum for WavePortData::EigenSolverType.
 PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
                            {{WavePortData::EigenSolverType::DEFAULT, "Default"},
@@ -1345,6 +1401,7 @@ void BoundaryData::SetUp(json &config)
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
   lumpedport.SetUp(*boundaries);
+  periodic.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
@@ -1370,6 +1427,12 @@ void BoundaryData::SetUp(json &config)
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
+  for (const auto &data : periodic)
+  {
+    donor_attributes.insert(donor_attributes.end(), data.donor_attributes.begin(), data.donor_attributes.end());
+    receiver_attributes.insert(receiver_attributes.end(), data.receiver_attributes.begin(), data.receiver_attributes.end());
+    translation.insert(translation.end(), data.translation.begin(), data.translation.end());
+  }
   for (const auto &[idx, data] : waveport)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
@@ -1394,6 +1457,7 @@ void BoundaryData::SetUp(json &config)
   boundaries->erase("Conductivity");
   boundaries->erase("Impedance");
   boundaries->erase("LumpedPort");
+  boundaries->erase("Periodic");
   boundaries->erase("WavePort");
   boundaries->erase("SurfaceCurrent");
   boundaries->erase("Ground");

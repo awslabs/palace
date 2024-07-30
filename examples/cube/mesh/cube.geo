@@ -20,22 +20,13 @@ Recombine Surface {1};
 out[] = Extrude {0, 0, 1} { Surface{1}; Layers{4}; Recombine; };
 
 Physical Volume(1) = {out[1]};
-Physical Surface(1) = {1};      // back
-Physical Surface(2) = {out[5]}; // front
-Physical Surface(3) = {out[4]}; // left
-Physical Surface(4) = {out[2]}; // right
-Physical Surface(5) = {out[0]}; // bottom
-Physical Surface(6) = {out[3]}; // top
+
+Physical Surface(1) = {out[3]}; // left (x-direction)
+Physical Surface(2) = {out[5]}; // right (x-direction)
+Physical Surface(3) = {out[2]}; // bottom (y-direction)
+Physical Surface(4) = {out[4]}; // top (y-direction)
+Physical Surface(5) = {1};      // back (z-direction)
+Physical Surface(6) = {out[0]}; // front (z-direction)
 
 Mesh 3;
 Mesh.MshFileVersion = 2.2;
-
-/*
-Physical Surface:
-back => 1
-bottom => 13 => out[0]
-right => 17 => out[2]
-top => 21 => out[3]
-left => 25 => out[4]
-front => 26 => out[5]
-*/
