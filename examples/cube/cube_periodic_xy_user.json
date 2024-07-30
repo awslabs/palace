@@ -35,14 +35,23 @@
   "Boundaries":
   {
     "Periodic":
+    [
+      {
+        "DonorAttributes": [1],
+        "ReceiverAttributes": [2],
+        "Direction": "X",
+        "Distance": 1.0e-2 // in L0 units
+      },
+      {
+        "DonorAttributes": [3],
+        "ReceiverAttributes": [4],
+        "Direction": "Y",
+        "Distance": 1.0e-2 // in L0 units
+      }
+    ],
+    "PEC":
     {
-      "DonorAttributes": [3, 2],
-      "ReceiverAttributes": [4, 6]
-    },
-    "Absorbing":
-    {
-      "Attributes": [1, 5],
-      "Order": 1
+      "Attributes": [5, 6]
     }
   },
   "Solver":

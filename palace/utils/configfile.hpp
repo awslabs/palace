@@ -455,6 +455,23 @@ public:
   void SetUp(json &boundaries);
 };
 
+struct PeriodicData
+{
+public:
+  // Vector defining the direction and distance for this periodic boundary condition.
+  std::vector<double> translation = {0.0, 0.0, 0.0};
+  // List of boundary donor attributes for this periodic boundary condition.
+  std::vector<int> donor_attributes = {};
+  // List of boundary receiver attributes for this periodic boundary condition.
+  std::vector<int> receiver_attributes = {};
+};
+
+struct PeriodicBoundaryData : public internal::DataVector<PeriodicData>
+{
+public:
+  void SetUp(json &boundaries);
+};
+
 struct WavePortData
 {
 public:
@@ -598,6 +615,9 @@ struct BoundaryData
 public:
   // Set of all boundary attributes.
   std::vector<int> attributes = {};
+  std::vector<int> donor_attributes = {};
+  std::vector<int> receiver_attributes = {};
+  std::vector<double> translation = {};
 
   // Boundary objects.
   PecBoundaryData pec = {};
@@ -609,6 +629,7 @@ public:
   LumpedPortBoundaryData lumpedport = {};
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
+  PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
   void SetUp(json &config);
