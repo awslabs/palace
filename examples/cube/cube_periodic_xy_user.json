@@ -40,13 +40,13 @@
         "DonorAttributes": [1],
         "ReceiverAttributes": [2],
         "Direction": "X",
-        "Distance": 1.0
+        "Distance": 1.0e-2 // in L0 units
       },
       {
         "DonorAttributes": [3],
         "ReceiverAttributes": [4],
         "Direction": "Y",
-        "Distance": 1.0
+        "Distance": 1.0e-2 // in L0 units
       }
     ],
     "PEC":

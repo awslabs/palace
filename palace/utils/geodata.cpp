@@ -38,7 +38,7 @@ namespace
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool, const config::BoundaryData &);
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool, const config::BoundaryData &, double);
 
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
@@ -96,7 +96,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     if ((use_mesh_partitioner && Mpi::Root(comm)) ||
         (!use_mesh_partitioner && Mpi::Root(node_comm)))
     {
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries, iodata.model.L0);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
@@ -228,7 +228,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     }
     int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
     std::unique_ptr<mfem::Mesh> gsmesh =
-        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries, iodata.model.L0);
     std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
     mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
     {
@@ -1664,7 +1664,7 @@ template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &, bo
 namespace
 {
 
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature, const config::BoundaryData &boundaries)
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature, const config::BoundaryData &boundaries, double L0)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
@@ -1722,13 +1722,14 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
     mesh->EnsureNodes();
   }
   if (!boundaries.periodic.empty()) {
-    mfem::real_t tol = 1E-8; // TODO: make it relative
+    mfem::real_t tol = 1E-5 / L0;
     auto periodic_mesh = std::move(mesh);
     for (auto &data : boundaries.periodic)
     {
       std::vector<mfem::Vector> translation;
       mfem::Vector translation_vec(data.translation.size());
       std::copy(data.translation.begin(), data.translation.end(), translation_vec.GetData());
+      for (int i = 0; i < translation_vec.Size(); ++i) translation_vec[i] /= L0;
       translation.push_back(translation_vec);
       auto p_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mesh->CreatePeriodicVertexMapping(translation, tol)));
       if (p_mesh) periodic_mesh = std::move(p_mesh);
