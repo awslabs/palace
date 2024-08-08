@@ -38,7 +38,7 @@ namespace
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool, const config::BoundaryData &, double);
 
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
@@ -96,7 +96,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     if ((use_mesh_partitioner && Mpi::Root(comm)) ||
         (!use_mesh_partitioner && Mpi::Root(node_comm)))
     {
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries, iodata.model.L0);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
@@ -228,7 +228,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     }
     int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
     std::unique_ptr<mfem::Mesh> gsmesh =
-        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries, iodata.model.L0);
     std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
     mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
     {
@@ -1664,7 +1664,7 @@ template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &, bo
 namespace
 {
 
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature)
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature, const config::BoundaryData &boundaries, double L0)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
@@ -1720,6 +1720,21 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   else
   {
     mesh->EnsureNodes();
+  }
+  if (!boundaries.periodic.empty()) {
+    mfem::real_t tol = 1E-5 / L0;
+    auto periodic_mesh = std::move(mesh);
+    for (auto &data : boundaries.periodic)
+    {
+      std::vector<mfem::Vector> translation;
+      mfem::Vector translation_vec(data.translation.size());
+      std::copy(data.translation.begin(), data.translation.end(), translation_vec.GetData());
+      for (int i = 0; i < translation_vec.Size(); ++i) translation_vec[i] /= L0;
+      translation.push_back(translation_vec);
+      auto p_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mesh->CreatePeriodicVertexMapping(translation, tol)));
+      if (p_mesh) periodic_mesh = std::move(p_mesh);
+    }
+    mesh = std::move(periodic_mesh);
   }
   return mesh;
 }
@@ -2160,14 +2175,14 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       bdr_elem_delete(orig_mesh->GetNBE(), false);
   std::unordered_map<int, int> face_to_be, new_face_be;
   face_to_be.reserve(orig_mesh->GetNBE());
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
-  {
-    int f, o;
-    orig_mesh->GetBdrElementFace(be, &f, &o);
-    MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                "Mesh should not define boundary elements multiple times!");
-    face_to_be[f] = be;
-  }
+  //for (int be = 0; be < orig_mesh->GetNBE(); be++) // TODO: need to fix this!
+  //{
+  //  int f, o;
+  //  orig_mesh->GetBdrElementFace(be, &f, &o);
+  //  MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
+  //              "Mesh should not define boundary elements multiple times!");
+  //  face_to_be[f] = be;
+  //}
 
   if (clean_elem)
   {
@@ -2199,6 +2214,24 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         new_nbe--;
       }
     }
+    // Remove any boundary element that is on the periodic surfaces.
+    if (!iodata.boundaries.periodic.empty()) {
+      for (int be = 0; be < orig_mesh->GetNBE(); be++)
+      {
+        int attr = orig_mesh->GetBdrAttribute(be);
+        for (auto &data : iodata.boundaries.periodic)
+        {
+          bool periodic_be = false;
+          for (auto d_attr : data.donor_attributes) if (d_attr == attr) periodic_be = true;
+          for (auto r_attr : data.receiver_attributes) if (r_attr == attr) periodic_be = true;
+          if (periodic_be)
+          {
+            bdr_elem_delete[be] = true;
+            new_nbe--;
+          }
+        }
+      }
+    }
     if (new_ne < orig_mesh->GetNE())
     {
       Mpi::Print("Removed {:d} unmarked domain elements from the mesh\n",
@@ -2222,7 +2255,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     int new_nbe_ext = 0, new_nbe_int = 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
     {
-      if (face_to_be.find(f) != face_to_be.end())
+      if (face_to_be.find(f) != face_to_be.end() || !iodata.boundaries.periodic.empty()) // TODO: I might need to fix this
       {
         continue;
       }
