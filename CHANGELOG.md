@@ -25,6 +25,11 @@ The format of this changelog is based on
   - Added `"MakeSimplex"` and `"MakeHexahedral"` mesh options to convert an input mesh to
     all tetrahedra or all hexahedra. Also adds `"SerialUniformLevels"` option to
     `config["Model"]["Refinement"]` for testing or debugging.
+  - Added `config["Model"]["CrackInternalBoundaryElements"]` which will separate or "crack" the mesh
+    along all internal boundaries. This improves the performance of error estimation and AMR
+    as the recovered smooth fields do not enforce additional erroneous continuity at
+    internal boundaries. This will change the default behaviour in the case of internal
+    impedance boundary conditions, and can be disabled by setting this option to false.
 
 ## [0.13.0] - 2024-05-20
 
