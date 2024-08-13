@@ -167,16 +167,15 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           fespace.GetMesh()->GetBdrElementAdjacentElement(e, elem_id, face_info);
           mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(e);
           face_info = fespace.GetMesh()->EncodeFaceInfo(
-                         fespace.GetMesh()->DecodeFaceInfoLocalIndex(face_info),
-                         mfem::Geometry::GetInverseOrientation(
-                            face_geom, fespace.GetMesh()->DecodeFaceInfoOrientation(face_info))
-                      );
+              fespace.GetMesh()->DecodeFaceInfoLocalIndex(face_info),
+              mfem::Geometry::GetInverseOrientation(
+                  face_geom, fespace.GetMesh()->DecodeFaceInfoOrientation(face_info)));
           mfem::IntegrationPointTransformation Loc1;
-          fespace.GetMesh()->GetLocalFaceTransformation(fespace.GetMesh()->GetBdrElementType(e),
-                                     fespace.GetMesh()->GetElementType(elem_id),
-                                     Loc1.Transf, face_info);
+          fespace.GetMesh()->GetLocalFaceTransformation(
+              fespace.GetMesh()->GetBdrElementType(e),
+              fespace.GetMesh()->GetElementType(elem_id), Loc1.Transf, face_info);
           const mfem::FiniteElement *face_el = fespace.GetTraceElement(elem_id, face_geom);
-          MFEM_VERIFY(dynamic_cast<const mfem::NodalFiniteElement*>(face_el),
+          MFEM_VERIFY(dynamic_cast<const mfem::NodalFiniteElement *>(face_el),
                       "Mesh requires nodal Finite Element.");
           mfem::IntegrationRule face_ir(face_el->GetDof());
           Loc1.Transf.ElementNo = elem_id;
@@ -188,7 +187,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           face_tr.ElementType = mfem::ElementTransformation::BDR_ELEMENT;
           face_tr.mesh = fespace.GetMesh();
           face_tr.Attribute = fespace.GetMesh()->GetBdrAttribute(e);
-          mfem::DenseMatrix &face_pm = face_tr.GetPointMat(); // dim x dof
+          mfem::DenseMatrix &face_pm = face_tr.GetPointMat();  // dim x dof
           face_tr.Reset();
           fespace.GetMesh()->GetNodes()->GetVectorValues(Loc1.Transf, face_ir, face_pm);
 
@@ -196,15 +195,18 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           mfem::DenseMatrix elem_pm;
           const mfem::FiniteElement *fe_elem = fespace.GetFE(elem_id);
           const mfem::IntegrationRule &fe_elem_nodes = fe_elem->GetNodes();
-          mfem::ElementTransformation *T = fespace.GetMesh()->GetElementTransformation(elem_id);
+          mfem::ElementTransformation *T =
+              fespace.GetMesh()->GetElementTransformation(elem_id);
           T->Transform(fe_elem_nodes, elem_pm);
 
           // Find the dofs
+          // TODO: Instead of comparing the point matrices for each element, we might
+          //       be able to configure the face info once using the reference element.
           mfem::real_t tol = 1E-5;
           mfem::Array<int> elem_dofs;
           fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);
           dofs.SetSize(P);
-          for (int l=0; l< P; l++)
+          for (int l = 0; l < P; l++)
           {
             double norm_f = 0.0;
             for (int m = 0; m < face_pm.Height(); m++)
@@ -212,7 +214,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
               norm_f += face_pm(m, l) * face_pm(m, l);
             }
             norm_f = std::sqrt(norm_f);
-            for (int m=0; m< elem_pm.Width(); m++)
+            for (int m = 0; m < elem_pm.Width(); m++)
             {
               double norm_e = 0.0;
               for (int n = 0; n < elem_pm.Height(); n++)
@@ -230,11 +232,10 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
               else
               {
                 double relative_tol = tol * std::max(norm_f, norm_e);
-                bool same_coord = false;
                 double diff = 0.0;
-                for (int o = 0; o < elem_pm.Height(); o++)
+                for (int n = 0; n < elem_pm.Height(); n++)
                 {
-                  diff += std::fabs(elem_pm(o, m) - face_pm(o, l));
+                  diff += std::fabs(elem_pm(n, m) - face_pm(n, l));
                 }
                 if (diff <= relative_tol)
                 {
@@ -319,7 +320,6 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           }
         }
       }
-
     }
     use_el_orients += use_el_orients_loc;
   }

@@ -138,7 +138,11 @@ CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fes
   mfem::IsoparametricTransformation T;
   const mfem::FiniteElement *fe_nodal;
   fe_nodal = fespace.GetMesh()->GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom);
-  if (!fe_nodal) fe_nodal = fespace.GetMesh()->GetNodalFESpace()->FEColl()->TraceFiniteElementForGeometry(geom);
+  if (!fe_nodal)
+  {
+    fe_nodal =
+        fespace.GetMesh()->GetNodalFESpace()->FEColl()->TraceFiniteElementForGeometry(geom);
+  }
   T.SetFE(fe_nodal);
   const int q_order = fem::DefaultIntegrationOrder::Get(T);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
@@ -147,7 +151,10 @@ CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fes
   CeedBasis val;
   const mfem::FiniteElement *fe;
   fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-  if (!fe) fe = fespace.FEColl()->TraceFiniteElementForGeometry(geom);
+  if (!fe)
+  {
+    fe = fespace.FEColl()->TraceFiniteElementForGeometry(geom);
+  }
   const int vdim = fespace.GetVDim();
   ceed::InitBasis(*fe, ir, vdim, ceed, &val);
   return val;

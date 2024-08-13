@@ -1033,9 +1033,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
   {
     return;
   }
-  MFEM_VERIFY(
-      periodic->is_array(),
-      "\"Periodic\" should specify an array in the configuration file!");
+  MFEM_VERIFY(periodic->is_array(),
+              "\"Periodic\" should specify an array in the configuration file!");
   for (auto it = periodic->begin(); it != periodic->end(); ++it)
   {
     MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
@@ -1046,9 +1045,10 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
                 "configuration file!");
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
-    data.receiver_attributes = it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    auto direction = it->at("Direction").get<std::string>(); // Required (TODO: the user can provide the vectors)
-    auto distance = it->at("Distance").get<double>(); // Required
+    data.receiver_attributes =
+        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    auto direction = it->at("Direction").get<std::string>();   // Required
+    auto distance = it->at("Distance").get<double>();          // Required
     for (auto &c : direction)
     {
       c = std::tolower(c);
@@ -1059,9 +1059,18 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     const bool xfound = xpos != std::string::npos;
     const bool yfound = ypos != std::string::npos;
     const bool zfound = zpos != std::string::npos;
-    if (xfound) data.translation[0] = distance;
-    if (yfound) data.translation[1] = distance;
-    if (zfound) data.translation[2] = distance;
+    if (xfound)
+    {
+      data.translation[0] = distance;
+    }
+    if (yfound)
+    {
+      data.translation[1] = distance;
+    }
+    if (zfound)
+    {
+      data.translation[2] = distance;
+    }
 
     // Cleanup
     it->erase("DonorAttributes");
@@ -1429,8 +1438,10 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &data : periodic)
   {
-    donor_attributes.insert(donor_attributes.end(), data.donor_attributes.begin(), data.donor_attributes.end());
-    receiver_attributes.insert(receiver_attributes.end(), data.receiver_attributes.begin(), data.receiver_attributes.end());
+    donor_attributes.insert(donor_attributes.end(), data.donor_attributes.begin(),
+                            data.donor_attributes.end());
+    receiver_attributes.insert(receiver_attributes.end(), data.receiver_attributes.begin(),
+                               data.receiver_attributes.end());
     translation.insert(translation.end(), data.translation.begin(), data.translation.end());
   }
   for (const auto &[idx, data] : waveport)
