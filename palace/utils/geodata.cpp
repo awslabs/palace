@@ -2172,17 +2172,56 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   int new_ne = orig_mesh->GetNE();
   int new_nbe = orig_mesh->GetNBE();
   std::vector<bool> elem_delete(orig_mesh->GetNE(), false),
-      bdr_elem_delete(orig_mesh->GetNBE(), false);
+      bdr_elem_delete(orig_mesh->GetNBE(), false), bdr_elem_periodic(orig_mesh->GetNBE(), false);
   std::unordered_map<int, int> face_to_be, new_face_be;
   face_to_be.reserve(orig_mesh->GetNBE());
-  //for (int be = 0; be < orig_mesh->GetNBE(); be++) // TODO: need to fix this!
-  //{
-  //  int f, o;
-  //  orig_mesh->GetBdrElementFace(be, &f, &o);
-  //  MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-  //              "Mesh should not define boundary elements multiple times!");
-  //  face_to_be[f] = be;
-  //}
+  for (int be = 0; be < orig_mesh->GetNBE(); be++)
+  {
+    int attr = orig_mesh->GetBdrAttribute(be);
+    bool periodic_be = false;
+    for (auto &data : iodata.boundaries.periodic)
+    {
+      for (auto d_attr : data.donor_attributes) if (d_attr == attr) periodic_be = true;
+      for (auto r_attr : data.receiver_attributes) if (r_attr == attr) periodic_be = true;
+    }
+    int face, o, e1, e2;
+    orig_mesh->GetBdrElementFace(be, &face, &o);
+    orig_mesh->GetFaceElements(face, &e1, &e2);
+
+    // If there are two elements associated with the face on the boundary, then the mesh is periodic.
+    if ((e1 >= 0) && (e2 >= 0))
+    {
+      auto Normal = [&](int e)
+      {
+        int dim = orig_mesh->SpaceDimension();
+        mfem::Vector normal(dim);
+        mfem::IsoparametricTransformation T;
+        orig_mesh->GetBdrElementTransformation(e, &T);
+        const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+        T.SetIntPoint(&ip);
+        mfem::CalcOrtho(T.Jacobian(), normal);
+        normal /= normal.Norml2();
+        return normal;
+      };
+      auto normal1 = Normal(e1);
+      auto normal2 = Normal(e2);
+      if ((normal1 * normal1 == 0) && (normal2 * normal2 == 0)) periodic_be = true;
+      if (normal1 * normal2 > 0) periodic_be = true;
+
+      int f, o;
+      orig_mesh->GetBdrElementFace(be, &f, &o);
+      face_to_be[f] = be;
+      if (periodic_be)
+      {
+        bdr_elem_periodic[be] = true;
+      }
+      else
+      {
+        MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
+                    "Mesh should not define boundary elements multiple times!");
+      }
+    }
+  }
 
   if (clean_elem)
   {
@@ -2207,31 +2246,14 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       orig_mesh->GetFaceElements(f, &e1, &e2);
       bool no_e1 = (e1 < 0 || elem_delete[e1]);
       bool no_e2 = (e2 < 0 || elem_delete[e2]);
-      if (no_e1 && no_e2)
+      if ((no_e1 && no_e2) || bdr_elem_periodic[be])
       {
         // Mpi::Print("Deleting an unattached boundary element!\n");
         bdr_elem_delete[be] = true;
         new_nbe--;
       }
     }
-    // Remove any boundary element that is on the periodic surfaces.
-    if (!iodata.boundaries.periodic.empty()) {
-      for (int be = 0; be < orig_mesh->GetNBE(); be++)
-      {
-        int attr = orig_mesh->GetBdrAttribute(be);
-        for (auto &data : iodata.boundaries.periodic)
-        {
-          bool periodic_be = false;
-          for (auto d_attr : data.donor_attributes) if (d_attr == attr) periodic_be = true;
-          for (auto r_attr : data.receiver_attributes) if (r_attr == attr) periodic_be = true;
-          if (periodic_be)
-          {
-            bdr_elem_delete[be] = true;
-            new_nbe--;
-          }
-        }
-      }
-    }
+
     if (new_ne < orig_mesh->GetNE())
     {
       Mpi::Print("Removed {:d} unmarked domain elements from the mesh\n",
@@ -2255,7 +2277,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     int new_nbe_ext = 0, new_nbe_int = 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
     {
-      if (face_to_be.find(f) != face_to_be.end() || !iodata.boundaries.periodic.empty()) // TODO: I might need to fix this
+      if ((face_to_be.find(f) != face_to_be.end()) || bdr_elem_periodic[face_to_be[f]])
       {
         continue;
       }

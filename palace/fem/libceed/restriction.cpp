@@ -202,7 +202,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           // Find the dofs
           mfem::real_t tol = 1E-5;
           mfem::Array<int> elem_dofs;
-          fespace.GetElementDofs(elem_id, elem_dofs, dof_trans); // TODO: Check if passing dof_trans is OK
+          fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);
           dofs.SetSize(P);
           for (int l=0; l< P; l++)
           {
@@ -225,10 +225,6 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
                 if (norm_f == 0)
                 {
                   dofs[l] = elem_dofs[m];
-                }
-                else
-                {
-                  continue;
                 }
               }
               else
