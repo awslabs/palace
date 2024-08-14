@@ -2200,6 +2200,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         if (d_attr == attr)
         {
           periodic_be = true;
+          bdr_elem_periodic[be] = true;
         }
       }
       for (auto r_attr : data.receiver_attributes)
@@ -2207,52 +2208,18 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         if (r_attr == attr)
         {
           periodic_be = true;
+          bdr_elem_periodic[be] = true;
         }
       }
     }
-    int face, o, e1, e2;
-    orig_mesh->GetBdrElementFace(be, &face, &o);
-    orig_mesh->GetFaceElements(face, &e1, &e2);
-
-    // If there are two elements associated with the face on the boundary, then the mesh is
-    // periodic.
-    if ((e1 >= 0) && (e2 >= 0))
+    int f, o;
+    orig_mesh->GetBdrElementFace(be, &f, &o);
+    if (!periodic_be)
     {
-      auto Normal = [&](int e)
-      {
-        int dim = orig_mesh->SpaceDimension();
-        mfem::Vector normal(dim);
-        mfem::IsoparametricTransformation T;
-        orig_mesh->GetBdrElementTransformation(e, &T);
-        const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
-        T.SetIntPoint(&ip);
-        mfem::CalcOrtho(T.Jacobian(), normal);
-        normal /= normal.Norml2();
-        return normal;
-      };
-      auto normal1 = Normal(e1);
-      auto normal2 = Normal(e2);
-      if ((normal1 * normal1 == 0) && (normal2 * normal2 == 0))
-      {
-        periodic_be = true;
-      }
-      if (normal1 * normal2 > 0)
-      {
-        periodic_be = true;
-      }
-      int f, o;
-      orig_mesh->GetBdrElementFace(be, &f, &o);
-      if (periodic_be)
-      {
-        bdr_elem_periodic[be] = true;
-      }
-      else
-      {
-        MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                    "Mesh should not define boundary elements multiple times!");
-      }
-      face_to_be[f] = be;
+      MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
+                  "Mesh should not define boundary elements multiple times!");
     }
+    face_to_be[f] = be;
   }
 
   if (clean_elem)
@@ -2309,7 +2276,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     int new_nbe_ext = 0, new_nbe_int = 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
     {
-      if ((face_to_be.find(f) != face_to_be.end()) || bdr_elem_periodic[face_to_be[f]])
+      if ((face_to_be.find(f) != face_to_be.end()))
       {
         continue;
       }
