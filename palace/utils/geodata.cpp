@@ -2276,7 +2276,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     int new_nbe_ext = 0, new_nbe_int = 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
     {
-      if ((face_to_be.find(f) != face_to_be.end()))
+      if (face_to_be.find(f) != face_to_be.end())
       {
         continue;
       }
