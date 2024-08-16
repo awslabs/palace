@@ -2217,7 +2217,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     if (!periodic_be)
     {
       MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                  "Mesh should not define boundary elements multiple times!");
+                  "A face cannot have multiple boundary elements!");
     }
     face_to_be[f] = be;
   }
