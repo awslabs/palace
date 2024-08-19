@@ -46,26 +46,18 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   Loc1.Transf.mesh = fespace.GetMesh();
   Loc1.Transf.ElementType = mfem::ElementTransformation::ELEMENT;
   Loc1.Transform(face_el->GetNodes(), face_ir);
-  mfem::IsoparametricTransformation face_tr;
-  face_tr.ElementNo = e;
-  face_tr.ElementType = mfem::ElementTransformation::BDR_ELEMENT;
-  face_tr.mesh = fespace.GetMesh();
-  face_tr.Attribute = fespace.GetMesh()->GetBdrAttribute(e);
-  mfem::DenseMatrix &face_pm = face_tr.GetPointMat();  // dim x dof
-  face_tr.Reset();
+  mfem::DenseMatrix face_pm;
   fespace.GetMesh()->GetNodes()->GetVectorValues(Loc1.Transf, face_ir, face_pm);
 
   // Get coordinates of element dofs
   mfem::DenseMatrix elem_pm;
   const mfem::FiniteElement *fe_elem = fespace.GetFE(elem_id);
-  const mfem::IntegrationRule &fe_elem_nodes = fe_elem->GetNodes();
   mfem::ElementTransformation *T = fespace.GetMesh()->GetElementTransformation(elem_id);
-  T->Transform(fe_elem_nodes, elem_pm);
+  T->Transform(fe_elem->GetNodes(), elem_pm);
 
   // Find the dofs
-  mfem::real_t tol = 1E-5;
-  mfem::Array<int> elem_dofs, dofs;
-  dofs.SetSize(P);
+  double tol = 1E-5;
+  mfem::Array<int> elem_dofs, dofs(P);
   fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);
   for (int l = 0; l < P; l++)
   {
@@ -97,7 +89,6 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
       else
       {
         double relative_tol = tol * std::max(norm_f, norm_e);
-        bool same_coord = false;
         double diff = 0.0;
         for (int o = 0; o < elem_pm.Height(); o++)
         {

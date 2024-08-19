@@ -136,8 +136,8 @@ CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fes
 {
   // Find the appropriate integration rule for the element.
   mfem::IsoparametricTransformation T;
-  const mfem::FiniteElement *fe_nodal;
-  fe_nodal = fespace.GetMesh()->GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom);
+  const mfem::FiniteElement *fe_nodal =
+      fespace.GetMesh()->GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom);
   if (!fe_nodal)
   {
     fe_nodal =
@@ -149,8 +149,7 @@ CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fes
 
   // Build the libCEED basis.
   CeedBasis val;
-  const mfem::FiniteElement *fe;
-  fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+  const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
   if (!fe)
   {
     fe = fespace.FEColl()->TraceFiniteElementForGeometry(geom);

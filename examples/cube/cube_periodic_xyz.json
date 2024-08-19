@@ -3,7 +3,7 @@
   {
     "Type": "Eigenmode",
     "Verbose": 2,
-    "Output": "postpro/pec"
+    "Output": "postpro/periodic_xyz"
   },
   "Model":
   {

@@ -1053,12 +1053,9 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     {
       c = std::tolower(c);
     }
-    const auto xpos = direction.find("x");
-    const auto ypos = direction.find("y");
-    const auto zpos = direction.find("z");
-    const bool xfound = xpos != std::string::npos;
-    const bool yfound = ypos != std::string::npos;
-    const bool zfound = zpos != std::string::npos;
+    const bool xfound = direction.find("x") != std::string::npos;
+    const bool yfound = direction.find("y") != std::string::npos;
+    const bool zfound = direction.find("z") != std::string::npos;
     if (xfound)
     {
       data.translation[0] = distance;
@@ -1438,11 +1435,8 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &data : periodic)
   {
-    donor_attributes.insert(donor_attributes.end(), data.donor_attributes.begin(),
-                            data.donor_attributes.end());
-    receiver_attributes.insert(receiver_attributes.end(), data.receiver_attributes.begin(),
-                               data.receiver_attributes.end());
-    translation.insert(translation.end(), data.translation.begin(), data.translation.end());
+    attributes.insert(attributes.end(), data.receiver_attributes.begin(),
+                      data.receiver_attributes.end());
   }
   for (const auto &[idx, data] : waveport)
   {
