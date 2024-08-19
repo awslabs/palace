@@ -118,6 +118,9 @@ mesh length units.
   - `"MakeHexahedral" [false]`
   - `"ReorderElements" [false]`
   - `"CleanUnusedElements" [true]`
+  - `"CrackInternalBoundaryElements" [true]`
+  - `"RefineCrackElements" [true]`
+  - `"CrackDisplacementFactor" [1.0e-3]`
   - `"AddInterfaceBoundaryElements" [true]`
   - `"ReorientTetMesh" [false]`
   - `"Partitioning" [""]`
