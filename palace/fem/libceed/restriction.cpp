@@ -60,43 +60,27 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);
   for (int l = 0; l < P; l++)
   {
-    double norm_f = 0.0;
+    double norm2_f = 0.0;
     for (int m = 0; m < face_pm.Height(); m++)
     {
-      norm_f += face_pm(m, l) * face_pm(m, l);
+      norm2_f += face_pm(m, l) * face_pm(m, l);
     }
-    norm_f = std::sqrt(norm_f);
     for (int m = 0; m < elem_pm.Width(); m++)
     {
-      double norm_e = 0.0;
+      double norm2_e = 0.0;
       for (int n = 0; n < elem_pm.Height(); n++)
       {
-        norm_e += elem_pm(n, m) * elem_pm(n, m);
+        norm2_e += elem_pm(n, m) * elem_pm(n, m);
       }
-      norm_e = std::sqrt(norm_e);
-      if (norm_e == 0)
+      double relative_tol = tol * std::max(std::max(norm2_f, norm2_e), 1.0E-6);
+      double diff = 0.0;
+      for (int o = 0; o < elem_pm.Height(); o++)
       {
-        if (norm_f == 0)
-        {
-          dofs[l] = elem_dofs[m];
-        }
-        else
-        {
-          continue;
-        }
+        diff += std::fabs(elem_pm(o, m) - face_pm(o, l));
       }
-      else
+      if (diff <= relative_tol)
       {
-        double relative_tol = tol * std::max(norm_f, norm_e);
-        double diff = 0.0;
-        for (int o = 0; o < elem_pm.Height(); o++)
-        {
-          diff += std::fabs(elem_pm(o, m) - face_pm(o, l));
-        }
-        if (diff <= relative_tol)
-        {
-          dofs[l] = elem_dofs[m];
-        }
+        dofs[l] = elem_dofs[m];
       }
     }
   }

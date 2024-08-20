@@ -1433,11 +1433,6 @@ void BoundaryData::SetUp(json &config)
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
-  for (const auto &data : periodic)
-  {
-    attributes.insert(attributes.end(), data.receiver_attributes.begin(),
-                      data.receiver_attributes.end());
-  }
   for (const auto &[idx, data] : waveport)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
