@@ -29,7 +29,7 @@
         "DonorAttributes": [5],
         "ReceiverAttributes": [6],
         "Direction": "Z",
-        "Distance": 1.0e-2 // in L0 units
+        "Distance": 1.0 // in mesh units
       }
     ],
     "PEC":

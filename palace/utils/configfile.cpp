@@ -1057,8 +1057,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     const bool yfound = direction.find("y") != std::string::npos;
     const bool zfound = direction.find("z") != std::string::npos;
     int direction_count = xfound + yfound + zfound;
-    MFEM_VERIFY(direction_count <= 1,
-                "Only one of the X, Y, or Z directions can be specified for the donor/receiver attributes pair!");
+    MFEM_VERIFY(direction_count <= 1, "Only one of the X, Y, or Z directions can be "
+                                      "specified for the donor/receiver attributes pair!");
     if (xfound)
     {
       data.translation[0] = distance;
