@@ -12,9 +12,8 @@ namespace palace::ceed
 namespace
 {
 
-const mfem::FiniteElement *
-GetFESpaceForTraceElement(const mfem::FiniteElementSpace &fespace,
-                          const std::vector<int> &indices)
+const mfem::FiniteElement *GetTraceElement(const mfem::FiniteElementSpace &fespace,
+                                           const std::vector<int> &indices)
 {
   int elem_id, face_info;
   fespace.GetMesh()->GetBdrElementAdjacentElement(indices[0], elem_id, face_info);
@@ -120,7 +119,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
     fe = fespace.GetBE(indices[0]);
     if (!fe)
     {
-      fe = GetFESpaceForTraceElement(fespace, indices);
+      fe = GetTraceElement(fespace, indices);
       face_flg = true;
     }
   }
@@ -214,7 +213,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     fe = fespace.GetBE(indices[0]);
     if (!fe)
     {
-      fe = GetFESpaceForTraceElement(fespace, indices);
+      fe = GetTraceElement(fespace, indices);
       face_flg = true;
     }
   }
@@ -401,7 +400,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
     fe = fespace.GetBE(indices[0]);
     if (!fe)
     {
-      fe = GetFESpaceForTraceElement(fespace, indices);
+      fe = GetTraceElement(fespace, indices);
     }
   }
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(fe);
