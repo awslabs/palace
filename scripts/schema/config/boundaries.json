@@ -227,11 +227,13 @@
       {
         "type": "object",
         "additionalProperties": false,
-        "required": ["DonorAttributes", "ReceiverAttributes"],
+        "required": ["DonorAttributes", "ReceiverAttributes", "Direction", "Distance"],
         "properties":
         {
           "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
-          "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" }
+          "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
+          "Direction": { "type": "string" },
+          "Distance": { "type": "number" }
         }
       }
     },
