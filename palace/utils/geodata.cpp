@@ -2181,25 +2181,37 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
     int attr = orig_mesh->GetBdrAttribute(be);
-    bool periodic_be = false;
-    for (auto &data : iodata.boundaries.periodic)
+    bool periodic_be = false, periodic_mesh = false;
+    if (!iodata.boundaries.periodic.empty())
     {
-      for (auto d_attr : data.donor_attributes)
+      int f, o, e1, e2;
+      orig_mesh->GetBdrElementFace(be, &f, &o);
+      orig_mesh->GetFaceElements(f, &e1, &e2);
+      if (e1 >= 0 && e2 >= 0)
       {
-        if (d_attr == attr)
+        periodic_mesh = true;
+      }
+      for (auto &data : iodata.boundaries.periodic)
+      {
+        for (auto d_attr : data.donor_attributes)
         {
-          periodic_be = true;
-          bdr_elem_periodic[be] = true;
+          if (d_attr == attr)
+          {
+            periodic_be = true;
+            bdr_elem_periodic[be] = true;
+          }
+        }
+        for (auto r_attr : data.receiver_attributes)
+        {
+          if (r_attr == attr)
+          {
+            periodic_be = true;
+            bdr_elem_periodic[be] = true;
+          }
         }
       }
-      for (auto r_attr : data.receiver_attributes)
-      {
-        if (r_attr == attr)
-        {
-          periodic_be = true;
-          bdr_elem_periodic[be] = true;
-        }
-      }
+      MFEM_VERIFY((periodic_mesh && periodic_be) || (!periodic_mesh && !periodic_be),
+                  "Mesh is not periodic on attribute " << attr << "!");
     }
     int f, o;
     orig_mesh->GetBdrElementFace(be, &f, &o);
