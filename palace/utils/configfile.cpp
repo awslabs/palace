@@ -1043,40 +1043,19 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
+    MFEM_VERIFY(it->find("Translation") != it->end(),
+                "Missing \"Translation\" vector for \"Periodic\" boundary in the "
+                "configuration file!");
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    auto direction = it->at("Direction").get<std::string>();   // Required
-    auto distance = it->at("Distance").get<double>();          // Required
-    for (auto &c : direction)
-    {
-      c = std::tolower(c);
-    }
-    const bool xfound = direction.find("x") != std::string::npos;
-    const bool yfound = direction.find("y") != std::string::npos;
-    const bool zfound = direction.find("z") != std::string::npos;
-    int direction_count = xfound + yfound + zfound;
-    MFEM_VERIFY(direction_count <= 1, "Only one of the X, Y, or Z directions can be "
-                                      "specified for the donor/receiver attributes pair!");
-    if (xfound)
-    {
-      data.translation[0] = distance;
-    }
-    if (yfound)
-    {
-      data.translation[1] = distance;
-    }
-    if (zfound)
-    {
-      data.translation[2] = distance;
-    }
+    data.translation = it->at("Translation").get<std::array<double, 3>>(); // Required
 
     // Cleanup
     it->erase("DonorAttributes");
     it->erase("ReceiverAttributes");
-    it->erase("Direction");
-    it->erase("Distance");
+    it->erase("Translation");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
@@ -1086,7 +1065,7 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     {
       std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
       std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
-      std::cout << "DonorAttributes: " << data.translation << '\n';
+      std::cout << "Translation: " << data.translation << '\n';
     }
   }
 }

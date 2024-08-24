@@ -227,13 +227,12 @@
       {
         "type": "object",
         "additionalProperties": false,
-        "required": ["DonorAttributes", "ReceiverAttributes", "Direction", "Distance"],
+        "required": ["DonorAttributes", "ReceiverAttributes", "Translation"],
         "properties":
         {
           "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
           "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
-          "Direction": { "type": "string" },
-          "Distance": { "type": "number" }
+          "Translation": { "$ref": "#/$defs/Translation" }
         }
       }
     },
@@ -316,6 +315,14 @@
       "additionalItems": false,
       "items": { "type": "integer"},
       "minItems": 1
+    },
+    "Translation":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
     },
     "Direction":
     {
