@@ -41,7 +41,7 @@
     "Impedance":
     [
       {
-        "Attributes": [2],
+        "Attributes": [2, 3, 5],
         "Rs": 0.0184   // Ω, surface resistance of Cu @ 5 GHz
       }
     ]

@@ -40,7 +40,7 @@
   {
     "PEC":
     {
-      "Attributes": [2]
+      "Attributes": [2, 3, 5]
     }
   },
   "Solver":

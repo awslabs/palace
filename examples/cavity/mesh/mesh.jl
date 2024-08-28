@@ -106,6 +106,28 @@ function generate_cylindrical_cavity_mesh(;
     # Add physical groups
     cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
 
+    top = last.(
+        gmsh.model.getEntitiesInBoundingBox(
+            -1.1 * radius,
+            -1.1 * radius,
+            0.5 * height,
+            1.1 * radius,
+            1.1 * radius,
+            1.1 * height,
+            2
+        )
+    )
+    bottom = last.(
+        gmsh.model.getEntitiesInBoundingBox(
+            -1.1 * radius,
+            -1.1 * radius,
+            -0.1 * height,
+            1.1 * radius,
+            1.1 * radius,
+            0.5 * height,
+            2
+        )
+    )
     symmetry =
         last.(
             gmsh.model.getEntitiesInBoundingBox(
@@ -118,23 +140,25 @@ function generate_cylindrical_cavity_mesh(;
                 2
             )
         )
-    boundaries = []
+    exterior = []
     for domain in cylinder
         _, domain_boundaries = gmsh.model.getAdjacencies(3, domain)
         for boundary in domain_boundaries
-            if boundary in symmetry
+            if boundary in top || boundary in bottom || boundary in symmetry
                 continue
             end
-            idx = first(indexin([boundary], boundaries))
+            idx = first(indexin([boundary], exterior))
             if isnothing(idx)
-                push!(boundaries, boundary)
+                push!(exterior, boundary)
             else
-                deleteat!(boundaries, idx)
+                deleteat!(exterior, idx)
             end
         end
     end
-    boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
+    top_group = gmsh.model.addPhysicalGroup(2, top, -1, "top")
+    bottom_group = gmsh.model.addPhysicalGroup(2, bottom, -1, "bottom")
     symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
+    exterior_group = gmsh.model.addPhysicalGroup(2, exterior, -1, "exterior")
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
@@ -180,7 +204,9 @@ function generate_cylindrical_cavity_mesh(;
     if verbose > 0
         println("\nFinished generating mesh. Physical group tags:")
         println("Cylinder: ", cylinder_group)
-        println("Boundaries: ", boundary_group)
+        println("Exterior boundaries: ", exterior_group)
+        println("Top boundaries: ", top_group)
+        println("Bottom boundaries: ", bottom_group)
         if length(symmetry) > 0
             println("Symmetry boundaries: ", symmetry_group)
         end
