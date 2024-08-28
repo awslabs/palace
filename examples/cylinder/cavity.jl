@@ -25,7 +25,7 @@ include(joinpath(@__DIR__, "mesh", "mesh.jl"))
 
 Solve the cavity mode problem, with an automatically generated Gmsh mesh
 
-See also [`generate_cylindrical_cavity_mesh`](@ref)
+See also [`generate_cylindrical_mesh`](@ref)
 
 # Arguments
 
@@ -34,8 +34,8 @@ See also [`generate_cylindrical_cavity_mesh`](@ref)
   - geo_order - the polynomial order used in the mesh representation
   - refinement - the level of mesh refinement
   - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
-  - radius - the radius of the cavity resonator
-  - aspect_ratio - the ratio of the DIAMETER of the cavity to the height
+  - radius - the radius of the cylinder
+  - aspect_ratio - the ratio of the DIAMETER of the cylinder to the height
   - num_processors - number of processors to use for the simulation
   - cleanup_files - delete temporary mesh and configuration files after simulation
 """
@@ -56,10 +56,10 @@ function solve_cavity_resonator(
     @assert mesh_type ∈ [0, 1, 2]
 
     # Generate a mesh
-    cavity_dir = @__DIR__
+    cylinder_dir = @__DIR__
     file_root = string("cavity_p", order, "_h", refinement)
     mesh_filename = string(file_root, ".msh")
-    generate_cylindrical_cavity_mesh(
+    generate_cylindrical_mesh(
         filename=mesh_filename,
         refinement=refinement,
         order=geo_order,
@@ -71,14 +71,14 @@ function solve_cavity_resonator(
 
     # Generate solver parameter file
     params["Solver"]["Order"] = order
-    params["Model"]["Mesh"] = joinpath(cavity_dir, "mesh", mesh_filename)
+    params["Model"]["Mesh"] = joinpath(cylinder_dir, "mesh", mesh_filename)
     json_filename = string(file_root, ".json")
-    open(joinpath(cavity_dir, json_filename), "w") do f
+    open(joinpath(cylinder_dir, json_filename), "w") do f
         return JSON.print(f, params)
     end
 
     # Call the solver, storing the terminal output
-    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cavity_dir)
+    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cylinder_dir)
     log_file = read(call_command, String)
     # println(log_file)
 
@@ -89,13 +89,13 @@ function solve_cavity_resonator(
     dof = parse(Int, filter(isdigit, log_file[start_ind:end_ind]))
 
     # Extract the top two frequency modes
-    eig_df = CSV.read(joinpath(cavity_dir, "postpro", "convergence", "eig.csv"), DataFrame)
+    eig_df = CSV.read(joinpath(cylinder_dir, "postpro", "convergence", "eig.csv"), DataFrame)
     eig = Matrix(eig_df[:, 2:end])[:, 1]
 
     # Clean up the parameter and mesh file
     if cleanup_files
-        rm(joinpath(cavity_dir, "mesh", mesh_filename))
-        rm(joinpath(cavity_dir, json_filename))
+        rm(joinpath(cylinder_dir, "mesh", mesh_filename))
+        rm(joinpath(cylinder_dir, json_filename))
     end
 
     return dof, eig
@@ -212,14 +212,14 @@ function generate_cavity_convergence_data(;
     num_processors::Integer = 1
 )
     # Load the default JSON script (the file contains comments and we need to sanitize them)
-    cavity_dir = @__DIR__
-    params = open(joinpath(cavity_dir, "cavity_pec.json"), "r") do f
+    cylinder_dir = @__DIR__
+    params = open(joinpath(cylinder_dir, "cavity_pec.json"), "r") do f
         return JSON.parse(join(getindex.(split.(eachline(f), "//"), 1), "\n"))
     end
 
     # Update the dictionary
     params["Problem"]["Verbose"] = 2
-    params["Problem"]["Output"] = joinpath(cavity_dir, "postpro", "convergence")
+    params["Problem"]["Output"] = joinpath(cylinder_dir, "postpro", "convergence")
     params["Model"]["Refinement"]["UniformLevels"] = 0 # Don't perform any mesh refinement
     params["Solver"]["Eigenmode"]["Save"] = 0 # Don't write any fields to file
     params["Solver"]["Eigenmode"]["N"] = 4 # Look only for the top 4 modes

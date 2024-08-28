@@ -4,7 +4,7 @@
 using Gmsh: gmsh
 
 """
-    generate_cylindrical_cavity_mesh(;
+    generate_cylindrical_mesh(;
         filename::AbstractString,
         refinement::Integer  = 0,
         order::Integer       = 1,
@@ -16,7 +16,7 @@ using Gmsh: gmsh
         gui::Bool            = false
     )
 
-Generate a mesh for the cylindrical cavity resonator example using Gmsh
+Generate a mesh for the cylinder example using Gmsh
 
 # Arguments
 
@@ -24,13 +24,13 @@ Generate a mesh for the cylindrical cavity resonator example using Gmsh
   - refinement - measure of how many elements to include, 0 is least
   - order - the polynomial order of the approximation, minimum 1
   - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
-  - radius - the radius of the cavity resonator
-  - aspect_ratio - the ratio of the diameter (not radius!) of the cavity to the height
+  - radius - the radius of the cylinder
+  - aspect_ratio - the ratio of the diameter (not radius!) of the cylinder to the height
   - symmetry_plane - whether to cut the cylinder in half and use a symmetry plane in the model
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
-function generate_cylindrical_cavity_mesh(;
+function generate_cylindrical_mesh(;
     filename::AbstractString,
     refinement::Integer  = 0,
     order::Integer       = 1,
@@ -50,11 +50,11 @@ function generate_cylindrical_cavity_mesh(;
     gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Add model
-    if "cavity" in gmsh.model.list()
-        gmsh.model.setCurrent("cavity")
+    if "cylinder" in gmsh.model.list()
+        gmsh.model.setCurrent("cylinder")
         gmsh.model.remove()
     end
-    gmsh.model.add("cavity")
+    gmsh.model.add("cylinder")
 
     # Geometry parameters (in cm)
     height = aspect_ratio * 2 * radius  # Cylinder height

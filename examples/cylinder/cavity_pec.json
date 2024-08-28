@@ -3,11 +3,11 @@
   {
     "Type": "Eigenmode",
     "Verbose": 2,
-    "Output": "postpro/impedance"
+    "Output": "postpro/cavity_pec"
   },
   "Model":
   {
-    "Mesh": "mesh/cavity_prism.msh",
+    "Mesh": "mesh/cylinder_prism.msh",
     "L0": 1.0e-2,  // cm
     "Refinement":
     {
@@ -38,13 +38,10 @@
   },
   "Boundaries":
   {
-    "Impedance":
-    [
-      {
-        "Attributes": [2, 3, 5],
-        "Rs": 0.0184   // Ω, surface resistance of Cu @ 5 GHz
-      }
-    ]
+    "PEC":
+    {
+      "Attributes": [2, 3, 5]
+    }
   },
   "Solver":
   {
