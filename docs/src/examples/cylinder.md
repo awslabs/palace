@@ -3,13 +3,15 @@
 <!--- SPDX-License-Identifier: Apache-2.0 --->
 ```
 
-# Eigenmodes of a Cylindrical Cavity
+# Eigenmodes of a Cylinder
 
 !!! note
     
     The files for this example can be found in the
-    [`examples/cavity/`](https://github.com/awslabs/palace/blob/main/examples/cavity)
+    [`examples/cylinder/`](https://github.com/awslabs/palace/blob/main/examples/cylinder)
     directory of the *Palace* source code.
+
+## Cavity
 
 This example demonstrates *Palace*'s eigenmode simulation type to solve for the lowest
 frequency modes of a cylindrical cavity resonator. In particular, we consider a cylindrical
@@ -55,12 +57,12 @@ where ``k=\omega\sqrt{\mu\varepsilon}``, ``\eta=\sqrt{\mu/\varepsilon}``, and
 ``\beta=l\pi/d``.
 
 The initial Gmsh mesh for this problem, from
-[`mesh/cavity_prism.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_prism.msh),
+[`mesh/cavity_prism.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_prism.msh),
 is shown below. We use quadratic triangular prism elements. There are also two other
 included mesh files,
-[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_tet.msh)
+[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh)
 and
-[`mesh/cavity_hex.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_hex.msh),
+[`mesh/cavity_hex.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_hex.msh),
 which use curved tetrahedral and hexahedral elements, respectively.
 
 ```@raw html
@@ -70,9 +72,9 @@ which use curved tetrahedral and hexahedral elements, respectively.
 ```
 
 There are two configuration files for this problem,
-[`cavity_pec.json`](https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_pec.json)
+[`cavity_pec.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_pec.json)
 and
-[`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_impedance.json).
+[`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_impedance.json).
 
 In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
 field is set to `"Eigenmode"`, and we use the mesh shown above. The material properties for
@@ -188,10 +190,10 @@ for the ``\text{TE}_{011}`` mode is shown below.
 </p>
 ```
 
-## Mesh convergence
+### Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using
-[`convergence_study.jl`](https://github.com/awslabs/palace/blob/main/examples/cavity/convergence_study.jl).
+[`convergence_study.jl`](https://github.com/awslabs/palace/blob/main/examples/cylinder/convergence_study.jl).
 For a polynomial order of solution and refinement level, a mesh is generated using Gmsh
 using polynomials of the same order to resolve the boundary geometry. The eigenvalue
 problem is then solved for ``f_{\text{TM},010}`` and ``f_{\text{TE},111}``, and the
@@ -214,6 +216,53 @@ The observed rate of convergence for the eigenvalues are ``p+1`` for odd polynom
 maximum convergence rate is ``2p`` [[2]](#References). The figures demonstrate that
 increasing the polynomial order of the solution will give reduced error, however the effect
 may only become significant on sufficiently refined meshes.
+
+## Waveguide
+
+This example demonstrates the eigenmode simulation type in  *Palace* to solve for the
+eigenfrequencies of a circular waveguide. We consider the interior material to be vacuum
+with parameters ``\varepsilon_r = 1.0`` and ``\tan\delta = 0``, and with radius
+``a = 2.74\text{ cm}`` and height ``d = 2a``.
+Periodic boundary conditions (BCs) are applied in the $z$-direction with the wavelength $\lambda = d$.
+According to [[1]](#References), the propagation constants of the ``\text{TE}_{nm}`` and ``\text{TM}_{nm}``
+modes are given by
+
+```math
+\beta_{nm} = \frac{2 \pi}{\lambda} = \sqrt{\left( 2\pi f\sqrt{\mu\varepsilon} \right)^2 - \left(\frac{p^\prime_{nm}}{a}\right)^2}
+```
+
+where $p^\prime_{nm}$ is defined in [[1]](#References). Thus, the corresponding analytical
+eigenfrequencies are given by
+
+```math
+f_{nm} = \sqrt{\frac{\frac{1}{\lambda^2} + \left(\frac{p^\prime_{nm}}{2\pi a}\right)^2}{\mu\varepsilon}}
+```
+
+For this problem, we use curved tetrahedral elements from the mesh file
+[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh),
+and the configuration file
+[`waveguide.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/waveguide.json).
+
+The main difference between this configuration file and those used in the cavity example is in the
+`"Boundaries"` object. In `cavity_pec.json` and `cavity_impedance.json`, either a perfect electric
+conductor or impedance boundary condition is prescribed on all boundaries.
+In contrast, `waveguide.json` specifies a perfect electric conductor ("PEC") boundary condition for
+the exterior surface and a periodic boundary condition (`"Periodic"`) on the cross-sections of the
+cylinder (in the $z-$ direction). The periodic attribute pairs are defined by `"DonorAttributes"`
+and `"ReceiverAttributes"`, and the distance between them is given by the `"Translation"` vector
+in mesh units.
+
+After running `waveguide.json`, we find that some of the frequencies listed in `postpro/waveguide/eig.csv`
+are close to those computed using the above formula. The differences between the analytical and numerical
+mode frequencies are summarized in the table below:
+
+| ``\text{mode}``    | ``f_{\text{analytical}}`` | ``f_{\text{numerical}}`` | ``\text{relative error}`` |
+|:------------------ | -------------------------:| ------------------------:| -------------------------:|
+| ``\text{TM}_{01}`` | ``6.89438\text{ GHz}``    | ``6.895697\text{ GHz}``  | ``0.01911\text{ \%}``     |
+| ``\text{TE}_{11}`` | ``6.34515\text{ GHz}``    | ``6.346605\text{ GHz}``  | ``0.02288\text{ \%}``     |
+| ``\text{TE}_{21}`` | ``7.63480\text{ GHz}``    | ``7.635135\text{ GHz}``  | ``0.00434\text{ \%}``     |
+
+Note that the spurious frequencies in `postpro/waveguide/eig.csv` have been ignored.
 
 ## References
 
