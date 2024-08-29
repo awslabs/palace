@@ -1049,8 +1049,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    data.translation = it->at("Translation").get<std::array<double, 3>>(); // Required
+        it->at("ReceiverAttributes").get<std::vector<int>>();               // Required
+    data.translation = it->at("Translation").get<std::array<double, 3>>();  // Required
 
     // Cleanup
     it->erase("DonorAttributes");

@@ -89,7 +89,8 @@ function solve_cavity_resonator(
     dof = parse(Int, filter(isdigit, log_file[start_ind:end_ind]))
 
     # Extract the top two frequency modes
-    eig_df = CSV.read(joinpath(cylinder_dir, "postpro", "convergence", "eig.csv"), DataFrame)
+    eig_df =
+        CSV.read(joinpath(cylinder_dir, "postpro", "convergence", "eig.csv"), DataFrame)
     eig = Matrix(eig_df[:, 2:end])[:, 1]
 
     # Clean up the parameter and mesh file

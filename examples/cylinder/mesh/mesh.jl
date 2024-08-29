@@ -106,28 +106,30 @@ function generate_cylindrical_mesh(;
     # Add physical groups
     cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
 
-    top = last.(
-        gmsh.model.getEntitiesInBoundingBox(
-            -1.1 * radius,
-            -1.1 * radius,
-            0.5 * height,
-            1.1 * radius,
-            1.1 * radius,
-            1.1 * height,
-            2
+    top =
+        last.(
+            gmsh.model.getEntitiesInBoundingBox(
+                -1.1 * radius,
+                -1.1 * radius,
+                0.5 * height,
+                1.1 * radius,
+                1.1 * radius,
+                1.1 * height,
+                2
+            )
         )
-    )
-    bottom = last.(
-        gmsh.model.getEntitiesInBoundingBox(
-            -1.1 * radius,
-            -1.1 * radius,
-            -0.1 * height,
-            1.1 * radius,
-            1.1 * radius,
-            0.5 * height,
-            2
+    bottom =
+        last.(
+            gmsh.model.getEntitiesInBoundingBox(
+                -1.1 * radius,
+                -1.1 * radius,
+                -0.1 * height,
+                1.1 * radius,
+                1.1 * radius,
+                0.5 * height,
+                2
+            )
         )
-    )
     symmetry =
         last.(
             gmsh.model.getEntitiesInBoundingBox(
