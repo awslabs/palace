@@ -54,23 +54,19 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
                  &space_op.GetNDSpace().GetParMesh()),
     interp_op(iodata, space_op.GetNDSpace().GetParMesh())
 {
-  bool side_n_min = (iodata.boundaries.postpro.side ==
-                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
-                                                                                side_n_min);
-  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
-                                                                                side_n_min);
-  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, side_n_min);
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
 
-  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
-  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
+  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
   J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
   Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
   if (HasImag())
   {
-    E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op, side_n_min);
-    B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op, side_n_min);
+    E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
+    B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
     J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(), mat_op);
     Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
         &E->Imag(), nullptr, mat_op, true, mfem::Vector());
@@ -79,7 +75,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
   // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
-    auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
+    auto ret = port_E0.emplace(idx, WavePortFieldData());
     ret.first->second.E0r = data.GetModeFieldCoefficientReal();
     ret.first->second.E0i = data.GetModeFieldCoefficientImag();
   }
@@ -104,13 +100,10 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
   // etc.), since only V and E fields are supplied.
-  bool side_n_min = (iodata.boundaries.postpro.side ==
-                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
-                                                                                side_n_min);
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
 
-  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
-  V_s = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op, side_n_min);
+  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+  V_s = std::make_unique<BdrFieldCoefficient>(V->Real());
   Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
 
@@ -134,13 +127,10 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,
   // etc.), since only the B field is supplied.
-  bool side_n_min = (iodata.boundaries.postpro.side ==
-                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
-                                                                                side_n_min);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
 
-  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
-  A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op, side_n_min);
+  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+  A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real());
   J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
 
   // Initialize data collection objects.

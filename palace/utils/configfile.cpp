@@ -470,6 +470,9 @@ void ModelData::SetUp(json &config)
   make_hex = model->value("MakeHexahedral", make_hex);
   reorder_elements = model->value("ReorderElements", reorder_elements);
   clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
+  crack_bdr_elements = model->value("CrackInternalBoundaryElements", crack_bdr_elements);
+  refine_crack_elements = model->value("RefineCrackElements", refine_crack_elements);
+  crack_displ_factor = model->value("CrackDisplacementFactor", crack_displ_factor);
   add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
   reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
   partitioning = model->value("Partitioning", partitioning);
@@ -484,6 +487,9 @@ void ModelData::SetUp(json &config)
   model->erase("MakeHexahedral");
   model->erase("ReorderElements");
   model->erase("CleanUnusedElements");
+  model->erase("CrackInternalBoundaryElements");
+  model->erase("RefineCrackElements");
+  model->erase("CrackDisplacementFactor");
   model->erase("AddInterfaceBoundaryElements");
   model->erase("ReorientTetMesh");
   model->erase("Partitioning");
@@ -503,6 +509,9 @@ void ModelData::SetUp(json &config)
     std::cout << "MakeHexahedral: " << make_hex << '\n';
     std::cout << "ReorderElements: " << reorder_elements << '\n';
     std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
+    std::cout << "CrackInternalBoundaryElements: " << crack_bdr_elements << '\n';
+    std::cout << "RefineCrackElements: " << refine_crack_elements << '\n';
+    std::cout << "CrackDisplacementFactor: " << crack_displ_factor << '\n';
     std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
     std::cout << "ReorientTetMesh: " << reorient_tet_mesh << '\n';
     std::cout << "Partitioning: " << partitioning << '\n';
@@ -647,7 +656,7 @@ void DomainPostData::SetUp(json &domains)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup
@@ -672,7 +681,7 @@ void DomainData::SetUp(json &config)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
   for (const auto &attr : postpro.attributes)
   {
@@ -1269,17 +1278,12 @@ void SurfaceFluxPostData::SetUp(json &postpro)
   }
 }
 
-// Helper for converting string keys to enum for InterfaceDielectricData::Type and
-// InterfaceDielectricData::Side.
+// Helper for converting string keys to enum for InterfaceDielectricData::Type.
 PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricData::Type,
                            {{InterfaceDielectricData::Type::DEFAULT, "Default"},
                             {InterfaceDielectricData::Type::MA, "MA"},
                             {InterfaceDielectricData::Type::MS, "MS"},
                             {InterfaceDielectricData::Type::SA, "SA"}})
-PALACE_JSON_SERIALIZE_ENUM(
-    InterfaceDielectricData::Side,
-    {{InterfaceDielectricData::Side::SMALLER_REF_INDEX, "SmallerRefractiveIndex"},
-     {InterfaceDielectricData::Side::LARGER_REF_INDEX, "LargerRefractiveIndex"}})
 
 void InterfaceDielectricPostData::SetUp(json &postpro)
 {
@@ -1308,7 +1312,6 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     data.t = it->at("Thickness");             // Required
     data.epsilon_r = it->at("Permittivity");  // Required
     data.tandelta = it->value("LossTan", data.tandelta);
-    data.side = it->value("Side", data.side);
 
     // Cleanup
     it->erase("Index");
@@ -1317,7 +1320,6 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     it->erase("Thickness");
     it->erase("Permittivity");
     it->erase("LossTan");
-    it->erase("Side");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
                     << it->dump(2));
@@ -1331,11 +1333,9 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
       std::cout << "Thickness: " << data.t << '\n';
       std::cout << "Permittivity: " << data.epsilon_r << '\n';
       std::cout << "LossTan: " << data.tandelta << '\n';
-      std::cout << "Side: " << data.side << '\n';
     }
   }
 }
-
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1343,8 +1343,6 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     return;
   }
-  side = postpro->value("Side", side);
-
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
 
@@ -1358,23 +1356,15 @@ void BoundaryPostData::SetUp(json &boundaries)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup
-  postpro->erase("Side");
-
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Side: " << side << '\n';
-  }
 }
 
 void BoundaryData::SetUp(json &config)
@@ -1426,9 +1416,8 @@ void BoundaryData::SetUp(json &config)
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
-  attributes.insert(attributes.end(), postpro.attributes.begin(), postpro.attributes.end());
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup

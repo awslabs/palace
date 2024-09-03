@@ -62,7 +62,6 @@
     ],
     "Postprocessing":
     {
-        "Side": <string>,
         "SurfaceFlux":
         [
             ...
@@ -129,19 +128,6 @@ each terminal boundary.
 with meshes that are identical after a specified translation.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
-
-`"Side" ["SmallerRefractiveIndex"]` :  Defines the postprocessing side for internal
-boundary surfaces where the fields are in general double-valued. This is only relevant for
-output for [boundary visualization with ParaView](../guide/postprocessing.md#Visualization).
-The available options are:
-
-  - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
-    refraction is smaller (speed of light is larger). Typically this selects the vacuum
-    side. For anisotropic materials, the index of refraction associated with the principal
-    direction with the smallest value is used.
-  - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
-    refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
-    side.
 
 `"SurfaceFlux"` :  Array of objects for postprocessing surface flux.
 
@@ -604,8 +590,7 @@ axis-aligned bounding box for all elements making up the postprocessing boundary
             "Type": <string>,
             "Thickness": <float>,
             "Permittivity": <float>,
-            "LossTan": <float>,
-            "Side": <string>
+            "LossTan": <float>
         },
         ...
     ]
@@ -617,8 +602,7 @@ with
 `"Index" [None]` :  Index of this dielectric interface, used in postprocessing output files.
 
 `"Attributes" [None]` :  Integer array of mesh boundary attributes for this dielectric
-interface. If the interface consists of multiple elements with different `"Side"` values,
-use the `"Elements"` array described below.
+interface.
 
 `"Type" [None]` :  Specifies the type of dielectric interface for this postprocessing
 boundary. See also [this page](../reference.md#Bulk-and-interface-dielectric-loss).
@@ -640,15 +624,3 @@ units.
 be the interface layer permittivity for the specific `"Type"` of interface specified.
 
 `"LossTan" [0.0]` :  Loss tangent for this lossy dielectric interface.
-
-`"Side" ["SmallerRefractiveIndex"]` :  Defines the postprocessing side when this dielectric
-interface is an internal boundary surface (and thus the electric field on the boundary is in
-general double-valued). The available options are:
-
-  - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
-    refraction is smaller (speed of light is larger). Typically this selects the vacuum
-    side. For anisotropic materials, the index of refraction associated with the principal
-    direction with the smallest value is used.
-  - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
-    refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
-    side.
