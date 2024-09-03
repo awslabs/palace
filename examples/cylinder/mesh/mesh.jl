@@ -6,7 +6,7 @@ using Gmsh: gmsh
 """
     generate_cylindrical_mesh(;
         filename::AbstractString,
-        refinement::Integer  = 0,
+        refinement::Integer  = 1,
         order::Integer       = 1,
         mesh_type::Integer   = 0,
         radius::Real         = 2.74,
@@ -32,7 +32,7 @@ Generate a mesh for the cylinder example using Gmsh
 """
 function generate_cylindrical_mesh(;
     filename::AbstractString,
-    refinement::Integer  = 0,
+    refinement::Integer  = 1,
     order::Integer       = 1,
     mesh_type::Integer   = 0,
     radius::Real         = 2.74,
@@ -106,7 +106,7 @@ function generate_cylindrical_mesh(;
     # Add physical groups
     cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
 
-    top =
+    @show top =
         last.(
             gmsh.model.getEntitiesInBoundingBox(
                 -1.1 * radius,
@@ -118,7 +118,7 @@ function generate_cylindrical_mesh(;
                 2
             )
         )
-    bottom =
+    @show bottom =
         last.(
             gmsh.model.getEntitiesInBoundingBox(
                 -1.1 * radius,
@@ -130,7 +130,7 @@ function generate_cylindrical_mesh(;
                 2
             )
         )
-    symmetry =
+    @show symmetry =
         last.(
             gmsh.model.getEntitiesInBoundingBox(
                 -1.1 * radius,
@@ -159,8 +159,8 @@ function generate_cylindrical_mesh(;
     end
     top_group = gmsh.model.addPhysicalGroup(2, top, -1, "top")
     bottom_group = gmsh.model.addPhysicalGroup(2, bottom, -1, "bottom")
-    symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
     exterior_group = gmsh.model.addPhysicalGroup(2, exterior, -1, "exterior")
+    symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)

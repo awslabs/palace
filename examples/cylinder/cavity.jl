@@ -1,13 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using CSV
-using DataFrames
-using Dates
-using ForwardDiff
-using JSON
-using Roots
-using SpecialFunctions
+using CSV, DataFrames, Dates, ForwardDiff, JSON, Roots, SpecialFunctions
 
 include(joinpath(@__DIR__, "mesh", "mesh.jl"))
 
@@ -113,6 +107,9 @@ Note: Compare against https://mathworld.wolfram.com/BesselFunctionZeros.html
 with besselj_roots.((0:5)', 1:5)
 """
 function besselj_roots(ν, n::Integer)::Float64
+    if n == 0
+        return NaN
+    end
     upper_bound = 10
     roots = find_zeros(x -> besselj(ν, x), 0, upper_bound)
     while length(roots) < n + 1
@@ -135,6 +132,9 @@ Note: Compare against https://mathworld.wolfram.com/BesselFunctionZeros.html wit
 ∂besselj_roots.((0:5)', 1:5)
 """
 function ∂besselj_roots(ν, n::Integer)::Float64
+    if n == 0
+        return NaN
+    end
     upper_bound = 10
     roots = find_zeros(x -> ∂besselj(ν, x), 0, upper_bound)
     while length(roots) < n + 1
@@ -164,7 +164,7 @@ l, in GHz
   - a - radius of cavity in centimeters
   - d - height of cavity in centimeters
 """
-function frequency_transverse(n, m, l; ϵᵣ, μᵣ, a_cm, d_cm)
+function frequency_transverse(n, m, l; ϵᵣ=1.0, μᵣ=1.0, a_cm, d_cm)
     ϵ₀ = 8.8541878176e-12
     μ₀ = 4e-7 * π
 
@@ -286,4 +286,74 @@ function generate_cavity_convergence_data(;
     f_TE_111_rel_error = map(x -> abs.(x .- f_TE_111_true) ./ f_TE_111_true, f_TE_111)
 
     return dof, f_TM_010_rel_error, f_TE_111_rel_error
+end
+
+"""
+    compute_electric(ϵᵣ,μᵣ=1)
+
+Generate the transverse electric cutoff frequencies for a cylindrical waveguide
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function compute_electric(ϵᵣ, μᵣ=1)
+    E = Array{Float64}(undef, 4, 2)
+    a_cm = 2.74
+    for i = 0:3
+        E[i + 1, 1] = frequency_transverse(i, 1, 0; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[1]
+    end
+
+    # single wavelength cavity
+    # l = d
+    for i = 0:3
+        E[i + 1, 2] = frequency_transverse(i, 1, 2; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[1]
+    end
+
+    return E
+end
+
+"""
+    compute_magnetic(ϵᵣ,μᵣ=1)
+
+Generate the transverse magnetic cutoff frequencies for a cylindrical waveguide
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function compute_magnetic(ϵᵣ, μᵣ=1)
+    M = Array{Float64}(undef, 4, 2)
+    a_cm = 2.74
+    for i = 0:3
+        M[i + 1, 1] = frequency_transverse(i, 1, 0; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[2]
+    end
+    # single wavelength cavity
+    # l = d
+    for i = 0:3
+        M[i + 1, 2] = frequency_transverse(i, 1, 2; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[2]
+    end
+
+    return M
+end
+
+"""
+    print_waveguide_modes(ϵᵣ)
+
+Compute the waveguide analytic frequencies and print to REPL
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function print_waveguide_modes(ϵᵣ, μᵣ=1)
+    E = compute_electric(ϵᵣ, μᵣ)
+    M = compute_magnetic(ϵᵣ, μᵣ)
+    println("Modes (GHz): TE, TM")
+    for l = 0:1, n = 0:3
+        println("(", n, ',', 1, ',', 2 * l, ") : ", E[n + 1, l + 1], ' ', M[n + 1, l + 1])
+    end
 end

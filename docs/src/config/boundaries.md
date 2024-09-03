@@ -125,8 +125,8 @@ surface.
 electrostatic simulations. Entries of the capacitance matrix are extracted corresponding to
 each terminal boundary.
 
-`"Periodic"` :  Array of objects for configuring periodic boundary conditions. This imposes
-periodicity on boundary surfaces that have identical meshes, meaning they are topologically periodic.
+`"Periodic"` :  Array of objects for configuring periodic boundary conditions for surfaces
+with meshes that are identical after a specified translation.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
 

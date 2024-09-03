@@ -220,49 +220,75 @@ may only become significant on sufficiently refined meshes.
 ## Waveguide
 
 This example demonstrates the eigenmode simulation type in  *Palace* to solve for the
-eigenfrequencies of a circular waveguide. We consider the interior material to be vacuum
-with parameters ``\varepsilon_r = 1.0`` and ``\tan\delta = 0``, and with radius
-``a = 2.74\text{ cm}`` and height ``d = 2a``.
-Periodic boundary conditions (BCs) are applied in the $z$-direction with the wavelength $\lambda = d$.
-According to [[1]](#References), the propagation constants of the ``\text{TE}_{nm}`` and ``\text{TM}_{nm}``
-modes are given by
+cutoff-frequencies of a circular waveguide. As with the cavity the interior material to be
+Silicon (``\varepsilon_r = 2.08``,
+``\tan\delta = 4\times 10^{-4}``), with cylindrical domain radius ``a = 2.74\text{ cm}``,
+and length ``d=2*a = 5.48\text{ cm}``.
+Periodic boundary conditions (BCs) are applied in the $z$-direction.
+According to [[1]](#References), the cutoff frequencies for the transverse electric and
+magnetic modes are given by the formulae:
 
 ```math
-\beta_{nm} = \frac{2 \pi}{\lambda} = \sqrt{\left( 2\pi f\sqrt{\mu\varepsilon} \right)^2 - \left(\frac{p^\prime_{nm}}{a}\right)^2}
+f_{\text{TE},nm} = \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p'_{nm}}{a} \qquad
+f_{\text{TM},nm} = \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p_{nm}}{a}
 ```
 
-where $p^\prime_{nm}$ is defined in [[1]](#References). Thus, the corresponding analytical
-eigenfrequencies are given by
+which are identical to those for the cavity modes, in the special case of ``l=0``.
 
-```math
-f_{nm} = \sqrt{\frac{\frac{1}{\lambda^2} + \left(\frac{p^\prime_{nm}}{2\pi a}\right)^2}{\mu\varepsilon}}
-```
+In addition to these pure waveguide modes, there are aliasing cavity
+modes corresponding to a full wavelength in the computational domain (``l==2``). In a
+practical problem these are suppressed by choosing a smaller value of ``d`` which shifts
+such modes to higher frequencies. The relevant modes are tabulated as
+
+| ``(n,m,l)`` | ``f_{\text{TE}}``       | ``f_{\text{TM}}``       |
+|:----------- | -----------------------:| -----------------------:|
+| ``(0,1,0)`` | ``4.626481\text{ GHz}`` | ``2.903636\text{ GHz}`` |
+| ``(1,1,0)`` | ``2.223083\text{ GHz}`` | ``4.626481\text{ GHz}`` |
+| ``(2,1,0)`` | ``3.687749\text{ GHz}`` | ``6.200856\text{ GHz}`` |
+| ``(3,1,0)`` | ``5.072602\text{ GHz}`` | ``7.703539\text{ GHz}`` |
+| ``(0,1,2)`` | ``5.982715\text{ GHz}`` | ``4.776992\text{ GHz}`` |
+| ``(1,1,2)`` | ``4.396663\text{ GHz}`` | ``5.982715\text{ GHz}`` |
+| ``(2,1,2)`` | ``5.290372\text{ GHz}`` | ``7.269056\text{ GHz}`` |
+| ``(3,1,2)`` | ``6.334023\text{ GHz}`` | ``8.586796\text{ GHz}`` |
 
 For this problem, we use curved tetrahedral elements from the mesh file
 [`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh),
 and the configuration file
 [`waveguide.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/waveguide.json).
 
-The main difference between this configuration file and those used in the cavity example is in the
-`"Boundaries"` object. In `cavity_pec.json` and `cavity_impedance.json`, either a perfect electric
-conductor or impedance boundary condition is prescribed on all boundaries.
-In contrast, `waveguide.json` specifies a perfect electric conductor ("PEC") boundary condition for
-the exterior surface and a periodic boundary condition (`"Periodic"`) on the cross-sections of the
-cylinder (in the $z-$ direction). The periodic attribute pairs are defined by `"DonorAttributes"`
-and `"ReceiverAttributes"`, and the distance between them is given by the `"Translation"` vector
-in mesh units.
+The main difference between this configuration file and those used in the cavity example is
+in the `"Boundaries"` object: `waveguide.json` specifies a perfect electric conductor
+(`"PEC"`) boundary condition for the exterior surface and a periodic boundary condition
+(`"Periodic"`) on the cross-sections of the cylinder (in the $z-$ direction). The periodic
+attribute pairs are defined by `"DonorAttributes"` and `"ReceiverAttributes"`, and the
+distance between them is given by the `"Translation"` vector in mesh units.
 
-After running `waveguide.json`, we find that some of the frequencies listed in `postpro/waveguide/eig.csv`
-are close to those computed using the above formula. The differences between the analytical and numerical
-mode frequencies are summarized in the table below:
+```
+               m,             Re{f} (GHz),             Im{f} (GHz),                       Q,
+ 1.000000000e+00,        +2.223255722e+00,        +4.446511256e-04,        +2.500000155e+03,
+ 2.000000000e+00,        +2.223255722e+00,        +4.446511297e-04,        +2.500000132e+03,
+ 3.000000000e+00,        +2.903861940e+00,        +5.807723634e-04,        +2.500000156e+03,
+ 4.000000000e+00,        +3.688035400e+00,        +7.376066296e-04,        +2.500001577e+03,
+ 5.000000000e+00,        +3.688035400e+00,        +7.376076214e-04,        +2.499998215e+03,
+ 6.000000000e+00,        +4.396748739e+00,        +8.793492525e-04,        +2.500001459e+03,
+ 7.000000000e+00,        +4.396748742e+00,        +8.793504597e-04,        +2.499998028e+03,
+ 8.000000000e+00,        +4.396843854e+00,        +8.793689551e-04,        +2.499999526e+03,
+ 9.000000000e+00,        +4.396843859e+00,        +8.793688076e-04,        +2.499999948e+03,
+ 1.000000000e+01,        +4.626835690e+00,        +9.253659897e-04,        +2.500003152e+03,
+ 1.100000000e+01,        +4.626835691e+00,        +9.253679806e-04,        +2.499997774e+03,
+ 1.200000000e+01,        +4.626845256e+00,        +9.253697773e-04,        +2.499998088e+03,
+ 1.300000000e+01,        +4.777149609e+00,        +9.554297850e-04,        +2.500000408e+03,
+ 1.400000000e+01,        +4.777237409e+00,        +9.554487274e-04,        +2.499996791e+03,
+ 1.500000000e+01,        +5.073016463e+00,        +1.014603170e-03,        +2.500000351e+03,
+ 1.600000000e+01,        +5.073034992e+00,        +1.014607502e-03,        +2.499998810e+03,
+ 1.700000000e+01,        +5.290571316e+00,        +1.058112715e-03,        +2.500003709e+03,
+```
 
-| ``\text{mode}``    | ``f_{\text{analytical}}`` | ``f_{\text{numerical}}`` | ``\text{relative error}`` |
-|:------------------ | -------------------------:| ------------------------:| -------------------------:|
-| ``\text{TM}_{01}`` | ``6.89438\text{ GHz}``    | ``6.895697\text{ GHz}``  | ``0.01911\text{ \%}``     |
-| ``\text{TE}_{11}`` | ``6.34515\text{ GHz}``    | ``6.346605\text{ GHz}``  | ``0.02288\text{ \%}``     |
-| ``\text{TE}_{21}`` | ``7.63480\text{ GHz}``    | ``7.635135\text{ GHz}``  | ``0.00434\text{ \%}``     |
-
-Note that the spurious frequencies in `postpro/waveguide/eig.csv` have been ignored.
+In common with the PEC cavity ``Q = Q_d = 1/0.0004 = 2.50\times 10^3`` in all cases, and all
+the anticipated waveguide modes are recovered with ``TE_{1,1}`` having the lowest cutoff
+frequency followed by ``TM_{0,1}`` and ``TE_{2,1}``, while the aliasing mode ``TE_{1,1,2}`` has
+marginally lower frequency than the waveguide modes ``TE_{0,1}`` and ``TM_{1,1}``
+(``4.397\text{ GHz}`` compared to ``4.627\text{ GHz}``).
 
 ## References
 

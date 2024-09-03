@@ -108,15 +108,7 @@ if "cylinder/waveguide" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=[
-            "Maximum",
-            "Minimum",
-            "Mean",
-            "Im{f} (GHz)",
-            "Q",
-            "Error (Bkwd.)",
-            "Error (Abs.)"
-        ],
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true
     )
 end

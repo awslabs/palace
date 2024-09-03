@@ -8,7 +8,7 @@
   "Model":
   {
     "Mesh": "mesh/cylinder_tet.msh",
-    "L0": 1.0e-2  // cm
+    "L0": 1.0e-2,  // cm
   },
   "Domains":
   {
@@ -17,7 +17,8 @@
       {
         "Attributes": [1],
         "Permeability": 1.0,
-        "Permittivity": 1.0 // vacuum
+        "Permittivity": 2.08,
+        "LossTan": 0.0004
       }
     ],
     "Postprocessing":
@@ -38,12 +39,12 @@
       {
         "DonorAttributes": [2],
         "ReceiverAttributes": [3],
-        "Translation": [0.0, 0.0, 5.48] // in mesh units
+        "Translation": [0.0, 0.0, 5.48] // in L0 units
       }
     ],
     "PEC":
     {
-      "Attributes": [5]
+      "Attributes": [4]
     }
   },
   "Solver":

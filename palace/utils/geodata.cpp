@@ -2174,52 +2174,31 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   int new_ne = orig_mesh->GetNE();
   int new_nbe = orig_mesh->GetNBE();
   std::vector<bool> elem_delete(orig_mesh->GetNE(), false),
-      bdr_elem_delete(orig_mesh->GetNBE(), false),
-      bdr_elem_periodic(orig_mesh->GetNBE(), false);
+      bdr_elem_delete(orig_mesh->GetNBE(), false);
   std::unordered_map<int, int> face_to_be, new_face_be;
   face_to_be.reserve(orig_mesh->GetNBE());
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
-    int attr = orig_mesh->GetBdrAttribute(be);
-    bool periodic_be = false, periodic_mesh = false;
+    int f, o, e1 = -1, e2 = -1;
+    orig_mesh->GetBdrElementFace(be, &f, &o);
     if (!iodata.boundaries.periodic.empty())
     {
-      int f, o, e1, e2;
-      orig_mesh->GetBdrElementFace(be, &f, &o);
-      orig_mesh->GetFaceElements(f, &e1, &e2);
-      if (e1 >= 0 && e2 >= 0)
+      int attr = orig_mesh->GetBdrAttribute(be);
+      for (const auto &data : iodata.boundaries.periodic)
       {
-        periodic_mesh = true;
-      }
-      for (auto &data : iodata.boundaries.periodic)
-      {
-        for (auto d_attr : data.donor_attributes)
+        const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
+        auto donor = std::find(da.begin(), da.end(), attr) != da.end();
+        auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
+        if (donor || receiver)
         {
-          if (d_attr == attr)
-          {
-            periodic_be = true;
-            bdr_elem_periodic[be] = true;
-          }
-        }
-        for (auto r_attr : data.receiver_attributes)
-        {
-          if (r_attr == attr)
-          {
-            periodic_be = true;
-            bdr_elem_periodic[be] = true;
-          }
+          orig_mesh->GetFaceElements(f, &e1, &e2);
+          MFEM_VERIFY(e1 >= 0 && e2 >= 0,
+                      "Mesh is not periodic on attribute " << attr << "!");
         }
       }
-      MFEM_VERIFY((periodic_mesh && periodic_be) || (!periodic_mesh && !periodic_be),
-                  "Mesh is not periodic on attribute " << attr << "!");
     }
-    int f, o;
-    orig_mesh->GetBdrElementFace(be, &f, &o);
-    if (!periodic_be)
-    {
-      MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                  "A face cannot have multiple boundary elements!");
-    }
+    MFEM_VERIFY((e1 >= 0 && e2 >= 0) || face_to_be.find(f) == face_to_be.end(),
+                "A non-periodic face (" << f << ") cannot have multiple boundary elements");
     face_to_be[f] = be;
   }
 
@@ -2246,7 +2225,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       orig_mesh->GetFaceElements(f, &e1, &e2);
       bool no_e1 = (e1 < 0 || elem_delete[e1]);
       bool no_e2 = (e2 < 0 || elem_delete[e2]);
-      if ((no_e1 && no_e2) || bdr_elem_periodic[be])
+      if ((no_e1 && no_e2))
       {
         // Mpi::Print("Deleting an unattached boundary element!\n");
         bdr_elem_delete[be] = true;
