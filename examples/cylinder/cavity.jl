@@ -1,13 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using CSV
-using DataFrames
-using Dates
-using ForwardDiff
-using JSON
-using Roots
-using SpecialFunctions
+using CSV, DataFrames, Dates, ForwardDiff, JSON, Roots, SpecialFunctions
 
 include(joinpath(@__DIR__, "mesh", "mesh.jl"))
 
@@ -25,7 +19,7 @@ include(joinpath(@__DIR__, "mesh", "mesh.jl"))
 
 Solve the cavity mode problem, with an automatically generated Gmsh mesh
 
-See also [`generate_cylindrical_cavity_mesh`](@ref)
+See also [`generate_cylindrical_mesh`](@ref)
 
 # Arguments
 
@@ -34,8 +28,8 @@ See also [`generate_cylindrical_cavity_mesh`](@ref)
   - geo_order - the polynomial order used in the mesh representation
   - refinement - the level of mesh refinement
   - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
-  - radius - the radius of the cavity resonator
-  - aspect_ratio - the ratio of the DIAMETER of the cavity to the height
+  - radius - the radius of the cylinder
+  - aspect_ratio - the ratio of the DIAMETER of the cylinder to the height
   - num_processors - number of processors to use for the simulation
   - cleanup_files - delete temporary mesh and configuration files after simulation
 """
@@ -56,10 +50,10 @@ function solve_cavity_resonator(
     @assert mesh_type ∈ [0, 1, 2]
 
     # Generate a mesh
-    cavity_dir = @__DIR__
+    cylinder_dir = @__DIR__
     file_root = string("cavity_p", order, "_h", refinement)
     mesh_filename = string(file_root, ".msh")
-    generate_cylindrical_cavity_mesh(
+    generate_cylindrical_mesh(
         filename=mesh_filename,
         refinement=refinement,
         order=geo_order,
@@ -71,14 +65,14 @@ function solve_cavity_resonator(
 
     # Generate solver parameter file
     params["Solver"]["Order"] = order
-    params["Model"]["Mesh"] = joinpath(cavity_dir, "mesh", mesh_filename)
+    params["Model"]["Mesh"] = joinpath(cylinder_dir, "mesh", mesh_filename)
     json_filename = string(file_root, ".json")
-    open(joinpath(cavity_dir, json_filename), "w") do f
+    open(joinpath(cylinder_dir, json_filename), "w") do f
         return JSON.print(f, params)
     end
 
     # Call the solver, storing the terminal output
-    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cavity_dir)
+    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cylinder_dir)
     log_file = read(call_command, String)
     # println(log_file)
 
@@ -89,13 +83,14 @@ function solve_cavity_resonator(
     dof = parse(Int, filter(isdigit, log_file[start_ind:end_ind]))
 
     # Extract the top two frequency modes
-    eig_df = CSV.read(joinpath(cavity_dir, "postpro", "convergence", "eig.csv"), DataFrame)
+    eig_df =
+        CSV.read(joinpath(cylinder_dir, "postpro", "convergence", "eig.csv"), DataFrame)
     eig = Matrix(eig_df[:, 2:end])[:, 1]
 
     # Clean up the parameter and mesh file
     if cleanup_files
-        rm(joinpath(cavity_dir, "mesh", mesh_filename))
-        rm(joinpath(cavity_dir, json_filename))
+        rm(joinpath(cylinder_dir, "mesh", mesh_filename))
+        rm(joinpath(cylinder_dir, json_filename))
     end
 
     return dof, eig
@@ -112,6 +107,9 @@ Note: Compare against https://mathworld.wolfram.com/BesselFunctionZeros.html
 with besselj_roots.((0:5)', 1:5)
 """
 function besselj_roots(ν, n::Integer)::Float64
+    if n == 0
+        return NaN
+    end
     upper_bound = 10
     roots = find_zeros(x -> besselj(ν, x), 0, upper_bound)
     while length(roots) < n + 1
@@ -134,6 +132,9 @@ Note: Compare against https://mathworld.wolfram.com/BesselFunctionZeros.html wit
 ∂besselj_roots.((0:5)', 1:5)
 """
 function ∂besselj_roots(ν, n::Integer)::Float64
+    if n == 0
+        return NaN
+    end
     upper_bound = 10
     roots = find_zeros(x -> ∂besselj(ν, x), 0, upper_bound)
     while length(roots) < n + 1
@@ -163,7 +164,7 @@ l, in GHz
   - a - radius of cavity in centimeters
   - d - height of cavity in centimeters
 """
-function frequency_transverse(n, m, l; ϵᵣ, μᵣ, a_cm, d_cm)
+function frequency_transverse(n, m, l; ϵᵣ=1.0, μᵣ=1.0, a_cm, d_cm)
     ϵ₀ = 8.8541878176e-12
     μ₀ = 4e-7 * π
 
@@ -212,14 +213,14 @@ function generate_cavity_convergence_data(;
     num_processors::Integer = 1
 )
     # Load the default JSON script (the file contains comments and we need to sanitize them)
-    cavity_dir = @__DIR__
-    params = open(joinpath(cavity_dir, "cavity_pec.json"), "r") do f
+    cylinder_dir = @__DIR__
+    params = open(joinpath(cylinder_dir, "cavity_pec.json"), "r") do f
         return JSON.parse(join(getindex.(split.(eachline(f), "//"), 1), "\n"))
     end
 
     # Update the dictionary
     params["Problem"]["Verbose"] = 2
-    params["Problem"]["Output"] = joinpath(cavity_dir, "postpro", "convergence")
+    params["Problem"]["Output"] = joinpath(cylinder_dir, "postpro", "convergence")
     params["Model"]["Refinement"]["UniformLevels"] = 0 # Don't perform any mesh refinement
     params["Solver"]["Eigenmode"]["Save"] = 0 # Don't write any fields to file
     params["Solver"]["Eigenmode"]["N"] = 4 # Look only for the top 4 modes
@@ -285,4 +286,74 @@ function generate_cavity_convergence_data(;
     f_TE_111_rel_error = map(x -> abs.(x .- f_TE_111_true) ./ f_TE_111_true, f_TE_111)
 
     return dof, f_TM_010_rel_error, f_TE_111_rel_error
+end
+
+"""
+    compute_electric(ϵᵣ,μᵣ=1)
+
+Generate the transverse electric cutoff frequencies for a cylindrical waveguide
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function compute_electric(ϵᵣ, μᵣ=1)
+    E = Array{Float64}(undef, 4, 2)
+    a_cm = 2.74
+    for i = 0:3
+        E[i + 1, 1] = frequency_transverse(i, 1, 0; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[1]
+    end
+
+    # single wavelength cavity
+    # l = d
+    for i = 0:3
+        E[i + 1, 2] = frequency_transverse(i, 1, 2; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[1]
+    end
+
+    return E
+end
+
+"""
+    compute_magnetic(ϵᵣ,μᵣ=1)
+
+Generate the transverse magnetic cutoff frequencies for a cylindrical waveguide
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function compute_magnetic(ϵᵣ, μᵣ=1)
+    M = Array{Float64}(undef, 4, 2)
+    a_cm = 2.74
+    for i = 0:3
+        M[i + 1, 1] = frequency_transverse(i, 1, 0; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[2]
+    end
+    # single wavelength cavity
+    # l = d
+    for i = 0:3
+        M[i + 1, 2] = frequency_transverse(i, 1, 2; ϵᵣ, μᵣ, a_cm, d_cm=2 * a_cm)[2]
+    end
+
+    return M
+end
+
+"""
+    print_waveguide_modes(ϵᵣ)
+
+Compute the waveguide analytic frequencies and print to REPL
+
+# Arguments
+
+  - ϵᵣ relative permittivity
+  - μᵣ relative permeability
+"""
+function print_waveguide_modes(ϵᵣ, μᵣ=1)
+    E = compute_electric(ϵᵣ, μᵣ)
+    M = compute_magnetic(ϵᵣ, μᵣ)
+    println("Modes (GHz): TE, TM")
+    for l = 0:1, n = 0:3
+        println("(", n, ',', 1, ',', 2 * l, ") : ", E[n + 1, l + 1], ' ', M[n + 1, l + 1])
+    end
 end

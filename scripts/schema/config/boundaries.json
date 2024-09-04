@@ -219,6 +219,23 @@
         }
       }
     },
+    "Periodic":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["DonorAttributes", "ReceiverAttributes", "Translation"],
+        "properties":
+        {
+          "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
+          "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
+          "Translation": { "$ref": "#/$defs/Translation" }
+        }
+      }
+    },
     "Postprocessing":
     {
       "type": "object",
@@ -283,6 +300,28 @@
       "additionalItems": false,
       "items": { "type": "integer"},
       "minItems": 1
+    },
+    "DonorAttributes":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "integer"},
+      "minItems": 1
+    },
+    "ReceiverAttributes":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "integer"},
+      "minItems": 1
+    },
+    "Translation":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
     },
     "Direction":
     {

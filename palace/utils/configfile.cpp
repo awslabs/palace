@@ -1035,6 +1035,50 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   }
 }
 
+void PeriodicBoundaryData::SetUp(json &boundaries)
+{
+  auto periodic = boundaries.find("Periodic");
+  if (periodic == boundaries.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(periodic->is_array(),
+              "\"Periodic\" should specify an array in the configuration file!");
+  for (auto it = periodic->begin(); it != periodic->end(); ++it)
+  {
+    MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
+                "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
+                "configuration file!");
+    MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
+                "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
+                "configuration file!");
+    MFEM_VERIFY(it->find("Translation") != it->end(),
+                "Missing \"Translation\" vector for \"Periodic\" boundary in the "
+                "configuration file!");
+    PeriodicData &data = vecdata.emplace_back();
+    data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
+    data.receiver_attributes =
+        it->at("ReceiverAttributes").get<std::vector<int>>();               // Required
+    data.translation = it->at("Translation").get<std::array<double, 3>>();  // Required
+
+    // Cleanup
+    it->erase("DonorAttributes");
+    it->erase("ReceiverAttributes");
+    it->erase("Translation");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"Periodic\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
+      std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
+      std::cout << "Translation: " << data.translation << '\n';
+    }
+  }
+}
+
 // Helper for converting string keys to enum for WavePortData::EigenSolverType.
 PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
                            {{WavePortData::EigenSolverType::DEFAULT, "Default"},
@@ -1335,6 +1379,7 @@ void BoundaryData::SetUp(json &config)
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
   lumpedport.SetUp(*boundaries);
+  periodic.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
@@ -1383,6 +1428,7 @@ void BoundaryData::SetUp(json &config)
   boundaries->erase("Conductivity");
   boundaries->erase("Impedance");
   boundaries->erase("LumpedPort");
+  boundaries->erase("Periodic");
   boundaries->erase("WavePort");
   boundaries->erase("SurfaceCurrent");
   boundaries->erase("Ground");

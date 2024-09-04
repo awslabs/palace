@@ -3,16 +3,12 @@
   {
     "Type": "Eigenmode",
     "Verbose": 2,
-    "Output": "postpro/impedance"
+    "Output": "postpro/cavity_impedance"
   },
   "Model":
   {
-    "Mesh": "mesh/cavity_prism.msh",
+    "Mesh": "mesh/cylinder_prism.msh",
     "L0": 1.0e-2,  // cm
-    "Refinement":
-    {
-      "UniformLevels": 1
-    }
   },
   "Domains":
   {
@@ -41,7 +37,7 @@
     "Impedance":
     [
       {
-        "Attributes": [2],
+        "Attributes": [2, 3, 4],
         "Rs": 0.0184   // Ω, surface resistance of Cu @ 5 GHz
       }
     ]

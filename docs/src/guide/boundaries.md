@@ -68,6 +68,15 @@ information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
 
+## Periodic boundary
+
+Periodic boundary conditions on an existing mesh can be specified using the
+["Periodic"](../config/boundaries.md#boundaries%5B%22Periodic%22%5D) boundary keyword. This
+boundary condition enforces that the solution on the specified boundaries be exactly equal,
+and requires that the surface meshes on the donor and receiver boundaries be identical up to
+translation. Periodicity in *Palace* is also supported through meshes generated
+incorporating periodicity as part of the meshing process.
+
 ## Lumped and wave port excitation
 
   - [`config["Boundaries"]["LumpedPort"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D) :

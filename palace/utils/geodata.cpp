@@ -39,7 +39,8 @@ namespace
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
+                                     const config::BoundaryData &);
 
 // Clean the provided serial mesh by removing unused domain and boundary elements.
 void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &, bool = true);
@@ -54,12 +55,12 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
 void ReorderMeshElements(mfem::Mesh &, bool = true);
 
 // Check that mesh boundary conditions are given for external boundaries.
-std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const std::vector<int> &);
+std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::BoundaryData &);
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &, std::unordered_map<int, int> &,
-                            const std::vector<int> &, bool, double, bool);
+                            const IoData &);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -121,7 +122,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     if ((use_mesh_partitioner && Mpi::Root(comm)) ||
         (!use_mesh_partitioner && Mpi::Root(node_comm)))
     {
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
@@ -187,27 +188,18 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
 
     // Check the final mesh, throwing warnings if there are exterior boundaries with no
     // associated boundary condition.
-    auto face_to_be = CheckMesh(*smesh, iodata.boundaries.attributes);
+    auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
 
     // Add new boundary elements for material interfaces if not present (with new unique
     // boundary attributes). Also duplicate internal boundary elements associated with
     // cracks if desired.
     if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
     {
-      std::vector<int> crack_bdr_attr_list;
-      if (iodata.model.crack_bdr_elements)
-      {
-        // Split all internal boundary elements for boundary attributes where BC are
-        // applied (not just postprocessing).
-        crack_bdr_attr_list = iodata.boundaries.attributes;
-      }
-      int success = 0;
-      while (!success)
+      // Split all internal (non periodic) boundary elements for boundary attributes where
+      // BC are applied (not just postprocessing).
+      while (AddInterfaceBdrElements(smesh, face_to_be, iodata) != 1)
       {
         // May require multiple calls due to early exit/retry approach.
-        success = AddInterfaceBdrElements(
-            smesh, face_to_be, crack_bdr_attr_list, iodata.model.refine_crack_elements,
-            iodata.model.crack_displ_factor, iodata.model.add_bdr_elements);
       }
     }
 
@@ -287,7 +279,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     }
     int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
     std::unique_ptr<mfem::Mesh> gsmesh =
-        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
     std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
     mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
     {
@@ -1727,7 +1719,8 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
 namespace
 {
 
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature)
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature,
+                                     const config::BoundaryData &boundaries)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
@@ -1774,6 +1767,21 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   else
   {
     mesh->EnsureNodes();
+  }
+  if (!boundaries.periodic.empty())
+  {
+    auto periodic_mesh = std::move(mesh);
+    for (const auto &data : boundaries.periodic)
+    {
+      mfem::Vector translation(data.translation.size());
+      std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
+      auto periodic_mapping =
+          periodic_mesh->CreatePeriodicVertexMapping({translation}, 1E-6);
+      auto p_mesh = std::make_unique<mfem::Mesh>(
+          mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
+      periodic_mesh = std::move(p_mesh);
+    }
+    mesh = std::move(periodic_mesh);
   }
   return mesh;
 }
@@ -2281,30 +2289,48 @@ void ReorderMeshElements(mfem::Mesh &mesh, bool print)
   }
 }
 
-std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh)
+std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
+                                                    const config::BoundaryData &boundaries)
 {
   std::unordered_map<int, int> face_to_be;
   face_to_be.reserve(mesh.GetNBE());
   for (int be = 0; be < mesh.GetNBE(); be++)
   {
-    int f, o;
+    int f, o, e1 = -1, e2 = -1;
     mesh.GetBdrElementFace(be, &f, &o);
-    MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                "Mesh should not define boundary elements multiple times!");
+    if (!boundaries.periodic.empty())
+    {
+      int attr = mesh.GetBdrAttribute(be);
+      for (const auto &data : boundaries.periodic)
+      {
+        const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
+        auto donor = std::find(da.begin(), da.end(), attr) != da.end();
+        auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
+        if (donor || receiver)
+        {
+          mesh.GetFaceElements(f, &e1, &e2);
+          MFEM_VERIFY(e1 >= 0 && e2 >= 0,
+                      "Mesh is not periodic on attribute " << attr << "!");
+        }
+      }
+    }
+    MFEM_VERIFY((e1 >= 0 && e2 >= 0) || face_to_be.find(f) == face_to_be.end(),
+                "A non-periodic face (" << f << ") cannot have multiple boundary elements");
     face_to_be[f] = be;
   }
   return face_to_be;
 }
 
 std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
-                                       const std::vector<int> &bdr_attr_list)
+                                       const config::BoundaryData &boundaries)
 {
   // Check for:
   //   (1) Boundary elements with no prescribed boundary condition, and
   //   (2) Boundary faces which have no boundary element.
-  auto bdr_marker = mesh::AttrToMarker(
-      mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, bdr_attr_list, true);
-  std::unordered_map<int, int> face_to_be = GetFaceToBdrElementMap(mesh);
+  auto bdr_marker =
+      mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
+                         boundaries.attributes, true);
+  std::unordered_map<int, int> face_to_be = GetFaceToBdrElementMap(mesh, boundaries);
   std::unordered_set<int> bdr_warn_list;
   int bdr_face_warn = 0;
   for (int f = 0; f < mesh.GetNumFaces(); f++)
@@ -2434,19 +2460,19 @@ struct UnorderedPairHasher
 };
 
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            std::unordered_map<int, int> &face_to_be,
-                            const std::vector<int> &crack_bdr_attr_list,
-                            bool refine_crack_elem, double crack_displ_factor,
-                            bool add_bdr_elem)
+                            std::unordered_map<int, int> &face_to_be, const IoData &iodata)
+// const std::vector<int> &crack_bdr_attr_list,
+// bool refine_crack_elem, double crack_displ_factor,
+// bool add_bdr_elem)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
-  if (crack_bdr_attr_list.empty() && !add_bdr_elem)
+  if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)
   {
     return 1;  // Success
   }
   if (face_to_be.size() != static_cast<std::size_t>(orig_mesh->GetNBE()))
   {
-    face_to_be = GetFaceToBdrElementMap(*orig_mesh);
+    face_to_be = GetFaceToBdrElementMap(*orig_mesh, iodata.boundaries);
   }
   int new_nv = orig_mesh->GetNV();
   int new_nbe = orig_mesh->GetNBE();
@@ -2459,11 +2485,11 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!crack_bdr_attr_list.empty())
+  if (!iodata.boundaries.attributes.empty())
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
-        crack_bdr_attr_list, true);
+        iodata.boundaries.attributes, true);
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       if (crack_bdr_marker[orig_mesh->GetBdrAttribute(be) - 1])
@@ -2584,7 +2610,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // attached to crack boundary elements). A previous implementation of refinement
     // considered for refinement just all boundary elements with all attached vertices
     // lying on the seam, but this doesn't catch all required cases.
-    if (refine_crack_elem)
+    if (iodata.model.refine_crack_elements)
     {
       std::unordered_map<UnorderedPair<int>, std::vector<int>, UnorderedPairHasher<int>>
           coarse_crack_edge_to_be;
@@ -2715,7 +2741,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   // Add new boundary elements at material interfaces or on the exterior boundary of the
   // simulation domain, if there is not already a boundary element present.
   std::unordered_map<int, int> new_face_bdr_elem;
-  if (add_bdr_elem)
+  if (iodata.model.add_bdr_elements)
   {
     int new_nbe_ext = 0, new_nbe_int = 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
@@ -2793,7 +2819,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // Add duplicated vertices from interior boundary cracking, renumber the vertices of
   // domain and boundary elements to tear the mesh, and add new crack boundary elements.
-  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty())
+  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty())
   {
     // Add duplicate vertices. We assign the vertex number of the duplicated vertex in order
     // to update the element connectivities in the next step.
@@ -2903,7 +2929,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
 
   // Add new boundary elements.
-  if (add_bdr_elem && !new_face_bdr_elem.empty())
+  if (iodata.model.add_bdr_elements && !new_face_bdr_elem.empty())
   {
     // Some (1-based) boundary attributes may be empty since they were removed from the
     // original mesh, but to keep attributes the same as config file we don't compress the
@@ -2999,7 +3025,8 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   // perturbation to separate the duplicated boundary elements on either side and prevent
   // them from lying exactly on top of each other. This is mostly just for visualization
   // and can be increased in magnitude for debugging.
-  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty() && crack_displ_factor > 0.0)
+  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty() &&
+      iodata.model.crack_displ_factor > 0.0)
   {
     // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.
     mfem::GridFunction *nodes = new_mesh->GetNodes();
@@ -3110,8 +3137,8 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // Scale and apply the displacements. We don't need to do anything special to constrain
     // the displacements at seam vertices (and associated high-order nodes on seam edges) to
     // to zero, because the normals from both sides will average out to zero.
-    displacements *=
-        (crack_displ_factor * h_min / (nodes ? nodes->FESpace()->GetMaxElementOrder() : 1));
+    displacements *= (iodata.model.crack_displ_factor * h_min /
+                      (nodes ? nodes->FESpace()->GetMaxElementOrder() : 1));
     new_mesh->MoveNodes(displacements);
   }
 

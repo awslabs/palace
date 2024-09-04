@@ -112,8 +112,8 @@ for mesh_type ∈ [0, 1, 2]
     println("k_f_TM_010 =", map(x -> round.(x, digits=2), k_f_TM_010))
     println("k_f_TE_111 =", map(x -> round.(x, digits=2), k_f_TE_111))
 
-    cavity_dir = @__DIR__
-    output_dir = joinpath(cavity_dir, "postpro", "convergence")
+    cylinder_dir = @__DIR__
+    output_dir = joinpath(cylinder_dir, "postpro", "convergence")
     lmesh_name = lowercase(mesh_name)
 
     savefig(pp, joinpath(output_dir, string("cavity_error_", lmesh_name, ".png")))

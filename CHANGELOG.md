@@ -30,6 +30,12 @@ The format of this changelog is based on
     as the recovered smooth fields do not enforce additional erroneous continuity at
     internal boundaries. This will change the default behaviour in the case of internal
     impedance boundary conditions, and can be disabled by setting this option to false.
+  - Added support for exact periodic boundary conditions, these can be specified as part of
+    the mesh file (where supported by the format) or by specification of `"DonorAttributes"`
+    and `"ReceiverAttributes"` in `config["Boundaries"]["Periodic"]` which will attempt to
+    match the mesh on the boundaries specified by the donor and receiver attributes. This is
+    only possible the mesh on the donor and receiver match exactly, non-matching meshes are
+    not supported.
 
 ## [0.13.0] - 2024-05-20
 

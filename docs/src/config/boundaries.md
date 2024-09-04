@@ -56,6 +56,10 @@
     [
         ...
     ],
+    "Periodic":
+    [
+        ...
+    ],
     "Postprocessing":
     {
         "SurfaceFlux":
@@ -119,6 +123,9 @@ surface.
 `"Terminal"` :  Array of objects for configuring terminal boundary conditions for
 electrostatic simulations. Entries of the capacitance matrix are extracted corresponding to
 each terminal boundary.
+
+`"Periodic"` :  Array of objects for configuring periodic boundary conditions for surfaces
+with meshes that are identical after a specified translation.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
 
@@ -497,6 +504,31 @@ to index the computed capacitance matrix.
 
 `"Attributes" [None]` :  Integer array of mesh boundary attributes for this terminal
 boundary.
+
+## `boundaries["Periodic"]`
+
+```json
+"Periodic":
+[
+    {
+        "DonorAttributes": [<int array>],
+        "ReceiverAttributes": [<int array>],
+        "Translation": [<float array>]
+    },
+    ...
+]
+```
+
+with
+
+`"DonorAttributes" [None]` :  Integer array of the donor attributes of the mesh boundary
+attributes for this periodic boundary.
+
+`"ReceiverAttributes" [None]` :  Integer array of the receiver attributes of the mesh boundary
+attributes for this periodic boundary.
+
+`"Translation" [None]` :  Defines the distance between the donor and receiver attributes in
+mesh units.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 
