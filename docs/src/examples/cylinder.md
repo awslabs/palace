@@ -115,7 +115,7 @@ the above formula for this problem are listed in the table below.
 | ``(2,1,2)`` | ``5.290341\text{ GHz}`` | ``7.269033\text{ GHz}`` |
 
 First, we examine the output of the `cavity_pec.json` simulation. The file
-`postpro/pec/eig.csv` contains information about the computed eigenfrequencies and
+`postpro/cavity_pec/eig.csv` contains information about the computed eigenfrequencies and
 associated quality factors:
 
 ```
@@ -142,7 +142,7 @@ obtained by *Palace*. Since the only source of loss in the simulation is the non
 dielectric loss tangent, we have ``Q = Q_d = 1/0.0004 = 2.50\times 10^3`` in all cases.
 
 Next, we run `cavity_impedance.json`, which  adds the surface impedance boundary condition.
-Examining `postpro/impedance/eig.csv` we see that the mode frequencies are roughly
+Examining `postpro/cavity_impedance/eig.csv` we see that the mode frequencies are roughly
 unchanged but the quality factors have fallen due to the addition of imperfectly conducting
 walls to the model:
 
@@ -166,7 +166,7 @@ walls to the model:
 ```
 
 However, the bulk dielectric loss postprocessing results, computed from the energies written
-to `postpro/impedance/domain-E.csv`, still give ``Q_d = 1/0.004 = 2.50\times 10^3`` for
+to `postpro/cavity_impedance/domain-E.csv`, still give ``Q_d = 1/0.004 = 2.50\times 10^3`` for
 every mode as expected.
 
 Focusing on the ``\text{TE}_{011}`` mode with ``f_{\text{TE},010} = 5.00\text{ GHz}``, we
@@ -221,23 +221,24 @@ may only become significant on sufficiently refined meshes.
 
 This example demonstrates the eigenmode simulation type in  *Palace* to solve for the
 cutoff-frequencies of a circular waveguide. As with the cavity the interior material to be
-Silicon (``\varepsilon_r = 2.08``,
-``\tan\delta = 4\times 10^{-4}``), with cylindrical domain radius ``a = 2.74\text{ cm}``,
-and length ``d=2*a = 5.48\text{ cm}``.
-Periodic boundary conditions (BCs) are applied in the $z$-direction.
-According to [[1]](#References), the cutoff frequencies for the transverse electric and
-magnetic modes are given by the formulae:
+Silicon (``\varepsilon_r = 2.08``, ``\tan\delta = 4\times 10^{-4}``), with cylindrical
+domain radius ``a = 2.74\text{ cm}``, and length ``d=2a = 5.48\text{ cm}``, however now
+periodic boundary conditions are applied in the $z$-direction. According to
+[[1]](#References), the cutoff frequencies for the transverse electric and magnetic modes
+are given by the formulae:
 
 ```math
-f_{\text{TE},nm} = \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p'_{nm}}{a} \qquad
-f_{\text{TM},nm} = \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p_{nm}}{a}
+\begin{aligned}
+f_{\text{TE},nm} &= \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p'_{nm}}{a}\\
+f_{\text{TM},nm} &= \frac{1}{2\pi\sqrt{\mu\varepsilon}} \frac{p_{nm}}{a}
+\end{aligned}
 ```
 
 which are identical to those for the cavity modes, in the special case of ``l=0``.
 
 In addition to these pure waveguide modes, there are aliasing cavity
-modes corresponding to a full wavelength in the computational domain (``l==2``). In a
-practical problem these are suppressed by choosing a smaller value of ``d`` which shifts
+modes corresponding to a full wavelength in the computational domain (``l=2``). In a
+practical problem these can be suppressed by choosing a smaller value of ``d`` which shifts
 such modes to higher frequencies. The relevant modes are tabulated as
 
 | ``(n,m,l)`` | ``f_{\text{TE}}``       | ``f_{\text{TM}}``       |
@@ -263,6 +264,9 @@ in the `"Boundaries"` object: `waveguide.json` specifies a perfect electric cond
 attribute pairs are defined by `"DonorAttributes"` and `"ReceiverAttributes"`, and the
 distance between them is given by the `"Translation"` vector in mesh units.
 
+The file `postpro/waveguide/eig.csv` contains information about the computed eigenfrequencies and
+associated quality factors:
+
 ```
                m,             Re{f} (GHz),             Im{f} (GHz),                       Q,
  1.000000000e+00,        +2.223255722e+00,        +4.446511256e-04,        +2.500000155e+03,
@@ -285,10 +289,10 @@ distance between them is given by the `"Translation"` vector in mesh units.
 ```
 
 In common with the PEC cavity ``Q = Q_d = 1/0.0004 = 2.50\times 10^3`` in all cases, and all
-the anticipated waveguide modes are recovered with ``TE_{1,1}`` having the lowest cutoff
-frequency followed by ``TM_{0,1}`` and ``TE_{2,1}``, while the aliasing mode ``TE_{1,1,2}`` has
-marginally lower frequency than the waveguide modes ``TE_{0,1}`` and ``TM_{1,1}``
-(``4.397\text{ GHz}`` compared to ``4.627\text{ GHz}``).
+the anticipated waveguide modes are recovered with ``\text{TE}_{1,1}`` having the lowest
+cutoff frequency followed by ``\text{TM}_{0,1}`` and ``\text{TE}_{2,1}``, while the aliasing
+mode ``\text{TE}_{1,1,2}`` has marginally lower frequency than the waveguide modes
+``\text{TE}_{0,1}`` and ``\text{TM}_{1,1}`` (``4.397\text{ GHz}`` compared to ``4.627\text{ GHz}``) and is thus found first.
 
 ## References
 
