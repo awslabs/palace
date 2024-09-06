@@ -177,9 +177,10 @@ else()
   list(REMOVE_DUPLICATES _BLAS_LAPACK_DIRS)
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
     NAMES cblas.h
-    HINTS ${_BLAS_LAPACK_DIRS}
+    PATHS ${_BLAS_LAPACK_DIRS}
     PATH_SUFFIXES include include/openblas
     REQUIRED
+    NO_DEFAULT_PATH
   )
   message(STATUS "Using BLAS/LAPACK located by CMake")
 endif()
