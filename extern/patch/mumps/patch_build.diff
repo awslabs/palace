@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 637122a..9306afa 100644
+index 3be37f8..193e8b5 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -43,10 +43,7 @@ find_package(Threads)
+@@ -48,10 +48,7 @@ find_package(Threads)
  
  if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
@@ -14,7 +14,7 @@ index 637122a..9306afa 100644
    set(NUMERIC_LIBS LAPACK::LAPACK)
  
    if(scalapack)
-@@ -94,15 +91,6 @@ endif()
+@@ -99,15 +96,6 @@ endif()
  
  list(APPEND ORDERING_LIBS pord)
  
@@ -539,7 +539,7 @@ index 8647696..0000000
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index f8c4cdc..718a510 100644
+index 9b2e056..166d05f 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
 @@ -52,8 +52,6 @@ References
@@ -668,12 +668,12 @@ index 3f0997e..14ebbe6 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index f4d1a70..7238c21 100644
+index 21503e7..78c9dda 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
 @@ -3,27 +3,7 @@ include(GNUInstallDirs)
  
- if(find)
+ if(find AND NOT TARGET SCALAPACK::SCALAPACK)
  
 -if(NOT DEFINED SCALAPACK_VENDOR)
 -  if(LAPACK_VENDOR MATCHES "^MKL")
