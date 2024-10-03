@@ -35,7 +35,7 @@ class WavePortOperator;
 //
 class PostOperator
 {
-private:
+public:
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 

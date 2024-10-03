@@ -24,7 +24,8 @@ class SpaceOperator;
 //
 class RomOperator
 {
-private:
+  // TODO: private:
+public:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
@@ -39,6 +40,7 @@ private:
   // PROM matrices and vectors.
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
   Eigen::VectorXcd RHS1r, RHSr;
+  Eigen::VectorXd voltage_norm_H;  // Normalization
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
@@ -70,7 +72,7 @@ public:
   void SolveHDM(double omega, ComplexVector &u);
 
   // Add the solution vector to the reduced-order basis and update the PROM.
-  void UpdatePROM(double omega, const ComplexVector &u);
+  void UpdatePROM(bool add_to_mri, double omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
