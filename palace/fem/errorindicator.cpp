@@ -38,10 +38,9 @@ void ErrorIndicator::AddIndicator(const Vector &indicator)
   const int Dn = n;
   const auto *DI = indicator.Read();
   auto *DL = local.ReadWrite();
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i) {
-                        DL[i] = std::sqrt((DL[i] * DL[i] * Dn + DI[i] * DI[i]) / (Dn + 1));
-                      });
+  mfem::forall_switch(
+      use_dev, N, [=] MFEM_HOST_DEVICE(int i)
+      { DL[i] = std::sqrt((DL[i] * DL[i] * Dn + DI[i] * DI[i]) / (Dn + 1)); });
 
   // More samples have been added, update for the running average.
   n += 1;
