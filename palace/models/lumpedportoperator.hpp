@@ -42,7 +42,8 @@ public:
 
   // Lumped port properties.
   double R, L, C;
-  bool excitation, active;
+  bool active;
+  int excitation;
 
   // TODO: private:
 public:

@@ -17,6 +17,8 @@ class ParMesh;
 namespace palace
 {
 
+std::stringstream PreprocessFile(const char *filename);
+
 //
 // A parser class for processing the configuration file which controls runtime options.
 //

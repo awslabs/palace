@@ -552,7 +552,7 @@ struct CurrentData
 struct PortVIData
 {
   const int idx;                        // Lumped port index
-  const bool excitation;                // Flag for excited ports
+  const int excitation;                 // Flag for excited ports
   const double V_inc, I_inc;            // Incident voltage, current
   const std::complex<double> V_i, I_i;  // Port voltage, current
 };
