@@ -193,6 +193,8 @@ public:
   bool GetExcitationVector(Vector &RHS);
   bool GetExcitationVector(double omega, ComplexVector &RHS);
 
+  bool GetLumpedPortExcitationVector(int port_idx, ComplexVector &RHS, bool zero_metal);
+
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether
   // or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(ComplexVector &RHS1);

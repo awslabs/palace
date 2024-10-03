@@ -367,6 +367,8 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   {
     for (const auto &elem : data.elems)
     {
+      // TODO: Mpi::Print(" Element w {:.3e}, l {}, size {}", elem->GetGeometryWidth(),
+      //            elem->GetGeometryLength(), data.elems.size());
       for (auto attr : elem->GetAttrList())
       {
         mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);

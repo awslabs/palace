@@ -271,7 +271,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
+void RomOperator::UpdatePROM(bool add_to_mri, double omega, const ComplexVector &u)
 {
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
@@ -285,12 +285,14 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
               "Unable to increase basis storage size, increase maximum number of vectors!");
   const std::size_t dim_V0 = dim_V;
   std::vector<double> H(dim_V + has_real + has_imag);
+  voltage_norm_H.conservativeResize(dim_V + has_real + has_imag);
   if (has_real)
   {
     V[dim_V] = u.Real();
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = add_to_mri ? 1.0 : H[dim_V];
     dim_V++;
   }
   if (has_imag)
@@ -299,9 +301,9 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = add_to_mri ? 1.0 : H[dim_V];
     dim_V++;
   }
-
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
@@ -321,6 +323,11 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
   }
   RHSr.resize(dim_V);
+
+  if (!add_to_mri)
+  {
+    return;
+  }
 
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
