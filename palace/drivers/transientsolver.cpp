@@ -368,7 +368,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &post_op,
         (std::abs(V_inc) > 0.0) ? data.GetExcitationPower() * J_coef * J_coef / V_inc : 0.0;
     const double V_i = post_op.GetPortVoltage(lumped_port_op, idx).real();
     const double I_i = post_op.GetPortCurrent(lumped_port_op, idx).real();
-    port_data.push_back({idx, data.excitation,
+    port_data.push_back({idx, data.excitation != 0,
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_inc),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc),
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
