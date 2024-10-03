@@ -231,7 +231,13 @@ void IoData::CheckConfiguration()
   // problem type.
   if (problem.type == config::ProblemData::Type::DRIVEN)
   {
-    // No unsupported domain or boundary objects for frequency domain driven simulations.
+    // Can't synthesize circuit with wave-ports since sysm is not LRC quadratic.
+    if (solver.driven.adaptive_synthesize_circuit &&
+        (!boundaries.auxpec.empty() || !boundaries.waveport.empty()))
+    {
+      Mpi::Warning("Driven system with circuit synthesis does not support wave port "
+                   "boundary conditions!\n");
+    }
   }
   else if (problem.type == config::ProblemData::Type::EIGENMODE)
   {

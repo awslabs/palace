@@ -659,6 +659,9 @@ public:
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;
 
+  // Return circuit matrices from port with port excitation vectors
+  bool adaptive_synthesize_circuit = false;
+
   void SetUp(json &solver);
 };
 
