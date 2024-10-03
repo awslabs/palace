@@ -375,9 +375,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int it = 2, it0 = it, memory = 0;
+  int it = 2;
+  int it0 = it;
+  int memory = 0;
   std::vector<double> max_errors = {0.0, 0.0};
-  while (true)
+  for (; it < max_size; it++)
   {
     // Compute the location of the maximum error in parameter domain (bounded by the
     // previous samples).
@@ -391,20 +393,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
                          linalg::Norml2(space_op.GetComm(), E));
     if (max_errors.back() < offline_tol)
     {
-      if (++memory == convergence_memory)
-      {
-        break;
-      }
+      ++memory;
     }
     else
     {
       memory = 0;
     }
-    if (it == max_size)
-    {
-      break;
-    }
-
     // Sample HDM and add solution to basis.
     Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
                "{:.3e}{}\n",
@@ -414,7 +408,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
                    ? ""
                    : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
     UpdatePROM(omega_star);
-    it++;
+    if (memory == convergence_memory)  // converged
+    {
+      break;
+    }
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
              " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
