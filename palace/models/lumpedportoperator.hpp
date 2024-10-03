@@ -4,9 +4,11 @@
 #ifndef PALACE_MODELS_LUMPED_PORT_OPERATOR_HPP
 #define PALACE_MODELS_LUMPED_PORT_OPERATOR_HPP
 
+#include <algorithm>
 #include <complex>
 #include <map>
 #include <memory>
+#include <ranges>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
@@ -61,6 +63,10 @@ public:
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
 
+  bool has_R() const { return std::abs(R) > 0.0; }
+  bool has_L() const { return std::abs(L) > 0.0; }
+  bool has_C() const { return std::abs(C) > 0.0; }
+
   enum class Branch
   {
     TOTAL,
@@ -88,11 +94,28 @@ private:
   // Mapping from port index to data structure containing port information and methods to
   // calculate circuit properties like voltage and current on lumped or multielement lumped
   // ports.
-  std::map<int, LumpedPortData> ports;
+  std::map<int, LumpedPortData> ports = {};
 
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
                                const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+
+  // Returns array of lumped port attributes.
+  template <typename ViewFilterLike>
+  mfem::Array<int> GetAttrList(ViewFilterLike &&data_filter) const
+  {
+    mfem::Array<int> attr_list;
+    for (const auto &elem :
+         ports | std::views::values |
+             std::views::filter([](auto &data) { return data.active; }) |
+             std::forward<ViewFilterLike>(data_filter) |
+             std::views::transform([](auto &data) -> auto & { return data.elems; }) |
+             std::views::join)
+    {
+      attr_list.Append(elem->GetAttrList());
+    }
+    return attr_list;
+  };
 
 public:
   LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
@@ -106,11 +129,20 @@ public:
   auto rend() const { return ports.rend(); }
   auto Size() const { return ports.size(); }
 
-  // Returns array of lumped port attributes.
-  mfem::Array<int> GetAttrList() const;
-  mfem::Array<int> GetRsAttrList() const;
-  mfem::Array<int> GetLsAttrList() const;
-  mfem::Array<int> GetCsAttrList() const;
+  // Get attributes with filters
+  auto GetAttrList() const { return GetAttrList(std::views::all); }
+  auto GetRsAttrList() const
+  {
+    return GetAttrList(std::views::filter([](auto &data) { return data.has_R(); }));
+  }
+  auto GetLsAttrList() const
+  {
+    return GetAttrList(std::views::filter([](auto &data) { return data.has_L(); }));
+  }
+  auto GetCsAttrList() const
+  {
+    return GetAttrList(std::views::filter([](auto &data) { return data.has_C(); }));
+  }
 
   // Add contributions to system matrices from lumped elements with nonzero inductance,
   // resistance, and/or capacitance.

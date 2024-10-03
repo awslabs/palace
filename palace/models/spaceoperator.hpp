@@ -61,6 +61,9 @@ private:
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
 
+  // Helper class for source excitations specified above.
+  PortExcitationManager port_excitation_manager;
+
   mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
@@ -109,12 +112,15 @@ public:
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
 
   // Access to underlying BC operator objects for postprocessing.
-  auto &GetLumpedPortOp() { return lumped_port_op; }
+  // TODO(PhD): Reconsider const-qual
+  // auto &GetLumpedPortOp() { return lumped_port_op; }
+  // Need mutable wave-ports to turn off wave-ports for offline PROM construction:
   auto &GetWavePortOp() { return wave_port_op; }
-  auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  // auto &GetSurfaceCurrentOp() { return surf_j_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetPortExcitationManager() const { return port_excitation_manager; }
 
   PortExcitationHelper BuildPortExcitationHelper() const
   {
@@ -212,7 +218,8 @@ public:
   void GetConstantInitialVector(ComplexVector &v);
 
   // Get the associated MPI communicator.
-  MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
+  MPI_Comm GetComm() const {
+    return GetNDSpace().GetComm(); }
 };
 
 }  // namespace palace

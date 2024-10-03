@@ -3,6 +3,7 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <ranges>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -66,7 +67,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   }
 
   // Populate the property data for the lumped port.
-  if (std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) == 0.0)
+  if (has_circ)
   {
     R = data.R;
     L = data.L;
@@ -317,32 +318,35 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                  const MaterialOperator &mat_op,
                                                  const mfem::ParMesh &mesh)
 {
-  // Check that lumped port boundary attributes have been specified correctly.
-  if (!iodata.boundaries.lumpedport.empty())
+  if (iodata.boundaries.lumpedport.empty())
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
-    bdr_attr_marker = 0;
-    port_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    return;
+  }
+
+  // Check that lumped port boundary attributes have been specified correctly.
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+  mfem::Array<int> port_marker(bdr_attr_max);
+  bdr_attr_marker = 0;
+  port_marker = 0;
+  for (auto attr : mesh.bdr_attributes)
+  {
+    bdr_attr_marker[attr - 1] = 1;
+  }
+  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  {
+    for (const auto &elem : data.elements)
     {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
-    {
-      for (const auto &elem : data.elements)
+      for (auto attr : elem.attributes)
       {
-        for (auto attr : elem.attributes)
-        {
-          MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-                      "Port boundary attribute tags must be non-negative and correspond to "
-                      "boundaries in the mesh!");
-          MFEM_VERIFY(bdr_attr_marker[attr - 1],
-                      "Unknown port boundary attribute " << attr << "!");
-          MFEM_VERIFY(!data.active || !port_marker[attr - 1],
-                      "Boundary attribute is assigned to more than one lumped port!");
-          port_marker[attr - 1] = 1;
-        }
+        MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+                    "Port boundary attribute tags must be non-negative and correspond to "
+                    "boundaries in the mesh!");
+        MFEM_VERIFY(bdr_attr_marker[attr - 1],
+                    "Unknown port boundary attribute " << attr << "!");
+        MFEM_VERIFY(!data.active || !port_marker[attr - 1],
+                    "Boundary attribute is assigned to more than one lumped port!");
+        port_marker[attr - 1] = 1;
       }
     }
   }
@@ -490,83 +494,6 @@ const LumpedPortData &LumpedPortOperator::GetPort(int idx) const
   auto it = ports.find(idx);
   MFEM_VERIFY(it != ports.end(), "Unknown lumped port index requested!");
   return it->second;
-}
-
-mfem::Array<int> LumpedPortOperator::GetAttrList() const
-{
-  mfem::Array<int> attr_list;
-  for (const auto &[idx, data] : ports)
-  {
-    if (!data.active)
-    {
-      continue;
-    }
-    for (const auto &elem : data.elems)
-    {
-      attr_list.Append(elem->GetAttrList());
-    }
-  }
-  return attr_list;
-}
-
-mfem::Array<int> LumpedPortOperator::GetRsAttrList() const
-{
-  mfem::Array<int> attr_list;
-  for (const auto &[idx, data] : ports)
-  {
-    if (!data.active)
-    {
-      continue;
-    }
-    if (std::abs(data.R) > 0.0)
-    {
-      for (const auto &elem : data.elems)
-      {
-        attr_list.Append(elem->GetAttrList());
-      }
-    }
-  }
-  return attr_list;
-}
-
-mfem::Array<int> LumpedPortOperator::GetLsAttrList() const
-{
-  mfem::Array<int> attr_list;
-  for (const auto &[idx, data] : ports)
-  {
-    if (!data.active)
-    {
-      continue;
-    }
-    if (std::abs(data.L) > 0.0)
-    {
-      for (const auto &elem : data.elems)
-      {
-        attr_list.Append(elem->GetAttrList());
-      }
-    }
-  }
-  return attr_list;
-}
-
-mfem::Array<int> LumpedPortOperator::GetCsAttrList() const
-{
-  mfem::Array<int> attr_list;
-  for (const auto &[idx, data] : ports)
-  {
-    if (!data.active)
-    {
-      continue;
-    }
-    if (std::abs(data.C) > 0.0)
-    {
-      for (const auto &elem : data.elems)
-      {
-        attr_list.Append(elem->GetAttrList());
-      }
-    }
-  }
-  return attr_list;
 }
 
 void LumpedPortOperator::AddStiffnessBdrCoefficients(double coeff,

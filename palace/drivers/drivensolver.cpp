@@ -4,7 +4,7 @@
 #include "drivensolver.hpp"
 
 #include <complex>
-#include <iostream>
+#include <ranges>
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <Eigen/src/Core/IO.h>
@@ -114,66 +114,69 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
-  int step = step0;
-  double omega = omega0;
   auto t0 = Timer::Now();
-  while (step < n_step)
+  auto n_excitations = space_op.GetPortExcitationManager().Size();
+  for (int excitation_i = 1; excitation_i <= n_excitations; excitation_i++)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-    Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
-               n_step, freq, Timer::Duration(Timer::Now() - t0).count());
-
-    // Assemble and solve the linear system.
-    if (step > step0)
+    Mpi::Print("Sweeping Excitation {:d}/{:d}:\n", excitation_i, n_excitations);
+    double omega = omega0;
+    for (int step = step0; step < n_step; step++)
     {
-      // Update frequency-dependent excitation and operators.
-      A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-      A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                   std::complex<double>(-omega * omega, 0.0), K.get(),
-                                   C.get(), M.get(), A2.get());
-      P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
-                                                            omega);
-      ksp.SetOperators(*A, *P);
-    }
-    space_op.GetExcitationVector(omega, RHS);
-    Mpi::Print("\n");
-    ksp.Mult(RHS, E);
+      const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+      Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
+                 n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for all postprocessing operations.
+      // Assemble and solve the linear system.
+      if (step > step0)
+      {
+        // Update frequency-dependent excitation and operators.
+        A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+        A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                     std::complex<double>(-omega * omega, 0.0), K.get(),
+                                     C.get(), M.get(), A2.get());
+        P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
+                                                              omega);
+        ksp.SetOperators(*A, *P);
+      }
+      space_op.GetExcitationVector(omega, RHS);
+      Mpi::Print("\n");
+      ksp.Mult(RHS, E);
+
+      // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
+      // PostOperator for all postprocessing operations.
+      BlockTimer bt0(Timer::POSTPRO);
+      Curl.Mult(E.Real(), B.Real());
+      Curl.Mult(E.Imag(), B.Imag());
+      B *= -1.0 / (1i * omega);
+      post_op.SetEGridFunction(E);
+      post_op.SetBGridFunction(B);
+      post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
+      const double E_elec = post_op.GetEFieldEnergy();
+      const double E_mag = post_op.GetHFieldEnergy();
+      Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
+                 linalg::Norml2(space_op.GetComm(), E),
+                 linalg::Norml2(space_op.GetComm(), RHS));
+      {
+        const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+        Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                   E_mag * J, (E_elec + E_mag) * J);
+      }
+
+      // Calculate and record the error indicators.
+      Mpi::Print(" Updating solution error estimates\n");
+      estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
+
+      // Postprocess S-parameters and optionally write solution to disk.
+      Postprocess(post_op, space_op.GetLumpedPortOp(), space_op.GetWavePortOp(),
+                  space_op.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
+                  (step == n_step - 1) ? &indicator : nullptr);
+
+      // Increment frequency.
+      omega += delta_omega;
+    }
     BlockTimer bt0(Timer::POSTPRO);
-    Curl.Mult(E.Real(), B.Real());
-    Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(space_op.GetComm(), E),
-               linalg::Norml2(space_op.GetComm(), RHS));
-    {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-                 E_mag * J, (E_elec + E_mag) * J);
-    }
-
-    // Calculate and record the error indicators.
-    Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
-
-    // Postprocess S-parameters and optionally write solution to disk.
-    Postprocess(post_op, space_op.GetLumpedPortOp(), space_op.GetWavePortOp(),
-                space_op.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                (step == n_step - 1) ? &indicator : nullptr);
-
-    // Increment frequency.
-    step++;
-    omega += delta_omega;
+    SaveMetadata(ksp);
   }
-  BlockTimer bt0(Timer::POSTPRO);
-  SaveMetadata(ksp);
   return indicator;
 }
 
@@ -186,6 +189,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   int max_size = iodata.solver.driven.adaptive_max_size;
   MFEM_VERIFY(max_size <= 0 || max_size > 2,
               "Adaptive frequency sweep must sample at least two frequency points!");
+  // Fix this max size to include ports
   if (max_size <= 0)
   {
     max_size = 50;  // Default value
@@ -446,6 +450,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
 
     auto output_h = OutputFile(post_dir + "prom-voltage_norm_H.csv", false);
     output_h.print("{}", fmt::streamed(prom_op.voltage_norm_H.format(eigenio)));
+
+    // Print pivot-points
+    // Scale Lc, tc / scaling
   }
 
   return indicator;
