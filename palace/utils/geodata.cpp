@@ -2461,9 +2461,6 @@ struct UnorderedPairHasher
 
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, const IoData &iodata)
-// const std::vector<int> &crack_bdr_attr_list,
-// bool refine_crack_elem, double crack_displ_factor,
-// bool add_bdr_elem)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)
@@ -2485,7 +2482,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!iodata.boundaries.attributes.empty())
+  if (!iodata.boundaries.attributes.empty() && iodata.model.crack_bdr_elements)
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
