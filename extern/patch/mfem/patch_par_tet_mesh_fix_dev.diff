@@ -13,7 +13,7 @@ index e9dd07217..4129789bb 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index a32ba38e8..456f9618c 100644
+index cef4fa130..663abf933 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -2153,7 +2153,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
@@ -389,7 +389,7 @@ index a32ba38e8..456f9618c 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 73cf6124f..d737768b0 100644
+index 32708a78a..cf94746e3 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
@@ -410,7 +410,7 @@ index 73cf6124f..d737768b0 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index cc673f78e..0e9274ece 100644
+index 9556bcbd2..735d8f09c 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -446,7 +446,7 @@ index cc673f78e..0e9274ece 100644
 +   // vertex 0 - vertex 1 is the longest edge in the element. In the case of
 +   // ties in the edge length, the global edge index is used for a consistent
 +   // ordering between elements.
-+   Array<double> lengths;
++   Array<real_t> lengths;
 +   GetEdgeLengths2(v_to_v, lengths);
 +
 +   // Create a GroupCommunicator over shared edges
@@ -602,7 +602,7 @@ index cc673f78e..0e9274ece 100644
        {
           svert_master_rank[group_svert.GetRow(i)[j]] = rank;
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 05d81c618..6d4378578 100644
+index 05d81c618..328f35b3a 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
 @@ -13,6 +13,8 @@
@@ -691,9 +691,9 @@ index 05d81c618..6d4378578 100644
  
 +// @cond DOXYGEN_SKIP
 +
-+template void Tetrahedron::MarkEdge(const DSTable &, const Array<double> &,
++template void Tetrahedron::MarkEdge(const DSTable &, const Array<real_t> &,
 +                                    const Array<int> &);
-+template void Tetrahedron::MarkEdge(const DSTable &, const Array<double> &,
++template void Tetrahedron::MarkEdge(const DSTable &, const Array<real_t> &,
 +                                    const Array<std::int64_t> &);
 +
 +// @endcond
@@ -719,7 +719,7 @@ index 83665454e..d7ee8b419 100644
     void ResetTransform(int tr) override { transform = tr; }
     unsigned GetTransform() const override { return transform; }
 diff --git a/mesh/triangle.cpp b/mesh/triangle.cpp
-index 795425b46..da9cc741e 100644
+index 795425b46..2e5b30e1f 100644
 --- a/mesh/triangle.cpp
 +++ b/mesh/triangle.cpp
 @@ -11,6 +11,8 @@
@@ -823,9 +823,9 @@ index 795425b46..da9cc741e 100644
  
 +// @cond DOXYGEN_SKIP
 +
-+template void Triangle::MarkEdge(int *, const DSTable &, const Array<double> &,
++template void Triangle::MarkEdge(int *, const DSTable &, const Array<real_t> &,
 +                                 const Array<int> &);
-+template void Triangle::MarkEdge(int *, const DSTable &, const Array<double> &,
++template void Triangle::MarkEdge(int *, const DSTable &, const Array<real_t> &,
 +                                 const Array<std::int64_t> &);
 +
 +// @endcond
