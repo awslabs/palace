@@ -1467,25 +1467,26 @@ void BoundaryData::SetUp(json &config)
   farfield.SetUp(*boundaries);
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
-  auto lumpedport_info = lumpedport.SetUp(*boundaries);
+  auto lumpedport_setup_info = lumpedport.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
-  auto waveport_info = waveport.SetUp(*boundaries);
+  auto waveport_setup_info = waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
 
   // Ensure consistent excitation specifier
-  MFEM_VERIFY(
-      (lumpedport_info.excitation_input_is_bool == TriBool::Uninitalized ||
-       waveport_info.excitation_input_is_bool == TriBool::Uninitalized ||
-       lumpedport_info.excitation_input_is_bool == waveport_info.excitation_input_is_bool),
-      "\"Excitation\" on lumped and wave ports should be specified using "
-      "either integers or using bools, but not both!")
+  MFEM_VERIFY((lumpedport_setup_info.excitation_input_is_bool == TriBool::Uninitalized ||
+               waveport_setup_info.excitation_input_is_bool == TriBool::Uninitalized ||
+               lumpedport_setup_info.excitation_input_is_bool ==
+                   waveport_setup_info.excitation_input_is_bool),
+              "\"Excitation\" on lumped and wave ports should be specified using "
+              "either integers or using bools, but not both.")
 
   // Ensure unique indexing of lumpedport, waveport, current
   {
     std::vector<std::pair<int, std::string_view>> index_map;
-    std::string lumpedport_str =
-        (lumpedport_info.has_terminal_spec == TriBool::True) ? "Terminal" : "LumpedPort";
+    std::string lumpedport_str = (lumpedport_setup_info.has_terminal_spec == TriBool::True)
+                                     ? "Terminal"
+                                     : "LumpedPort";
     std::string waveport_str = "WavePort";
     std::string current_str = "SurfaceCurrent";
 
@@ -1507,6 +1508,7 @@ void BoundaryData::SetUp(json &config)
                 [](auto &a, auto &b) { return a.first < b.first; });
 
       // Check all duplicates / triplicates for pretty-printing warning: Two lag iterator
+      // Future: Can make this cleaner with C++20 std::views::chunk_by and filter.
       fmt::memory_buffer buf{};
       auto to = [&buf](auto f, auto &&...a)  // mini-lambda for cleaner code
       { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
