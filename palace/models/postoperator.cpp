@@ -522,7 +522,7 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
   const LumpedPortData &src_data = lumped_port_op.GetPort(source_idx);
   const auto it = lumped_port_vi.find(idx);
-  MFEM_VERIFY(src_data.excitation,
+  MFEM_VERIFY(src_data.excitation == source_idx,
               "Lumped port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != lumped_port_vi.end(),
               "Could not find lumped port when calculating port S-parameters!");
@@ -548,7 +548,7 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
   const WavePortData &data = wave_port_op.GetPort(idx);
   const WavePortData &src_data = wave_port_op.GetPort(source_idx);
   const auto it = wave_port_vi.find(idx);
-  MFEM_VERIFY(src_data.excitation,
+  MFEM_VERIFY(src_data.excitation == source_idx,
               "Wave port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != wave_port_vi.end(),
               "Could not find wave port when calculating port S-parameters!");

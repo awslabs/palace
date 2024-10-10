@@ -41,9 +41,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
   SpaceOperator space_op(iodata, mesh);
-
-  PortExcitationHelper excitation_helper(
-      space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), space_op.GetSurfaceCurrentOp());
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
   MFEM_VERIFY(!excitation_helper.Empty(), "No excitation specified for driven simulation!");
 
   int n_step = GetNumSteps(iodata.solver.driven.min_f, iodata.solver.driven.max_f,
