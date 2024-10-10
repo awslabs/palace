@@ -1534,18 +1534,18 @@ void BoundaryData::SetUp(json &config)
     PortExcitationHelper excitation_view(lumpedport, waveport, current);
     if (excitation_view.Size() == 1)
     {
-      auto ex = *excitation_view.excitations.begin();
-      auto n_lumped = ex.second.lumped_port.size();
-      auto n_wave = ex.second.wave_port.size();
-      auto n_current = ex.second.current_port.size();
+      auto ex = excitation_view.excitations.begin();
+      auto n_lumped = ex->second.lumped_port.size();
+      auto n_wave = ex->second.wave_port.size();
+      auto n_current = ex->second.current_port.size();
       if (n_current == 0 && n_lumped == 1 && n_wave == 0)
       {
-        int port_idx = ex.second.lumped_port.at(0);
+        int port_idx = ex->second.lumped_port.at(0);
         lumpedport.at(port_idx).excitation = port_idx;
       }
       else if (n_current == 0 && n_lumped == 0 && n_wave == 1)
       {
-        int port_idx = ex.second.wave_port.at(0);
+        int port_idx = ex->second.wave_port.at(0);
         waveport.at(port_idx).excitation = port_idx;
       }
     }
