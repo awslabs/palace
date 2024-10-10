@@ -466,7 +466,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   first = true;
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation == 0)
     {
       continue;
     }
@@ -635,7 +635,8 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddExcitationBdrCoefficients(SumVectorCoefficient &fb)
+void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
+                                                      SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
   // +2 iω/Z_s E_inc for a port boundary with an incident field E_inc. The chosen incident
@@ -645,7 +646,7 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(SumVectorCoefficient &fb)
   // works for time domain simulations requiring RHS -U_inc(t).
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation != excitation_idx)
     {
       continue;
     }
