@@ -208,7 +208,11 @@ error tolerance.
     "ExcitationWidth": <float>,
     "MaxTime": <float>,
     "TimeStep": <float>,
-    "SaveStep": <int>
+    "SaveStep": <int>,
+    "AdaptiveTimeStep": <bool>,
+    "Order": <int>,
+    "RelTol": <float>,
+    "AbsTol": <float>
 }
 ```
 
@@ -218,7 +222,7 @@ with
 the second-order system of differential equations. The available options are:
 
   - `"GeneralizedAlpha"` :  The second-order implicit generalized-``\alpha`` method with
-    ``\rho_\inf = 1.0``. This scheme is unconditionally stable.
+    ``\rho_{\inf} = 1.0``. This scheme is unconditionally stable.
   - `"NewmarkBeta"` :  The second-order implicit Newmark-``\beta`` method with
     ``\beta = 1/4`` and ``\gamma = 1/2``. This scheme is unconditionally stable.
   - `"CentralDifference"` :  The second-order explicit central difference method, obtained
@@ -226,6 +230,12 @@ the second-order system of differential equations. The available options are:
     case, the maximum eigenvalue of the system operator is estimated at the start of the
     simulation and used to restrict the simulation time step to below the maximum stability
     time step.
+  - `"ImplicitRK"` :  SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
+    ODE system for the electric and magnetic flux fields.
+  - `"ExplicitRK"` :  SUNDIALS ARKode explicit Runge-Kutta scheme applied to the first-order
+    ODE system for the electric and magnetic flux fields. In this case, the maximum
+    eigenvalue of the system operator is estimated at the start of the simulation and used to
+    restrict the simulation time step to below the maximum stability time step.
   - `"Default"` :  Use the default `"GeneralizedAlpha"` time integration scheme.
 
 `"Excitation" [None]` :  Controls the time dependence of the source excitation. The
@@ -259,6 +269,18 @@ start from rest at ``t = 0.0``.
 disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are
 saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+`"AdaptiveTimeStep" [true]` :  Enable adaptive time-stepping in the Runge-Kutta integrators.
+Only relevant when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"`.
+
+`"Order" [3]` :  Order of the Runge-Kutta integrators. Only relevant when `"Type"` is
+`"ExplicitRK"` or `"ImplicitRK"`.
+
+`"RelTol" [1e-3]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
+ when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"` and `"AdaptiveTimeStep"` is enabled.
+
+`"AbsTol" [1e-6]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
+ when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"` and `"AdaptiveTimeStep"` is enabled.
 
 ## `solver["Electrostatic"]`
 

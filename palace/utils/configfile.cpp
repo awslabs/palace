@@ -1608,7 +1608,9 @@ PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
                            {{TransientSolverData::Type::DEFAULT, "Default"},
                             {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
                             {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
-                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"}})
+                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"},
+                            {TransientSolverData::Type::EXPLICIT_RK, "ExplicitRK"},
+                            {TransientSolverData::Type::IMPLICIT_RK, "ImplicitRK"}})
 PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
     {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
@@ -1639,6 +1641,10 @@ void TransientSolverData::SetUp(json &solver)
   max_t = transient->at("MaxTime");     // Required
   delta_t = transient->at("TimeStep");  // Required
   delta_post = transient->value("SaveStep", delta_post);
+  rk_order = transient->value("Order", rk_order);
+  adaptive_dt = transient->value("AdaptiveTimeStep", adaptive_dt);
+  rel_tol = transient->value("RelTol", rel_tol);
+  abs_tol = transient->value("AbsTol", abs_tol);
 
   // Cleanup
   transient->erase("Type");
@@ -1648,6 +1654,10 @@ void TransientSolverData::SetUp(json &solver)
   transient->erase("MaxTime");
   transient->erase("TimeStep");
   transient->erase("SaveStep");
+  transient->erase("Order");
+  transient->erase("AdaptiveTimeStep");
+  transient->erase("RelTol");
+  transient->erase("AbsTol");
   MFEM_VERIFY(transient->empty(),
               "Found an unsupported configuration file keyword under \"Transient\"!\n"
                   << transient->dump(2));
@@ -1662,6 +1672,10 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "MaxTime: " << max_t << '\n';
     std::cout << "TimeStep: " << delta_t << '\n';
     std::cout << "SaveStep: " << delta_post << '\n';
+    std::cout << "Order: " << rk_order << '\n';
+    std::cout << "AdaptiveTimeStep: " << adaptive_dt << '\n';
+    std::cout << "RelTol: " << rel_tol << '\n';
+    std::cout << "AbsTol: " << abs_tol << '\n';
   }
 }
 
