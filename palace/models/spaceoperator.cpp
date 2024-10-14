@@ -442,6 +442,39 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetWeakCurlMatrix()
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute());
+  AddStiffnessCoefficients(1.0, df, f);
+  int empty = (df.empty() && f.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false, assemble_q_data = false;
+  BilinearForm a(GetRTSpace(), GetNDSpace());
+  a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(df);
+  if (assemble_q_data)
+  {
+    a.AssembleQuadratureData();
+  }
+  auto weakCurl = a.Assemble(skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto WeakCurl = std::make_unique<ComplexParOperator>(std::move(weakCurl),nullptr, GetRTSpace(), GetNDSpace(),false);
+    return WeakCurl;
+  }
+  else
+  {
+    auto WeakCurl = std::make_unique<ParOperator>(std::move(weakCurl),GetRTSpace(), GetNDSpace(), false);
+    return WeakCurl;
+  }
+}
+
 namespace
 {
 
@@ -1049,4 +1082,8 @@ SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double)
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double);
 
+template std::unique_ptr<Operator>
+    SpaceOperator::GetWeakCurlMatrix();
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetWeakCurlMatrix();
 }  // namespace palace
