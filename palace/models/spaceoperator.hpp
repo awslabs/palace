@@ -177,6 +177,10 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
                                                     double a3);
 
+  // Construct the weak curl operator: curl 1/mu
+  template <typename OperType>
+  std::unique_ptr<OperType> GetWeakCurlMatrix();
+
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {
