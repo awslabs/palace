@@ -732,7 +732,9 @@ public:
     DEFAULT,
     GEN_ALPHA,
     NEWMARK,
-    CENTRAL_DIFF
+    CENTRAL_DIFF,
+    EXPLICIT_RK,
+    IMPLICIT_RK
   };
   Type type = Type::DEFAULT;
 
@@ -760,6 +762,16 @@ public:
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
+
+  // RK scheme order for SUNDIALS ARKode integrators;
+  int rk_order = 3;
+
+  // Adaptive time-stepping for SUNDIALS integrators
+  bool adaptive_dt = true;
+
+  // Adaptive time-stepping tolerances
+  double rel_tol = 1e-3;
+  double abs_tol = 1e-6;
 
   void SetUp(json &solver);
 };
