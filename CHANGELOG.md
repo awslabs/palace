@@ -36,6 +36,9 @@ The format of this changelog is based on
     match the mesh on the boundaries specified by the donor and receiver attributes. This is
     only possible the mesh on the donor and receiver match exactly, non-matching meshes are
     not supported.
+  - Exposed configuration linear solver and eigen solver options for the wave port
+    subproblem. These can now be specified as part of the `config["Boundaries"]["WavePort"]`
+    configuration. The defaults align with the previously hardcoded values.
 
 ## [0.13.0] - 2024-05-20
 

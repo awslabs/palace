@@ -510,6 +510,18 @@ public:
 
   // List of boundary attributes for this wave port.
   std::vector<int> attributes = {};
+
+  // Maximum number of iterations in linear solver.
+  int ksp_max_its = 45;
+
+  // Tolerance for linear solver.
+  double ksp_tol = 1e-8;
+
+  // Tolerance for eigenvalue solver.
+  double eig_tol = 1e-6;
+
+  // Print level for linear and eigenvalue solvers.
+  int verbose = 0;
 };
 
 struct WavePortBoundaryData : public internal::DataMap<WavePortData>
@@ -674,7 +686,7 @@ public:
   // Maximum iterations for eigenvalue solver.
   int max_it = -1;
 
-  // Eigensolver subspace dimension or maximum dimension before restart.
+  // Eigenvalue solver subspace dimension or maximum dimension before restart.
   int max_size = -1;
 
   // Desired number of eigenmodes.
