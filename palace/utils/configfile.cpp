@@ -1114,6 +1114,10 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.eigen_type = it->value("SolverType", data.eigen_type);
     data.excitation = it->value("Excitation", data.excitation);
     data.active = it->value("Active", data.active);
+    data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
+    data.ksp_tol = it->value("KSPTol", data.ksp_tol);
+    data.eig_tol = it->value("EigenTol", data.eig_tol);
+    data.verbose = it->value("Verbose", data.verbose);
 
     // Cleanup
     it->erase("Index");
@@ -1123,6 +1127,10 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("SolverType");
     it->erase("Excitation");
     it->erase("Active");
+    it->erase("MaxIts");
+    it->erase("KSPTol");
+    it->erase("EigenTol");
+    it->erase("Verbose");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
                     << it->dump(2));
@@ -1137,6 +1145,10 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "SolverType: " << data.eigen_type << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
+      std::cout << "MaxIts: " << data.ksp_max_its << '\n';
+      std::cout << "KSPTol: " << data.ksp_tol << '\n';
+      std::cout << "EigenTol: " << data.eig_tol << '\n';
+      std::cout << "Verbose: " << data.verbose << '\n';
     }
   }
 }

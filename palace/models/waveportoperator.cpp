@@ -645,14 +645,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   {
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem.
-    constexpr int ksp_print = 0;
-    constexpr double ksp_tol = 1.0e-8;
-    constexpr double ksp_max_it = 30;
-    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, ksp_print);
+    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, data.verbose);
     gmres->SetInitialGuess(false);
-    gmres->SetRelTol(ksp_tol);
-    gmres->SetMaxIter(ksp_max_it);
-    gmres->SetRestartDim(ksp_max_it);
+    gmres->SetRelTol(data.ksp_tol);
+    gmres->SetMaxIter(data.ksp_max_its);
+    gmres->SetRestartDim(data.ksp_max_its);
     // gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
 
     config::LinearSolverData::Type pc_type = solver.linear.type;
@@ -698,7 +695,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_SUPERLU)
             auto slu = std::make_unique<SuperLUSolver>(
                 port_comm, config::LinearSolverData::SymFactType::DEFAULT, false,
-                ksp_print - 1);
+                data.verbose - 1);
             // slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
             return slu;
 #endif
@@ -708,7 +705,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_STRUMPACK)
             auto strumpack = std::make_unique<StrumpackSolver>(
                 port_comm, config::LinearSolverData::SymFactType::DEFAULT,
-                config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0, ksp_print - 1);
+                config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0,
+                data.verbose - 1);
             // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
             return strumpack;
 #endif
@@ -718,7 +716,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
                 port_comm, mfem::MUMPSSolver::UNSYMMETRIC,
-                config::LinearSolverData::SymFactType::DEFAULT, 0.0, ksp_print - 1);
+                config::LinearSolverData::SymFactType::DEFAULT, 0.0, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
@@ -770,9 +768,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
       eigen = std::move(slepc);
 #endif
     }
-    constexpr double tol = 1.0e-6;
     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
-    eigen->SetTol(tol);
+    eigen->SetTol(data.eig_tol);
     eigen->SetLinearSolver(*ksp);
 
     // We want to ignore evanescent modes (kₙ with large imaginary component). The
