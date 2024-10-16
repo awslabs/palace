@@ -74,7 +74,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     data_wave_uniform = data_wave_uniform[:, 2:end]
 
     # Wrap phases
-    for p = 1:(size(data_lumped_adaptive, 2) ÷ 2)
+    for p = 1:(size(data_lumped_adaptive, 2)÷2)
         idx = (data_lumped_adaptive[:, 2 * p] .< 0.0)
         data_lumped_adaptive[idx, 2 * p] = data_lumped_adaptive[idx, 2 * p] .+ 180.0
 
