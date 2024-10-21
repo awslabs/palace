@@ -20,7 +20,7 @@ class SpaceOperator;
 //
 // Abstract class handling temporal discretization of the governing equations.
 //
-class TimeOperator 
+class TimeOperator
 {
   protected:
     Vector E, B;
@@ -102,16 +102,16 @@ class FirstOrderTimeOperator : public TimeOperator
 {
 private:
   // Solution vector storage.
-  Vector sol;
+  Vector sol, En;
 
-  // Time integrator for the first order E-B ODE system.
+  // Time integrator for the first order ODE system.
   std::unique_ptr<mfem::ODESolver> ode;
 
-  // Time-dependent operator for the E-B system.
+  // Time-dependent operator for the Edot-E ODE system.
   std::unique_ptr<mfem::TimeDependentOperator> op;
 
   // Adaptive time-stepping parameters.
-  int rk_order;
+  int order;
   bool adapt_dt;
   double rel_tol, abs_tol;
 
@@ -120,7 +120,7 @@ private:
 
 public:
   FirstOrderTimeOperator(const IoData &iodata, SpaceOperator &space_op,
-                         std::function<double(double)> &J_coef);
+                         std::function<double(double)> &dJ_coef);
 
   // Return the linear solver associated with the implicit or explicit time integrator.
   const KspSolver &GetLinearSolver() const;
