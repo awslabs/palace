@@ -230,12 +230,10 @@ the second-order system of differential equations. The available options are:
     case, the maximum eigenvalue of the system operator is estimated at the start of the
     simulation and used to restrict the simulation time step to below the maximum stability
     time step.
-  - `"ImplicitRK"` :  SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
-    ODE system for the electric and magnetic flux fields.
-  - `"ExplicitRK"` :  SUNDIALS ARKode explicit Runge-Kutta scheme applied to the first-order
-    ODE system for the electric and magnetic flux fields. In this case, the maximum
-    eigenvalue of the system operator is estimated at the start of the simulation and used to
-    restrict the simulation time step to below the maximum stability time step.
+  - `"ARKODE"` :  SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
+    ODE system for the electric field.
+  - `"CVODE"` :  SUNDIALS CVODE implicit multistep method scheme applied to the first-order
+    ODE system for the electric field.
   - `"Default"` :  Use the default `"GeneralizedAlpha"` time integration scheme.
 
 `"Excitation" [None]` :  Controls the time dependence of the source excitation. The
@@ -271,16 +269,16 @@ saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"AdaptiveTimeStep" [true]` :  Enable adaptive time-stepping in the Runge-Kutta integrators.
-Only relevant when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"`.
+Only relevant when `"Type"` is `"ARKODE"`. `"CVODE"` always uses adaptive time-stepping.
 
-`"Order" [3]` :  Order of the Runge-Kutta integrators. Only relevant when `"Type"` is
-`"ExplicitRK"` or `"ImplicitRK"`.
+`"Order" [2]` :  Order of the Runge-Kutta integrators or maximum order of the multistep method.
+Only relevant when `"Type"` is `"ARKODE"` or `"CVODE"`.
 
-`"RelTol" [1e-3]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"` and `"AdaptiveTimeStep"` is enabled.
+`"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
+ when `"Type"` is `"CVODE"` or `"ARKODE"` (when `"AdaptiveTimeStep"` is enabled).
 
-`"AbsTol" [1e-6]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"ExplicitRK"` or `"ImplicitRK"` and `"AdaptiveTimeStep"` is enabled.
+`"AbsTol" [1e-9]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
+ when `"Type"` is `"CVODE"` or `"ARKODE"` (when `"AdaptiveTimeStep"` is enabled).
 
 ## `solver["Electrostatic"]`
 

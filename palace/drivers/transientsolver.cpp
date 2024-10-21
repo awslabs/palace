@@ -41,14 +41,14 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         time_op = std::make_unique<SecondOrderTimeOperator>(iodata, space_op, dJdt_coef);
       }
       break;
-    case config::TransientSolverData::Type::EXPLICIT_RK:
-    case config::TransientSolverData::Type::IMPLICIT_RK:
+    case config::TransientSolverData::Type::ARKODE:
+    case config::TransientSolverData::Type::CVODE:
       {
 #if !defined(MFEM_USE_SUNDIALS)
       MFEM_ABORT("Solver was not built with SUNDIALS support, please choose a "
                  "different transient solver type!");
 #endif
-        time_op = std::make_unique<FirstOrderTimeOperator>(iodata, space_op, J_coef);
+        time_op = std::make_unique<FirstOrderTimeOperator>(iodata, space_op, dJdt_coef);
       }
       break;
   }

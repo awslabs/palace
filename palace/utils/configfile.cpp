@@ -1609,8 +1609,8 @@ PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
                             {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
                             {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
                             {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"},
-                            {TransientSolverData::Type::EXPLICIT_RK, "ExplicitRK"},
-                            {TransientSolverData::Type::IMPLICIT_RK, "ImplicitRK"}})
+                            {TransientSolverData::Type::CVODE, "CVODE"},
+                            {TransientSolverData::Type::ARKODE, "ARKODE"}})
 PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
     {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
@@ -1641,7 +1641,7 @@ void TransientSolverData::SetUp(json &solver)
   max_t = transient->at("MaxTime");     // Required
   delta_t = transient->at("TimeStep");  // Required
   delta_post = transient->value("SaveStep", delta_post);
-  rk_order = transient->value("Order", rk_order);
+  order = transient->value("Order", order);
   adaptive_dt = transient->value("AdaptiveTimeStep", adaptive_dt);
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
@@ -1672,7 +1672,7 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "MaxTime: " << max_t << '\n';
     std::cout << "TimeStep: " << delta_t << '\n';
     std::cout << "SaveStep: " << delta_post << '\n';
-    std::cout << "Order: " << rk_order << '\n';
+    std::cout << "Order: " << order << '\n';
     std::cout << "AdaptiveTimeStep: " << adaptive_dt << '\n';
     std::cout << "RelTol: " << rel_tol << '\n';
     std::cout << "AbsTol: " << abs_tol << '\n';
