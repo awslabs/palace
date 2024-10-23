@@ -235,6 +235,20 @@ public:
     to("{:s}", print_row_separator);
   }
 
+  [[nodiscard]] std::string format_header() const
+  {
+    fmt::memory_buffer buf{};
+    append_header(buf);
+    return {buf.data(), buf.size()};
+  }
+
+  [[nodiscard]] std::string format_row(size_t j) const
+  {
+    fmt::memory_buffer buf{};
+    append_row(buf, j);
+    return {buf.data(), buf.size()};
+  }
+
   [[nodiscard]] std::string format_table() const
   {
     fmt::memory_buffer buf{};
@@ -283,7 +297,7 @@ public:
     }
     auto file_buf =
         fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
-    table.append_header(file_buf);
+    file_buf.print("{}", table.format_header());
     file_append_curser++;
   }
   void AppendRow()
@@ -295,7 +309,7 @@ public:
     }
     auto file_buf =
         fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
-    table.append_row(file_buf, file_append_curser);
+    file_buf.print("{}", table.format_row(file_append_curser));
     file_append_curser++;
   }
 
