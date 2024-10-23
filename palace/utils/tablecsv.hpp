@@ -13,16 +13,17 @@
 #include <utility>
 #include <vector>
 #include <fmt/format.h>
+#include <fmt/os.h>
 #include <fmt/ranges.h>
 
-namespace palace::table
+namespace palace
 {
 
 struct ColumnOptions
 {
   size_t min_left_padding = 8;
   size_t float_precision = 9;
-  double empty_val = std::nan("1");
+  double empty_cell_val = std::nan("1");
   std::string fmt_sign = {"+"};
 };
 
@@ -55,7 +56,8 @@ class Column
   [[nodiscard]] auto format_row(size_t i, const std::optional<size_t> &width = {}) const
   {
     auto val =
-        ((i >= 0) && (i < data.size()) ? data[i] : empty_val.value_or(defaults->empty_val));
+        ((i >= 0) && (i < data.size()) ? data[i]
+                                       : empty_cell_val.value_or(defaults->empty_cell_val));
 
     auto sign = fmt_sign.value_or(defaults->fmt_sign);
     auto width_ = width.value_or(col_width());
@@ -71,8 +73,14 @@ class Column
   std::string name = "";
 
 public:
-  Column(std::string name, std::string header_text = "")
-    : name(std::move(name)), header_text(std::move(header_text))
+  Column(std::string name, std::string header_text = "",
+         std::optional<size_t> min_left_padding = {},
+         std::optional<size_t> float_precision = {},
+         std::optional<double> empty_cell_val = {},
+         std::optional<std::string> fmt_sign = {})
+    : name(std::move(name)), header_text(std::move(header_text)),
+      min_left_padding(min_left_padding), float_precision(float_precision),
+      empty_cell_val(empty_cell_val), fmt_sign(std::move(fmt_sign))
   {
   }
 
@@ -81,10 +89,13 @@ public:
 
   std::optional<size_t> min_left_padding = {};
   std::optional<size_t> float_precision = {};
-  std::optional<double> empty_val = {};
+  std::optional<double> empty_cell_val = {};
   std::optional<std::string> fmt_sign = {};
 
   [[nodiscard]] size_t n_rows() const { return data.size(); }
+
+  // Convenience operator at higher level
+  auto operator<<(double val) { return data.emplace_back(val); }
 };
 
 class Table
@@ -166,10 +177,10 @@ public:
 
   // Access columns via vector position or column name
 
-  Column &at(size_t idx) { return cols.at(idx); }
-  const Column &at(size_t idx) const { return cols.at(idx); }
+  Column &operator[](size_t idx) { return cols.at(idx); }
+  const Column &operator[](size_t idx) const { return (*this)[idx]; }
 
-  Column &at(std::string_view name)
+  Column &operator[](std::string_view name)
   {
     auto it =
         std::find_if(cols.begin(), cols.end(), [&name](auto &c) { return c.name == name; });
@@ -179,7 +190,7 @@ public:
     }
     return *it;
   }
-  const Column &at(std::string_view name) const { return at(name); }
+  const Column &operator[](std::string_view name) const { return (*this)[name]; }
 
   auto begin() { return cols.begin(); }
   auto end() { return cols.end(); }
@@ -189,7 +200,7 @@ public:
   // Formatting and Printing Options
   // TODO: Improve all the functions below with ranges in C++20
 
-private:
+public:
   template <typename T>
   void append_header(T &buf) const
   {
@@ -224,8 +235,7 @@ private:
     to("{:s}", print_row_separator);
   }
 
-public:
-  [[nodiscard]] std::string format_table()
+  [[nodiscard]] std::string format_table() const
   {
     fmt::memory_buffer buf{};
     append_header(buf);
@@ -237,6 +247,61 @@ public:
   }
 };
 
-}  // namespace palace::table
+// Wrapper for storing Table to csv file wish row wise updates
+
+class TableWithCSVFile
+{
+  std::string csv_file_fullpath = "";
+  unsigned long file_append_curser = -1;
+
+public:
+  Table table = {};
+
+  TableWithCSVFile() = default;
+  explicit TableWithCSVFile(std::string csv_file_fullpath)
+    : csv_file_fullpath{std::move(csv_file_fullpath)}
+  {
+    // Validate
+    auto file_buf = fmt::output_file(
+        csv_file_fullpath, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+  }
+
+  void WriteFullTableTrunc()
+  {
+    auto file_buf = fmt::output_file(
+        csv_file_fullpath, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+    file_buf.print("{}", table.format_table());
+    file_append_curser = table.n_rows();
+  }
+
+  void AppendHeader()
+  {
+    if (file_append_curser != -1)
+    {
+      // ReplaceHeader;
+      return;
+    }
+    auto file_buf =
+        fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
+    table.append_header(file_buf);
+    file_append_curser++;
+  }
+  void AppendRow()
+  {
+    if (file_append_curser < 0)
+    {
+      // ReplaceHeader;
+      return;
+    }
+    auto file_buf =
+        fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
+    table.append_row(file_buf, file_append_curser);
+    file_append_curser++;
+  }
+
+  [[nodiscard]] auto GetAppendRowCurser() const { return file_append_curser; }
+};
+
+}  // namespace palace
 
 #endif  // PALACE_UTILS_TABLECSV_HPP

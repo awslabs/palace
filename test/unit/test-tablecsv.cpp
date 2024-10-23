@@ -6,7 +6,6 @@
 #include "utils/tablecsv.hpp"
 
 using namespace palace;
-using namespace palace::table;
 
 TEST_CASE("TableCSV", "[tablecsv]")
 {
@@ -24,17 +23,17 @@ TEST_CASE("TableCSV", "[tablecsv]")
   {
     auto status_1 = table.insert_column("col_1");
     REQUIRE(status_1);
-    auto &col_1 = table.at("col_1");
+    auto &col_1 = table["col_1"];
     CHECK(col_1.header_text == "");
 
     col_1.header_text = "Header Col 1";
-    auto &col_1i = table.at(0);
+    auto &col_1i = table[0];
     CHECK(col_1i.header_text == "Header Col 1");
 
     auto status_2 = table.insert_column("col_2", "Header Col 2");
     REQUIRE(status_2);
 
-    auto &col_2 = table.at("col_2");
+    auto &col_2 = table["col_2"];
     CHECK(col_2.header_text == "Header Col 2");
     col_2.data.push_back(2.0);
 
@@ -46,22 +45,22 @@ TEST_CASE("TableCSV", "[tablecsv]")
   REQUIRE(table.n_cols() == 2);
 
   // Invalid access
-  CHECK_THROWS(table.at("col3"));
-  CHECK_THROWS(table.at(2));
+  CHECK_THROWS(table["col3"]);
+  CHECK_THROWS(table[2]);
 
   // Check reserved: invalidates references
   {
     table.reserve(6, 3);
-    CHECK(table.at("col_1").data.capacity() == 6);
-    CHECK(table.at("col_2").data.capacity() == 6);
+    CHECK(table["col_1"].data.capacity() == 6);
+    CHECK(table["col_2"].data.capacity() == 6);
   }
 
   {
     table.insert_column(Column("col_3", "Header Col 3"));
-    auto &col_3 = table.at("col_3");
+    auto &col_3 = table["col_3"];
     CHECK(col_3.header_text == "Header Col 3");
     col_3.data.push_back(3.0);
-    col_3.data.push_back(6.0);
+    col_3 << 6.0;
   }
 
   std::vector<size_t> cols_n_row;
@@ -82,7 +81,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format on
   CHECK(table.format_table() == table_str1);
 
-  auto &col_2 = table.at("col_2");
+  auto &col_2 = table["col_2"];
   col_2.min_left_padding = 5;
   col_2.float_precision = 6;
 
@@ -95,7 +94,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format on
   CHECK(table.format_table() == table_str2);
 
-  table.at("col_1").fmt_sign = " ";
+  table["col_1"].fmt_sign = " ";
 
   col_2.min_left_padding = 0;
   col_2.float_precision = 2;
@@ -109,7 +108,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format on
   CHECK(table.format_table() == table_str3);
 
-  table.at("col_1").fmt_sign.reset();
+  table["col_1"].fmt_sign.reset();
   col_2.min_left_padding.reset();
   col_2.float_precision.reset();
   CHECK(table.format_table() == table_str1);
