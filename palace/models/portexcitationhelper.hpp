@@ -21,9 +21,24 @@ public:
     std::vector<int> lumped_port = {};
     std::vector<int> wave_port = {};
     std::vector<int> current_port = {};
+
+    // TODO: C++20 to replace this with iterator over joined range
+    auto flatten_port_indices() const
+    {
+      std::vector<int> out;
+      out.insert(out.end(), lumped_port.cbegin(), lumped_port.cend());
+      out.insert(out.end(), wave_port.cbegin(), wave_port.cend());
+      out.insert(out.end(), current_port.cbegin(), current_port.cend());
+      return out;
+    }
   };
 
   std::map<int, SingleExcitationSpec> excitations = {};
+
+  auto begin() { return excitations.begin(); }
+  auto end() { return excitations.end(); }
+  auto begin() const { return excitations.begin(); }
+  auto end() const { return excitations.end(); }
 
   template <typename LumpedportIt, typename WaveportIt, typename CurrentIt>
   PortExcitationHelper(const LumpedportIt &lumped_port_op, const WaveportIt &wave_port_op,
