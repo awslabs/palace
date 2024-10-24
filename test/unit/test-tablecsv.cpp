@@ -75,8 +75,8 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format off
   auto table_str1 = std::string(
     "             Header Col 1,             Header Col 2,             Header Col 3\n"
-    "                     +nan,         +2.000000000e+00,         +3.000000000e+00\n"
-    "                     +nan,                     +nan,         +6.000000000e+00\n"
+    "                     NULL,         +2.000000000e+00,         +3.000000000e+00\n"
+    "                     NULL,                     NULL,         +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str1);
@@ -88,13 +88,13 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format off
   auto table_str2 = std::string(
     "             Header Col 1,       Header Col 2,             Header Col 3\n"
-    "                     +nan,      +2.000000e+00,         +3.000000000e+00\n"
-    "                     +nan,               +nan,         +6.000000000e+00\n"
+    "                     NULL,      +2.000000e+00,         +3.000000000e+00\n"
+    "                     NULL,               NULL,         +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str2);
 
-  table["col_1"].fmt_sign = " ";
+  table["col_2"].fmt_sign = " ";
 
   col_2.min_left_padding = 0;
   col_2.float_precision = 2;
@@ -102,13 +102,13 @@ TEST_CASE("TableCSV", "[tablecsv]")
   // clang-format off
   auto table_str3 = std::string(
     "             Header Col 1,Header Col 2,             Header Col 3\n"
-    "                      nan,   +2.00e+00,         +3.000000000e+00\n"
-    "                      nan,        +nan,         +6.000000000e+00\n"
+    "                     NULL,    2.00e+00,         +3.000000000e+00\n"
+    "                     NULL,        NULL,         +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str3);
 
-  table["col_1"].fmt_sign.reset();
+  col_2.fmt_sign.reset();
   col_2.min_left_padding.reset();
   col_2.float_precision.reset();
   CHECK(table.format_table() == table_str1);

@@ -23,7 +23,7 @@ struct ColumnOptions
 {
   size_t min_left_padding = 8;
   size_t float_precision = 9;
-  double empty_cell_val = std::nan("1");
+  std::string empty_cell_val = {"NULL"};
   std::string fmt_sign = {"+"};
 };
 
@@ -43,28 +43,32 @@ class Column
 
     // Normal float in our exponent format needs float_precision + 7 ("+" , leading digit,
     // ".", "e", "+", +2 exponent. Sometimes exponent maybe +3 if very small or large; see
-    // std::numeric_limits<double>::max_exponent. So pick +8 to avoid this corner case.
+    // std::numeric_limits<double>::max_exponent. We pick +7 for consistnacy, but
+    // min_left_padding should be at least 1, which is not currently enforced.
     return std::max(pad + prec + 8, header_text.size());
   }
 
   [[nodiscard]] auto format_header(const std::optional<size_t> &width = {}) const
   {
     auto w = width.value_or(col_width());
-    return fmt::format("{:>{w}s}", header_text, fmt::arg("w", w));
+    return fmt::format("{:>{width}s}", header_text, fmt::arg("width", w));
   }
 
   [[nodiscard]] auto format_row(size_t i, const std::optional<size_t> &width = {}) const
   {
-    auto val =
-        ((i >= 0) && (i < data.size()) ? data[i]
-                                       : empty_cell_val.value_or(defaults->empty_cell_val));
-
-    auto sign = fmt_sign.value_or(defaults->fmt_sign);
     auto width_ = width.value_or(col_width());
-    auto prec = float_precision.value_or(defaults->float_precision);
-    auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
-                               fmt::arg("width", width_), fmt::arg("prec", prec));
-    return fmt::format(fmt::runtime(fmt_str), val);
+    // If data available format double
+    if ((i >= 0) && (i < data.size()))
+    {
+      auto val = data[i];
+      auto sign = fmt_sign.value_or(defaults->fmt_sign);
+      auto prec = float_precision.value_or(defaults->float_precision);
+      auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
+                                 fmt::arg("width", width_), fmt::arg("prec", prec));
+      return fmt::format(fmt::runtime(fmt_str), val);
+    }
+    auto empty_cell = empty_cell_val.value_or(defaults->empty_cell_val);
+    return fmt::format("{:>{width}s}", empty_cell, fmt::arg("width", width_));
   }
 
   // ----
@@ -76,11 +80,11 @@ public:
   Column(std::string name, std::string header_text = "",
          std::optional<size_t> min_left_padding = {},
          std::optional<size_t> float_precision = {},
-         std::optional<double> empty_cell_val = {},
+         std::optional<std::string> empty_cell_val = {},
          std::optional<std::string> fmt_sign = {})
     : name(std::move(name)), header_text(std::move(header_text)),
       min_left_padding(min_left_padding), float_precision(float_precision),
-      empty_cell_val(empty_cell_val), fmt_sign(std::move(fmt_sign))
+      empty_cell_val(std::move(empty_cell_val)), fmt_sign(std::move(fmt_sign))
   {
   }
 
@@ -89,7 +93,7 @@ public:
 
   std::optional<size_t> min_left_padding = {};
   std::optional<size_t> float_precision = {};
-  std::optional<double> empty_cell_val = {};
+  std::optional<std::string> empty_cell_val = {};
   std::optional<std::string> fmt_sign = {};
 
   [[nodiscard]] size_t n_rows() const { return data.size(); }
@@ -265,7 +269,7 @@ public:
 
 class TableWithCSVFile
 {
-  std::string csv_file_fullpath = "";
+  std::string csv_file_fullpath_ = "";
   unsigned long file_append_curser = -1;
 
 public:
@@ -273,17 +277,17 @@ public:
 
   TableWithCSVFile() = default;
   explicit TableWithCSVFile(std::string csv_file_fullpath)
-    : csv_file_fullpath{std::move(csv_file_fullpath)}
+    : csv_file_fullpath_{std::move(csv_file_fullpath)}
   {
     // Validate
     auto file_buf = fmt::output_file(
-        csv_file_fullpath, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
   }
 
   void WriteFullTableTrunc()
   {
     auto file_buf = fmt::output_file(
-        csv_file_fullpath, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
     file_buf.print("{}", table.format_table());
     file_append_curser = table.n_rows();
   }
@@ -296,7 +300,7 @@ public:
       return;
     }
     auto file_buf =
-        fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
+        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
     file_buf.print("{}", table.format_header());
     file_append_curser++;
   }
@@ -308,7 +312,7 @@ public:
       return;
     }
     auto file_buf =
-        fmt::output_file(csv_file_fullpath, fmt::file::WRONLY | fmt::file::APPEND);
+        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
     file_buf.print("{}", table.format_row(file_append_curser));
     file_append_curser++;
   }
