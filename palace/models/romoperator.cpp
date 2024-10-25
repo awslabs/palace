@@ -200,7 +200,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
-  has_RHS1 = space_op.GetExcitationVector1(RHS1);
+  int tmp_excitation = 1;  // TODO: FIX
+  has_RHS1 = space_op.GetExcitationVector1(tmp_excitation, RHS1);
   if (!has_RHS1)
   {
     RHS1.SetSize(0);
@@ -241,6 +242,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
 
 void RomOperator::SolveHDM(double omega, ComplexVector &u)
 {
+  int excitation_i = 1;  // TODO
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -256,7 +258,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   Mpi::Print("\n");
   if (has_RHS2)
   {
-    has_RHS2 = space_op.GetExcitationVector2(omega, r);
+    has_RHS2 = space_op.GetExcitationVector2(excitation_i, omega, r);
   }
   else
   {
@@ -358,6 +360,7 @@ void RomOperator::UpdatePROM(bool add_to_mri, double omega, const ComplexVector 
 
 void RomOperator::SolvePROM(double omega, ComplexVector &u)
 {
+  int excitation_i = 1;
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
@@ -380,7 +383,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
 
   if (has_RHS2)
   {
-    space_op.GetExcitationVector2(omega, RHS2);
+    space_op.GetExcitationVector2(excitation_i, omega, RHS2);
     ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
   }
   else

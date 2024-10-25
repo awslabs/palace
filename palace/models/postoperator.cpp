@@ -514,54 +514,71 @@ PostOperator::GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op)
   return U;
 }
 
-std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumped_port_op,
-                                                 int idx, int source_idx) const
+std::complex<double> PostOperator::GetSParameter(
+    const LumpedPortOperator &lumped_port_op, const WavePortOperator &wave_port_op,
+    const PortExcitationHelper &excitation_helper, int out_idx, int excitation_idx) const
 {
-  MFEM_VERIFY(lumped_port_init,
+  MFEM_VERIFY(lumped_port_init && wave_port_init,
               "Port S-parameters not defined until ports are initialized!");
-  const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  const LumpedPortData &src_data = lumped_port_op.GetPort(source_idx);
-  const auto it = lumped_port_vi.find(idx);
-  MFEM_VERIFY(src_data.excitation == source_idx,
-              "Lumped port index " << source_idx << " is not marked for excitation!");
-  MFEM_VERIFY(it != lumped_port_vi.end(),
-              "Could not find lumped port when calculating port S-parameters!");
-  std::complex<double> S_ij = it->second.S;
-  if (idx == source_idx)
-  {
-    S_ij.real(S_ij.real() - 1.0);
-  }
-  // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-  if (std::abs(data.R) > 0.0)
-  {
-    S_ij *= std::sqrt(src_data.R / data.R);
-  }
-  return S_ij;
-}
 
-std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_port_op,
-                                                 int idx, int source_idx) const
-{
-  // Wave port modes are not normalized to a characteristic impedance so no generalized
-  // S-parameters are available.
-  MFEM_VERIFY(wave_port_init, "Port S-parameters not defined until ports are initialized!");
-  const WavePortData &data = wave_port_op.GetPort(idx);
-  const WavePortData &src_data = wave_port_op.GetPort(source_idx);
-  const auto it = wave_port_vi.find(idx);
-  MFEM_VERIFY(src_data.excitation == source_idx,
-              "Wave port index " << source_idx << " is not marked for excitation!");
-  MFEM_VERIFY(it != wave_port_vi.end(),
-              "Could not find wave port when calculating port S-parameters!");
-  std::complex<double> S_ij = it->second.S;
-  if (idx == source_idx)
+  auto excitation_spec = excitation_helper.excitations.at(excitation_idx);
+  MFEM_VERIFY(excitation_spec.flatten_port_indices().size() == 1,
+              "Port S-parameters can (currently) only be calculated when each excitation "
+              "only has contributions from a single port!");
+
+  std::complex<double> S_ij = 0.0;
+  std::complex<double> scale_i = 1.0;
+  std::complex<double> scale_j = 1.0;
+  bool out_lumped_port_with_R = false;
+
+  auto it_out_port = lumped_port_vi.find(out_idx);
+  if (it_out_port != lumped_port_vi.end())
   {
-    S_ij.real(S_ij.real() - 1.0);
+    S_ij = it_out_port->second.S;
+    // Work with generalized lumped scattering parameters
+    const LumpedPortData &data = lumped_port_op.GetPort(out_idx);
+    out_lumped_port_with_R = (std::abs(data.R) > 0.0);
+
+    scale_i *= out_lumped_port_with_R ? 1.0 / std::sqrt(data.R) : 1.0;
   }
-  // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
-  // unless specified).
-  S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-  S_ij *= std::exp(1i * data.kn0 * data.d_offset);
-  return S_ij;
+  else
+  {
+    auto it_out_port_wp = wave_port_vi.find(out_idx);
+    MFEM_VERIFY(it_out_port_wp != wave_port_vi.end(),
+                fmt::format("Could not find a lumped or wave port with index {} when "
+                            "calculating port S-parameters!",
+                            out_idx));
+    S_ij = it_out_port_wp->second.S;
+    // Deembed wave port (but no generalized scattering parametrs?)
+    // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
+    // unless specified).
+    // SJG: Wave port modes are not normalized to a characteristic impedance so no
+    // generalized S-parameters are available. // TODO: PhD ???
+    const WavePortData &data = wave_port_op.GetPort(out_idx);
+    scale_i *= std::exp(1i * data.kn0 * data.d_offset);
+  }
+
+  for (const auto &idx_lumped_port : excitation_spec.lumped_port)
+  {
+    if (out_idx == idx_lumped_port)
+    {
+      S_ij.real(S_ij.real() - 1.0);
+    }
+    // S-Parameter norm
+    const LumpedPortData &src_data = lumped_port_op.GetPort(idx_lumped_port);
+    scale_j *= out_lumped_port_with_R ? std::sqrt(src_data.R) : 1.0;
+  }
+  for (const auto &idx_wave_port : excitation_spec.wave_port)
+  {
+    if (out_idx == idx_wave_port)
+    {
+      S_ij.real(S_ij.real() - 1.0);
+    }
+    // Deembedding
+    const WavePortData &src_data = wave_port_op.GetPort(idx_wave_port);
+    scale_j *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+  }
+  return scale_i * S_ij * scale_j;
 }
 
 std::complex<double> PostOperator::GetPortPower(const LumpedPortOperator &lumped_port_op,
