@@ -1052,19 +1052,20 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
-    MFEM_VERIFY(it->find("Translation") != it->end(),
-                "Missing \"Translation\" vector for \"Periodic\" boundary in the "
-                "configuration file!");
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();               // Required
-    data.translation = it->at("Translation").get<std::array<double, 3>>();  // Required
+    data.translation = it->at("Translation").get<std::array<double, 3>>();
+    data.affine_transform = it->at("AffineTransformation").get<std::array<double, 16>>();
+    data.wave_vector = it->at("WaveVector").get<std::array<double, 3>>();
 
     // Cleanup
     it->erase("DonorAttributes");
     it->erase("ReceiverAttributes");
     it->erase("Translation");
+    it->erase("AffineTransformation");
+    it->erase("WaveVector");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
@@ -1075,6 +1076,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
       std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
       std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
       std::cout << "Translation: " << data.translation << '\n';
+      std::cout << "AffineTransformation: " << data.affine_transform << '\n';
+      std::cout << "WaveVector: " << data.wave_vector << '\n';
     }
   }
 }

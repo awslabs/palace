@@ -2213,7 +2213,12 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
                                                  transformation,
                                                  norm_tol);
 
-
+      // Should move this up. If translation or affine transform is provided in config
+      // file, we use those.
+      // If only translation is provided -> use it
+      // If only affine transfomr is provided -> use it
+      // If both affine transform and translation are provided -> error or warning?
+      // If neither -> automatic detection
       //mfem::Vector translation(data.translation.size());
       //std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
       //auto periodic_mapping =
