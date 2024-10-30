@@ -602,56 +602,6 @@ void FirstOrderTimeOperator::Step(double &t, double &dt)
   // Trapezoidal integration for B-field: dB/dt = -∇ x E.
   En += E;
   Curl->AddMult(En, B, -0.5 * dt);
-
-/*
-#if defined(MFEM_USE_SUNDIALS)
-  if (mfem::ARKStepSolver* arkode = dynamic_cast<mfem::ARKStepSolver*>(ode.get()))
-  {
-    // Print some timestepping stats
-    long int nsteps;
-    double hinused, hlast, hcur, tcur;
-    ARKStepGetStepStats(arkode->GetMem(), &nsteps, &hinused,
-                        &hlast, &hcur, &tcur);
-
-    double hlasts = iodata.DimensionalizeValue(IoData::ValueType::TIME, hlast);
-
-    Mpi::Print("\nARKODE step statistics\n");
-    Mpi::Print(" num steps: {:d}\n", nsteps);
-    Mpi::Print(" last dt: {:.3e}\n", hlasts);
-    Mpi::Print("\n");
-  }
-  else if (mfem::CVODESolver* cvode = dynamic_cast<mfem::CVODESolver*>(ode.get()))
-  {
-    long int nsteps, nfevals, nlinsetups, netfails;
-    int      qlast, qcur;
-    double   hinused, hlast, hcur, tcur;
-
-    // Get integrator stats
-    CVodeGetIntegratorStats(cvode->GetMem(),
-                            &nsteps,
-                            &nfevals,
-                            &nlinsetups,
-                            &netfails,
-                            &qlast,
-                            &qcur,
-                            &hinused,
-                            &hlast,
-                            &hcur,
-                            &tcur);
-
-    double hlasts = iodata.DimensionalizeValue(IoData::ValueType::TIME, hlast);
-
-    Mpi::Print("\n CVODE step statistics\n");
-    Mpi::Print(" num steps: {:d}\n", nsteps);
-    Mpi::Print(" num rhs evals: {:d}\n", nfevals);
-    Mpi::Print(" num lin setups: {:d}\n", nlinsetups);
-    Mpi::Print(" num error test fails: {:d}\n", netfails);
-    Mpi::Print(" last order: {:d}\n", qlast);
-    Mpi::Print(" last dt: {:.3e}\n", hlasts);
-    Mpi::Print("\n");
-  }
-#endif
-*/
 }
 
 void FirstOrderTimeOperator::PrintStats()
