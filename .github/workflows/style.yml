@@ -20,13 +20,13 @@ jobs:
       - name: Install clang-format
         run: |
           wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main'
+          sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
           sudo apt-get update -q
-          sudo apt-get install -y clang-format-18
+          sudo apt-get install -y clang-format-19
 
       - name: Check style
         run: |
-          ./scripts/format-source --clang-format clang-format-18
+          ./scripts/format-source --clang-format clang-format-19
           if [[ `git status -s | wc -l` -ne 0 ]]; then
             echo 'Error: Commit is not formatted!'
             echo 'Run '\`'./scripts/format-source'\`' in the source root directory'

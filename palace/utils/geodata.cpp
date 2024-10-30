@@ -1362,7 +1362,8 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
       // Find the next point as the vertex furthest from the initial axis.
       const Eigen::Vector3d n_1 = (*p_2 - *p_1).normalized();
       auto p_3 = std::max_element(vertices.begin(), vertices.end(),
-                                  [&](const auto &x, const auto &y) {
+                                  [&](const auto &x, const auto &y)
+                                  {
                                     return PerpendicularDistance({n_1}, *p_1, x) <
                                            PerpendicularDistance({n_1}, *p_1, y);
                                   });

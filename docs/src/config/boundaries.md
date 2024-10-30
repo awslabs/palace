@@ -349,7 +349,11 @@ corresponding coordinate system.
         "Active": <bool>,
         "Mode": <int>,
         "Offset": <float>,
-        "SolverType": <string>
+        "SolverType": <string>,
+        "MaxIts": <int>,
+        "KSPTol": <float>,
+        "EigenTol": <float>,
+        "Verbose": <int>
     },
     ...
 ]
@@ -377,6 +381,16 @@ port boundary, specified in mesh length units.
 `"SolverType" ["Default"]` :  Specifies the eigenvalue solver to be used in computing
 the boundary mode for this wave port. See
 [`config["Solver"]["Eigenmode"]["Type"]`](solver.md#solver%5B%22Eigenmode%22%5D).
+
+`"MaxIts" [30]` :  Specifies the maximum number of iterations to be used in the GMRES
+solver.
+
+`"KSPTol" [1e-8]` :  Specifies the tolerance to be used in the linear solver.
+
+`"EigenTol" [1e-6]` :  Specifies the tolerance to be used in the eigenvalue solver.
+
+`"Verbose" [0]` :  Specifies the verbosity level to be used in the linear and eigensolver
+for the wave port problem.
 
 ## `boundaries["WavePortPEC"]`
 
