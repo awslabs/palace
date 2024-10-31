@@ -478,14 +478,21 @@ public:
   std::vector<int> donor_attributes = {};
   // List of boundary receiver attributes for this periodic boundary condition.
   std::vector<int> receiver_attributes = {};
-  // Bloch wavevector specifying the phase delay in the X/Y/Z directions.
-  std::array<double, 3>  wave_vector = {0.0, 0.0, 0.0};
 };
 
 struct PeriodicBoundaryData : public internal::DataVector<PeriodicData>
 {
 public:
   void SetUp(json &boundaries);
+};
+
+struct FloquetData
+{
+  public:
+    // Bloch wavevector specifying the phase delay in the X/Y/Z directions.
+    std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
+
+    void SetUp(json &boundaries);
 };
 
 struct WavePortData
@@ -643,6 +650,7 @@ public:
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
+  FloquetData floquet;//?
   BoundaryPostData postpro = {};
 
   void SetUp(json &config);

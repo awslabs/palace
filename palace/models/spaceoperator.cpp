@@ -207,7 +207,9 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
-                    const MaterialPropertyCoefficient *fb, bool assemble_q_data = false)
+                    const MaterialPropertyCoefficient *fb,
+                    const MaterialPropertyCoefficient *fpw,
+                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
 {
   if (df && !df->empty() && f && !f->empty())
   {
@@ -239,6 +241,14 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
       a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
   }
+  if (fpw && !fpw->empty())
+  {
+    a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fpw);
+  }
+  if (fp && !fp->empty())
+  {
+    a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp);
+  }
   if (assemble_q_data)
   {
     a.AssembleQuadratureData();
@@ -262,32 +272,17 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
   }
 }
 
-void AddMixedIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
-                         const MaterialPropertyCoefficient *fw, bool assemble_q_data = false)
-{
-  if (f && !f->empty())
-  {
-    a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*f);
-  }
-  if (fw && !fw->empty())
-  {
-    a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fw);
-  }
-  if (assemble_q_data)
-  {
-    a.AssembleQuadratureData();
-  }
-}
-
 auto AssembleOperator(const FiniteElementSpace &fespace,
                       const MaterialPropertyCoefficient *df,
                       const MaterialPropertyCoefficient *f,
                       const MaterialPropertyCoefficient *dfb,
-                      const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+                      const MaterialPropertyCoefficient *fb,
+                      const MaterialPropertyCoefficient *fpw,
+                      const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
                       bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
-  AddIntegrators(a, df, f, dfb, fb, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fpw, fp, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
 
@@ -295,11 +290,13 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
                        const MaterialPropertyCoefficient *df,
                        const MaterialPropertyCoefficient *f,
                        const MaterialPropertyCoefficient *dfb,
-                       const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+                       const MaterialPropertyCoefficient *fb,
+                       const MaterialPropertyCoefficient *fpw,
+                       const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
                        bool assemble_q_data = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddIntegrators(a, df, f, dfb, fb, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fpw, fp, assemble_q_data);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
@@ -313,18 +310,6 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
-/*
-// Add fp, fpw logic to AssembleOperators and AddIntegrators instead
-auto AssembleMixedOperators(const FiniteElementSpaceHierarchy &fespaces,
-                            const MaterialPropertyCoefficient *fp,
-                            const MaterialPropertyCoefficient *fpw, bool skip_zeros = false,
-                            bool assemble_q_data = false, std::size_t l0 = 0)
-{
-  BilinearForm a(fespaces.GetFinestFESpace());
-  AddMixedIntegrators(a, fp, fpw, assemble_q_data);
-  return a.Assemble(fespaces, skip_zeros, l0); //can't use assemble when trial and test spaces differ
-}
-*/
 }  // namespace
 
 template <typename OperType>
@@ -343,7 +328,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto k = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, skip_zeros);
+  auto k = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto K = std::make_unique<ComplexParOperator>(std::move(k), nullptr, GetNDSpace());
@@ -374,7 +359,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, skip_zeros);
+  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -411,11 +396,11 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, skip_zeros);
+    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, skip_zeros);
+    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -451,11 +436,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -479,23 +464,25 @@ std::unique_ptr<OperType>
 SpaceOperator::GetPeriodicWeakCurlMatrix()
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
-  periodic_op.AddWeakCurlCoefficients(1.0, f);
-  int empty = (f.empty());
+  MaterialPropertyCoefficient fpw(mat_op.MaxCeedAttribute());
+  periodic_op.AddWeakCurlCoefficients(1.0, fpw);
+  int empty = (fpw.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
     return {};
   }
-  constexpr bool skip_zeros = false, assemble_q_data = false;
+  constexpr bool skip_zeros = false;
+  //constexpr bool assemble_q_data = false;
   //BilinearForm a(GetNDSpace(), GetNDSpace()); //? which spaces and what order
-  BilinearForm a(GetNDSpace());//test
-  a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(f);
-  if (assemble_q_data)
-  {
-    a.AssembleQuadratureData();
-  }
-  auto weakCurl = a.Assemble(skip_zeros);
+  //BilinearForm a(GetNDSpace());//test
+  //a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(f);
+  //if (assemble_q_data)
+  //{
+  //  a.AssembleQuadratureData();
+  //}
+  //auto weakCurl = a.Assemble(skip_zeros);
+  auto weakCurl = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fpw, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto WeakCurl = std::make_unique<ComplexParOperator>(std::move(weakCurl),nullptr, GetNDSpace(), GetNDSpace(),false);
@@ -513,23 +500,25 @@ std::unique_ptr<OperType>
 SpaceOperator::GetPeriodicCurlMatrix()
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
-  periodic_op.AddCurlCoefficients(1.0, f);
-  int empty = (f.empty());
+  MaterialPropertyCoefficient fw(mat_op.MaxCeedAttribute());
+  periodic_op.AddCurlCoefficients(1.0, fw);
+  int empty = (fw.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
     return {};
   }
-  constexpr bool skip_zeros = false, assemble_q_data = false;
+  constexpr bool skip_zeros = false;
+  //constexpr bool assemble_q_data = false;
   //BilinearForm a(GetNDSpace(), GetNDSpace()); //? which spaces and what order?
-  BilinearForm a(GetNDSpace());//test
-  a.AddDomainIntegrator<MixedVectorCurlIntegrator>(f);
-  if (assemble_q_data)
-  {
-    a.AssembleQuadratureData();
-  }
-  auto curl = a.Assemble(skip_zeros);
+  //BilinearForm a(GetNDSpace());//test
+  //a.AddDomainIntegrator<MixedVectorCurlIntegrator>(f);
+  //if (assemble_q_data)
+  //{
+  //  a.AssembleQuadratureData();
+  //}
+  //auto curl = a.Assemble(skip_zeros);
+  auto curl = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr, &fw, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto Curl = std::make_unique<ComplexParOperator>(std::move(curl),nullptr, GetNDSpace(), GetNDSpace(),false);
@@ -738,6 +727,7 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *A2, ScalarType a4, ScalarType a5,
                                const OperType *P1, const OperType *P2)
 {
+  Mpi::Print("In GetSystemMatrix\n");
   using ParOperType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                 ComplexParOperator, ParOperator>::type;
@@ -868,6 +858,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
                                                                  double a2, double a3,
                                                                  double a4, double a5)
 {
+  Mpi::Print("In GetPreconditionerMatrix\n");
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
 
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
@@ -891,7 +882,9 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
         fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
         dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-        fbi(mat_op.MaxCeedBdrAttribute());
+        fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
+        fpwi(mat_op.MaxCeedAttribute()), fpr(mat_op.MaxCeedAttribute()),
+        fpwr(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fi);
@@ -900,21 +893,23 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-    //periodic_op.AddWeakCurlCoefficients(a4, fwi);
-    //periodic_op.AddCurlCoefficients(a5, fi);
-    int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()),
-                    (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty())};
+    periodic_op.AddWeakCurlCoefficients(a4, fpwi);
+    periodic_op.AddCurlCoefficients(a5, fpi);
+    int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()
+                     && fpwr.empty() && fpr.empty()),
+                    (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty()
+                     && fpwi.empty() && fpi.empty())};
     Mpi::GlobalMin(2, empty, GetComm());
     if (!empty[0])
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, skip_zeros,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr, skip_zeros,
                                  assemble_q_data);
       br_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
     }
     if (!empty[1])
     {
-      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, skip_zeros,
+      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi, skip_zeros,
                                  assemble_q_data);
       bi_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
@@ -924,7 +919,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   {
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
-        fbr(mat_op.MaxCeedBdrAttribute());
+        fbr(mat_op.MaxCeedBdrAttribute()), fpwr(mat_op.MaxCeedAttribute()),
+        fpr(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fr);
@@ -936,7 +932,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     Mpi::GlobalMin(1, &empty, GetComm());
     if (!empty)
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, skip_zeros,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr, skip_zeros,
                                  assemble_q_data);
       br_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);

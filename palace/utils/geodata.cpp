@@ -1884,37 +1884,6 @@ void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
                                  const std::vector<mfem::Vector> &receiver_pts,
                                  mfem::DenseMatrix &transformation)
 {
-  // SVD
-  // But this assumes known correspondence
-  /*
-  mfem::DenseMatrix Am(3, num_donor_pts);
-  mfem::DenseMatrix Bm(3, num_receiver_pts);
-  int idx = 0;
-  for (const int v : bdr_v_donor)
-  {
-    coord = periodic_mesh->GetVertex(v);
-    Am(0,idx) = coord[0] - donor_centroid[0];
-    Am(1,idx) = coord[1] - donor_centroid[1];
-    Am(2,idx) = coord[2] - donor_centroid[2];
-    idx++;
-  }
-  idx = 0;
-  for (const int v : bdr_v_receiver)
-  {
-    coord = periodic_mesh->GetVertex(v);
-    Bm(0,idx) = coord[0] - receiver_centroid[0];
-    Bm(1,idx) = coord[1] - receiver_centroid[1];
-    Bm(2,idx) = coord[2] - receiver_centroid[2];
-    idx++;
-  }
-  mfem::DenseMatrix H(3);
-  Bm.Transpose();
-  Mult(Am, Bm, H);
-  H.Print();
-  //mfem::DenseMatrixSVD svd(H,'A','A');
-  // Use eigen?
-  */
-
 
     mfem::DenseMatrix A(12);
     A = 0.0;
@@ -2037,7 +2006,7 @@ std::vector<int> CreatePeriodicVertexMapping(
     dx -= coord;
     //Mpi::Print(" to receiver point: {:d} ({:.3e}, {:.3e}, {:.3e}), with transform error {:.3e}\n", vj, receiver_coord[0], receiver_coord[1], receiver_coord[2], dx.Norml2());
 
-    MFEM_VERIFY(dx.Norml2() < tol, "Could not match points on periodic boundaries.");
+    MFEM_VERIFY(dx.Norml2() < tol, "Could not match points on periodic boundaries, transformed donor point does not correspond to a receive point.");
 
     MFEM_VERIFY(replica2primary.find(vj) == replica2primary.end(), "Could not match points on periodic boundaries, multiple donor points map to the same receiver point.")
 
@@ -2112,7 +2081,15 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
     auto periodic_mesh = std::move(mesh);
     for (const auto &data : boundaries.periodic)
     {
-      // Compute the translation vector between donor and receiver boundaries.
+
+      // If translation or affine transform is provided in config
+      // file, we use those.
+      // If only translation is provided -> use it
+      // If only affine transfomr is provided -> use it
+      // If both affine transform and translation are provided -> error or warning?
+      // If neither -> automatic detection
+
+      // Compute the transformation between donor and receiver boundaries.
       const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
       const int sdim = periodic_mesh->SpaceDimension();
       mfem::Vector coord(sdim), donor_centroid(sdim), receiver_centroid(sdim);
@@ -2196,9 +2173,9 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       else if (donor_pts.size() == 2)
       {
         // Use normals to compute a rotation matrix
-        ComputeRotation(donor_normal, receiver_normal,
-                        transformation);
-        // Use add centroids translation to transform matrix
+        ComputeRotation(donor_normal, receiver_normal, transformation);
+
+        // Add centroids translation to transform matrix
         transformation(0,3) = translation2[0];
         transformation(1,3) = translation2[1];
         transformation(2,3) = translation2[2];
@@ -2213,12 +2190,6 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
                                                  transformation,
                                                  norm_tol);
 
-      // Should move this up. If translation or affine transform is provided in config
-      // file, we use those.
-      // If only translation is provided -> use it
-      // If only affine transfomr is provided -> use it
-      // If both affine transform and translation are provided -> error or warning?
-      // If neither -> automatic detection
       //mfem::Vector translation(data.translation.size());
       //std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
       //auto periodic_mapping =

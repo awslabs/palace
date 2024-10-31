@@ -26,6 +26,31 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
     std::sort(periodic_attr.begin(), periodic_attr.end());
     utils::PrettyPrint(periodic_attr);
   }
+  const auto &data = iodata.boundaries.floquet;
+  MFEM_VERIFY(data.wave_vector.size() == mesh.SpaceDimension(),
+              "Bloch wave vector size must equal the spatial dimension.");
+  wave_vector.SetSize(data.wave_vector.size());
+  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
+  non_zero_wave_vector = (wave_vector.Norml2() > std::numeric_limits<double>::epsilon());
+  MFEM_VERIFY(!non_zero_wave_vector ||
+              iodata.problem.type == config::ProblemData::Type::DRIVEN ||
+              iodata.problem.type == config::ProblemData::Type::EIGENMODE,
+              "Quasi-periodic Floquet boundary conditions are only available for "
+              " frequency domain driven or eigenmode simulations!");
+
+  // Matrix representation of cross product with wave vector
+  // [k x] = | 0  -k3  k2|
+  //         | k3  0  -k1|
+  //         |-k2  k1  0 |
+  wave_vector_cross.SetSize(3); // assumes 3D?
+  wave_vector_cross(0,1) = -wave_vector[2];
+  wave_vector_cross(0,2) = wave_vector[1];
+  wave_vector_cross(1,0) = wave_vector[2];
+  wave_vector_cross(1,2) = -wave_vector[0];
+  wave_vector_cross(2,0) = -wave_vector[1];
+  wave_vector_cross(2,1) = wave_vector[0];
+  //Mpi::Print("Wave vector cross product\n");
+  //wave_vector_cross.Print();
 }
 
 mfem::Array<int>
@@ -73,7 +98,6 @@ PeriodicBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Mark selected boundary attributes from the mesh as periodic.
-  // ???? IS THIS USEFUL???
   mfem::Array<int> periodic_bcs;
   for (const auto &data : iodata.boundaries.periodic)
   {
@@ -94,32 +118,6 @@ PeriodicBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
       }
       periodic_bcs.Append(attr);
     }
-
-    // Wave vector ???? SHOULD BE ONLY ONE WAVE VECTOR FOR THE ENTIRE SIM
-    // NOT ONE PER PERIODIC BC PAIR??? MOVE THIS OUTSIDE THE LOOP?
-    MFEM_VERIFY(data.wave_vector.size() == mesh.SpaceDimension(),
-    "Block wave vector size must equal the spatial dimension.");
-    wave_vector.SetSize(data.wave_vector.size());
-    std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
-    MFEM_VERIFY(periodic_bcs.Size() == 0 ||
-                wave_vector.Normlinf() < std::numeric_limits<double>::epsilon() ||
-                iodata.problem.type == config::ProblemData::Type::DRIVEN ||
-                iodata.problem.type == config::ProblemData::Type::EIGENMODE,
-                "Quasi-periodic Floquet boundary conditions are only available for "
-                " frequency domain driven or eigenmode simulations!");
-
-
-    // Matrix representation of cross product with wave vector
-    // [k x] = | 0  -k3  k2|
-    //         | k3  0  -k1|
-    //         |-k2  k1  0 |
-    wave_vector_cross.SetSize(3); // assumes 3D?
-    wave_vector_cross(0,1) = -wave_vector[2];
-    wave_vector_cross(0,2) = wave_vector[1];
-    wave_vector_cross(1,0) = wave_vector[2];
-    wave_vector_cross(1,2) = -wave_vector[0];
-    wave_vector_cross(2,0) = -wave_vector[1];
-    wave_vector_cross(2,1) = wave_vector[0];
   }
 
   return periodic_bcs;
@@ -129,7 +127,7 @@ void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {
 
-  if (periodic_attr.Size())
+  if (non_zero_wave_vector)
   {
     // [k x]^T 1/mu [k x]
     mfem::DenseTensor kx(mat_op.GetInvPermeability().SizeI(),
@@ -154,7 +152,7 @@ void PeriodicBoundaryOperator::AddWeakCurlCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {
 
-  if (periodic_attr.Size())
+  if (non_zero_wave_vector)
   {
     // 1/mu [k x]
     mfem::DenseTensor kx(mat_op.GetInvPermeability().SizeI(),
@@ -176,7 +174,7 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
                                                    MaterialPropertyCoefficient &f)
 {
 
-  if (periodic_attr.Size())
+  if (non_zero_wave_vector)
   {
     // [k x]^T 1/mu
     mfem::DenseTensor kxT(mat_op.GetInvPermeability().SizeI(),

@@ -28,8 +28,11 @@ private:
   // Bloch wave vector for Floquet boundary conditions.
   mfem::Vector wave_vector;
 
-  // Matrix representation of cross product with the wave_vector;
+  // Matrix representation of cross product with the wave vector.
   mfem::DenseMatrix wave_vector_cross;
+
+  // Check if the wave vector is zero to bypass additional terms.
+  bool non_zero_wave_vector;
 
   mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
