@@ -83,8 +83,8 @@ public:
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
-        A = space_op.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
-        B = space_op.GetPreconditionerMatrix<Operator>(a0, a1, 1.0, 0.0);
+        A = space_op.GetSystemMatrix(a0, a1, 1.0, 0.0, 0.0, K.get(), C.get(), M.get());
+        B = space_op.GetPreconditionerMatrix<Operator>(a0, a1, 1.0, 0.0, 0.0, 0.0);
 
         // Configure the solver.
         if (!kspA)

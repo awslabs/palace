@@ -723,11 +723,10 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
+                               ScalarType a4, ScalarType a5,
                                const OperType *K, const OperType *C, const OperType *M,
-                               const OperType *A2, ScalarType a4, ScalarType a5,
-                               const OperType *P1, const OperType *P2)
+                               const OperType *A2, const OperType *P1, const OperType *P2)
 {
-  Mpi::Print("In GetSystemMatrix\n");
   using ParOperType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                 ComplexParOperator, ParOperator>::type;
@@ -858,7 +857,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
                                                                  double a2, double a3,
                                                                  double a4, double a5)
 {
-  Mpi::Print("In GetPreconditionerMatrix\n");
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
 
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
@@ -1212,16 +1210,15 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
+SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, double, double, const Operator *,
                                                  const Operator *, const Operator *,
-                                                 const Operator *, double, double,
-                                                 const Operator *, const Operator *);
+                                                 const Operator *, const Operator *, const Operator *);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>,
+    std::complex<double>, std::complex<double>,
     const ComplexOperator *, const ComplexOperator *, const ComplexOperator *,
-    const ComplexOperator *, std::complex<double>, std::complex<double>,
-    const ComplexOperator *, const ComplexOperator *);
+    const ComplexOperator *, const ComplexOperator *, const ComplexOperator *);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double, double, double);
@@ -1229,9 +1226,13 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double, double, double);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPeriodicWeakCurlMatrix();
+SpaceOperator::GetPeriodicWeakCurlMatrix<Operator>();
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetPeriodicWeakCurlMatrix<ComplexOperator>();
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPeriodicCurlMatrix();
+SpaceOperator::GetPeriodicCurlMatrix<Operator>();
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetPeriodicCurlMatrix<ComplexOperator>();
 
 }  // namespace palace

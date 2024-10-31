@@ -36,6 +36,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>();
+  auto P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>();
   const auto &Curl = space_op.GetCurlMatrix();
   SaveMetadata(space_op.GetNDSpaces());
 
@@ -241,10 +243,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get());
+                                    std::complex<double>(-target * target, 0.0), 1.0i, -1.0i, K.get(),
+                                    C.get(), M.get(), P1.get(), P2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                             target);
+                                                             target, 1.0, -1.0);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);

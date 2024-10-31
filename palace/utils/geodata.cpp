@@ -2149,6 +2149,9 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       Mpi::Print("Donor normal: {:.9e}, {:.9e}, {:.9e}\n", donor_normal[0], donor_normal[1], donor_normal[2]);
       Mpi::Print("Receiver normal: {:.9e}, {:.9e}, {:.9e}\n", receiver_normal[0], receiver_normal[1], receiver_normal[2]);
 
+      // Should we add check somewhere that the boundary surfaces are planar??
+      // Maybe in the ComputeNormal function?
+
       std::vector<mfem::Vector> donor_pts, receiver_pts;
       FindUniquePoints(periodic_mesh, bdr_v_donor, donor_centroid, diameter, donor_pts, norm_tol);
       FindUniquePoints(periodic_mesh, bdr_v_receiver, receiver_centroid, diameter, receiver_pts, norm_tol);

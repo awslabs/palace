@@ -162,9 +162,8 @@ public:
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType>
-  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
+  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, ScalarType a4, ScalarType a5, const OperType *K,
                   const OperType *C, const OperType *M, const OperType *A2 = nullptr,
-                  ScalarType a4 = 0, ScalarType a5 = 0,
                   const OperType *P1 = nullptr, const OperType *P2 = nullptr);
 
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
