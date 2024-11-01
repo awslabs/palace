@@ -117,8 +117,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
-  auto P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>();
-  auto P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>();
+  auto P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver and set operators for the first frequency step. The

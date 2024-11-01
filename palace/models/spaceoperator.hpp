@@ -151,9 +151,9 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
-  std::unique_ptr<OperType> GetPeriodicWeakCurlMatrix();
+  std::unique_ptr<OperType> GetPeriodicWeakCurlMatrix(Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
-  std::unique_ptr<OperType> GetPeriodicCurlMatrix();
+  std::unique_ptr<OperType> GetPeriodicCurlMatrix(Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

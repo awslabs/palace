@@ -1563,7 +1563,7 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_EPS_A0\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->opP1)
@@ -1586,7 +1586,7 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_EPS_A1\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   ctx->y1 *= ctx->delta * ctx->gamma;
@@ -1601,7 +1601,7 @@ PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_EPS_B\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -1620,7 +1620,7 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc pc_apply_EPS\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
@@ -1780,7 +1780,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_PEP_A0\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->opP1)
@@ -1802,7 +1802,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_PEP_A1\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opC->Mult(ctx->x1, ctx->y1);
   PetscCall(ToPetscVec(ctx->y1, y));
@@ -1816,7 +1816,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_PEP_A2\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   PetscCall(ToPetscVec(ctx->y1, y));
@@ -1830,7 +1830,7 @@ PetscErrorCode __mat_apply_PEP_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc apply_PEP_B\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -1849,7 +1849,7 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+  palace::Mpi::Print("SLEPc pc_apply_PEP\n");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)

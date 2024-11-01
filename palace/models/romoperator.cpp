@@ -196,8 +196,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>();
-  P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>();
+  P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,

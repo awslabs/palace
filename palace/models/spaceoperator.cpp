@@ -461,7 +461,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 // Move some of this inside AssembleOperator(s)? AssembleMixedOperator(s)?
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetPeriodicWeakCurlMatrix()
+SpaceOperator::GetPeriodicWeakCurlMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fpw(mat_op.MaxCeedAttribute());
@@ -483,6 +483,20 @@ SpaceOperator::GetPeriodicWeakCurlMatrix()
   //}
   //auto weakCurl = a.Assemble(skip_zeros);
   auto weakCurl = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fpw, nullptr, skip_zeros);
+
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto WeakCurl = std::make_unique<ComplexParOperator>(std::move(weakCurl), nullptr, GetNDSpace());
+    WeakCurl->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return WeakCurl;
+  }
+  else
+  {
+    auto WeakCurl = std::make_unique<ParOperator>(std::move(weakCurl), GetNDSpace());
+    WeakCurl->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return WeakCurl;
+  }
+/*
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto WeakCurl = std::make_unique<ComplexParOperator>(std::move(weakCurl),nullptr, GetNDSpace(), GetNDSpace(),false);
@@ -493,11 +507,12 @@ SpaceOperator::GetPeriodicWeakCurlMatrix()
     auto WeakCurl = std::make_unique<ParOperator>(std::move(weakCurl),GetNDSpace(), GetNDSpace(), false);
     return WeakCurl;
   }
+  */
 }
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetPeriodicCurlMatrix()
+SpaceOperator::GetPeriodicCurlMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fw(mat_op.MaxCeedAttribute());
@@ -521,6 +536,19 @@ SpaceOperator::GetPeriodicCurlMatrix()
   auto curl = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr, &fw, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
+    auto Curl = std::make_unique<ComplexParOperator>(std::move(curl), nullptr, GetNDSpace());
+    Curl->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return Curl;
+  }
+  else
+  {
+    auto Curl = std::make_unique<ParOperator>(std::move(curl), GetNDSpace());
+    Curl->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return Curl;
+  }
+  /*
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
     auto Curl = std::make_unique<ComplexParOperator>(std::move(curl),nullptr, GetNDSpace(), GetNDSpace(),false);
     return Curl;
   }
@@ -529,6 +557,7 @@ SpaceOperator::GetPeriodicCurlMatrix()
     auto Curl = std::make_unique<ParOperator>(std::move(curl),GetNDSpace(), GetNDSpace(), false);
     return Curl;
   }
+  */
 }
 
 namespace
@@ -556,11 +585,11 @@ auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
   {
     sum->AddOperator(A2->LocalOperator(), 1.0);
   }
-  if (P1)
+  if (P1 && a4 != 0.0)
   {
     sum->AddOperator(P1->LocalOperator(), a4);
   }
-  if (P2)
+  if (P2 && a5 != 0.0)
   {
     sum->AddOperator(P2->LocalOperator(), a5);
   }
@@ -1226,13 +1255,13 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double, double, double);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPeriodicWeakCurlMatrix<Operator>();
+SpaceOperator::GetPeriodicWeakCurlMatrix<Operator>(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPeriodicWeakCurlMatrix<ComplexOperator>();
+SpaceOperator::GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPeriodicCurlMatrix<Operator>();
+SpaceOperator::GetPeriodicCurlMatrix<Operator>(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPeriodicCurlMatrix<ComplexOperator>();
+SpaceOperator::GetPeriodicCurlMatrix<ComplexOperator>(Operator::DiagonalPolicy);
 
 }  // namespace palace
