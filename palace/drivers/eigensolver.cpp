@@ -130,12 +130,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (P1 && P2)
     {
-      Mpi::Print("Eigen set operators K, C, M, P1, P2\n");
       eigen->SetOperators(*K, *C, *M, *P1, *P2, scale);
     }
     else
     {
-      Mpi::Print("Eigen set operators K, C, M\n");
       eigen->SetOperators(*K, *C, *M, scale);
     }
   }
@@ -143,12 +141,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (P1 && P2)
     {
-      Mpi::Print("Eigen set operators K, M, P1, P2\n");
       eigen->SetOperators(*K, *M, *P1, *P2, scale);
     }
     else
     {
-      Mpi::Print("Eigen set operators K, M\n");
       eigen->SetOperators(*K, *M, scale);
     }
   }
