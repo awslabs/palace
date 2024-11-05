@@ -433,7 +433,7 @@ void IoData::CheckConfiguration()
       if (solver.transient.rel_tol > 0 || solver.transient.abs_tol > 0)
       {
         Mpi::Warning("Generalized alpha transient solver does not use relative "
-                    "and absolute tolerance parameters!\n");
+                     "and absolute tolerance parameters!\n");
       }
       if (solver.transient.order > 0)
       {
@@ -465,7 +465,7 @@ void IoData::CheckConfiguration()
         solver.transient.order = 5;
       }
     }
-    else // ARKODE and RUNGE_KUTTA
+    else  // ARKODE and RUNGE_KUTTA
     {
       if (solver.transient.rel_tol < 0)
       {
@@ -486,7 +486,8 @@ void IoData::CheckConfiguration()
       }
       else if (solver.transient.order > 5)
       {
-        Mpi::Warning("Runge-Kutta/ARKODE transient solver order cannot be greater than 5!\n");
+        Mpi::Warning(
+            "Runge-Kutta/ARKODE transient solver order cannot be greater than 5!\n");
         solver.transient.order = 5;
       }
     }
