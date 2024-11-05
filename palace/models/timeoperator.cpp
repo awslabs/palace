@@ -18,7 +18,7 @@ namespace palace
 namespace
 {
 
-class TimeDependentFirstOrderOperator: public mfem::TimeDependentOperator
+class TimeDependentFirstOrderOperator : public mfem::TimeDependentOperator
 {
 public:
   // MPI communicator.
@@ -45,10 +45,9 @@ public:
 
 public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
-                                std::function<double(double)> &dJ_coef, double t0,
-                                mfem::TimeDependentOperator::Type type)
-    : mfem::TimeDependentOperator(2*space_op.GetNDSpace().GetTrueVSize(),
-                                  t0, type),
+                                  std::function<double(double)> &dJ_coef, double t0,
+                                  mfem::TimeDependentOperator::Type type)
+    : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize(), t0, type),
       comm(space_op.GetComm()), dJ_coef(dJ_coef)
   {
     // Get dimensions of E and Edot vectors.
@@ -65,7 +64,7 @@ public:
     // Set up RHS vector for the current source term: -g(t) J, where g(t) handles the time
     // dependence.
     space_op.GetExcitationVector(NegJ);
-    RHS.SetSize(2*size_E);
+    RHS.SetSize(2 * size_E);
     RHS.UseDevice(true);
 
     // Set up linear solvers.
@@ -88,8 +87,8 @@ public:
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
-        A = space_op.GetSystemMatrix(dt*dt, dt, 1.0, K.get(), C.get(), M.get());
-        B = space_op.GetPreconditionerMatrix<Operator>(dt*dt, dt, 1.0, 0.0);
+        A = space_op.GetSystemMatrix(dt * dt, dt, 1.0, K.get(), C.get(), M.get());
+        B = space_op.GetPreconditionerMatrix<Operator>(dt * dt, dt, 1.0, 0.0);
 
         // Configure the solver.
         if (!kspA)
@@ -105,9 +104,9 @@ public:
   // Form the RHS for the first-order ODE system
   void FormRHS(const Vector &u, Vector &rhs) const
   {
-    Vector u1(u.GetData()     +      0, size_E);
-    Vector u2(u.GetData()     + size_E, size_E);
-    Vector rhs1(rhs.GetData() +      0, size_E);
+    Vector u1(u.GetData() + 0, size_E);
+    Vector u2(u.GetData() + size_E, size_E);
+    Vector rhs1(rhs.GetData() + 0, size_E);
     Vector rhs2(rhs.GetData() + size_E, size_E);
     // u1 = Edot, u2 = E
     // rhs_u1 = -C*u1 - K*u2 - J(t)
@@ -131,9 +130,9 @@ public:
       du = 0.0;
     }
     FormRHS(u, RHS);
-    Vector du1(du.GetData()   +      0, size_E);
-    Vector du2(du.GetData()   + size_E, size_E);
-    Vector rhs1(RHS.GetData() +      0, size_E);
+    Vector du1(du.GetData() + 0, size_E);
+    Vector du2(du.GetData() + size_E, size_E);
+    Vector rhs1(RHS.GetData() + 0, size_E);
     Vector rhs2(RHS.GetData() + size_E, size_E);
     kspM->Mult(rhs1, du1);
     du2 = rhs2;
@@ -153,9 +152,9 @@ public:
     }
     Mpi::Print("\n");
     FormRHS(u, RHS);
-    Vector k1(k.GetData()     +      0, size_E);
-    Vector k2(k.GetData()     + size_E, size_E);
-    Vector rhs1(RHS.GetData() +      0, size_E);
+    Vector k1(k.GetData() + 0, size_E);
+    Vector k2(k.GetData() + size_E, size_E);
+    Vector rhs1(RHS.GetData() + 0, size_E);
     Vector rhs2(RHS.GetData() + size_E, size_E);
     // A k1 = rhs1 - dt K rhs2
     K->AddMult(rhs2, rhs1, -dt);
@@ -165,14 +164,10 @@ public:
     linalg::AXPBYPCZ(1.0, rhs2, dt, k1, 0.0, k2);
   }
 
-  void ExplicitMult(const Vector &u, Vector &v) const override
-  {
-    Mult(u, v);
-  }
+  void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
 
   // Setup A = M - gamma J = M + gamma C + gamma^2 K
-  int SUNImplicitSetup(const Vector &y, const Vector &fy,
-                       int jok, int *jcur, double gamma)
+  int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur, double gamma)
   {
     // Update Jacobian matrix
     if (!kspA || gamma != saved_gamma)
@@ -192,9 +187,9 @@ public:
   // Solve (Mass - dt Jacobian) x = Mass b
   int SUNImplicitSolve(const Vector &b, Vector &x, double tol)
   {
-    Vector b1(b.GetData() +      0, size_E);
+    Vector b1(b.GetData() + 0, size_E);
     Vector b2(b.GetData() + size_E, size_E);
-    Vector x1(x.GetData() +      0, size_E);
+    Vector x1(x.GetData() + 0, size_E);
     Vector x2(x.GetData() + size_E, size_E);
     Vector rhs(RHS.GetData() + 0, size_E);
 
@@ -223,7 +218,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   int size_B = space_op.GetRTSpace().GetTrueVSize();
 
   // Allocate space for solution vectors.
-  sol.SetSize(2*size_E);
+  sol.SetSize(2 * size_E);
   E.SetSize(size_E);
   En.SetSize(size_E);
   B.SetSize(size_B);
@@ -251,7 +246,8 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         constexpr double rho_inf = 1.0;
         use_mfem_integrator = true;
         ode = std::make_unique<mfem::GeneralizedAlphaSolver>(rho_inf);
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0, type);
+        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
+                                                               0.0, type);
       }
       break;
     case config::TransientSolverData::Type::ARKODE:
@@ -263,7 +259,8 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         arkode = std::make_unique<mfem::ARKStepSolver>(space_op.GetComm(),
                                                        mfem::ARKStepSolver::IMPLICIT);
         // Operator for first-order ODE system.
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0, type);
+        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
+                                                               0.0, type);
         // Initialize ARKODE.
         arkode->Init(*op);
         // Use implicit setup/solve defined in SUNImplicit*.
@@ -294,7 +291,8 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         cvode = std::make_unique<mfem::CVODESolver>(space_op.GetComm(), CV_BDF);
         type = mfem::TimeDependentOperator::IMPLICIT;
         // Operator for first-order ODE system.
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0, type);
+        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
+                                                               0.0, type);
         // Initialize CVODE.
         cvode->Init(*op);
         // Relative and absolute tolerances for time step control.
@@ -305,7 +303,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         // CV_BDF can go up to 5, but >= 3 is not unconditionally stable.
         cvode->SetMaxOrder(order);
         // Set the max number of steps allowed in one CVODE step() call.
-        cvode->SetMaxNSteps(10000); //default 500
+        cvode->SetMaxNSteps(10000);  // default 500
         // Set the ODE solver to CVODE.
         ode = std::move(cvode);
 #else
@@ -370,9 +368,9 @@ void TimeOperator::Init(double &dt)
     ode->Init(*op);
   }
 #if defined(MFEM_USE_SUNDIALS)
-  if (mfem::ARKStepSolver* arkode = dynamic_cast<mfem::ARKStepSolver*>(ode.get()))
+  if (mfem::ARKStepSolver *arkode = dynamic_cast<mfem::ARKStepSolver *>(ode.get()))
   {
-    if(!adapt_dt)
+    if (!adapt_dt)
     {
       // Disable adaptive time stepping.
       arkode->SetFixedStep(dt);
@@ -397,17 +395,11 @@ void TimeOperator::Step(double &t, double &dt)
 void TimeOperator::PrintStats()
 {
 #if defined(MFEM_USE_SUNDIALS)
-  if (mfem::ARKStepSolver* arkode = dynamic_cast<mfem::ARKStepSolver*>(ode.get()))
+  if (mfem::ARKStepSolver *arkode = dynamic_cast<mfem::ARKStepSolver *>(ode.get()))
   {
     long int expsteps, accsteps, step_attempts, nfe_evals, nfi_evals, nlinsetups, netfails;
-    ARKStepGetTimestepperStats(arkode->GetMem(),
-                               &expsteps,
-                               &accsteps,
-                               &step_attempts,
-                               &nfe_evals,
-                               &nfi_evals,
-                               &nlinsetups,
-                               &netfails);
+    ARKStepGetTimestepperStats(arkode->GetMem(), &expsteps, &accsteps, &step_attempts,
+                               &nfe_evals, &nfi_evals, &nlinsetups, &netfails);
 
     long int nniters;
     ARKStepGetNumNonlinSolvIters(arkode->GetMem(), &nniters);
@@ -421,24 +413,15 @@ void TimeOperator::PrintStats()
     Mpi::Print(" Calls to linear solver solve function: {:d}\n", nniters);
     Mpi::Print(" Number of error test failures: {:d}\n", netfails);
   }
-  else if (mfem::CVODESolver* cvode = dynamic_cast<mfem::CVODESolver*>(ode.get()))
+  else if (mfem::CVODESolver *cvode = dynamic_cast<mfem::CVODESolver *>(ode.get()))
   {
     long int nsteps, nfevals, nlinsetups, netfails;
-    int      qlast, qcur;
-    double   hinused, hlast, hcur, tcur;
+    int qlast, qcur;
+    double hinused, hlast, hcur, tcur;
 
-   // Get integrator stats.
-   CVodeGetIntegratorStats(cvode->GetMem(),
-                           &nsteps,
-                           &nfevals,
-                           &nlinsetups,
-                           &netfails,
-                           &qlast,
-                           &qcur,
-                           &hinused,
-                           &hlast,
-                           &hcur,
-                           &tcur);
+    // Get integrator stats.
+    CVodeGetIntegratorStats(cvode->GetMem(), &nsteps, &nfevals, &nlinsetups, &netfails,
+                            &qlast, &qcur, &hinused, &hlast, &hcur, &tcur);
     Mpi::Print("\n CVODE time-stepper statistics\n");
     Mpi::Print(" Number of steps: {:d}\n", nsteps);
     Mpi::Print(" Calls to RHS function: {:d}\n", nfevals);

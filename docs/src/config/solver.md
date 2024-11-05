@@ -266,10 +266,10 @@ saved in the `paraview/` directory under the directory specified by
 Only relevant when `"Type"` is `"ARKODE"`, `"Runge-Kutta"` or `"CVODE"`.
 
 `"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"CVODE"` or `"ARKODE"` .
+when `"Type"` is `"CVODE"` or `"ARKODE"` .
 
 `"AbsTol" [1e-9]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"CVODE"` or `"ARKODE"`.
+when `"Type"` is `"CVODE"` or `"ARKODE"`.
 
 ## `solver["Electrostatic"]`
 

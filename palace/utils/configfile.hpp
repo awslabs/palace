@@ -776,11 +776,11 @@ public:
 
   // RK scheme order for SUNDIALS ARKODE integrators.
   // Max order for SUNDIALS CVODE integrator.
-  int order = -1;//2
+  int order = -1;
 
   // Adaptive time-stepping tolerances
-  double rel_tol = -1;//1e-4;
-  double abs_tol = -1;//1e-9;
+  double rel_tol = -1;
+  double abs_tol = -1;
 
   void SetUp(json &solver);
 };
