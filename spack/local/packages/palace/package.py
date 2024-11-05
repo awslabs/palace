@@ -78,7 +78,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack~openmp", when="~openmp")
 
     with when("+sundials"):
-        depends_on("sundials")
+        depends_on("sundials@6.7.0")
         depends_on("sundials+shared", when="+shared")
         depends_on("sundials~shared", when="~shared")
         depends_on("sundials+openmp", when="+openmp")
