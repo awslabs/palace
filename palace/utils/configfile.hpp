@@ -743,8 +743,7 @@ public:
   {
     DEFAULT,
     GEN_ALPHA,
-    NEWMARK,
-    CENTRAL_DIFF,
+    RUNGE_KUTTA,
     ARKODE,
     CVODE
   };
@@ -777,14 +776,11 @@ public:
 
   // RK scheme order for SUNDIALS ARKODE integrators.
   // Max order for SUNDIALS CVODE integrator.
-  int order = 2;
-
-  // Adaptive time-stepping for SUNDIALS ARKODE integrators
-  bool adaptive_dt = true;
+  int order = -1;//2
 
   // Adaptive time-stepping tolerances
-  double rel_tol = 1e-4;
-  double abs_tol = 1e-9;
+  double rel_tol = -1;//1e-4;
+  double abs_tol = -1;//1e-9;
 
   void SetUp(json &solver);
 };

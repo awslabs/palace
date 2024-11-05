@@ -1607,8 +1607,7 @@ void MagnetostaticSolverData::SetUp(json &solver)
 PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
                            {{TransientSolverData::Type::DEFAULT, "Default"},
                             {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
-                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"},
+                            {TransientSolverData::Type::RUNGE_KUTTA, "RungeKutta"},
                             {TransientSolverData::Type::CVODE, "CVODE"},
                             {TransientSolverData::Type::ARKODE, "ARKODE"}})
 PALACE_JSON_SERIALIZE_ENUM(
@@ -1642,7 +1641,6 @@ void TransientSolverData::SetUp(json &solver)
   delta_t = transient->at("TimeStep");  // Required
   delta_post = transient->value("SaveStep", delta_post);
   order = transient->value("Order", order);
-  adaptive_dt = transient->value("AdaptiveTimeStep", adaptive_dt);
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
 
@@ -1655,7 +1653,6 @@ void TransientSolverData::SetUp(json &solver)
   transient->erase("TimeStep");
   transient->erase("SaveStep");
   transient->erase("Order");
-  transient->erase("AdaptiveTimeStep");
   transient->erase("RelTol");
   transient->erase("AbsTol");
   MFEM_VERIFY(transient->empty(),
@@ -1673,7 +1670,6 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "TimeStep: " << delta_t << '\n';
     std::cout << "SaveStep: " << delta_post << '\n';
     std::cout << "Order: " << order << '\n';
-    std::cout << "AdaptiveTimeStep: " << adaptive_dt << '\n';
     std::cout << "RelTol: " << rel_tol << '\n';
     std::cout << "AbsTol: " << abs_tol << '\n';
   }

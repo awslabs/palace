@@ -209,7 +209,6 @@ error tolerance.
     "MaxTime": <float>,
     "TimeStep": <float>,
     "SaveStep": <int>,
-    "AdaptiveTimeStep": <bool>,
     "Order": <int>,
     "RelTol": <float>,
     "AbsTol": <float>
@@ -223,17 +222,12 @@ the second-order system of differential equations. The available options are:
 
   - `"GeneralizedAlpha"` :  The second-order implicit generalized-``\alpha`` method with
     ``\rho_{\inf} = 1.0``. This scheme is unconditionally stable.
-  - `"NewmarkBeta"` :  The second-order implicit Newmark-``\beta`` method with
-    ``\beta = 1/4`` and ``\gamma = 1/2``. This scheme is unconditionally stable.
-  - `"CentralDifference"` :  The second-order explicit central difference method, obtained
-    by setting ``\beta = 0`` and ``\gamma = 1/2`` in the Newmark-``\beta`` method. In this
-    case, the maximum eigenvalue of the system operator is estimated at the start of the
-    simulation and used to restrict the simulation time step to below the maximum stability
-    time step.
   - `"ARKODE"` :  SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
-    ODE system for the electric field.
+    ODE system for the electric field with adaptive time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
   - `"CVODE"` :  SUNDIALS CVODE implicit multistep method scheme applied to the first-order
-    ODE system for the electric field.
+    ODE system for the electric field with adaptive time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
+  - `"RungeKutta"` : SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
+    ODE system for the electric field with fixed time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
   - `"Default"` :  Use the default `"GeneralizedAlpha"` time integration scheme.
 
 `"Excitation" [None]` :  Controls the time dependence of the source excitation. The
@@ -268,17 +262,14 @@ disk for [visualization with ParaView](../guide/postprocessing.md#Visualization)
 saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-`"AdaptiveTimeStep" [true]` :  Enable adaptive time-stepping in the Runge-Kutta integrators.
-Only relevant when `"Type"` is `"ARKODE"`. `"CVODE"` always uses adaptive time-stepping.
-
 `"Order" [2]` :  Order of the Runge-Kutta integrators or maximum order of the multistep method.
-Only relevant when `"Type"` is `"ARKODE"` or `"CVODE"`.
+Only relevant when `"Type"` is `"ARKODE"`, `"Runge-Kutta"` or `"CVODE"`.
 
 `"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"CVODE"` or `"ARKODE"` (when `"AdaptiveTimeStep"` is enabled).
+ when `"Type"` is `"CVODE"` or `"ARKODE"` .
 
 `"AbsTol" [1e-9]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
- when `"Type"` is `"CVODE"` or `"ARKODE"` (when `"AdaptiveTimeStep"` is enabled).
+ when `"Type"` is `"CVODE"` or `"ARKODE"`.
 
 ## `solver["Electrostatic"]`
 
