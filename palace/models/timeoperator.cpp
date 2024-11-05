@@ -29,7 +29,7 @@ public:
   Vector NegJ;
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
-  // returns g(t).
+  // returns g'(t).
   std::function<double(double)> &dJ_coef;
 
   // Internal objects for solution of linear systems during time stepping.
@@ -38,7 +38,6 @@ public:
   std::unique_ptr<Operator> A, B;
   mutable Vector RHS;
   int size_E;
-
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.

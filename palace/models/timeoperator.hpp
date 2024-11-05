@@ -46,8 +46,8 @@ public:
                std::function<double(double)> &dJ_coef);
 
   // Access solution vectors for E- and B-fields.
-  virtual const Vector &GetE() const { return E; }
-  virtual const Vector &GetB() const { return B; }
+  const Vector &GetE() const { return E; }
+  const Vector &GetB() const { return B; }
 
   // Return the linear solver associated with the implicit or explicit time integrator.
   const KspSolver &GetLinearSolver() const;
