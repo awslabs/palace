@@ -324,9 +324,7 @@ void IoData::CheckConfiguration()
   // Resolve default values in configuration file.
   if (solver.linear.type == config::LinearSolverData::Type::DEFAULT)
   {
-    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        (problem.type == config::ProblemData::Type::TRANSIENT &&
-         solver.transient.type == config::TransientSolverData::Type::CENTRAL_DIFF))
+    if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
     {
       solver.linear.type = config::LinearSolverData::Type::BOOMER_AMG;
     }
@@ -426,6 +424,72 @@ void IoData::CheckConfiguration()
         (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
          problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
          problem.type == config::ProblemData::Type::TRANSIENT);
+  }
+  if (problem.type == config::ProblemData::Type::TRANSIENT)
+  {
+    if (solver.transient.type == config::TransientSolverData::Type::GEN_ALPHA ||
+        solver.transient.type == config::TransientSolverData::Type::DEFAULT)
+    {
+      if (solver.transient.rel_tol > 0 || solver.transient.abs_tol > 0)
+      {
+        Mpi::Warning("Generalized alpha transient solver does not use relative "
+                    "and absolute tolerance parameters!\n");
+      }
+      if (solver.transient.order > 0)
+      {
+        Mpi::Warning("Generalized alpha transient solver does not use order parameter!\n");
+      }
+    }
+    else if (solver.transient.type == config::TransientSolverData::Type::CVODE)
+    {
+      if (solver.transient.rel_tol < 0)
+      {
+        solver.transient.rel_tol = 1e-4;
+      }
+      if (solver.transient.abs_tol < 0)
+      {
+        solver.transient.abs_tol = 1e-9;
+      }
+      if (solver.transient.order < 0)
+      {
+        solver.transient.order = 2;
+      }
+      else if (solver.transient.order < 2)
+      {
+        Mpi::Warning("CVODE transient solver order cannot be less than 2!\n");
+        solver.transient.order = 2;
+      }
+      else if (solver.transient.order > 5)
+      {
+        Mpi::Warning("CVODE transient solver order cannot be greater than 5!\n");
+        solver.transient.order = 5;
+      }
+    }
+    else // ARKODE and RUNGE_KUTTA
+    {
+      if (solver.transient.rel_tol < 0)
+      {
+        solver.transient.rel_tol = 1e-4;
+      }
+      if (solver.transient.abs_tol < 0)
+      {
+        solver.transient.abs_tol = 1e-9;
+      }
+      if (solver.transient.order < 0)
+      {
+        solver.transient.order = 3;
+      }
+      else if (solver.transient.order < 2)
+      {
+        Mpi::Warning("Runge-Kutta/ARKODE transient solver order cannot be less than 2!\n");
+        solver.transient.order = 2;
+      }
+      else if (solver.transient.order > 5)
+      {
+        Mpi::Warning("Runge-Kutta/ARKODE transient solver order cannot be greater than 5!\n");
+        solver.transient.order = 5;
+      }
+    }
   }
 
   // Configure settings for quadrature rules and partial assembly.

@@ -29,35 +29,13 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
-
-  std::unique_ptr<TimeOperator> time_op;
-  switch (iodata.solver.transient.type)
-  {
-    case config::TransientSolverData::Type::GEN_ALPHA:
-    case config::TransientSolverData::Type::NEWMARK:
-    case config::TransientSolverData::Type::CENTRAL_DIFF:
-    case config::TransientSolverData::Type::DEFAULT:
-      {
-        time_op = std::make_unique<SecondOrderTimeOperator>(iodata, space_op, dJdt_coef);
-      }
-      break;
-    case config::TransientSolverData::Type::ARKODE:
-    case config::TransientSolverData::Type::CVODE:
-      {
-#if !defined(MFEM_USE_SUNDIALS)
-      MFEM_ABORT("Solver was not built with SUNDIALS support, please choose a "
-                 "different transient solver type!");
-#endif
-        time_op = std::make_unique<FirstOrderTimeOperator>(iodata, space_op, dJdt_coef);
-      }
-      break;
-  }
+  TimeOperator time_op(iodata, space_op, dJdt_coef);
 
   double delta_t = iodata.solver.transient.delta_t;
-  if (time_op->isExplicit())
+  if (time_op.isExplicit())
   {
     // Stability limited time step.
-    const double dt_max = time_op-> GetMaxTimeStep();
+    const double dt_max = time_op.GetMaxTimeStep();
     const double dts_max = iodata.DimensionalizeValue(IoData::ValueType::TIME, dt_max);
     Mpi::Print(" Maximum stable time step: {:.6e} ns\n", dts_max);
     delta_t = std::min(delta_t, 0.95 * dt_max);
@@ -124,17 +102,17 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       Mpi::Print("\n");
       t += delta_t;
-      time_op-> Init(delta_t);  // Initial conditions
+      time_op.Init(delta_t);  // Initial conditions
     }
     else
     {
-      time_op-> Step(t, delta_t);  // Advances t internally
+      time_op.Step(t, delta_t);  // Advances t internally
     }
 
     // Postprocess for the time step.
     BlockTimer bt2(Timer::POSTPRO);
-    const Vector &E = time_op->GetE();
-    const Vector &B = time_op->GetB();
+    const Vector &E = time_op.GetE();
+    const Vector &B = time_op.GetB();
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp());
@@ -161,8 +139,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     step++;
   }
   BlockTimer bt1(Timer::POSTPRO);
-  time_op->PrintStats();
-  SaveMetadata(time_op->GetLinearSolver());
+  time_op.PrintStats();
+  SaveMetadata(time_op.GetLinearSolver());
   return {indicator, space_op.GlobalTrueVSize()};
 }
 

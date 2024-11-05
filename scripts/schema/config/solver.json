@@ -68,10 +68,9 @@
         "MaxTime": { "type": "number" },
         "TimeStep": { "type": "number" },
         "SaveStep": { "type": "integer" },
-        "AdaptiveTimeStep": {"type": "boolean"},
-        "Order": {"type": "integer", "minimum": 1},
-        "RelTol": {"type": "number", "minimum": 0.0},
-        "AbsTol": {"type": "number", "minimum": 0.0}
+        "Order": {"type": "integer", "minimum": 2},
+        "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
+        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }
     },
     "Electrostatic":

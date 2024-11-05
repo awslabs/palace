@@ -133,6 +133,7 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
   - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
+  - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -155,7 +156,7 @@ and LAPACK libraries depending on the system architecture according to the follo
 procedure:
 
   - For `x86_64` systems:
-    
+
       + If the `MKLROOT` environment variable is set, looks for an
         [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
@@ -166,7 +167,7 @@ procedure:
         which is permissively licensed and available from most package managers.
 
   - For `aarch64`/`arm64` systems:
-    
+
       + If the `ARMPL_DIR` environment variable is set, looks for an
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.
