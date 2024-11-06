@@ -236,19 +236,19 @@ function generate_cavity_convergence_data(;
         0,
         1,
         0;
-        ϵᵣ = 2.08,
-        μᵣ = 1.0,
-        a_cm  = radius,
-        d_cm  = aspect_ratio * 2 * radius
+        ϵᵣ   = 2.08,
+        μᵣ   = 1.0,
+        a_cm = radius,
+        d_cm = aspect_ratio * 2 * radius
     )
     f_TE_111_true, ~ = frequency_transverse(
         1,
         1,
         1;
-        ϵᵣ = 2.08,
-        μᵣ = 1.0,
-        a_cm  = radius,
-        d_cm  = aspect_ratio * 2 * radius
+        ϵᵣ   = 2.08,
+        μᵣ   = 1.0,
+        a_cm = radius,
+        d_cm = aspect_ratio * 2 * radius
     )
 
     dof = Vector{Vector{Int}}()
