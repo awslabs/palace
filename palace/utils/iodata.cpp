@@ -428,16 +428,17 @@ void IoData::CheckConfiguration()
   if (problem.type == config::ProblemData::Type::TRANSIENT)
   {
     if (solver.transient.type == config::TransientSolverData::Type::GEN_ALPHA ||
-        solver.transient.type == config::TransientSolverData::Type::DEFAULT)
+        solver.transient.type == config::TransientSolverData::Type::DEFAULT ||
+        solver.transient.type == config::TransientSolverData::Type::RUNGE_KUTTA)
     {
       if (solver.transient.rel_tol > 0 || solver.transient.abs_tol > 0)
       {
-        Mpi::Warning("Generalized alpha transient solver does not use relative "
+        Mpi::Warning("Generalized alpha and Runge-Kutta transient solvers do not use relative "
                      "and absolute tolerance parameters!\n");
       }
       if (solver.transient.order > 0)
       {
-        Mpi::Warning("Generalized alpha transient solver does not use order parameter!\n");
+        Mpi::Warning("Generalized alpha and Runge-Kutta transient solvers do not use order parameter!\n");
       }
     }
     else if (solver.transient.type == config::TransientSolverData::Type::CVODE)
@@ -450,7 +451,7 @@ void IoData::CheckConfiguration()
       {
         solver.transient.abs_tol = 1e-9;
       }
-      if (solver.transient.order < 0)
+      if (solver.transient.order <= 0)
       {
         solver.transient.order = 2;
       }
@@ -481,13 +482,13 @@ void IoData::CheckConfiguration()
       }
       else if (solver.transient.order < 2)
       {
-        Mpi::Warning("Runge-Kutta/ARKODE transient solver order cannot be less than 2!\n");
+        Mpi::Warning("ARKODE transient solver order cannot be less than 2!\n");
         solver.transient.order = 2;
       }
       else if (solver.transient.order > 5)
       {
         Mpi::Warning(
-            "Runge-Kutta/ARKODE transient solver order cannot be greater than 5!\n");
+            "ARKODE transient solver order cannot be greater than 5!\n");
         solver.transient.order = 5;
       }
     }

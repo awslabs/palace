@@ -226,8 +226,7 @@ the second-order system of differential equations. The available options are:
     ODE system for the electric field with adaptive time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
   - `"CVODE"` :  SUNDIALS CVODE implicit multistep method scheme applied to the first-order
     ODE system for the electric field with adaptive time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
-  - `"RungeKutta"` : SUNDIALS ARKode implicit Runge-Kutta scheme applied to the first-order
-    ODE system for the electric field with fixed time-stepping. This option is only available when *Palace* has been [built with SUNDIALS support](../install.md#Configuration-options).
+  - `"RungeKutta"` : Two stage, singly diagonal implicit Runge-Kutta (SDIRK) method. Second order and L-stable.
   - `"Default"` :  Use the default `"GeneralizedAlpha"` time integration scheme.
 
 `"Excitation" [None]` :  Controls the time dependence of the source excitation. The
@@ -262,8 +261,9 @@ disk for [visualization with ParaView](../guide/postprocessing.md#Visualization)
 saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-`"Order" [2]` :  Order of the Runge-Kutta integrators or maximum order of the multistep method.
-Only relevant when `"Type"` is `"ARKODE"`, `"Runge-Kutta"` or `"CVODE"`.
+`"Order" [0]` :  Order of the adaptive Runge-Kutta integrators or maximum order of the multistep method.
+Only relevant when `"Type"` is `"ARKODE"` or `"CVODE"`. A value less than 1 defaults to 3 for `"ARKODE"`
+and 2 for `"CVODE"`.
 
 `"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
 when `"Type"` is `"CVODE"` or `"ARKODE"` .

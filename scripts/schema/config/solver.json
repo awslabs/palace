@@ -68,7 +68,7 @@
         "MaxTime": { "type": "number" },
         "TimeStep": { "type": "number" },
         "SaveStep": { "type": "integer" },
-        "Order": {"type": "integer", "minimum": 2},
+        "Order": {"type": "integer"},
         "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
         "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }

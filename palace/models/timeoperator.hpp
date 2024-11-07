@@ -34,7 +34,6 @@ private:
 
   // Adaptive time-stepping parameters.
   int order;
-  bool adapt_dt;
   double rel_tol, abs_tol;
   bool use_mfem_integrator = false;
 
@@ -60,7 +59,7 @@ public:
   double GetMaxTimeStep() const;
 
   // Initialize time integrators and set 0 initial conditions.
-  void Init(double &dt);
+  void Init();
 
   // Perform time step from t -> t + dt.
   void Step(double &t, double &dt);

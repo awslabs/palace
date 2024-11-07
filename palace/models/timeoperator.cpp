@@ -61,7 +61,7 @@ public:
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
-    // Set up RHS vector for the current source term: -g(t) J, where g(t) handles the time
+    // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
     space_op.GetExcitationVector(NegJ);
     RHS.SetSize(2 * size_E);
@@ -109,8 +109,8 @@ public:
     Vector rhs1(rhs.GetData() + 0, size_E);
     Vector rhs2(rhs.GetData() + size_E, size_E);
     // u1 = Edot, u2 = E
-    // rhs_u1 = -C*u1 - K*u2 - J(t)
-    // rhs_u2 = u1
+    // rhs1 = -(K * u2 + C * u1) - J(t)
+    // rhs2 = u1
     K->Mult(u2, rhs1);
     if (C)
     {
@@ -122,6 +122,8 @@ public:
   }
 
   // Solve M du = rhs
+  // |M 0| |du1| = |-(K * u2 + C * u1) - J(t) |
+  // |0 I| |du2|   | u1                       |
   void Mult(const Vector &u, Vector &du) const override
   {
     if (kspM->NumTotalMult() == 0)
@@ -167,7 +169,7 @@ public:
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
 
   // Setup A = M - gamma J = M + gamma C + gamma^2 K
-  int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur, double gamma)
+  int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur, double gamma) override
   {
     // Update Jacobian matrix
     if (!kspA || gamma != saved_gamma)
@@ -185,7 +187,7 @@ public:
   }
 
   // Solve (Mass - dt Jacobian) x = Mass b
-  int SUNImplicitSolve(const Vector &b, Vector &x, double tol)
+  int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
   {
     Vector b1(b.GetData() + 0, size_E);
     Vector b2(b.GetData() + size_E, size_E);
@@ -209,6 +211,8 @@ public:
 
 TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                            std::function<double(double)> &dJ_coef)
+  : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
+    order(iodata.solver.transient.order)
 {
   // Construct discrete curl matrix for B-field time integration.
   Curl = &space_op.GetCurlMatrix();
@@ -230,14 +234,10 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   // Sol = [Edot, E]
   E.MakeRef(sol, size_E);
 
-  // SUNDIALS adaptive time-stepping parameters.
-  adapt_dt = true;
-  rel_tol = iodata.solver.transient.rel_tol;
-  abs_tol = iodata.solver.transient.abs_tol;
-  order = iodata.solver.transient.order;
-
   // Create ODE solver for 1st-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::IMPLICIT;
+  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
+                                                         0.0, type);
   switch (iodata.solver.transient.type)
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
@@ -246,21 +246,22 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         constexpr double rho_inf = 1.0;
         use_mfem_integrator = true;
         ode = std::make_unique<mfem::GeneralizedAlphaSolver>(rho_inf);
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
-                                                               0.0, type);
+      }
+      break;
+    case config::TransientSolverData::Type::RUNGE_KUTTA:
+      {
+        constexpr int gamma_opt = 2;
+        use_mfem_integrator = true;
+        ode = std::make_unique<mfem::SDIRK23Solver>(gamma_opt);
       }
       break;
     case config::TransientSolverData::Type::ARKODE:
-    case config::TransientSolverData::Type::RUNGE_KUTTA:
       {
 #if defined(MFEM_USE_SUNDIALS)
         // SUNDIALS ARKODE solver.
         std::unique_ptr<mfem::ARKStepSolver> arkode;
         arkode = std::make_unique<mfem::ARKStepSolver>(space_op.GetComm(),
                                                        mfem::ARKStepSolver::IMPLICIT);
-        // Operator for first-order ODE system.
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
-                                                               0.0, type);
         // Initialize ARKODE.
         arkode->Init(*op);
         // Use implicit setup/solve defined in SUNImplicit*.
@@ -271,10 +272,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         arkode->SetSStolerances(rel_tol, abs_tol);
         // Set the order of the RK scheme.
         ARKStepSetOrder(arkode->GetMem(), order);
-        if (iodata.solver.transient.type == config::TransientSolverData::Type::RUNGE_KUTTA)
-        {
-          adapt_dt = false;
-        }
         // Set the ODE solver to ARKODE.
         ode = std::move(arkode);
 #else
@@ -289,10 +286,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         // SUNDIALS CVODE solver.
         std::unique_ptr<mfem::CVODESolver> cvode;
         cvode = std::make_unique<mfem::CVODESolver>(space_op.GetComm(), CV_BDF);
-        type = mfem::TimeDependentOperator::IMPLICIT;
-        // Operator for first-order ODE system.
-        op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
-                                                               0.0, type);
         // Initialize CVODE.
         cvode->Init(*op);
         // Relative and absolute tolerances for time step control.
@@ -303,7 +296,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         // CV_BDF can go up to 5, but >= 3 is not unconditionally stable.
         cvode->SetMaxOrder(order);
         // Set the max number of steps allowed in one CVODE step() call.
-        cvode->SetMaxNSteps(10000);  // default 500
+        cvode->SetMaxNSteps(10000);
         // Set the ODE solver to CVODE.
         ode = std::move(cvode);
 #else
@@ -318,18 +311,9 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 const KspSolver &TimeOperator::GetLinearSolver() const
 {
   const auto &firstOrder = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  if (isExplicit())
-  {
-    MFEM_VERIFY(firstOrder.kspM,
-                "No linear solver for time-dependent operator has been constructed!\n");
-    return *firstOrder.kspM;
-  }
-  else
-  {
-    MFEM_VERIFY(firstOrder.kspA,
-                "No linear solver for time-dependent operator has been constructed!\n");
-    return *firstOrder.kspA;
-  }
+  MFEM_VERIFY(firstOrder.kspA,
+              "No linear solver for time-dependent operator has been constructed!\n");
+  return *firstOrder.kspA;
 }
 
 double TimeOperator::GetMaxTimeStep() const
@@ -358,7 +342,7 @@ double TimeOperator::GetMaxTimeStep() const
   return 2.0 / std::sqrt(lam);
 }
 
-void TimeOperator::Init(double &dt)
+void TimeOperator::Init()
 {
   // Always use zero initial conditions.
   sol = 0.0;
@@ -367,16 +351,6 @@ void TimeOperator::Init(double &dt)
   {
     ode->Init(*op);
   }
-#if defined(MFEM_USE_SUNDIALS)
-  if (mfem::ARKStepSolver *arkode = dynamic_cast<mfem::ARKStepSolver *>(ode.get()))
-  {
-    if (!adapt_dt)
-    {
-      // Disable adaptive time stepping.
-      arkode->SetFixedStep(dt);
-    }
-  }
-#endif
 }
 
 void TimeOperator::Step(double &t, double &dt)

@@ -102,7 +102,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       Mpi::Print("\n");
       t += delta_t;
-      time_op.Init(delta_t);  // Initial conditions
+      time_op.Init();  // Initial conditions
     }
     else
     {

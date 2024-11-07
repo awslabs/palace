@@ -317,7 +317,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
     list(APPEND MFEM_OPTIONS
       "-DSUNDIALS_DIR=${CMAKE_INSTALL_PREFIX}"
       "-DSUNDIALS_OPT=-I${CMAKE_INSTALL_PREFIX}/include"
-      "-DSUNDIALS_LIB=-Wl,-rpath,${CMAKE_INSTALL_PREFIX}/lib64 -L${CMAKE_INSTALL_PREFIX}/lib64 -lsundials_arkode, -lsundials_cvode -lsundials_nvecserial -lsundials_kinsol -lsundials_nvecparhyp -lsundials_nvecparallel"
+      "-DSUNDIALS_LIB=-Wl,-rpath,${CMAKE_INSTALL_PREFIX}/lib64 -L${CMAKE_INSTALL_PREFIX}/lib64 -lsundials_arkode, -lsundials_cvode -lsundials_kinsol -lsundials_nvecparhyp -lsundials_nvecparallel"
       "-DSUNDIALS_REQUIRED_PACKAGES=${SUNDIALS_REQUIRED_PACKAGES}"
     )
     if(NOT "${SUNDIALS_REQUIRED_LIBRARIES}" STREQUAL "")
