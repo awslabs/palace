@@ -169,7 +169,8 @@ public:
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
 
   // Setup A = M - gamma J = M + gamma C + gamma^2 K
-  int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur, double gamma) override
+  int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur,
+                       double gamma) override
   {
     // Update Jacobian matrix
     if (!kspA || gamma != saved_gamma)
@@ -236,8 +237,8 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 
   // Create ODE solver for 1st-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::IMPLICIT;
-  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef,
-                                                         0.0, type);
+  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0,
+                                                         type);
   switch (iodata.solver.transient.type)
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
