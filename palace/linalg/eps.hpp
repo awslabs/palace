@@ -59,11 +59,12 @@ public:
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type) = 0;
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                            const ComplexOperator &MP, const ComplexOperator &P1,
+                            const ComplexOperator &P2, ScaleType type) = 0;
+  virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                            const ComplexOperator &M, const ComplexOperator &MP,
                             const ComplexOperator &P1, const ComplexOperator &P2,
                             ScaleType type) = 0;
-  virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                            const ComplexOperator &M, const ComplexOperator &P1,
-                            const ComplexOperator &P2, ScaleType type) = 0;
 
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic

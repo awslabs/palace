@@ -117,6 +117,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
+  auto MP = space_op.GetPeriodicMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
@@ -125,10 +126,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega0,
-                                    std::complex<double>(-omega0 * omega0, 0.0), 1.0i, -1.0i, K.get(),
-                                    C.get(), M.get(), A2.get(), P1.get(), P2.get());
+                                    std::complex<double>(-omega0 * omega0, 0.0), std::complex<double>(1.0, 0.0), 1.0i, -1.0i, K.get(),
+                                    C.get(), M.get(), A2.get(), MP.get(), P1.get(), P2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
-                                                             omega0, 1.0, -1.0);
+                                                             omega0, 1.0, 1.0, -1.0);
 
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
   ksp.SetOperators(*A, *P);
@@ -165,10 +166,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       // Update frequency-dependent excitation and operators.
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
       A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                   std::complex<double>(-omega * omega, 0.0), 1.0i, -1.0i, K.get(),
-                                   C.get(), M.get(), A2.get(), P1.get(), P2.get());
+                                   std::complex<double>(-omega * omega, 0.0), std::complex<double>(1.0, 0.0), 1.0i, -1.0i, K.get(),
+                                   C.get(), M.get(), A2.get(), MP.get(), P1.get(), P2.get());
       P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
-                                                            omega, 1.0, -1.0);
+                                                            omega, 1.0, 1.0, -1.0);
       ksp.SetOperators(*A, *P);
     }
     space_op.GetExcitationVector(omega, RHS);

@@ -352,15 +352,15 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
 }
 
 void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                         const ComplexOperator &P1, const ComplexOperator &P2,
+                                         const ComplexOperator &MP, const ComplexOperator &P1, const ComplexOperator &P2,
                                          EigenvalueSolver::ScaleType type)
 {
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
 void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                         const ComplexOperator &M, const ComplexOperator &P1,
-                                         const ComplexOperator &P2,
+                                         const ComplexOperator &M, const ComplexOperator &MP,
+                                         const ComplexOperator &P1, const ComplexOperator &P2,
                                          EigenvalueSolver::ScaleType type)
 {
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
@@ -754,7 +754,7 @@ RG SlepcEPSSolverBase::GetRG() const
 SlepcEPSSolver::SlepcEPSSolver(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcEPSSolverBase(comm, print, prefix)
 {
-  opK = opM = opP1 = opP2 = nullptr;
+  opK = opM = opMP = opP1 = opP2 = nullptr;
   normK = normM = 0.0;
 }
 
@@ -814,7 +814,7 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 }
 
 void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                  const ComplexOperator &P1, const ComplexOperator &P2,
+                                  const ComplexOperator &MP, const ComplexOperator &P1, const ComplexOperator &P2,
                                   EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled operators which define the generalized
@@ -822,6 +822,7 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   const bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
+  opMP = &MP;
   opP1 = &P1;
   opP2 = &P2;
 
@@ -890,6 +891,10 @@ PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
 {
   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
   opK->Mult(x, r);
+  if (opMP)
+  {
+    opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
   if (opP1)
   {
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
@@ -921,7 +926,7 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
                                            const std::string &prefix)
   : SlepcEPSSolverBase(comm, print, prefix)
 {
-  opK = opC = opM = opP1 = opP2 = nullptr;
+  opK = opC = opM = opMP = opP1 = opP2 = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -988,8 +993,8 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
 }
 
 void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                        const ComplexOperator &M, const ComplexOperator &P1,
-                                        const ComplexOperator &P2,
+                                        const ComplexOperator &M, const ComplexOperator &MP,
+                                        const ComplexOperator &P1, const ComplexOperator &P2,
                                         EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled linearized operators which define the block 2x2
@@ -998,6 +1003,7 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   opK = &K;
   opC = &C;
   opM = &M;
+  opMP = &MP;
   opP1 = &P1;
   opP2 = &P2;
 
@@ -1102,6 +1108,10 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
+  if (opMP)
+  {
+    opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
   if (opP1)
   {
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
@@ -1371,7 +1381,7 @@ RG SlepcPEPSolverBase::GetRG() const
 SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcPEPSolverBase(comm, print, prefix)
 {
-  opK = opC = opM = opP1 = opP2 = nullptr;
+  opK = opC = opM = opMP = opP1 = opP2 = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -1438,8 +1448,8 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 }
 
 void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                  const ComplexOperator &M, const ComplexOperator &P1,
-                                  const ComplexOperator &P2,
+                                  const ComplexOperator &M, const ComplexOperator &MP,
+                                  const ComplexOperator &P1, const ComplexOperator &P2,
                                   EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled operators which define the quadratic polynomial
@@ -1448,6 +1458,7 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   opK = &K;
   opC = &C;
   opM = &M;
+  opMP = &MP;
   opP1 = &P1;
   opP2 = &P2;
 
@@ -1522,6 +1533,10 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
+  if (opMP)
+  {
+    opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
   if (opP1)
   {
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
@@ -1566,6 +1581,10 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
+  if (ctx->opMP)
+  {
+    ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  }
   if (ctx->opP1)
   {
     ctx->opP1->AddMult(ctx->x1, ctx->y1, std::complex<double>(0.0, 1.0));
@@ -1656,6 +1675,10 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   ctx->opC->Mult(ctx->x2, ctx->y2);
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  if (ctx->opMP)
+  {
+    ctx->opMP->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  }
   if (ctx->opP1)
   {
     ctx->opP1->AddMult(ctx->x1, ctx->y2, std::complex<double>(0.0, 1.0));
@@ -1744,6 +1767,10 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    if (ctx->opMP)
+    {
+      ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    }
     if (ctx->opP1)
     {
       ctx->opP1->AddMult(ctx->x1, ctx->y1, std::complex<double>(0.0, 1.0));
@@ -1783,6 +1810,10 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
+  if (ctx->opMP)
+  {
+    ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  }
   if (ctx->opP1)
   {
     ctx->opP1->AddMult(ctx->x1, ctx->y1, std::complex<double>(0.0, 1.0));

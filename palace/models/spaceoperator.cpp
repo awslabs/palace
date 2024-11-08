@@ -458,7 +458,35 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   }
 }
 
-// Move some of this inside AssembleOperator(s)? AssembleMixedOperator(s)?
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetPeriodicMassMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  periodic_op.AddRealMassCoefficients(1.0, f);
+  int empty = (f.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+  else
+  {
+    auto M = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+}
+
 template <typename OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetPeriodicWeakCurlMatrix(Operator::DiagonalPolicy diag_policy)
@@ -565,8 +593,8 @@ namespace
 
 auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
                          const ParOperator *K, const ParOperator *C, const ParOperator *M,
-                         const ParOperator *A2, double a4, double a5, const ParOperator *P1,
-                         const ParOperator *P2, const FiniteElementSpace &fespace)
+                         const ParOperator *A2, double a4, double a5, double a6, const ParOperator *MP,
+                         const ParOperator *P1, const ParOperator *P2, const FiniteElementSpace &fespace)
 {
   auto sum = std::make_unique<SumOperator>(h, w);
   if (K && a0 != 0.0)
@@ -585,13 +613,17 @@ auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
   {
     sum->AddOperator(A2->LocalOperator(), 1.0);
   }
-  if (P1 && a4 != 0.0)
+  if (MP && a4 != 0.0)
   {
-    sum->AddOperator(P1->LocalOperator(), a4);
+    sum->AddOperator(MP->LocalOperator(), a4);
   }
-  if (P2 && a5 != 0.0)
+  if (P1 && a5 != 0.0)
   {
-    sum->AddOperator(P2->LocalOperator(), a5);
+    sum->AddOperator(P1->LocalOperator(), a5);
+  }
+  if (P2 && a6 != 0.0)
+  {
+    sum->AddOperator(P2->LocalOperator(), a6);
   }
   return std::make_unique<ParOperator>(std::move(sum), fespace);
 }
@@ -600,8 +632,8 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
                          std::complex<double> a2, const ComplexParOperator *K,
                          const ComplexParOperator *C, const ComplexParOperator *M,
                          const ComplexParOperator *A2, std::complex<double> a4,
-                         std::complex<double> a5, const ComplexParOperator *P1,
-                         const ComplexParOperator *P2, const FiniteElementSpace &fespace)
+                         std::complex<double> a5, std::complex<double> a6, const ComplexParOperator *MP,
+                         const ComplexParOperator *P1, const ComplexParOperator *P2, const FiniteElementSpace &fespace)
 {
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
@@ -694,53 +726,78 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
       sumi->AddOperator(*A2->LocalOperator().Imag(), 1.0);
     }
   }
-  if (P1 && a4 != 0.0)
+  if (MP && a4 != 0.0)
   {
     if (a4.real() != 0.0)
     {
-      if (P1->LocalOperator().Real())
+      if (MP->LocalOperator().Real())
       {
-        sumr->AddOperator(*P1->LocalOperator().Real(), a4.real());
+        sumr->AddOperator(*MP->LocalOperator().Real(), a4.real());
       }
-      if (P1->LocalOperator().Imag())
+      if (MP->LocalOperator().Imag())
       {
-        sumi->AddOperator(*P1->LocalOperator().Imag(), a4.real());
+        sumi->AddOperator(*MP->LocalOperator().Imag(), a4.real());
       }
     }
     if (a4.imag() != 0.0)
     {
-      if (P1->LocalOperator().Imag())
+      if (MP->LocalOperator().Imag())
       {
-        sumr->AddOperator(*P1->LocalOperator().Imag(), -a4.imag());
+        sumr->AddOperator(*MP->LocalOperator().Imag(), -a4.imag());
       }
-      if (P1->LocalOperator().Real())
+      if (MP->LocalOperator().Real())
       {
-        sumi->AddOperator(*P1->LocalOperator().Real(), a4.imag());
+        sumi->AddOperator(*MP->LocalOperator().Real(), a4.imag());
       }
     }
   }
-  if (P2 && a5 != 0.0)
+  if (P1 && a5 != 0.0)
   {
     if (a5.real() != 0.0)
     {
-      if (P2->LocalOperator().Real())
+      if (P1->LocalOperator().Real())
       {
-        sumr->AddOperator(*P2->LocalOperator().Real(), a5.real());
+        sumr->AddOperator(*P1->LocalOperator().Real(), a5.real());
       }
-      if (P2->LocalOperator().Imag())
+      if (P1->LocalOperator().Imag())
       {
-        sumi->AddOperator(*P2->LocalOperator().Imag(), a5.real());
+        sumi->AddOperator(*P1->LocalOperator().Imag(), a5.real());
       }
     }
     if (a5.imag() != 0.0)
     {
+      if (P1->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*P1->LocalOperator().Imag(), -a5.imag());
+      }
+      if (P1->LocalOperator().Real())
+      {
+        sumi->AddOperator(*P1->LocalOperator().Real(), a5.imag());
+      }
+    }
+  }
+  if (P2 && a6 != 0.0)
+  {
+    if (a6.real() != 0.0)
+    {
+      if (P2->LocalOperator().Real())
+      {
+        sumr->AddOperator(*P2->LocalOperator().Real(), a6.real());
+      }
       if (P2->LocalOperator().Imag())
       {
-        sumr->AddOperator(*P2->LocalOperator().Imag(), -a5.imag());
+        sumi->AddOperator(*P2->LocalOperator().Imag(), a6.real());
+      }
+    }
+    if (a6.imag() != 0.0)
+    {
+      if (P2->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*P2->LocalOperator().Imag(), -a6.imag());
       }
       if (P2->LocalOperator().Real())
       {
-        sumi->AddOperator(*P2->LocalOperator().Real(), a5.imag());
+        sumi->AddOperator(*P2->LocalOperator().Real(), a6.imag());
       }
     }
   }
@@ -752,9 +809,9 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
-                               ScalarType a4, ScalarType a5,
+                               ScalarType a4, ScalarType a5, ScalarType a6,
                                const OperType *K, const OperType *C, const OperType *M,
-                               const OperType *A2, const OperType *P1, const OperType *P2)
+                               const OperType *A2, const OperType *MP, const OperType *P1, const OperType *P2)
 {
   using ParOperType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
@@ -764,10 +821,11 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
   const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;
   const auto *PtAP_M = (M) ? dynamic_cast<const ParOperType *>(M) : nullptr;
   const auto *PtAP_A2 = (A2) ? dynamic_cast<const ParOperType *>(A2) : nullptr;
+  const auto *PtAP_MP = (MP) ? dynamic_cast<const ParOperType *>(MP) : nullptr;
   const auto *PtAP_P1 = (P1) ? dynamic_cast<const ParOperType *>(P1) : nullptr;
   const auto *PtAP_P2 = (P2) ? dynamic_cast<const ParOperType *>(P2) : nullptr;
   MFEM_VERIFY((!K || PtAP_K) && (!C || PtAP_C) && (!M || PtAP_M) && (!A2 || PtAP_A2)
-               && (!P1 || PtAP_P1) && (!P2 || PtAP_P2),
+               && (!MP || PtAP_MP) && (!P1 || PtAP_P1) && (!P2 || PtAP_P2),
               "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
               "construction!");
 
@@ -792,6 +850,11 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
     height = PtAP_A2->LocalOperator().Height();
     width = PtAP_A2->LocalOperator().Width();
   }
+  else if (PtAP_MP)
+  {
+    height = PtAP_MP->LocalOperator().Height();
+    width = PtAP_MP->LocalOperator().Width();
+  }
   else if (PtAP_P1)
   {
     height = PtAP_P1->LocalOperator().Height();
@@ -806,7 +869,7 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
               "At least one argument to GetSystemMatrix must not be empty!");
 
   auto A = BuildParSumOperator(height, width, a0, a1, a2, PtAP_K, PtAP_C, PtAP_M, PtAP_A2,
-                               a4, a5, PtAP_P1, PtAP_P2,
+                               a4, a5, a6, PtAP_MP, PtAP_P1, PtAP_P2,
                                GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
@@ -884,7 +947,8 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
 template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
                                                                  double a2, double a3,
-                                                                 double a4, double a5)
+                                                                 double a4, double a5,
+                                                                 double a6)
 {
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
 
@@ -911,7 +975,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
         fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
         fpwi(mat_op.MaxCeedAttribute()), fpr(mat_op.MaxCeedAttribute()),
-        fpwr(mat_op.MaxCeedAttribute());
+        fpwr(mat_op.MaxCeedAttribute()), fmpr(mat_op.MaxCeedAttribute()),
+        fmpi(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fi);
@@ -920,23 +985,24 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-    periodic_op.AddWeakCurlCoefficients(a4, fpwi);
-    periodic_op.AddCurlCoefficients(a5, fpi);
+    periodic_op.AddRealMassCoefficients(a4, fmpr);
+    periodic_op.AddWeakCurlCoefficients(a5, fpwi);
+    periodic_op.AddCurlCoefficients(a6, fpi);
     int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()
-                     && fpwr.empty() && fpr.empty()),
+                     && fpwr.empty() && fpr.empty() && fmpr.empty()),
                     (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty()
-                     && fpwi.empty() && fpi.empty())};
+                     && fpwi.empty() && fpi.empty() && fmpi.empty())};
     Mpi::GlobalMin(2, empty, GetComm());
     if (!empty[0])
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr, skip_zeros,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fmpr, &fpwr, &fpr, skip_zeros,
                                  assemble_q_data);
       br_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
     }
     if (!empty[1])
     {
-      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi, skip_zeros,
+      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fmpr, &fpwi, &fpi, skip_zeros,
                                  assemble_q_data);
       bi_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
@@ -947,7 +1013,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
         fbr(mat_op.MaxCeedBdrAttribute()), fpwr(mat_op.MaxCeedAttribute()),
-        fpr(mat_op.MaxCeedAttribute());
+        fpr(mat_op.MaxCeedAttribute()), fmpr(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fr);
@@ -955,11 +1021,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-    int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
+    periodic_op.AddRealMassCoefficients(a6, fmpr);
+    int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fmpr.empty());
     Mpi::GlobalMin(1, &empty, GetComm());
     if (!empty)
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr, skip_zeros,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fmpr, &fpwr, &fpr, skip_zeros,
                                  assemble_q_data);
       br_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
@@ -1056,7 +1123,7 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
-  periodic_op.AddRealMassCoefficients(coeff, f);
+  //periodic_op.AddRealMassCoefficients(coeff, f);//1.0 or coeff?
 }
 
 void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
@@ -1079,7 +1146,7 @@ void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoeffi
 void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
-  periodic_op.AddRealMassCoefficients(coeff, f);
+  //periodic_op.AddRealMassCoefficients(coeff, f);
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
@@ -1239,20 +1306,20 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, double, double, const Operator *,
-                                                 const Operator *, const Operator *,
+SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, double, double, double, const Operator *,
+                                                 const Operator *, const Operator *, const Operator *,
                                                  const Operator *, const Operator *, const Operator *);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>,
-    std::complex<double>, std::complex<double>,
-    const ComplexOperator *, const ComplexOperator *, const ComplexOperator *,
+    std::complex<double>, std::complex<double>, std::complex<double>,
+    const ComplexOperator *, const ComplexOperator *, const ComplexOperator *, const ComplexOperator *,
     const ComplexOperator *, const ComplexOperator *, const ComplexOperator *);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double, double, double);
+SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double, double, double, double);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double, double, double);
+SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double, double, double, double);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetPeriodicWeakCurlMatrix<Operator>(Operator::DiagonalPolicy);
@@ -1263,5 +1330,10 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetPeriodicCurlMatrix<Operator>(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPeriodicCurlMatrix<ComplexOperator>(Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetPeriodicMassMatrix<Operator>(Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetPeriodicMassMatrix<ComplexOperator>(Operator::DiagonalPolicy);
 
 }  // namespace palace

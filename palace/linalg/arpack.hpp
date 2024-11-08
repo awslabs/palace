@@ -121,11 +121,13 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &P1, const ComplexOperator &P2,
+                    const ComplexOperator &MP, const ComplexOperator &P1,
+                    const ComplexOperator &P2,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &P1,
-                    const ComplexOperator &P2, ScaleType type) override;
+                    const ComplexOperator &M, const ComplexOperator &MP,
+                    const ComplexOperator &P1, const ComplexOperator &P2,
+                    ScaleType type) override;
 
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
@@ -187,7 +189,7 @@ class ArpackEPSSolver : public ArpackEigenvalueSolver
 {
 private:
   // References to matrices defining the generalized eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opM, *opP1, *opP2;
+  const ComplexOperator *opK, *opM, *opMP, *opP1, *opP2;
 
   // Operator norms for scaling.
   mutable double normK, normM;
@@ -210,8 +212,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &P1, const ComplexOperator &P2,
-                    ScaleType type) override;
+                    const ComplexOperator &MP, const ComplexOperator &P1,
+                    const ComplexOperator &P2, ScaleType type) override;
 
   int Solve() override;
 };
@@ -222,7 +224,7 @@ class ArpackPEPSolver : public ArpackEigenvalueSolver
 private:
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const ComplexOperator *opK, *opC, *opM, *opP1, *opP2;
+  const ComplexOperator *opK, *opC, *opM, *opMP, *opP1, *opP2;
 
   // Operator norms for scaling.
   mutable double normK, normC, normM;
@@ -248,8 +250,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &P1,
-                    const ComplexOperator &P2, ScaleType type) override;
+                    const ComplexOperator &M, const ComplexOperator &MP,
+                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
 
   int Solve() override;
 };

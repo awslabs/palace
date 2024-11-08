@@ -1943,8 +1943,8 @@ void FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
   while (q.size() > 0 and normal.Norml2() < norm_tol)
   {
     coord = mesh->GetVertex(q.top().second);
-    Mpi::Print("pts: {:d}, x/y/z: {:.3e}, {:.3e}, {:.3e}, dist: {:.12e}\n", q.top().second, coord[0], coord[1], coord[2], q.top().first);
-    Mpi::Print("dist2points.size(): {:d}\n",dist2points[std::round(q.top().first/diameter*1e8)].size());
+    Mpi::Print("pts: {:d}, x/y/z: {:.3e}, {:.3e}, {:.3e}, dist: {:d}\n", q.top().second, coord[0], coord[1], coord[2], q.top().first);
+    Mpi::Print("dist2points.size(): {:d}\n",dist2points[q.top().first].size());
     q.pop();
     unique_pts.push_back(coord);
     if (unique_pts.size() == 3)
@@ -1956,13 +1956,75 @@ void FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
       v2 = unique_pts[2];
       v2 -= unique_pts[0];
       v1.cross3D(v2, normal);
-      //Mpi::Print("q.size: {:d}, normal.linf: {:.3e}\n", q.size(), normal.Normlinf());
+      Mpi::Print("q.size: {:d}, normal.linf: {:.3e}\n", q.size(), normal.Normlinf());
       if (normal.Norml2() < norm_tol)
       {
         unique_pts.pop_back();
       }
     }
   }
+}
+
+void ComputeTransformSVD(const std::vector<mfem::Vector> &donor_pts,
+                         const std::vector<mfem::Vector> &receiver_pts,
+                         mfem::DenseMatrix &transformation)
+{
+  Eigen::MatrixXd A(3,3), B(3,3), R(3,3);
+  Eigen::VectorXd cA(3), cB(3);
+
+  for (int i = 0; i < 3; i++)
+  {
+    A(0,i) = donor_pts[i][0] - donor_pts[0][0];
+    A(1,i) = donor_pts[i][1] - donor_pts[0][1];
+    A(2,i) = donor_pts[i][2] - donor_pts[0][2];
+    B(0,i) = receiver_pts[i][0] - receiver_pts[0][0];
+    B(1,i) = receiver_pts[i][1] - receiver_pts[0][1];
+    B(2,i) = receiver_pts[i][2] - receiver_pts[0][2];
+    cA(i) = donor_pts[0][i];
+    cB(i) = receiver_pts[0][i];
+  }
+
+  // Compute covariance matrix and its SVD
+  R = A * B.transpose();
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd;
+  svd.compute(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+  Eigen::MatrixXd U = svd.matrixU();
+  Eigen::MatrixXd V = svd.matrixV();
+  // Get rotation matrix
+  R = U * V.transpose();
+
+  // Check determinant
+  double det = R.determinant();
+  if (det < 0)
+  {
+    Mpi::Print("Determinant < 1, ({:.3e}), correct R matrix\n", det);
+    svd.compute(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    U = svd.matrixU();
+    V = svd.matrixV();
+    for (int i = 0; i < 3; i++)
+    {
+      V(i,2) *= -1.0;
+    }
+    R = V * U.transpose();
+  }
+
+  // Get translation
+  const Eigen::VectorXd t = cB - R * cA;
+
+  // Form affine transformation matrix
+  for(int i = 0; i < 3; i++)
+  {
+    for(int j = 0; j < 3; j++)
+    {
+      transformation(i,j) = R(i,j);
+    }
+  }
+  transformation(0,3) = t(0);
+  transformation(1,3) = t(1);
+  transformation(2,3) = t(2);
+  transformation(3,3) = 1.0;
+  Mpi::Print("Affine transformation using 3-pt SVD\n");
+  transformation.Print();
 }
 
 void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
@@ -2082,7 +2144,7 @@ std::vector<int> CreatePeriodicVertexMapping(
     at.MakeRef(receiver_coord, 0);
 
     coord = mesh->GetVertex(vi);
-    //Mpi::Print("Mapping donor point: {:d} ({:.3e}, {:.3e}, {:.3e})", vi, donor_coord[0], donor_coord[1], donor_coord[2]);
+    Mpi::Print("Mapping donor point: {:d} ({:.3e}, {:.3e}, {:.3e})", vi, donor_coord[0], donor_coord[1], donor_coord[2]);
     // Apply transformation
     // receiver = transform * donor
     transform.Mult(donor_coord, receiver_coord);
@@ -2091,7 +2153,7 @@ std::vector<int> CreatePeriodicVertexMapping(
     coord = mesh->GetVertex(vj);
     dx = at;
     dx -= coord;
-    //Mpi::Print(" to receiver point: {:d} ({:.3e}, {:.3e}, {:.3e}), with transform error {:.3e}\n", vj, receiver_coord[0], receiver_coord[1], receiver_coord[2], dx.Norml2());
+    Mpi::Print(" to receiver point: {:d} ({:.3e}, {:.3e}, {:.3e}), with transform error {:.3e}\n", vj, receiver_coord[0], receiver_coord[1], receiver_coord[2], dx.Norml2());
 
     MFEM_VERIFY(dx.Norml2() < tol, "Could not match points on periodic boundaries, transformed donor point does not correspond to a receive point.");
 
@@ -2287,8 +2349,12 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
         {
           ComputeAffineTransformation(donor_pts, receiver_pts,
                                       transformation);
-        }
-        else if (donor_pts.size() == 2)
+        }/*
+        else if (donor_pts.size() == 3)
+        {
+          ComputeTransformSVD(donor_pts, receiver_pts, transformation);
+        }*/
+        else /*if (donor_pts.size() == 2)*/
         {
           // Use normals to compute a rotation matrix
           ComputeRotation(donor_normal, receiver_normal, transformation);
@@ -2314,6 +2380,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       //std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
       //auto periodic_mapping =
       //    periodic_mesh->CreatePeriodicVertexMapping({translation2}, 1E-6);
+      //periodic_mesh->
       auto p_mesh = std::make_unique<mfem::Mesh>(
           mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
       periodic_mesh = std::move(p_mesh);

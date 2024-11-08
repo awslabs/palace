@@ -135,11 +135,11 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &P1, const ComplexOperator &P2,
-                    ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &P1,
+                    const ComplexOperator &MP, const ComplexOperator &P1,
                     const ComplexOperator &P2, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, const ComplexOperator &MP,
+                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
 
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
@@ -263,7 +263,7 @@ public:
   using SlepcEigenvalueSolver::sinvert;
 
   // References to matrices defining the generalized eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opM, *opP1, *opP2;
+  const ComplexOperator *opK, *opM, *opMP, *opP1, *opP2;
 
 private:
   // Operator norms for scaling.
@@ -282,7 +282,7 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &P1, const ComplexOperator &P2,
+                    const ComplexOperator &MP ,const ComplexOperator &P1, const ComplexOperator &P2,
                     ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
@@ -303,7 +303,7 @@ public:
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const ComplexOperator *opK, *opC, *opM, *opP1, *opP2;
+  const ComplexOperator *opK, *opC, *opM, *opMP, *opP1, *opP2;
 
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
@@ -325,8 +325,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &P1,
-                    const ComplexOperator &P2, ScaleType type) override;
+                    const ComplexOperator &M, const ComplexOperator &MP,
+                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 
@@ -405,7 +405,7 @@ public:
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const ComplexOperator *opK, *opC, *opM, *opP1, *opP2;
+  const ComplexOperator *opK, *opC, *opM, *opMP, *opP1, *opP2;
 
 private:
   // Operator norms for scaling.
@@ -424,8 +424,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &P1,
-                    const ComplexOperator &P2, ScaleType type) override;
+                    const ComplexOperator &M, const ComplexOperator &MP,
+                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 };

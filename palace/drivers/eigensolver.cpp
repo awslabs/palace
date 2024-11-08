@@ -36,10 +36,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto MP = space_op.GetPeriodicMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO);
-  A2 = nullptr;//?
+  A2 = nullptr;
   const auto &Curl = space_op.GetCurlMatrix();
   SaveMetadata(space_op.GetNDSpaces());
 
@@ -128,9 +129,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (C)
   {
-    if (P1 && P2)
+    if (MP && P1 && P2)
     {
-      eigen->SetOperators(*K, *C, *M, *P1, *P2, scale);
+      eigen->SetOperators(*K, *C, *M, *MP, *P1, *P2, scale);
     }
     else
     {
@@ -139,9 +140,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    if (P1 && P2)
+    if (MP && P1 && P2)
     {
-      eigen->SetOperators(*K, *M, *P1, *P2, scale);
+      eigen->SetOperators(*K, *M, *MP, *P1, *P2, scale);
     }
     else
     {
@@ -259,10 +260,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), 1.0i, -1.0i, K.get(),
-                                    C.get(), M.get(), A2.get(), P1.get(), P2.get());
+                                    std::complex<double>(-target * target, 0.0), std::complex<double>(1.0, 0.0), 1.0i, -1.0i, K.get(),
+                                    C.get(), M.get(), A2.get(), MP.get(), P1.get(), P2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                             target, 1.0, -1.0);
+                                                             target, 1.0, 1.0, -1.0);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);

@@ -126,7 +126,6 @@ PeriodicBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
 void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {
-
   if (non_zero_wave_vector)
   {
     // [k x]^T 1/mu [k x]
@@ -136,7 +135,7 @@ void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
     mfem::DenseTensor kxT(kx.SizeI(), kx.SizeJ(), kx.SizeK());
     for (int k = 0; k < kx.SizeK(); k++)
     {
-      kx(k)  = wave_vector_cross;
+      kx(k) = wave_vector_cross;
       kxT(k).Transpose(wave_vector_cross);
     }
     mfem::DenseTensor kxTmuinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
@@ -151,7 +150,6 @@ void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
 void PeriodicBoundaryOperator::AddWeakCurlCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {
-
   if (non_zero_wave_vector)
   {
     // 1/mu [k x]
@@ -160,7 +158,7 @@ void PeriodicBoundaryOperator::AddWeakCurlCoefficients(double coeff,
                          mat_op.GetInvPermeability().SizeK());
     for (int k = 0; k < kx.SizeK(); k++)
     {
-      kx(k)  = wave_vector_cross;
+      kx(k) = wave_vector_cross;
     }
     mfem::DenseTensor muinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
     MaterialPropertyCoefficient muinvkx_func(mat_op.GetAttributeToMaterial(), muinvkx);
@@ -173,7 +171,6 @@ void PeriodicBoundaryOperator::AddWeakCurlCoefficients(double coeff,
 void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
                                                    MaterialPropertyCoefficient &f)
 {
-
   if (non_zero_wave_vector)
   {
     // [k x]^T 1/mu

@@ -203,6 +203,7 @@ void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
 
 void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
                                           const ComplexOperator &M,
+                                          const ComplexOperator &MP,
                                           const ComplexOperator &P1,
                                           const ComplexOperator &P2,
                                           EigenvalueSolver::ScaleType type)
@@ -213,6 +214,7 @@ void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
 void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
                                           const ComplexOperator &C,
                                           const ComplexOperator &M,
+                                          const ComplexOperator &MP,
                                           const ComplexOperator &P1,
                                           const ComplexOperator &P2,
                                           EigenvalueSolver::ScaleType type)
@@ -509,7 +511,7 @@ void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
 ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)
 {
-  opK = opM = opP1 = opP2 = nullptr;
+  opK = opM = opMP = opP1 = opP2 = nullptr;
   normK = normM = 0.0;
 }
 
@@ -543,13 +545,14 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
 }
 
 void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                   const ComplexOperator &P1, const ComplexOperator &P2,
+                                   const ComplexOperator &MP, const ComplexOperator &P1, const ComplexOperator &P2,
                                    EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
+  opMP = &MP;
   opP1 = &P1;
   opP2 = &P2;
   if (first && type != ScaleType::NONE)
@@ -635,6 +638,10 @@ void ArpackEPSSolver::ApplyOp(const std::complex<double> *px,
   if (!sinvert)
   {
     opK->Mult(x1, z1);
+    if (opMP)
+    {
+      opMP->AddMult(x1, z1, 1.0);
+    }
     if (opP1)
     {
       opP1->AddMult(x1, z1, 1.0i);
@@ -677,6 +684,10 @@ double ArpackEPSSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
 {
   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
   opK->Mult(x, r);
+  if (opMP)
+  {
+    opMP->AddMult(x, r, 1.0);
+  }
   if (opP1)
   {
     opP1->AddMult(x, r, 1.0i);
@@ -709,7 +720,7 @@ double ArpackEPSSolver::GetBackwardScaling(std::complex<double> l) const
 ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)
 {
-  opK = opC = opM = opP1 = opP2 = nullptr;
+  opK = opC = opM = opMP = opP1 = opP2 = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -751,8 +762,8 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
 }
 
 void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                   const ComplexOperator &M, const ComplexOperator &P1,
-                                   const ComplexOperator &P2,
+                                   const ComplexOperator &M, const ComplexOperator &MP,
+                                   const ComplexOperator &P1, const ComplexOperator &P2,
                                    EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
@@ -760,6 +771,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   opK = &K;
   opC = &C;
   opM = &M;
+  opMP = &MP;
   opP1 = &P1;
   opP2 = &P2;
   if (first && type != ScaleType::NONE)
@@ -874,6 +886,10 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     }
 
     opK->Mult(x1, z1);
+    if (opMP)
+    {
+      opMP->AddMult(x1, z1, 1.0);
+    }
     if (opP1)
     {
       opP1->AddMult(x1, z1, 1.0i);
@@ -940,6 +956,10 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
+  if (opMP)
+  {
+    opMP->AddMult(x, r, 1.0);
+  }
   if (opP1)
   {
     opP1->AddMult(x, r, 1.0i);
