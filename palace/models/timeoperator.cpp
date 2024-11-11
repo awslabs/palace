@@ -116,8 +116,10 @@ public:
   void FormRHS(const Vector &u, Vector &rhs) const
   {
     Vector u1, u2, rhs1, rhs2;
-    u1.UseDevice(true); u2.UseDevice(true);
-    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    u1.UseDevice(true);
+    u2.UseDevice(true);
+    rhs1.UseDevice(true);
+    rhs2.UseDevice(true);
     u.GetSubVector(idx1, u1);
     u.GetSubVector(idx2, u2);
     rhs.GetSubVector(idx1, rhs1);
@@ -152,8 +154,10 @@ public:
     FormRHS(u, RHS);
 
     Vector du1, du2, rhs1, rhs2;
-    du1.UseDevice(true); du2.UseDevice(true);
-    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    du1.UseDevice(true);
+    du2.UseDevice(true);
+    rhs1.UseDevice(true);
+    rhs2.UseDevice(true);
     du.GetSubVector(idx1, du1);
     du.GetSubVector(idx2, du2);
     RHS.GetSubVector(idx1, rhs1);
@@ -182,8 +186,10 @@ public:
     FormRHS(u, RHS);
 
     Vector k1, k2, rhs1, rhs2;
-    k1.UseDevice(true); k2.UseDevice(true);
-    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    k1.UseDevice(true);
+    k2.UseDevice(true);
+    rhs1.UseDevice(true);
+    rhs2.UseDevice(true);
     k.GetSubVector(idx1, k1);
     k.GetSubVector(idx2, k2);
     RHS.GetSubVector(idx1, rhs1);
@@ -225,8 +231,10 @@ public:
   int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
   {
     Vector b1, b2, x1, x2, rhs;
-    b1.UseDevice(true); b2.UseDevice(true);
-    x1.UseDevice(true); x2.UseDevice(true);
+    b1.UseDevice(true);
+    b2.UseDevice(true);
+    x1.UseDevice(true);
+    x2.UseDevice(true);
     rhs.UseDevice(true);
     b.GetSubVector(idx1, b1);
     b.GetSubVector(idx2, b2);
