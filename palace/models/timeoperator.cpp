@@ -39,6 +39,9 @@ public:
   mutable Vector RHS;
   int size_E;
 
+  // Indices of the first and second halves of the solution vector, sol = [Edot, E]
+  mfem::Array<int> idx1, idx2;
+
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
   std::function<void(double dt)> ConfigureLinearSolver;
@@ -52,6 +55,15 @@ public:
   {
     // Get dimensions of E and Edot vectors.
     size_E = space_op.GetNDSpace().GetTrueVSize();
+
+    // Set array indices
+    idx1.SetSize(size_E);
+    idx2.SetSize(size_E);
+    for (int i = 0; i < size_E; i++)
+    {
+      idx1[i] = i;
+      idx2[i] = i + size_E;
+    }
 
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
@@ -69,7 +81,6 @@ public:
 
     // Set up linear solvers.
     {
-      const int print = iodata.problem.verbose;
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(0);
       pcg->SetRelTol(iodata.solver.linear.tol);
@@ -104,10 +115,14 @@ public:
   // Form the RHS for the first-order ODE system
   void FormRHS(const Vector &u, Vector &rhs) const
   {
-    Vector u1(u.GetData() + 0, size_E);
-    Vector u2(u.GetData() + size_E, size_E);
-    Vector rhs1(rhs.GetData() + 0, size_E);
-    Vector rhs2(rhs.GetData() + size_E, size_E);
+    Vector u1, u2, rhs1, rhs2;
+    u1.UseDevice(true); u2.UseDevice(true);
+    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    u.GetSubVector(idx1, u1);
+    u.GetSubVector(idx2, u2);
+    rhs.GetSubVector(idx1, rhs1);
+    rhs.GetSubVector(idx2, rhs2);
+
     // u1 = Edot, u2 = E
     // rhs1 = -(K * u2 + C * u1) - J(t)
     // rhs2 = u1
@@ -119,6 +134,9 @@ public:
     linalg::AXPBYPCZ(-1.0, rhs1, dJ_coef(t), NegJ, 0.0, rhs1);
 
     rhs2 = u1;
+
+    rhs.SetSubVector(idx1, rhs1);
+    rhs.SetSubVector(idx2, rhs2);
   }
 
   // Solve M du = rhs
@@ -132,12 +150,20 @@ public:
       du = 0.0;
     }
     FormRHS(u, RHS);
-    Vector du1(du.GetData() + 0, size_E);
-    Vector du2(du.GetData() + size_E, size_E);
-    Vector rhs1(RHS.GetData() + 0, size_E);
-    Vector rhs2(RHS.GetData() + size_E, size_E);
+
+    Vector du1, du2, rhs1, rhs2;
+    du1.UseDevice(true); du2.UseDevice(true);
+    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    du.GetSubVector(idx1, du1);
+    du.GetSubVector(idx2, du2);
+    RHS.GetSubVector(idx1, rhs1);
+    RHS.GetSubVector(idx2, rhs2);
+
     kspM->Mult(rhs1, du1);
     du2 = rhs2;
+
+    du.SetSubVector(idx1, du1);
+    du.SetSubVector(idx2, du);
   }
 
   void ImplicitSolve(double dt, const Vector &u, Vector &k) override
@@ -154,16 +180,24 @@ public:
     }
     Mpi::Print("\n");
     FormRHS(u, RHS);
-    Vector k1(k.GetData() + 0, size_E);
-    Vector k2(k.GetData() + size_E, size_E);
-    Vector rhs1(RHS.GetData() + 0, size_E);
-    Vector rhs2(RHS.GetData() + size_E, size_E);
+
+    Vector k1, k2, rhs1, rhs2;
+    k1.UseDevice(true); k2.UseDevice(true);
+    rhs1.UseDevice(true); rhs2.UseDevice(true);
+    k.GetSubVector(idx1, k1);
+    k.GetSubVector(idx2, k2);
+    RHS.GetSubVector(idx1, rhs1);
+    RHS.GetSubVector(idx2, rhs2);
+
     // A k1 = rhs1 - dt K rhs2
     K->AddMult(rhs2, rhs1, -dt);
     kspA->Mult(rhs1, k1);
 
     // k2 = rhs2 + dt k1
     linalg::AXPBYPCZ(1.0, rhs2, dt, k1, 0.0, k2);
+
+    k.SetSubVector(idx1, k1);
+    k.SetSubVector(idx2, k2);
   }
 
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
@@ -190,11 +224,15 @@ public:
   // Solve (Mass - dt Jacobian) x = Mass b
   int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
   {
-    Vector b1(b.GetData() + 0, size_E);
-    Vector b2(b.GetData() + size_E, size_E);
-    Vector x1(x.GetData() + 0, size_E);
-    Vector x2(x.GetData() + size_E, size_E);
-    Vector rhs(RHS.GetData() + 0, size_E);
+    Vector b1, b2, x1, x2, rhs;
+    b1.UseDevice(true); b2.UseDevice(true);
+    x1.UseDevice(true); x2.UseDevice(true);
+    rhs.UseDevice(true);
+    b.GetSubVector(idx1, b1);
+    b.GetSubVector(idx2, b2);
+    x.GetSubVector(idx1, x1);
+    x.GetSubVector(idx2, x2);
+    RHS.GetSubVector(idx1, rhs);
 
     // A x1 = M b1 - dt K b2
     M->Mult(b1, rhs);
@@ -204,6 +242,8 @@ public:
     // x2 = b2 + dt x1
     linalg::AXPBYPCZ(1.0, b2, saved_gamma, x1, 0.0, x2);
 
+    x.SetSubVector(idx1, x1);
+    x.SetSubVector(idx2, x2);
     return 0;
   }
 };
@@ -222,6 +262,15 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   int size_E = space_op.GetNDSpace().GetTrueVSize();
   int size_B = space_op.GetRTSpace().GetTrueVSize();
 
+  // Set indices of Edot and E in the solution vector, sol = [Edot, E]
+  idx1.SetSize(size_E);
+  idx2.SetSize(size_E);
+  for (int i = 0; i < size_E; i++)
+  {
+    idx1[i] = i;
+    idx2[i] = i + size_E;
+  }
+
   // Allocate space for solution vectors.
   sol.SetSize(2 * size_E);
   E.SetSize(size_E);
@@ -231,9 +280,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   E.UseDevice(true);
   En.UseDevice(true);
   B.UseDevice(true);
-
-  // Sol = [Edot, E]
-  E.MakeRef(sol, size_E);
 
   // Create ODE solver for 1st-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::IMPLICIT;
@@ -347,6 +393,7 @@ void TimeOperator::Init()
 {
   // Always use zero initial conditions.
   sol = 0.0;
+  sol.GetSubVector(idx2, E);
   B = 0.0;
   if (use_mfem_integrator)
   {
@@ -356,9 +403,10 @@ void TimeOperator::Init()
 
 void TimeOperator::Step(double &t, double &dt)
 {
-  En = E;
+  sol.GetSubVector(idx2, En);
   double dt_input = dt;
   ode->Step(sol, t, dt);
+  sol.GetSubVector(idx2, E);
   // Ensure user-specified dt does not change.
   dt = dt_input;
 
