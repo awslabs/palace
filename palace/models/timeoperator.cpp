@@ -167,7 +167,7 @@ public:
     du2 = rhs2;
 
     du.SetSubVector(idx1, du1);
-    du.SetSubVector(idx2, du);
+    du.SetSubVector(idx2, du2);
   }
 
   void ImplicitSolve(double dt, const Vector &u, Vector &k) override
