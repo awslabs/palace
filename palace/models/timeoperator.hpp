@@ -37,6 +37,9 @@ private:
   double rel_tol, abs_tol;
   bool use_mfem_integrator = false;
 
+  // Indices of the first and second halves of the solution vector, sol = [Edot, E]
+  mfem::Array<int> idx1, idx2;
+
   // Discrete curl for B-field time integration (not owned).
   const Operator *Curl;
 
