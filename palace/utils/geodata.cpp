@@ -2238,6 +2238,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       mfem::Vector coord(sdim);
       std::unordered_set<int> bdr_v_donor, bdr_v_receiver;
       std::unordered_set<int> bdr_e_donor, bdr_e_receiver;
+      bool has_tets = false;
       for (int be = 0; be < periodic_mesh->GetNBE(); be++)
       {
         int attr = periodic_mesh->GetBdrAttribute(be);
@@ -2245,6 +2246,12 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
         auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
         if (donor || receiver)
         {
+          int el, info;
+          periodic_mesh->GetBdrElementAdjacentElement(be, el, info);
+          if (periodic_mesh->GetElementType(el) == mfem::Element::TETRAHEDRON)
+          {
+            has_tets = true;
+          }
           //Mpi::Print("attr: {:d}, donor: {:d}, receiver: {:d}\n", attr, donor, receiver);
           if (donor) bdr_e_donor.insert(be);
           if (receiver) bdr_e_receiver.insert(be);
@@ -2261,6 +2268,37 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
             else if (receiver) bdr_v_receiver.insert(vertidxs[i]);
           }
         }
+      }
+      const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
+      Mpi::Print("Total number of elements: {:d}\n",periodic_mesh->GetNE());
+      Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
+      // How to check if the mesh is OK?
+      // Count number of elems in the periodic direction?
+      // If hex/prism: Count boundary elements on donor+receiver,
+      // if total NE = ndonorE+nReceiverE: not enough cells?
+      // If pure tet mesh NE = 3*(ndonorE+nreceiverE): not enough
+      // Mixed mesh is trickier
+      // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
+      // ALREADY CREATED WITH PERIODICITY!!!
+      mfem::Array<mfem::Geometry::Type> geoms;
+      periodic_mesh->GetGeometries(3, geoms);
+      if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
+      {
+        // Pure tet mesh
+        MFEM_VERIFY(periodic_mesh->GetNE() > 3*num_periodic_bc_elems,
+        "Not enough mesh elements in periodic direction!");
+      }
+      else if (geoms.Size() > 1 && has_tets)
+      {
+        // Mixed mesh
+        MFEM_VERIFY(periodic_mesh->GetNE() > num_periodic_bc_elems,
+        "Not enough mesh elements in periodic direction!");
+      }
+      else
+      {
+        // No tets
+        MFEM_VERIFY(periodic_mesh->GetNE() > num_periodic_bc_elems,
+        "Not enough mesh elements in periodic direction!");
       }
 
       mfem::DenseMatrix transformation(4);
