@@ -27,6 +27,7 @@ public:
   enum Index
   {
     INIT = 0,
+    MESH_PREPROCESS,      // Preprocessing mesh
     CONSTRUCT,            // Space and operator construction
     WAVE_PORT,            // Wave port solver
     KSP,                  // Linear solver
@@ -52,6 +53,7 @@ public:
   // clang-format off
   inline static const std::vector<std::string> descriptions{
       "Initialization",
+      "  Mesh Preprocessing",
       "Operator Construction",
       "  Wave Ports",
       "Linear Solve",
