@@ -893,14 +893,17 @@ PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   opK->Mult(x, r);
   if (opMP)
   {
+    Mpi::Print("EPS GetResNorm opMP\n");
     opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   if (opP1)
   {
+    Mpi::Print("EPS GetResNorm opP1\n");
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
   }
   if (opP2)
   {
+    Mpi::Print("EPS GetResNorm opP2\n");
     opP2->AddMult(x, r, std::complex<double>(0.0, -1.0));
   }
   opM->AddMult(x, r, -l);
@@ -1110,14 +1113,17 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   opK->Mult(x, r);
   if (opMP)
   {
+    Mpi::Print("PEPLinear GetResNorm opMP\n");
     opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   if (opP1)
   {
+    Mpi::Print("PEPLinear GetResNorm opP1\n");
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
   }
   if (opP2)
   {
+    Mpi::Print("PEPLinear GetResNorm opP2\n");
     opP2->AddMult(x, r, std::complex<double>(0.0, -1.0));
   }
   opC->AddMult(x, r, l);
@@ -1535,14 +1541,17 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   opK->Mult(x, r);
   if (opMP)
   {
+    Mpi::Print("PEP GetResNorm opMP\n");
     opMP->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   if (opP1)
   {
+    Mpi::Print("PEP GetResNorm opP1\n");
     opP1->AddMult(x, r, std::complex<double>(0.0, 1.0));
   }
   if (opP2)
   {
+    Mpi::Print("PEP GetResNorm opP2\n");
     opP2->AddMult(x, r, std::complex<double>(0.0, -1.0));
   }
   opC->AddMult(x, r, l);
@@ -1583,6 +1592,7 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->opMP)
   {
+    std::cerr << "EPS A0 opMP\n";
     ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   }
   if (ctx->opP1)
@@ -1669,7 +1679,7 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  std::cerr << "PEPLinear L0\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);
@@ -1677,14 +1687,17 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
   if (ctx->opMP)
   {
+    std::cerr << "PEPLinear L0 opMP\n";
     ctx->opMP->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
   }
   if (ctx->opP1)
   {
+    std::cerr << "PEPLinear L0 opP1\n";
     ctx->opP1->AddMult(ctx->x1, ctx->y2, std::complex<double>(0.0, 1.0));
   }
   if (ctx->opP2)
   {
+    std::cerr << "PEPLinear L0 opP2\n";
     ctx->opP2->AddMult(ctx->x1, ctx->y2, std::complex<double>(0.0, -1.0));
   }
   ctx->y2 *= -ctx->delta;
@@ -1701,7 +1714,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  std::cerr << "PEPLinear L1\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
@@ -1717,7 +1730,7 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  std::cerr << "PEPLinear B\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -1742,7 +1755,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+  std::cerr << "PEPLinear\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   if (!ctx->sinvert)
   {
@@ -1769,14 +1782,17 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     if (ctx->opMP)
     {
+      std::cerr << "PEPLinear opMP\n";
       ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     }
     if (ctx->opP1)
     {
+      std::cerr << "PEPLinear opP1\n";
       ctx->opP1->AddMult(ctx->x1, ctx->y1, std::complex<double>(0.0, 1.0));
     }
     if (ctx->opP2)
     {
+      std::cerr << "PEPLinear opP2\n";
       ctx->opP2->AddMult(ctx->x1, ctx->y1, std::complex<double>(0.0, -1.0));
     }
     ctx->opInv->Mult(ctx->y1, ctx->y2);
@@ -1812,6 +1828,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->opMP)
   {
+    std::cerr << "PEP A0 opMP\n";
     ctx->opMP->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   }
   if (ctx->opP1)

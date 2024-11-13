@@ -180,8 +180,10 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
     for (int k = 0; k < kxT.SizeK(); k++)
     {
       kxT(k).Transpose(wave_vector_cross);
+      //kxT(k) = wave_vector_cross;
     }
     mfem::DenseTensor kxTmuinv = linalg::Mult(kxT, mat_op.GetInvPermeability());
+    //mfem::DenseTensor kxTmuinv = linalg::Mult(mat_op.GetInvPermeability(), kxT);
     MaterialPropertyCoefficient kxTmuinv_func(mat_op.GetAttributeToMaterial(), kxTmuinv);
     //muinvkx_func.RestrictCoefficient
     f.AddCoefficient(kxTmuinv_func.GetAttributeToMaterial(),
