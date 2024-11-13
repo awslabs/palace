@@ -153,18 +153,18 @@ public:
     }
     FormRHS(u, RHS);
 
-    Vector du1, du2, rhs1, rhs2;
+    Vector du1, du2, RHS1, RHS2;
     du1.UseDevice(true);
     du2.UseDevice(true);
-    rhs1.UseDevice(true);
-    rhs2.UseDevice(true);
+    RHS1.UseDevice(true);
+    RHS2.UseDevice(true);
     du.GetSubVector(idx1, du1);
     du.GetSubVector(idx2, du2);
-    RHS.GetSubVector(idx1, rhs1);
-    RHS.GetSubVector(idx2, rhs2);
+    RHS.GetSubVector(idx1, RHS1);
+    RHS.GetSubVector(idx2, RHS2);
 
-    kspM->Mult(rhs1, du1);
-    du2 = rhs2;
+    kspM->Mult(RHS1, du1);
+    du2 = RHS2;
 
     du.SetSubVector(idx1, du1);
     du.SetSubVector(idx2, du2);
@@ -185,22 +185,22 @@ public:
     Mpi::Print("\n");
     FormRHS(u, RHS);
 
-    Vector k1, k2, rhs1, rhs2;
+    Vector k1, k2, RHS1, RHS2;
     k1.UseDevice(true);
     k2.UseDevice(true);
-    rhs1.UseDevice(true);
-    rhs2.UseDevice(true);
+    RHS1.UseDevice(true);
+    RHS2.UseDevice(true);
     k.GetSubVector(idx1, k1);
     k.GetSubVector(idx2, k2);
-    RHS.GetSubVector(idx1, rhs1);
-    RHS.GetSubVector(idx2, rhs2);
+    RHS.GetSubVector(idx1, RHS1);
+    RHS.GetSubVector(idx2, RHS2);
 
-    // A k1 = rhs1 - dt K rhs2
-    K->AddMult(rhs2, rhs1, -dt);
-    kspA->Mult(rhs1, k1);
+    // A k1 = RHS1 - dt K RHS2
+    K->AddMult(RHS2, RHS1, -dt);
+    kspA->Mult(RHS1, k1);
 
     // k2 = rhs2 + dt k1
-    linalg::AXPBYPCZ(1.0, rhs2, dt, k1, 0.0, k2);
+    linalg::AXPBYPCZ(1.0, RHS2, dt, k1, 0.0, k2);
 
     k.SetSubVector(idx1, k1);
     k.SetSubVector(idx2, k2);
@@ -230,22 +230,22 @@ public:
   // Solve (Mass - dt Jacobian) x = Mass b
   int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
   {
-    Vector b1, b2, x1, x2, rhs;
+    Vector b1, b2, x1, x2, RHS1;
     b1.UseDevice(true);
     b2.UseDevice(true);
     x1.UseDevice(true);
     x2.UseDevice(true);
-    rhs.UseDevice(true);
+    RHS1.UseDevice(true);
     b.GetSubVector(idx1, b1);
     b.GetSubVector(idx2, b2);
     x.GetSubVector(idx1, x1);
     x.GetSubVector(idx2, x2);
-    RHS.GetSubVector(idx1, rhs);
+    RHS.GetSubVector(idx1, RHS1);
 
     // A x1 = M b1 - dt K b2
-    M->Mult(b1, rhs);
-    K->AddMult(b2, rhs, -saved_gamma);
-    kspA->Mult(rhs, x1);
+    M->Mult(b1, RHS1);
+    K->AddMult(b2, RHS1, -saved_gamma);
+    kspA->Mult(RHS1, x1);
 
     // x2 = b2 + dt x1
     linalg::AXPBYPCZ(1.0, b2, saved_gamma, x1, 0.0, x2);
