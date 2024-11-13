@@ -109,8 +109,8 @@ public:
     rhs1.UseDevice(true);
     rhs2.UseDevice(true);
     u.Read();
-    u1.MakeRef(const_cast<Vector&>(u), 0, size_E);
-    u2.MakeRef(const_cast<Vector&>(u), size_E, size_E);
+    u1.MakeRef(const_cast<Vector &>(u), 0, size_E);
+    u2.MakeRef(const_cast<Vector &>(u), size_E, size_E);
     rhs.ReadWrite();
     rhs1.MakeRef(rhs, 0, size_E);
     rhs2.MakeRef(rhs, size_E, size_E);
@@ -222,8 +222,8 @@ public:
     x2.UseDevice(true);
     RHS1.UseDevice(true);
     b.Read();
-    b1.MakeRef(const_cast<Vector&>(b), 0, size_E);
-    b2.MakeRef(const_cast<Vector&>(b), size_E, size_E);
+    b1.MakeRef(const_cast<Vector &>(b), 0, size_E);
+    b2.MakeRef(const_cast<Vector &>(b), size_E, size_E);
     x.ReadWrite();
     x1.MakeRef(x, 0, size_E);
     x2.MakeRef(x, size_E, size_E);
