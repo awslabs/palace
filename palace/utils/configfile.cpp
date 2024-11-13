@@ -1648,18 +1648,24 @@ void TransientSolverData::SetUp(json &solver)
   {
     if (transient->contains("Order"))
     {
-      MFEM_WARNING("GeneralizedAlpha and RungeKutta transient solvers do not use config[\"Transient\"][\"Order\"]!");
+      MFEM_WARNING("GeneralizedAlpha and RungeKutta transient solvers do not use "
+                   "config[\"Transient\"][\"Order\"]!");
     }
     if (transient->contains("RelTol") || transient->contains("AbsTol"))
     {
-        MFEM_WARNING(
-            "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
-            "config[\"Transient\"][\"RelTol\"] and config[\"Transient\"][\"AbsTol\"]!");
+      MFEM_WARNING(
+          "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
+          "config[\"Transient\"][\"RelTol\"] and config[\"Transient\"][\"AbsTol\"]!");
     }
-  } else {
-    MFEM_VERIFY(rel_tol > 0, "config[\"Transient\"][\"RelTol\"] must be strictly positive!");
-    MFEM_VERIFY(abs_tol > 0, "config[\"Transient\"][\"AbsTol\"] must be strictly positive!");
-    MFEM_VERIFY(order >=2 && order <= 5, "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
+  }
+  else
+  {
+    MFEM_VERIFY(rel_tol > 0,
+                "config[\"Transient\"][\"RelTol\"] must be strictly positive!");
+    MFEM_VERIFY(abs_tol > 0,
+                "config[\"Transient\"][\"AbsTol\"] must be strictly positive!");
+    MFEM_VERIFY(order >= 2 && order <= 5,
+                "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
   }
 
   // Cleanup
