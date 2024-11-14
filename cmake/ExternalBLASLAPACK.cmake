@@ -163,6 +163,13 @@ else()
   else()
     set(OPENBLAS_DIR)
   endif()
+
+  if(NOT OPENBLAS_DIR STREQUAL "")
+    # If OpenBLAS was found set the vendor to avoid conflict with Accelerate on Darwin
+    set(BLA_VENDOR "OpenBLAS")
+    message(STATUS "Using BLAS/LAPACK from OpenBLAS")
+  endif()
+
   list(APPEND CMAKE_PREFIX_PATH ${OPENBLAS_DIR})
   find_package(BLAS REQUIRED)
   find_package(LAPACK REQUIRED)
