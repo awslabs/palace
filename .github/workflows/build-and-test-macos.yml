@@ -43,7 +43,7 @@ jobs:
             with-solver: strumpack
             with-eigensolver: slepc
 
-    runs-on: macos-latest-xl
+    runs-on: macos-latest-xlarge
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +52,10 @@ jobs:
       - name: Install dependencies
         run: |
           brew install pkg-config
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
 
       - name: Configure Open MPI
         if: matrix.mpi == 'openmpi'
@@ -84,7 +88,7 @@ jobs:
             export FC=gfortran-12
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
-            export OPENBLAS_DIR=/usr/local/opt/openblas
+            export OPENBLAS_DIR=$(brew --prefix openblas)
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
