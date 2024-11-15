@@ -88,7 +88,7 @@ jobs:
             export FC=gfortran-12
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
-            export OPENBLAS_DIR=/opt/homebrew/opt/openblas
+            export OPENBLAS_DIR=$(brew --prefix openblas)
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
