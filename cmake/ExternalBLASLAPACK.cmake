@@ -168,6 +168,8 @@ else()
     # If OpenBLAS was found set the vendor to avoid conflict with Accelerate on Darwin
     set(BLA_VENDOR "OpenBLAS")
     message(STATUS "Using BLAS/LAPACK from OpenBLAS")
+  else()
+    message(STATUS "Using BLAS/LAPACK located by CMake")
   endif()
 
   list(APPEND CMAKE_PREFIX_PATH ${OPENBLAS_DIR})
@@ -188,7 +190,6 @@ else()
     PATH_SUFFIXES include include/openblas
     REQUIRED
   )
-  message(STATUS "Using BLAS/LAPACK located by CMake")
 endif()
 
 # Save variables to cache
