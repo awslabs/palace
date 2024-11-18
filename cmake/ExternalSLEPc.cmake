@@ -95,6 +95,12 @@ endif()
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
+
+# A number of patches to MFEM for our use cases
+set(PETSC_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/PETSc/patch_install.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
@@ -106,6 +112,7 @@ ExternalProject_Add(petsc
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
   CONFIGURE_COMMAND   ./configure ${PETSC_OPTIONS}
+  PATCH_COMMAND       git apply "${PETSC_PATCH_FILES}"
   # TEST_COMMAND        ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected PETSC_DIR/PETSC_ARCH
   TEST_COMMAND        ""
   TEST_BEFORE_INSTALL TRUE
