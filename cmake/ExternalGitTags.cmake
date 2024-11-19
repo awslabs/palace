@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "302be130d10f3ac3ecb2d68cedb85c74d405fbf3" CACHE STRING
+  "7c1a0eb5e3f70ff9d161c9d6e3f228ba2513acca" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "72c1e49ee3d896ae53f9f914a80b983ec63c03c7" CACHE STRING
+  "2ad7182b1093845a8c26c56c2f6611a55c3328ce" CACHE STRING
   "Git tag for external PETSc build"
 )
 

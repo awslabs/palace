@@ -40,7 +40,7 @@ From: rockylinux:9
                    pkg-config python3 wget zlib
 
     # Install CMake (STRUMPACK requires >= 3.21)
-    CMAKE_VERSION=3.26.5
+    CMAKE_VERSION=3.31.0
     wget https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-$(uname -m).sh
     /bin/bash cmake-$CMAKE_VERSION-* --skip-license --prefix=/usr
     rm -rf cmake-*
