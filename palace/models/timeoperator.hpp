@@ -24,7 +24,7 @@ class TimeOperator
 {
 private:
   // Solution vector storage.
-  Vector E, B, sol, En;
+  Vector E, B, sol;
 
   // Time integrator for the first order ODE system.
   std::unique_ptr<mfem::ODESolver> ode;
@@ -36,9 +36,6 @@ private:
   int order;
   double rel_tol, abs_tol;
   bool use_mfem_integrator = false;
-
-  // Discrete curl for B-field time integration (not owned).
-  const Operator *Curl;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &space_op,
