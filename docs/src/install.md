@@ -156,7 +156,7 @@ and LAPACK libraries depending on the system architecture according to the follo
 procedure:
 
   - For `x86_64` systems:
-    
+
       + If the `MKLROOT` environment variable is set, looks for an
         [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
@@ -167,7 +167,7 @@ procedure:
         which is permissively licensed and available from most package managers.
 
   - For `aarch64`/`arm64` systems:
-    
+
       + If the `ARMPL_DIR` environment variable is set, looks for an
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.
@@ -208,6 +208,7 @@ source code for these dependencies is downloaded during the build process:
     `PALACE_WITH_ARPACK=ON`)
   - [LIBXSMM](https://github.com/libxsmm/libxsmm) (optional, when `PALACE_WITH_LIBXSMM=ON`)
   - [MAGMA](https://icl.utk.edu/magma/) (optional, when `PALACE_WITH_MAGMA=ON`)
+  - [SUNDIALS](https://github.com/LLNL/sundials) (optional, when `PALACE_WITH_SUNDIALS=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
   - [fmt](https://fmt.dev/latest)
   - [Eigen](https://eigen.tuxfamily.org)
