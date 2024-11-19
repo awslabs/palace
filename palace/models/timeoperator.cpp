@@ -49,7 +49,9 @@ public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
                                   std::function<double(double)> &dJ_coef, double t0,
                                   mfem::TimeDependentOperator::Type type)
-    : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() + space_op.GetRTSpace().GetTrueVSize(), t0, type),
+    : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
+                                      space_op.GetRTSpace().GetTrueVSize(),
+                                  t0, type),
       comm(space_op.GetComm()), dJ_coef(dJ_coef)
   {
     // Get dimensions of E and Edot vectors.
