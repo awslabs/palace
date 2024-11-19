@@ -94,9 +94,19 @@ boundary condition which is written for a lumped resistive port boundary, for ex
     = \bm{U}^{inc} \,,\; \bm{x}\in\Gamma_{Z} \,.
 ```
 
-The second-order electric field formulation is chosen to take advantage of unconditionally
-stable implicit time-integration schemes without the expense of a coupled block system
-solve for ``\bm{E}(\bm{x},t)`` and ``\bm{B}(\bm{x},t)``. It offers the additional benefit
+The second-order electric field differential equation is transformed into a first-order
+ODE system which is solved along with the equation for the magnetic flux density
+
+```math
+\left(\begin{matrix} \varepsilon_r & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 1\end{matrix}\right)
+  \left(\begin{matrix} \ddot{\bm{E}} \\ \dot{\bm{E}} \\ \dot{\bm{B}}\end{matrix} \right)
+  = \left(\begin{matrix} -\sigma & -\nabla\times\mu_r^{-1}\nabla\times & 0\\ 1 & 0 & 0 \\ 0 & -\nabla\times & 0\end{matrix}\right)
+    \left(\begin{matrix}\dot{\bm{E}}\\ \bm{E} \\ \bm{B} \end{matrix}\right) \,.
+```
+
+The first-order ODE system formulation is chosen to take advantage of implicit adaptive
+time-stepping integration schemes. The ``3 \times 3`` system can be block-eliminated to
+avoid an expensive coupled block system solve. It offers the additional benefit
 of sharing many similarities in the spatial discretization as the frequency domain
 formulation outlined above.
 
