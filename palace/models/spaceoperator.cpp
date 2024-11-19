@@ -977,6 +977,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   Mpi::Print("GetPreconditioner pc_mat_real: {:d}, pc_mat_shifted: {:d}\n", pc_mat_real, pc_mat_shifted);
   if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
   {
+    Mpi::Print("GetPreconditioner Complex!\n");
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
         fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
@@ -1018,6 +1019,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   }
   else
   {
+    Mpi::Print("GetPreconditioner Real!\n");
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
         fbr(mat_op.MaxCeedBdrAttribute()), fpwr(mat_op.MaxCeedAttribute()),
@@ -1134,7 +1136,6 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
-  //periodic_op.AddRealMassCoefficients(coeff, f);//1.0 or coeff?
 }
 
 void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
@@ -1157,7 +1158,6 @@ void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoeffi
 void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
-  //periodic_op.AddRealMassCoefficients(coeff, f);
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,

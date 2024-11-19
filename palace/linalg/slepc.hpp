@@ -267,7 +267,7 @@ public:
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normM;
+  mutable PetscReal normK, normM, normMP, normP1, normP2;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -310,7 +310,7 @@ public:
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM;
+  mutable PetscReal normK, normC, normM, normMP, normP1, normP2;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -409,7 +409,7 @@ public:
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM;
+  mutable PetscReal normK, normC, normM, normMP, normP1, normP2;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,

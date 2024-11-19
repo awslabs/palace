@@ -755,7 +755,7 @@ SlepcEPSSolver::SlepcEPSSolver(MPI_Comm comm, int print, const std::string &pref
   : SlepcEPSSolverBase(comm, print, prefix)
 {
   opK = opM = opMP = opP1 = opP2 = nullptr;
-  normK = normM = 0.0;
+  normK = normM = normMP = normP1 = normP2 = 0.0;
 }
 
 void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
@@ -846,6 +846,10 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    normMP = linalg::SpectralNorm(GetComm(), *opMP, opMP->IsReal());
+    normP1 = linalg::SpectralNorm(GetComm(), *opP1, opP1->IsReal());
+    normP2 = linalg::SpectralNorm(GetComm(), *opP2, opP2->IsReal());
+    Mpi::Print("normK, M, MP, P1, P2: {:.3e}, {:.3e}, {:.3e}, {:.3e}, {:.3e}\n", normK, normM, normMP, normP1, normP2);
     MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for EPS scaling!");
     if (normK > 0 && normM > 0.0)
     {
@@ -930,7 +934,7 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
   : SlepcEPSSolverBase(comm, print, prefix)
 {
   opK = opC = opM = opMP = opP1 = opP2 = nullptr;
-  normK = normC = normM = 0.0;
+  normK = normC = normM = normMP = normP1 = normP2 = 0.0;
 }
 
 void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -1031,6 +1035,10 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
     normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    normMP = linalg::SpectralNorm(GetComm(), *opMP, opMP->IsReal());
+    normP1 = linalg::SpectralNorm(GetComm(), *opP1, opP1->IsReal());
+    normP2 = linalg::SpectralNorm(GetComm(), *opP2, opP2->IsReal());
+    Mpi::Print("normK, C, M, MP, P1, P2: {:.3e}, {:.3e}, {:.3e}, {:.3e}, {:.3e}, {:.3e}\n", normK, normC, normM, normMP, normP1, normP2);
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
     if (normK > 0 && normC > 0.0 && normM > 0.0)
@@ -1388,7 +1396,7 @@ SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &pref
   : SlepcPEPSolverBase(comm, print, prefix)
 {
   opK = opC = opM = opMP = opP1 = opP2 = nullptr;
-  normK = normC = normM = 0.0;
+  normK = normC = normM = normMP = normP1 = normP2 = 0.0;
 }
 
 void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -1495,6 +1503,10 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
     normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    normMP = linalg::SpectralNorm(GetComm(), *opMP, opMP->IsReal());
+    normP1 = linalg::SpectralNorm(GetComm(), *opP1, opP1->IsReal());
+    normP2 = linalg::SpectralNorm(GetComm(), *opP2, opP2->IsReal());
+    Mpi::Print("normK, C, M, MP, P1, P2: {:.3e}, {:.3e}, {:.3e}, {:.3e}, {:.3e}, {:.3e}\n", normK, normC, normM, normMP, normP1, normP2);
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
     if (normK > 0 && normC > 0.0 && normM > 0.0)
