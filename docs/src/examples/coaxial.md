@@ -53,7 +53,7 @@ The excitation pulse is configured under
 use a modulated Gaussian pulse shape, with time dependence given by the expression
 
 ```math
-g(t) = \sin{\left[\omega(t-t_0)\right]} e^{-\frac{(t-t_0)^2}{2\tau}^2} \,.
+g(t) = \sin{\left[\omega(t-t_0)\right]} e^{-\frac{(t-t_0)^2}{2\tau^2}} \,.
 ```
 
 For this simulation, we use a center frequency ``f = \omega/2\pi = 10\text{ GHz}`` and pulse
