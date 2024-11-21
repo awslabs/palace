@@ -32,10 +32,10 @@ index 3be37f8..193e8b5 100644
  message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 8647696..0000000
+index 9b9d1d0..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,502 +0,0 @@
+@@ -1,501 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -392,12 +392,11 @@ index 8647696..0000000
 -
 -# ========== main program
 -
--set(lapack_cray false)
--if(DEFINED ENV{CRAYPE_VERSION})
--  set(lapack_cray true)
+-if(NOT DEFINED LAPACK_CRAY AND DEFINED ENV{CRAYPE_VERSION})
+-  set(LAPACK_CRAY true)
 -endif()
 -
--if(NOT (lapack_cray
+-if(NOT (LAPACK_CRAY
 -  OR OpenBLAS IN_LIST LAPACK_FIND_COMPONENTS
 -  OR Netlib IN_LIST LAPACK_FIND_COMPONENTS
 -  OR Atlas IN_LIST LAPACK_FIND_COMPONENTS
@@ -428,7 +427,7 @@ index 8647696..0000000
 -  openblas_libs()
 -elseif(AOCL IN_LIST LAPACK_FIND_COMPONENTS)
 -  aocl_libs()
--elseif(lapack_cray)
+-elseif(LAPACK_CRAY)
 -  # LAPACK is implicitly part of Cray PE LibSci, use Cray compiler wrapper.
 -endif()
 -
@@ -483,14 +482,14 @@ index 8647696..0000000
 -endfunction(lapack_check)
 -
 -# --- Check library links
--if(lapack_cray OR LAPACK_LIBRARY)
+-if(LAPACK_CRAY OR LAPACK_LIBRARY)
 -  lapack_check()
 -endif()
 -
 -
 -include(FindPackageHandleStandardArgs)
 -
--if(lapack_cray)
+-if(LAPACK_CRAY)
 -  find_package_handle_standard_args(LAPACK HANDLE_COMPONENTS
 -  REQUIRED_VARS LAPACK_links
 -  )
@@ -539,7 +538,7 @@ index 8647696..0000000
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index 9b2e056..166d05f 100644
+index e66930a..5fa9d78 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
 @@ -52,8 +52,6 @@ References
@@ -565,64 +564,7 @@ index 9b2e056..166d05f 100644
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
  
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
-@@ -188,40 +183,9 @@ endfunction(scalapack_lib)
- 
- # === main
- 
--set(scalapack_cray false)
--if(DEFINED ENV{CRAYPE_VERSION})
--  set(scalapack_cray true)
--endif()
--
--if(NOT scalapack_cray)
--  if(NOT MKL IN_LIST SCALAPACK_FIND_COMPONENTS AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
--    list(APPEND SCALAPACK_FIND_COMPONENTS MKL)
--  endif()
--endif()
--
--if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
--  set(_orig_suff ${CMAKE_FIND_LIBRARY_SUFFIXES})
--  set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_STATIC_LIBRARY_SUFFIX})
--endif()
--
--if(MKL IN_LIST SCALAPACK_FIND_COMPONENTS OR MKL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
--  scalapack_mkl()
--elseif(scalapack_cray)
--  # Cray PE has Scalapack build into LibSci. Use Cray compiler wrapper.
--else()
--  scalapack_lib()
--endif()
--
--if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
--  if(SCALAPACK_LIBRARY)
--    set(SCALAPACK_STATIC_FOUND true)
--  endif()
--  set(CMAKE_FIND_LIBRARY_SUFFIXES ${_orig_suff})
--endif()
--
- # --- Check that Scalapack links
- 
--if(scalapack_cray OR SCALAPACK_LIBRARY)
-+if(SCALAPACK_LIBRARIES)
-   scalapack_check()
- endif()
- 
-@@ -229,32 +193,19 @@ endif()
- 
- include(FindPackageHandleStandardArgs)
- 
--if(scalapack_cray)
--  find_package_handle_standard_args(SCALAPACK HANDLE_COMPONENTS
--  REQUIRED_VARS SCALAPACK_links
--  )
--else()
--  find_package_handle_standard_args(SCALAPACK HANDLE_COMPONENTS
--  REQUIRED_VARS SCALAPACK_LIBRARY SCALAPACK_links
--  )
--endif()
-+find_package_handle_standard_args(SCALAPACK HANDLE_COMPONENTS
-+REQUIRED_VARS SCALAPACK_LIBRARIES SCALAPACK_links
-+)
+@@ -240,20 +235,13 @@ endif()
  
  if(SCALAPACK_FOUND)
    # need if _FOUND guard as can't overwrite imported target even if bad
@@ -644,7 +586,7 @@ index 9b2e056..166d05f 100644
  
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
-@@ -262,5 +213,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+@@ -261,5 +249,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
      endif()
    endif()
  endif()
