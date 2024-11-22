@@ -51,6 +51,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          brew unlink pkg-config@0.29.2
           brew install pkg-config
 
       - uses: julia-actions/setup-julia@v2
