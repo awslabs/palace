@@ -19,7 +19,7 @@ CEED_QFUNCTION(f_apply_hdivmass_22)(void *__restrict__ ctx, CeedInt Q,
   {
     {
       const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
-      CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
+      CeedScalar coeff[4], adjJt_loc[4], v_loc[2];
       CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
       MatUnpack22(adjJt + i, Q, adjJt_loc);
       MultAtBCx22(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);

@@ -134,13 +134,9 @@ public:
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &MP, const ComplexOperator &P1,
-                    const ComplexOperator &P2, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &MP,
-                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
-
+                    const ComplexOperator &M, const ComplexOperator &P,
+                    ScaleType type) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
@@ -263,11 +259,11 @@ public:
   using SlepcEigenvalueSolver::sinvert;
 
   // References to matrices defining the generalized eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opM, *opMP, *opP1, *opP2;
+  const ComplexOperator *opK, *opM, *opP;
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normM, normMP, normP1, normP2;
+  mutable PetscReal normK, normM;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -282,8 +278,7 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    const ComplexOperator &MP ,const ComplexOperator &P1, const ComplexOperator &P2,
-                    ScaleType type) override;
+                    const ComplexOperator &P, ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 };
@@ -303,14 +298,14 @@ public:
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const ComplexOperator *opK, *opC, *opM, *opMP, *opP1, *opP2;
+  const ComplexOperator *opK, *opC, *opM, *opP;
 
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM, normMP, normP1, normP2;
+  mutable PetscReal normK, normC, normM;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -325,9 +320,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &MP,
-                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
-
+                    const ComplexOperator &M, const ComplexOperator &P,
+                    ScaleType type) override;
   void SetBMat(const Operator &B) override;
 
   void SetInitialSpace(const ComplexVector &v) override;
@@ -405,11 +399,11 @@ public:
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const ComplexOperator *opK, *opC, *opM, *opMP, *opP1, *opP2;
+  const ComplexOperator *opK, *opC, *opM, *opP;
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM, normMP, normP1, normP2;
+  mutable PetscReal normK, normC, normM;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -424,9 +418,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, const ComplexOperator &MP,
-                    const ComplexOperator &P1, const ComplexOperator &P2, ScaleType type) override;
-
+                    const ComplexOperator &M, const ComplexOperator &P,
+                    ScaleType type) override;
   void SetBMat(const Operator &B) override;
 };
 

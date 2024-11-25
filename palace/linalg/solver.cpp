@@ -11,6 +11,7 @@ namespace palace
 template <>
 void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 {
+  Mpi::Print("In MfemWrapperSolver SetOperator with Real operator\n");
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
@@ -52,7 +53,22 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    /**/
+    // A = [Ar, -Ai]
+    //     [Ai,  Ar]
+    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+    mfem::Array2D<double> block_coeffs(2, 2);
+    blocks(0, 0) = hAr;
+    blocks(0, 1) = hAi;
+    blocks(1, 0) = hAi;
+    blocks(1, 1) = hAr;
+    block_coeffs(0, 0) = 1.0;
+    block_coeffs(0, 1) = -1.0;
+    block_coeffs(1, 0) = 1.0;
+    block_coeffs(1, 1) = 1.0;
+    A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+    /**/
     if (PtAPr)
     {
       PtAPr->StealParallelAssemble();
@@ -101,13 +117,39 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  mfem::Array<const Vector *> X(2);
-  mfem::Array<Vector *> Y(2);
-  X[0] = &x.Real();
-  X[1] = &x.Imag();
-  Y[0] = &y.Real();
-  Y[1] = &y.Imag();
-  pc->ArrayMult(X, Y);
+  if (pc->Height() == x.Size())
+  {
+    mfem::Array<const Vector *> X(2);
+    mfem::Array<Vector *> Y(2);
+    X[0] = &x.Real();
+    X[1] = &x.Imag();
+    Y[0] = &y.Real();
+    Y[1] = &y.Imag();
+    pc->ArrayMult(X, Y);
+  }
+  else
+  {
+    // Clean this up? Is there a better way than idx1, idx2 + SetSubVector?
+    mfem::Array<int> idx1(x.Size()), idx2(x.Size());
+    for (int i = 0; i < x.Size(); i++) //move to SetOperator if really needed
+    {
+      idx1[i] = i;
+      idx2[i] = i + x.Size();
+    }
+    Vector X(2 * x.Size()), Y(2 * y.Size()), yr, yi;
+    X.UseDevice(true);
+    Y.UseDevice(true);
+    yr.UseDevice(true);
+    yi.UseDevice(true);
+    X.SetSubVector(idx1, x.Real());
+    X.SetSubVector(idx2, x.Imag());
+    pc->Mult(X, Y);
+    Y.ReadWrite();
+    yr.MakeRef(Y, 0, y.Size());
+    yi.MakeRef(Y, y.Size(), y.Size());
+    y.Real() = yr;
+    y.Imag() = yi;
+  }
 }
 
 }  // namespace palace

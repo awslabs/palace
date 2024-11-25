@@ -42,15 +42,14 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |
-  wave_vector_cross.SetSize(3); // assumes 3D?
+  wave_vector_cross.SetSize(3); // assumes 3D
+  wave_vector_cross = 0.0;
   wave_vector_cross(0,1) = -wave_vector[2];
   wave_vector_cross(0,2) = wave_vector[1];
   wave_vector_cross(1,0) = wave_vector[2];
   wave_vector_cross(1,2) = -wave_vector[0];
   wave_vector_cross(2,0) = -wave_vector[1];
   wave_vector_cross(2,1) = wave_vector[0];
-  //Mpi::Print("Wave vector cross product\n");
-  //wave_vector_cross.Print();
 }
 
 mfem::Array<int>
@@ -141,7 +140,6 @@ void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
     mfem::DenseTensor kxTmuinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
     kxTmuinvkx = linalg::Mult(kxT, kxTmuinvkx);
     MaterialPropertyCoefficient kxTmuinvkx_func(mat_op.GetAttributeToMaterial(), kxTmuinvkx);
-    //muinvkx_func.RestrictCoefficient
     f.AddCoefficient(kxTmuinvkx_func.GetAttributeToMaterial(),
                      kxTmuinvkx_func.GetMaterialProperties(), coeff);
   }
@@ -162,7 +160,6 @@ void PeriodicBoundaryOperator::AddWeakCurlCoefficients(double coeff,
     }
     mfem::DenseTensor muinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
     MaterialPropertyCoefficient muinvkx_func(mat_op.GetAttributeToMaterial(), muinvkx);
-    //muinvkx_func.RestrictCoefficient
     f.AddCoefficient(muinvkx_func.GetAttributeToMaterial(),
                      muinvkx_func.GetMaterialProperties(), coeff);
   }
@@ -180,14 +177,12 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
     for (int k = 0; k < kxT.SizeK(); k++)
     {
       kxT(k).Transpose(wave_vector_cross);
-      //kxT(k) = wave_vector_cross;
     }
     mfem::DenseTensor kxTmuinv = linalg::Mult(kxT, mat_op.GetInvPermeability());
-    //mfem::DenseTensor kxTmuinv = linalg::Mult(mat_op.GetInvPermeability(), kxT);
     MaterialPropertyCoefficient kxTmuinv_func(mat_op.GetAttributeToMaterial(), kxTmuinv);
-    //muinvkx_func.RestrictCoefficient
     f.AddCoefficient(kxTmuinv_func.GetAttributeToMaterial(),
                      kxTmuinv_func.GetMaterialProperties(), coeff);
   }
 }
+
 }  // namespace palace

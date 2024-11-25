@@ -530,8 +530,8 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   };
 
   // Initialize the coarse operator.
-  auto op_coarse = std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
-                                                       fespace_coarse.GetVSize());
+  auto op_coarse = std::make_unique<Operator>(fespace_coarse.GetVSize(),
+                                              fespace_coarse.GetVSize());
 
   // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
   // types, integrators) of the original fine operator.

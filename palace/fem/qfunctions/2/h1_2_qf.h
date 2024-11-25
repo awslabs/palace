@@ -14,7 +14,7 @@ CEED_QFUNCTION(f_apply_h1_2)(void *__restrict__ ctx, CeedInt Q, const CeedScalar
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[3];
+    CeedScalar coeff[4];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
 
     const CeedScalar u0 = u[i + Q * 0];

@@ -39,7 +39,7 @@ CEED_QFUNCTION_HELPER const CeedIntScalar *MatCoeff(const CeedIntScalar *ctx)
 template <int DIM>
 CEED_QFUNCTION_HELPER const CeedIntScalar *CoeffPairSecond(const CeedIntScalar *ctx)
 {
-  return ctx + 2 + NumAttr(ctx) + (DIM * (DIM + 1) / 2) * NumMat(ctx);
+  return ctx + 2 + NumAttr(ctx) + (DIM * DIM) * NumMat(ctx);
 }
 
 #endif  // PALACE_LIBCEED_COEFF_QF_H

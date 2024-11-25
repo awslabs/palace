@@ -196,9 +196,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  MP = space_op.GetPeriodicMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  P1 = space_op.GetPeriodicWeakCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  P2 = space_op.GetPeriodicCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  PF = space_op.GetPeriodicMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
@@ -249,10 +247,10 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), std::complex<double>(1.0, 0.0), 1.0i, -1.0i, K.get(),
-                                    C.get(), M.get(), A2.get(), MP.get(), P1.get(), P2.get());
+                                    std::complex<double>(-omega * omega, 0.0), K.get(),
+                                    C.get(), M.get(), A2.get(), PF.get());
   auto P =
-      space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega, 1.0, 1.0, -1.0);
+      space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
   ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
@@ -317,20 +315,10 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
   }
   Mr.conservativeResize(dim_V, dim_V);
   ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  if (MP)
+  if (PF)
   {
-    MPr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *MP, MPr, r, dim_V0);
-  }
-  if (P1)
-  {
-    P1r.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *P1, P1r, r, dim_V0);
-  }
-  if (P2)
-  {
-    P2r.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *P2, P2r, r, dim_V0);
+    PFr.conservativeResize(dim_V, dim_V);
+    ProjectMatInternal(comm, V, *PF, PFr, r, dim_V0);
   }
   Ar.resize(dim_V, dim_V);
   if (RHS1.Size())
@@ -388,17 +376,9 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
-  if (MP)
+  if (PF)
   {
-    Ar += MPr;
-  }
-  if (P1)
-  {
-    Ar += 1i * P1r;
-  }
-  if (P2)
-  {
-    Ar -= 1i * P2r;
+    Ar += PFr;
   }
   if (has_RHS2)
   {

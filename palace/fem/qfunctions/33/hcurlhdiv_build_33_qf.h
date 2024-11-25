@@ -15,7 +15,7 @@ CEED_QFUNCTION(f_build_hcurlhdiv_33)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[6], adjJt_loc[9], J_loc[9], qd_loc[9];
+    CeedScalar coeff[9], adjJt_loc[9], J_loc[9], qd_loc[9];
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     AdjJt33(adjJt_loc, J_loc);
@@ -42,7 +42,7 @@ CEED_QFUNCTION(f_build_hdivhcurl_33)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[6], adjJt_loc[9], J_loc[9], qd_loc[9];
+    CeedScalar coeff[9], adjJt_loc[9], J_loc[9], qd_loc[9];
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     AdjJt33(adjJt_loc, J_loc);

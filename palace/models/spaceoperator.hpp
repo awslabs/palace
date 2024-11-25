@@ -138,7 +138,7 @@ public:
   auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
-  //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) + i P1 - i P2.
+  //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) + P.
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
   // ω is required only for the constructing the "extra" matrix A2(ω).
   template <typename OperType>
@@ -151,22 +151,17 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
-  std::unique_ptr<OperType> GetPeriodicMassMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
-  std::unique_ptr<OperType> GetPeriodicWeakCurlMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
-  std::unique_ptr<OperType> GetPeriodicCurlMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<OperType> GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
-  //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2 + a4 MP + a5 P1 + a6 P2.
+  //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2 + P.
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType>
-  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, ScalarType a4, ScalarType a5, ScalarType a6, const OperType *K,
-                  const OperType *C, const OperType *M, const OperType *A2 = nullptr,
-                  const OperType *MP = nullptr, const OperType *P1 = nullptr, const OperType *P2 = nullptr);
+  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
+                  const OperType *C, const OperType *M, const OperType *A2 = nullptr, const OperType *P = nullptr);
 
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
   //                           B = a0 Kr + a2 Mr .
@@ -181,10 +176,10 @@ public:
   // Construct the matrix for frequency or time domain linear system preconditioning. If it
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
-  //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3) + a4 MP + a5 P1 + a6 P2.
+  //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3) + P.
   template <typename OperType>
   std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
-                                                    double a3, double a4=0, double a5=0, double a6=0);
+                                                    double a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
