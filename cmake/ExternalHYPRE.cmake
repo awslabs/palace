@@ -44,7 +44,7 @@ if(NOT CMAKE_C_COMPILER STREQUAL MPI_C_COMPILER)
     set(HYPRE_CXXFLAGS "${HYPRE_CXXFLAGS} -I${INCLUDE_DIR}")
   endforeach()
   string(REPLACE ";" " " HYPRE_MPI_LIBRARIES "${MPI_C_LIBRARIES}")
-  set(HYPRE_LDFLAGS "${HYPRE_LDFLAGS} ${HYPRE_MPI_LIBRARIES}")
+  set(HYPRE_LDFLAGS "${HYPRE_LDFLAGS} ${HYPRE_MPI_LIBRARIES} -lm")
 endif()
 
 # Use Autotools build instead of CMake for HIP support

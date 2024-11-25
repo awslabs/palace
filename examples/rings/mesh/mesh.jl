@@ -38,7 +38,7 @@ function generate_ring_mesh(;
     outer_radius                       = 100.0,
     rot_center::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
     rot_axis::AbstractVector{<:Real}   = [0.0, 0.0, 1.0],
-    rot_θ::Real                       = π / 2,
+    rot_θ::Real                        = π / 6,
     verbose::Integer                   = 5,
     gui::Bool                          = false
 )
@@ -148,8 +148,17 @@ function generate_ring_mesh(;
     )
 
     # Apply a rotation transformation to all entities in the model
-    ra ./= norm(ra)
-    kernel.rotate(kernel.getEntities(), rc[1], rc[2], rc[3], ra[1], ra[2], ra[3], θ)
+    rot_axis ./= norm(rot_axis)
+    kernel.rotate(
+        kernel.getEntities(),
+        rot_center[1],
+        rot_center[2],
+        rot_center[3],
+        rot_axis[1],
+        rot_axis[2],
+        rot_axis[3],
+        rot_θ
+    )
 
     kernel.synchronize()
 
@@ -185,14 +194,15 @@ function generate_ring_mesh(;
     gmsh.model.mesh.field.setNumber(1, "DistMax", 6.0 * outer_radius)
     gmsh.model.mesh.field.setNumber(1, "SizeMax", l_farfield)
 
-    mesh_curves = last.(
-        gmsh.model.getBoundary(
-            [(2, x) for x in [inner_ring, outer_ring, inner_terminal, outer_terminal]],
-            true,
-            false,
-            false
+    mesh_curves =
+        last.(
+            gmsh.model.getBoundary(
+                [(2, x) for x in [inner_ring, outer_ring, inner_terminal, outer_terminal]],
+                true,
+                false,
+                false
+            )
         )
-    )
 
     gmsh.model.mesh.field.add("Distance", 2)
     gmsh.model.mesh.field.setNumbers(2, "CurvesList", mesh_curves)

@@ -85,6 +85,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
   // If possible on root, read the serial mesh (converting format if necessary), and do all
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
   // Count disk I/O time separately for the mesh read from file.
+  BlockTimer bt0(Timer::MESH_PREPROCESS);
 
   // If not doing any local adaptation, or performing conformal adaptation, we can use the
   // mesh partitioner.
@@ -118,7 +119,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
 
   // Only one process per node reads the serial mesh.
   {
-    BlockTimer bt(Timer::IO);
+    BlockTimer bt1(Timer::IO);
     if ((use_mesh_partitioner && Mpi::Root(comm)) ||
         (!use_mesh_partitioner && Mpi::Root(node_comm)))
     {
