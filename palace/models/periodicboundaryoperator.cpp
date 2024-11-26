@@ -28,7 +28,10 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   }
   const auto &data = iodata.boundaries.floquet;
   MFEM_VERIFY(data.wave_vector.size() == mesh.SpaceDimension(),
-              "Bloch wave vector size must equal the spatial dimension.");
+              "Floquet/Bloch wave vector size must equal the spatial dimension.");
+  MFEM_VERIFY(mesh.SpaceDimension() == 3,
+              "Quasi-periodic Floquet periodic boundary conditions are only available "
+              " in 3D!");
   wave_vector.SetSize(data.wave_vector.size());
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
   non_zero_wave_vector = (wave_vector.Norml2() > std::numeric_limits<double>::epsilon());
@@ -38,11 +41,29 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
 
+  // Get mesh dimensions in x/y/z coordinates
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  bbmax -= bbmin;
+
+  // Ensure Floquet wave vector components are in range [-π/L, π/L]
+  for (int i = 0; i < mesh.SpaceDimension(); i++)
+  {
+    if (wave_vector[i] > M_PI / bbmax[i])
+    {
+      wave_vector[i] = - M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+    }
+    else if (wave_vector[i] < M_PI / bbmax[i])
+    {
+      wave_vector[i] = M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+    }
+  }
+
   // Matrix representation of cross product with wave vector
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |
-  wave_vector_cross.SetSize(3); // assumes 3D
+  wave_vector_cross.SetSize(3);
   wave_vector_cross = 0.0;
   wave_vector_cross(0,1) = -wave_vector[2];
   wave_vector_cross(0,2) = wave_vector[1];

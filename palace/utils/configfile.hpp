@@ -489,7 +489,7 @@ public:
 struct FloquetData
 {
   public:
-    // Bloch wavevector specifying the phase delay in the X/Y/Z directions.
+    // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
     std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
     void SetUp(json &boundaries);
