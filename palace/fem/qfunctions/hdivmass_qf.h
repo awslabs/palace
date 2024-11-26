@@ -22,7 +22,7 @@
 // out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
 // out[1] is active vector curl, shape [ncomp=1, Q]
 
-// Build functions assemble the quadrature point data, stored as a symmetric matrix.
+// Build functions assemble the quadrature point data.
 
 #include "22/hdivmass_22_qf.h"
 #include "22/hdivmass_build_22_qf.h"

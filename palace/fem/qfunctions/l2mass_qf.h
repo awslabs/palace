@@ -14,7 +14,7 @@
 // out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
 // out[1] is active vector divergence, shape [ncomp=1, Q]
 
-// Build functions assemble the quadrature point data, stored as a symmetric matrix.
+// Build functions assemble the quadrature point data.
 
 #include "21/l2mass_21_qf.h"
 #include "21/l2mass_build_21_qf.h"
