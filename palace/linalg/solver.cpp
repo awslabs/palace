@@ -68,6 +68,13 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     block_coeffs(1, 0) = 1.0;
     block_coeffs(1, 1) = 1.0;
     A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+    idx1.SetSize(op.Width());
+    idx2.SetSize(op.Width());
+    for (int i = 0; i < op.Width(); i++)
+    {
+      idx1[i] = i;
+      idx2[i] = i + op.Width();
+    }
     /**/
     if (PtAPr)
     {
@@ -129,13 +136,7 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   }
   else
   {
-    // Clean this up? Is there a better way than idx1, idx2 + SetSubVector?
-    mfem::Array<int> idx1(x.Size()), idx2(x.Size());
-    for (int i = 0; i < x.Size(); i++) //move to SetOperator if really needed
-    {
-      idx1[i] = i;
-      idx2[i] = i + x.Size();
-    }
+    // Is there a better way than idx1, idx2 + SetSubVector?
     Vector X(2 * x.Size()), Y(2 * y.Size()), yr, yi;
     X.UseDevice(true);
     Y.UseDevice(true);
