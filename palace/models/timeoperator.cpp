@@ -30,7 +30,7 @@ public:
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
   // returns g'(t).
-  std::function<double(double)> &dJ_coef;
+  std::function<double(double)> dJ_coef;
 
   // Internal objects for solution of linear systems during time stepping.
   double dt_, saved_gamma;
@@ -39,7 +39,7 @@ public:
   mutable Vector RHS;
   int size_E, size_B;
 
-  const Operator *Curl;
+  const Operator &Curl;
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
@@ -47,17 +47,15 @@ public:
 
 public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
-                                  std::function<double(double)> &dJ_coef, double t0,
+                                  std::function<double(double)> dJ_coef, double t0,
                                   mfem::TimeDependentOperator::Type type)
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
                                       space_op.GetRTSpace().GetTrueVSize(),
                                   t0, type),
-      comm(space_op.GetComm()), dJ_coef(dJ_coef)
+      comm(space_op.GetComm()), dJ_coef(std::move(dJ_coef)),
+      size_E(space_op.GetNDSpace().GetTrueVSize()),
+      size_B(space_op.GetRTSpace().GetTrueVSize()), Curl(space_op.GetCurlMatrix())
   {
-    // Get dimensions of E and Edot vectors.
-    size_E = space_op.GetNDSpace().GetTrueVSize();
-    size_B = space_op.GetRTSpace().GetTrueVSize();
-
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
     // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
@@ -65,8 +63,6 @@ public:
     K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
-
-    Curl = &space_op.GetCurlMatrix();
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -107,7 +103,7 @@ public:
     }
   }
 
-  // Form the RHS for the first-order ODE system
+  // Form the RHS for the first-order ODE system.
   void FormRHS(const Vector &u, Vector &rhs) const
   {
     Vector u1, u2, u3, rhs1, rhs2, rhs3;
@@ -139,7 +135,7 @@ public:
 
     rhs2 = u1;
 
-    Curl->Mult(u2, rhs3);
+    Curl.Mult(u2, rhs3);
     rhs3 *= -1;
   }
 
@@ -179,8 +175,8 @@ public:
 
   void ImplicitSolve(double dt, const Vector &u, Vector &k) override
   {
-    // Solve: M k = f(u + dt k, t)
-    // Use block elimination to avoid solving a 2n x 2n linear system
+    // Solve: M k = f(u + dt k, t).
+    // Use block elimination to avoid solving a 3n x 3n linear system.
     if (!kspA || dt != dt_)
     {
       // Configure the linear solver, including the system matrix and also the matrix
@@ -217,31 +213,31 @@ public:
 
     // k3 = rhs3 - dt curl k2
     k3 = RHS3;
-    Curl->AddMult(k2, RHS3, -dt);
+    Curl.AddMult(k2, RHS3, -dt);
   }
 
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
 
-  // Setup A = M - gamma J = M + gamma C + gamma^2 K
+  // Setup A = M - gamma J = M + gamma C + gamma^2 K.
   int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur,
                        double gamma) override
   {
-    // Update Jacobian matrix
+    // Update Jacobian matrix.
     if (!kspA || gamma != saved_gamma)
     {
       ConfigureLinearSolver(gamma);
     }
 
-    // Indicate Jacobian was updated
+    // Indicate Jacobian was updated.
     *jcur = 1;
 
-    // Save gamma for use in solve
+    // Save gamma for use in solve.
     saved_gamma = gamma;
 
     return 0;
   }
 
-  // Solve (Mass - dt Jacobian) x = Mass b
+  // Solve (Mass - dt Jacobian) x = Mass b.
   int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
   {
     Vector b1, b2, b3, x1, x2, x3, RHS1;
@@ -273,7 +269,7 @@ public:
 
     // x3 = b3 - dt curl x2
     x3 = b3;
-    Curl->AddMult(x2, x3, -saved_gamma);
+    Curl.AddMult(x2, x3, -saved_gamma);
 
     return 0;
   }
@@ -282,11 +278,10 @@ public:
 }  // namespace
 
 TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-                           std::function<double(double)> &dJ_coef)
+                           std::function<double(double)> dJ_coef)
   : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
     order(iodata.solver.transient.order)
 {
-
   // Get sizes.
   int size_E = space_op.GetNDSpace().GetTrueVSize();
   int size_B = space_op.GetRTSpace().GetTrueVSize();
@@ -307,7 +302,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   switch (iodata.solver.transient.type)
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
-    case config::TransientSolverData::Type::DEFAULT:
       {
         constexpr double rho_inf = 1.0;
         use_mfem_integrator = true;
@@ -376,18 +370,18 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 
 const KspSolver &TimeOperator::GetLinearSolver() const
 {
-  const auto &firstOrder = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MFEM_VERIFY(firstOrder.kspA,
+  const auto &first_order = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
+  MFEM_VERIFY(first_order.kspA,
               "No linear solver for time-dependent operator has been constructed!\n");
-  return *firstOrder.kspA;
+  return *first_order.kspA;
 }
 
 double TimeOperator::GetMaxTimeStep() const
 {
-  const auto &firstOrder = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MPI_Comm comm = firstOrder.comm;
-  const Operator &M = *firstOrder.M;
-  const Operator &K = *firstOrder.K;
+  const auto &first_order = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
+  MPI_Comm comm = first_order.comm;
+  const Operator &M = *first_order.M;
+  const Operator &K = *first_order.K;
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;

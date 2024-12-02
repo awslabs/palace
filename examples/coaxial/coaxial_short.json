@@ -45,7 +45,7 @@
     "Device": "CPU",
     "Transient":
     {
-      "Type": "GeneralizedAlpha",
+      "Type": "ARKODE",
       "Excitation": "ModulatedGaussian",
       "ExcitationFreq": 10.0,  // GHz
       "ExcitationWidth": 0.05,  // ns, BW ∼ 1/τ

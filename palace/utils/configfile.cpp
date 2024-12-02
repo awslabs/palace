@@ -1605,11 +1605,11 @@ void MagnetostaticSolverData::SetUp(json &solver)
 // Helper for converting string keys to enum for TransientSolverData::Type and
 // TransientSolverData::ExcitationType.
 PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
-                           {{TransientSolverData::Type::DEFAULT, "Default"},
-                            {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
+                           {{TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
                             {TransientSolverData::Type::RUNGE_KUTTA, "RungeKutta"},
                             {TransientSolverData::Type::CVODE, "CVODE"},
-                            {TransientSolverData::Type::ARKODE, "ARKODE"}})
+                            {TransientSolverData::Type::ARKODE, "ARKODE"},
+                            {TransientSolverData::Type::DEFAULT, "Default"}})
 PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
     {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
@@ -1644,7 +1644,7 @@ void TransientSolverData::SetUp(json &solver)
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
 
-  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA || type == Type::DEFAULT)
+  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
   {
     if (transient->contains("Order"))
     {

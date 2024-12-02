@@ -98,9 +98,9 @@ The second-order electric field differential equation is transformed into a firs
 ODE system which is solved along with the equation for the magnetic flux density
 
 ```math
-\left(\begin{matrix} \varepsilon_r & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 1\end{matrix}\right)
+\left(\begin{matrix} \varepsilon_r & 0 & 0 \\ 0 & I & 0 \\ 0 & 0 & I\end{matrix}\right)
   \left(\begin{matrix} \ddot{\bm{E}} \\ \dot{\bm{E}} \\ \dot{\bm{B}}\end{matrix} \right)
-  = \left(\begin{matrix} -\sigma & -\nabla\times\mu_r^{-1}\nabla\times & 0\\ 1 & 0 & 0 \\ 0 & -\nabla\times & 0\end{matrix}\right)
+  = \left(\begin{matrix} -\sigma & -\nabla\times\mu_r^{-1}\nabla\times & 0\\ I & 0 & 0 \\ 0 & -\nabla\times & 0\end{matrix}\right)
     \left(\begin{matrix}\dot{\bm{E}}\\ \bm{E} \\ \bm{B} \end{matrix}\right) \,.
 ```
 
