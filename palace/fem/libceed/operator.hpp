@@ -47,9 +47,11 @@ public:
 
   auto Size() const { return op.size(); }
 
-  void AddOper(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
+  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
 
   void Finalize();
+
+  void DestroyAssemblyData() const;
 
   void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 

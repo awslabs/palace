@@ -57,7 +57,7 @@ Operator::~Operator()
   }
 }
 
-void Operator::AddOper(CeedOperator sub_op, CeedOperator sub_op_t)
+void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
@@ -100,6 +100,19 @@ void Operator::Finalize()
   }
 }
 
+void Operator::DestroyAssemblyData() const
+{
+  PalacePragmaOmp(parallel if (op.size() > 1))
+  {
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+    PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(op[id]));
+  }
+}
+
 void Operator::AssembleDiagonal(Vector &diag) const
 {
   Ceed ceed;
@@ -125,6 +138,7 @@ void Operator::AssembleDiagonal(Vector &diag) const
     PalaceCeedCall(
         ceed, CeedOperatorLinearAssembleAddDiagonal(op[id], v[id], CEED_REQUEST_IMMEDIATE));
     PalaceCeedCall(ceed, CeedVectorTakeArray(v[id], mem, nullptr));
+    PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(op[id]));
   }
 }
 
@@ -467,6 +481,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
       CeedVector vals;
       CeedMemType mem;
       CeedOperatorAssembleCOO(ceed, op[id], skip_zeros, &nnz, &rows, &cols, &vals, &mem);
+      PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(op[id]));
 
       // Convert COO to CSR (on each thread). The COO memory is free'd internally.
       loc_mat[id] =
@@ -527,6 +542,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
                                                           basis_coarse, op_coarse, nullptr,
                                                           nullptr));
+    PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(*op_coarse));
   };
 
   // Initialize the coarse operator.
@@ -562,8 +578,8 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
       CeedOperator sub_op_coarse, sub_op_coarse_t;
       SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
       SingleOperatorCoarsen(ceed, sub_ops_fine_t[k], &sub_op_coarse_t);
-      op_coarse->AddOper(sub_op_coarse, sub_op_coarse_t);  // Sub-operator owned by ceed::Operator
-      //op_coarse->AddOper(sub_op_coarse);  // Sub-operator owned by ceed::Operator
+      op_coarse->AddSubOperator(sub_op_coarse, sub_op_coarse_t);  // Sub-operator owned by ceed::Operator
+      //op_coarse->AddSubOperator(sub_op_coarse);  // Sub-operator owned by ceed::Operator
     }
   }
 

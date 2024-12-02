@@ -82,8 +82,8 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(test_map_type, trial_map_type);
           integ->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
                           data.geom_data, data.geom_data_restr, &sub_op_t);
-          op->AddOper(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
-          //op->AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+          op->AddSubOperator(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
+          //op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
       else if (mfem::Geometry::Dimension[geom] == mesh.Dimension() - 1 &&
@@ -103,13 +103,14 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
+
           // Transpose operator.
           CeedOperator sub_op_t;
           integ->SetMapTypes(test_map_type, trial_map_type);
           integ->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
                          data.geom_data, data.geom_data_restr, &sub_op_t);
-          op->AddOper(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
-          //op->AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+          op->AddSubOperator(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
+          //op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
     }
@@ -195,13 +196,14 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     }
   }
 
-  // Construct the final operators using full or partial assemble as needed. Force the
-  // coarse-level operator to be fully assembled always.
+  // Construct the final operators using full or partial assemble as needed. We do not
+  // force the coarse-level operator to be fully assembled always, it will be only assembled
+  // as needed for parallel assembly.
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    if (l == 0 || UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold))
+    if (UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold))
     {
       ops.push_back(FullAssemble(*pa_ops[l - l0], skip_zeros));
     }
@@ -256,7 +258,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
         {
           CeedOperator sub_op, sub_op_t;
           interp->Assemble(ceed, trial_restr, test_restr, interp_basis, &sub_op, &sub_op_t);
-          op->AddOper(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
+          op->AddSubOperator(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
         }
 
         // Basis is owned by the operator.
