@@ -1771,6 +1771,7 @@ mfem::Vector ComputeNormal2(std::unique_ptr<mfem::Mesh> &mesh,
     mesh->GetBdrElementVertices(el, vert_bdr);
     mfem::Vector bdr_elem_center(sdim), adj_elem_center(sdim);
     mfem::Vector bdr_elem_offset_p(sdim), bdr_elem_offset_n(sdim);
+    // Can maybe use mfem mesh GetElementCenter to compute centroids?
     bdr_elem_center = 0.0;
     for (int j=0; j<vert_bdr.Size(); j++)
     {
@@ -1781,7 +1782,9 @@ mfem::Vector ComputeNormal2(std::unique_ptr<mfem::Mesh> &mesh,
 
     int eladj, info;
     mesh->GetBdrElementAdjacentElement(el, eladj, info);
-    mesh->GetElementVertices(eladj, vert_adj);
+    //mesh->GetElementVertices(eladj, vert_adj);
+    mesh->GetElementCenter(eladj, adj_elem_center);
+    /*
     adj_elem_center = 0.0;
     for (int j=0; j<vert_adj.Size(); j++)
     {
@@ -1789,7 +1792,7 @@ mfem::Vector ComputeNormal2(std::unique_ptr<mfem::Mesh> &mesh,
       adj_elem_center += vx;
     }
     adj_elem_center /= vert_adj.Size();
-
+    */
     bdr_elem_offset_p = bdr_elem_center;
     bdr_elem_offset_p += loc_normal;
     bdr_elem_offset_n = bdr_elem_center;
@@ -1868,6 +1871,8 @@ void ComputeNormal(std::unique_ptr<mfem::Mesh> &periodic_mesh,
   int el, info;
   periodic_mesh->GetBdrElementAdjacentElement(elem, el, info);
   periodic_mesh->GetElementVertices(el, vert_adj);
+
+  // Can maybe use mfem mesh GetElementCenter to compute centroids?
   adj_elem_center = 0.0;
   for (int j=0; j<vert_adj.Size(); j++)
   {
@@ -2281,12 +2286,13 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       // Mixed mesh is trickier
       // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
       // ALREADY CREATED WITH PERIODICITY!!!
+      /**/
       mfem::Array<mfem::Geometry::Type> geoms;
       periodic_mesh->GetGeometries(3, geoms);
       if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
       {
         // Pure tet mesh
-        MFEM_VERIFY(periodic_mesh->GetNE() > 3*num_periodic_bc_elems,
+        MFEM_VERIFY(periodic_mesh->GetNE() > 3 * num_periodic_bc_elems,
         "Not enough mesh elements in periodic direction!");
       }
       else if (geoms.Size() > 1 && has_tets)
@@ -2301,7 +2307,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
         MFEM_VERIFY(periodic_mesh->GetNE() > num_periodic_bc_elems,
         "Not enough mesh elements in periodic direction!");
       }
-
+      /**/
       mfem::DenseMatrix transformation(4);
       // If only translation is provided -> use it
       // If only affine transfomr is provided -> use it
@@ -2408,7 +2414,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
         }
 
       }
-
+      Mpi::Print("CreatePeriodicVertexMapping\n");
       auto periodic_mapping = CreatePeriodicVertexMapping(periodic_mesh,
                                                  bdr_v_donor,
                                                  bdr_v_receiver,
@@ -2420,12 +2426,14 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
       //auto periodic_mapping =
       //    periodic_mesh->CreatePeriodicVertexMapping({translation2}, 1E-6);
       //periodic_mesh->
+      Mpi::Print("MFEM MakePeriodic\n");
       auto p_mesh = std::make_unique<mfem::Mesh>(
           mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
       periodic_mesh = std::move(p_mesh);
     }
     mesh = std::move(periodic_mesh);
   }
+  Mpi::Print("Return mesh\n");
   return mesh;
 }
 

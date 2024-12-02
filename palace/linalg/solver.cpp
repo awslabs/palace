@@ -11,7 +11,6 @@ namespace palace
 template <>
 void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 {
-  Mpi::Print("In MfemWrapperSolver SetOperator with Real operator\n");
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
