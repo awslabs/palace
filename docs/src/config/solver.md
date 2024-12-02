@@ -261,15 +261,15 @@ disk for [visualization with ParaView](../guide/postprocessing.md#Visualization)
 saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-`"Order" [0]` :  Order of the adaptive Runge-Kutta integrators or maximum order of the multistep method.
-Only relevant when `"Type"` is `"ARKODE"` or `"CVODE"`. A value less than 1 defaults to 3 for `"ARKODE"`
-and 2 for `"CVODE"`.
+`"Order" [2]` :  Order of the adaptive Runge-Kutta integrators or maximum order of the
+multistep method, must be within `[2,5]`. Should only be specified if `"Type"` is `"ARKODE"`
+or `"CVODE"`.
 
-`"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Only relevant
-when `"Type"` is `"CVODE"` or `"ARKODE"` .
+`"RelTol" [1e-4]` :  Relative tolerance used in adaptive time-stepping schemes. Should only
+be specified if `"Type"` is `"ARKODE"` or `"CVODE"`.
 
-`"AbsTol" [1e-9]` :  Absolute tolerance used in adaptive time-stepping schemes. Only relevant
-when `"Type"` is `"CVODE"` or `"ARKODE"`.
+`"AbsTol" [1e-9]` :  Absolute tolerance used in adaptive time-stepping schemes. Should only
+be specified if `"Type"` is `"ARKODE"` or `"CVODE"`.
 
 ## `solver["Electrostatic"]`
 
