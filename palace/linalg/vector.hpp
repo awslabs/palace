@@ -12,12 +12,12 @@
 namespace palace
 {
 
-using Vector = mfem::Vector;
-
 //
 // Functionality extending mfem::Vector from MFEM, including basic functions for parallel
 // vectors distributed across MPI processes.
 //
+
+using Vector = mfem::Vector;
 
 // A complex-valued vector represented as two real vectors, one for each component.
 class ComplexVector

@@ -39,9 +39,13 @@ The format of this changelog is based on
   - Exposed configuration linear solver and eigen solver options for the wave port
     subproblem. These can now be specified as part of the `config["Boundaries"]["WavePort"]`
     configuration. The defaults align with the previously hardcoded values.
+  - Nonconformal adaptation is now supported for WavePort boundary conditions. This was
+    achieved through a patch applied to MFEM to support `mfem::ParSubMesh` on external
+    nonconformal surface subdomains.
   - Added adaptive time-stepping capability for transient simulations. The new ODE integrators
     rely on the SUNDIALS library and can be specified by setting the
     `config["Solver"]["Transient"]["Type"]` option to `"CVODE"` or `"ARKODE"`.
+
 
 ## [0.13.0] - 2024-05-20
 
