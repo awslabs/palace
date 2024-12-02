@@ -32,14 +32,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   TimeOperator time_op(iodata, space_op, dJdt_coef);
 
   double delta_t = iodata.solver.transient.delta_t;
-  if (time_op.isExplicit())
-  {
-    // Stability limited time step.
-    const double dt_max = time_op.GetMaxTimeStep();
-    const double dts_max = iodata.DimensionalizeValue(IoData::ValueType::TIME, dt_max);
-    Mpi::Print(" Maximum stable time step: {:.6e} ns\n", dts_max);
-    delta_t = std::min(delta_t, 0.95 * dt_max);
-  }
   int n_step = GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);
   SaveMetadata(space_op.GetNDSpaces());
 

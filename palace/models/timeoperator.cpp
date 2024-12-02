@@ -30,7 +30,7 @@ public:
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
   // returns g'(t).
-  std::function<double(double)> &dJ_coef;
+  std::function<double(double)> dJ_coef;
 
   // Internal objects for solution of linear systems during time stepping.
   double dt_, saved_gamma;
@@ -39,7 +39,7 @@ public:
   mutable Vector RHS;
   int size_E, size_B;
 
-  const Operator *Curl;
+  const Operator &Curl;
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
@@ -47,17 +47,14 @@ public:
 
 public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
-                                  std::function<double(double)> &dJ_coef, double t0,
+                                  std::function<double(double)> dJ_coef, double t0,
                                   mfem::TimeDependentOperator::Type type)
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
                                       space_op.GetRTSpace().GetTrueVSize(),
                                   t0, type),
-      comm(space_op.GetComm()), dJ_coef(dJ_coef)
+      comm(space_op.GetComm()), dJ_coef(dJ_coef), size_E(space_op.GetNDSpace().GetTrueVSize()),
+      size_B(space_op.GetRTSpace().GetTrueVSize()), Curl(space_op.GetCurlMatrix())
   {
-    // Get dimensions of E and Edot vectors.
-    size_E = space_op.GetNDSpace().GetTrueVSize();
-    size_B = space_op.GetRTSpace().GetTrueVSize();
-
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
     // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
@@ -65,8 +62,6 @@ public:
     K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
-
-    Curl = &space_op.GetCurlMatrix();
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -139,7 +134,7 @@ public:
 
     rhs2 = u1;
 
-    Curl->Mult(u2, rhs3);
+    Curl.Mult(u2, rhs3);
     rhs3 *= -1;
   }
 
@@ -180,7 +175,7 @@ public:
   void ImplicitSolve(double dt, const Vector &u, Vector &k) override
   {
     // Solve: M k = f(u + dt k, t)
-    // Use block elimination to avoid solving a 2n x 2n linear system
+    // Use block elimination to avoid solving a 3n x 3n linear system
     if (!kspA || dt != dt_)
     {
       // Configure the linear solver, including the system matrix and also the matrix
@@ -217,7 +212,7 @@ public:
 
     // k3 = rhs3 - dt curl k2
     k3 = RHS3;
-    Curl->AddMult(k2, RHS3, -dt);
+    Curl.AddMult(k2, RHS3, -dt);
   }
 
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
@@ -273,7 +268,7 @@ public:
 
     // x3 = b3 - dt curl x2
     x3 = b3;
-    Curl->AddMult(x2, x3, -saved_gamma);
+    Curl.AddMult(x2, x3, -saved_gamma);
 
     return 0;
   }
@@ -282,7 +277,7 @@ public:
 }  // namespace
 
 TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-                           std::function<double(double)> &dJ_coef)
+                           std::function<double(double)> dJ_coef)
   : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
     order(iodata.solver.transient.order)
 {
@@ -307,7 +302,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   switch (iodata.solver.transient.type)
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
-    case config::TransientSolverData::Type::DEFAULT:
       {
         constexpr double rho_inf = 1.0;
         use_mfem_integrator = true;
@@ -376,36 +370,10 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 
 const KspSolver &TimeOperator::GetLinearSolver() const
 {
-  const auto &firstOrder = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MFEM_VERIFY(firstOrder.kspA,
+  const auto &first_order = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
+  MFEM_VERIFY(first_order.kspA,
               "No linear solver for time-dependent operator has been constructed!\n");
-  return *firstOrder.kspA;
-}
-
-double TimeOperator::GetMaxTimeStep() const
-{
-  const auto &firstOrder = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MPI_Comm comm = firstOrder.comm;
-  const Operator &M = *firstOrder.M;
-  const Operator &K = *firstOrder.K;
-
-  // Solver for M⁻¹.
-  constexpr double lin_tol = 1.0e-9;
-  constexpr int max_lin_it = 10000;
-  CgSolver<Operator> pcg(comm, 0);
-  pcg.SetRelTol(lin_tol);
-  pcg.SetMaxIter(max_lin_it);
-  pcg.SetOperator(M);
-  JacobiSmoother<Operator> jac(comm);
-  jac.SetOperator(M);
-  pcg.SetPreconditioner(jac);
-
-  // Power iteration to estimate largest eigenvalue of undamped system matrix M⁻¹ K (can use
-  // Hermitian eigenvalue solver as M, K are SPD).
-  ProductOperator op(pcg, K);
-  double lam = linalg::SpectralNorm(comm, op, true);
-  MFEM_VERIFY(lam > 0.0, "Error during power iteration, λ = " << lam << "!");
-  return 2.0 / std::sqrt(lam);
+  return *first_order.kspA;
 }
 
 void TimeOperator::Init()

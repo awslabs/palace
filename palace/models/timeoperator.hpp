@@ -39,7 +39,7 @@ private:
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-               std::function<double(double)> &dJ_coef);
+               std::function<double(double)> dJ_coef);
 
   // Access solution vectors for E- and B-fields.
   const Vector &GetE() const { return E; }
@@ -47,13 +47,6 @@ public:
 
   // Return the linear solver associated with the implicit or explicit time integrator.
   const KspSolver &GetLinearSolver() const;
-
-  // Return if the time integration scheme explicit or implicit.
-  bool isExplicit() const { return op->isExplicit(); }
-
-  // Estimate the maximum stable time step based on the maximum eigenvalue of the
-  // undamped system matrix M⁻¹ K.
-  double GetMaxTimeStep() const;
 
   // Initialize time integrators and set 0 initial conditions.
   void Init();

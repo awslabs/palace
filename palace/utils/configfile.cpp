@@ -1644,7 +1644,7 @@ void TransientSolverData::SetUp(json &solver)
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
 
-  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA || type == Type::DEFAULT)
+  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
   {
     if (transient->contains("Order"))
     {

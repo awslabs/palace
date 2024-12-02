@@ -741,11 +741,11 @@ public:
   // Time integration scheme type.
   enum class Type
   {
-    DEFAULT,
     GEN_ALPHA,
     RUNGE_KUTTA,
     ARKODE,
-    CVODE
+    CVODE,
+    DEFAULT = GEN_ALPHA
   };
   Type type = Type::DEFAULT;
 
