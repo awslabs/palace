@@ -52,7 +52,8 @@ public:
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
                                       space_op.GetRTSpace().GetTrueVSize(),
                                   t0, type),
-      comm(space_op.GetComm()), dJ_coef(dJ_coef), size_E(space_op.GetNDSpace().GetTrueVSize()),
+      comm(space_op.GetComm()), dJ_coef(dJ_coef),
+      size_E(space_op.GetNDSpace().GetTrueVSize()),
       size_B(space_op.GetRTSpace().GetTrueVSize()), Curl(space_op.GetCurlMatrix())
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are

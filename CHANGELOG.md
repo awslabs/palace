@@ -46,7 +46,6 @@ The format of this changelog is based on
     rely on the SUNDIALS library and can be specified by setting the
     `config["Solver"]["Transient"]["Type"]` option to `"CVODE"` or `"ARKODE"`.
 
-
 ## [0.13.0] - 2024-05-20
 
   - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
