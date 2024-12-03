@@ -21,6 +21,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
 #if defined(MFEM_USE_STRUMPACK)
@@ -258,7 +259,9 @@ int main(int argc, char *argv[])
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
   IoData iodata(argv[1], false);
+  MakeOutputFolder(iodata, world_comm);
 
+  BlockTimer bt1(Timer::INIT);
   // Initialize the MFEM device and configure libCEED backend.
   int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
   mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
