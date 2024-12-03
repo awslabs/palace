@@ -419,10 +419,8 @@ void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
 }
 
 EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
-                                                const std::string &post_dir, int n_eig)
-  : root_{root}, do_measurement_(do_measurement            //
-                                 && post_dir.length() > 0  // Valid output dir
-                                 ),
+                                                const fs::path &post_dir, int n_eig)
+  : root_{root}, do_measurement_(do_measurement),
     stdout_int_print_width(1 + static_cast<int>(std::log10(n_eig)))
 {
   // Note: we switch to n_eig rather than n_conv for padding since we don't know n_conv
@@ -431,7 +429,7 @@ EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
   {
     return;
   }
-  eig = TableWithCSVFile(post_dir + "eig.csv");
+  eig = TableWithCSVFile(post_dir / "eig.csv");
   eig.table.reserve(n_eig, 6);
   eig.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
   eig.table.insert_column("f_re", "Re{f} (GHz)");
@@ -469,25 +467,24 @@ void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
 }
 
 EigenSolver::PortsPostPrinter::PortsPostPrinter(bool do_measurement, bool root,
-                                                const std::string &post_dir,
+                                                const fs::path &post_dir,
                                                 const LumpedPortOperator &lumped_port_op,
                                                 int n_expected_rows)
-  : do_measurement_{do_measurement}, root_{root}
+  : root_{root}, do_measurement_{
+                     do_measurement                  //
+                     && (lumped_port_op.Size() > 0)  //
+                 }
 {
-  do_measurement_ = do_measurement_                  //
-                    && post_dir.length() > 0         // Valid output dir
-                    && (lumped_port_op.Size() > 0);  // Only works for lumped ports
-
   if (!do_measurement_ || !root_)
   {
     return;
   }
   using fmt::format;
-  port_V = TableWithCSVFile(post_dir + "port-V.csv");
+  port_V = TableWithCSVFile(post_dir / "port-V.csv");
   port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_V.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
 
-  port_I = TableWithCSVFile(post_dir + "port-I.csv");
+  port_I = TableWithCSVFile(post_dir / "port-I.csv");
   port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_I.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
 
@@ -538,13 +535,11 @@ void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
 }
 
 EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
-                                            const std::string &post_dir,
+                                            const fs::path &post_dir,
                                             const LumpedPortOperator &lumped_port_op,
                                             int n_expected_rows)
-  : root_{root},                                  //
-    do_measurement_EPR_(do_measurement            //
-                        && post_dir.length() > 0  // Valid output dir
-                        && lumped_port_op.Size() > 0),
+  : root_{root}, do_measurement_EPR_(do_measurement  //
+                                     && lumped_port_op.Size() > 0),
     do_measurement_Q_(do_measurement_EPR_)
 {
   // Mode EPR for lumped inductor elements:
@@ -572,7 +567,7 @@ EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
 
   if (do_measurement_EPR_)
   {
-    port_EPR = TableWithCSVFile(post_dir + "port-EPR.csv");
+    port_EPR = TableWithCSVFile(post_dir / "port-EPR.csv");
     port_EPR.table.reserve(n_expected_rows, 1 + ports_with_L.size());
     port_EPR.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
     for (const auto idx : ports_with_L)
@@ -583,7 +578,7 @@ EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
   }
   if (do_measurement_Q_)
   {
-    port_Q = TableWithCSVFile(post_dir + "port-Q.csv");
+    port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
     port_Q.table.reserve(n_expected_rows, 1 + ports_with_R.size());
     port_Q.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
     for (const auto idx : ports_with_L)
@@ -677,30 +672,17 @@ void EigenSolver::EPRPostPrinter::AddMeasurement(double eigen_print_idx,
 }
 
 EigenSolver::PostprocessPrintResults::PostprocessPrintResults(bool root,
-                                                              const std::string &post_dir,
+                                                              const fs::path &post_dir,
                                                               const PostOperator &post_op,
                                                               const SpaceOperator &space_op,
                                                               int n_post_)
-  : n_post(n_post_),  //
+  : n_post(n_post_), write_paraview_fields(n_post_ > 0),
     domains{true, root, post_dir, post_op.GetDomainPostOp(), "m", n_post},
     surfaces{true, root, post_dir, post_op, "m", n_post},
     probes{true, root, post_dir, post_op, "m", n_post}, eigen{true, root, post_dir, n_post},
     epr{true, root, post_dir, space_op.GetLumpedPortOp(), n_post},
     error_indicator{true, root, post_dir}
 {
-  if (n_post > 0)
-  {
-    if (post_dir.length() == 0)
-    {
-      Mpi::Warning(post_op.GetComm(),
-                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
-                   "fields to disk in solve!\n");
-    }
-    else
-    {
-      write_paraview_fields = true;
-    }
-  }
 }
 
 void EigenSolver::PostprocessPrintResults::PostprocessStep(

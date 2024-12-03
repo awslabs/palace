@@ -400,19 +400,18 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
 // Measurements / Postprocessing
 
 DrivenSolver::CurrentsPostPrinter::CurrentsPostPrinter(
-    bool do_measurement, bool root, const std::string &post_dir,
+    bool do_measurement, bool root, const fs::path &post_dir,
     const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
-  : do_measurement_{do_measurement}, root_{root}
+  : root_{root}, do_measurement_{
+                     do_measurement             //
+                     && (surf_j_op.Size() > 0)  // Needs surface currents
+                 }
 {
-  do_measurement_ = do_measurement_             //
-                    && post_dir.length() > 0    // Valid output dir
-                    && (surf_j_op.Size() > 0);  // Needs surface currents
-
   if (!do_measurement_ || !root_)
   {
     return;
   }
-  surface_I = TableWithCSVFile(post_dir + "surface-I.csv");
+  surface_I = TableWithCSVFile(post_dir / "surface-I.csv");
   surface_I.table.reserve(n_expected_rows, surf_j_op.Size());
   surface_I.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
   for (const auto &[idx, data] : surf_j_op)
@@ -443,25 +442,24 @@ void DrivenSolver::CurrentsPostPrinter::AddMeasurement(
 }
 
 DrivenSolver::PortsPostPrinter::PortsPostPrinter(bool do_measurement, bool root,
-                                                 const std::string &post_dir,
+                                                 const fs::path &post_dir,
                                                  const LumpedPortOperator &lumped_port_op,
                                                  int n_expected_rows)
-  : do_measurement_{do_measurement}, root_{root}
+  : root_{root}, do_measurement_{
+                     do_measurement                  //
+                     && (lumped_port_op.Size() > 0)  // Only works for lumped ports
+                 }
 {
-  do_measurement_ = do_measurement_                  //
-                    && post_dir.length() > 0         // Valid output dir
-                    && (lumped_port_op.Size() > 0);  // Only works for lumped ports
-
   if (!do_measurement_ || !root_)
   {
     return;
   }
   using fmt::format;
-  port_V = TableWithCSVFile(post_dir + "port-V.csv");
+  port_V = TableWithCSVFile(post_dir / "port-V.csv");
   port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_V.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
 
-  port_I = TableWithCSVFile(post_dir + "port-I.csv");
+  port_I = TableWithCSVFile(post_dir / "port-I.csv");
   port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_I.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
 
@@ -527,16 +525,18 @@ void DrivenSolver::PortsPostPrinter::AddMeasurement(
 }
 
 DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
-    bool do_measurement, bool root, const std::string &post_dir,
+    bool do_measurement, bool root, const fs::path &post_dir,
     const LumpedPortOperator &lumped_port_op, const WavePortOperator &wave_port_op,
     int n_expected_rows)
-  : do_measurement_{do_measurement}, root_{root}, src_lumped_port{lumped_port_op.Size() > 0}
-{
-  do_measurement_ = do_measurement_             //
-                    && (post_dir.length() > 0)  // valid output dir
-                    && (src_lumped_port xor
-                        (wave_port_op.Size() > 0));  // either lumped or wave but not both
+  : root_{root},
+    do_measurement_{
+        do_measurement  //
+        && ((lumped_port_op.Size() > 0) xor
+            (wave_port_op.Size() > 0))  // either lumped or wave but not both
 
+    },
+    src_lumped_port{lumped_port_op.Size() > 0}
+{
   if (!do_measurement_ || !root_)
   {
     return;
@@ -567,7 +567,7 @@ DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
   }
 
   using fmt::format;
-  port_S = TableWithCSVFile(post_dir + "port-S.csv");
+  port_S = TableWithCSVFile(post_dir / "port-S.csv");
   port_S.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_S.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
 
@@ -639,9 +639,9 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
 }
 
 DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const std::string &post_dir, const PostOperator &post_op,
+    bool root, const fs::path &post_dir, const PostOperator &post_op,
     const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
-  : delta_post{delta_post_},
+  : delta_post{delta_post_}, write_paraview_fields{delta_post_ > 0},
     domains{true, root, post_dir, post_op.GetDomainPostOp(), "f (GHz)", n_expected_rows},
     surfaces{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
     currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
@@ -655,20 +655,6 @@ DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
                  n_expected_rows},
     error_indicator{true, root, post_dir}
 {
-  // If to print paraview fields
-  if (delta_post > 0)
-  {
-    if (post_dir.length() == 0)
-    {
-      Mpi::Warning(post_op.GetComm(),
-                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
-                   "fields to disk in solve!\n");
-    }
-    else
-    {
-      write_paraview_fields = true;
-    }
-  }
 }
 
 void DrivenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,

@@ -153,7 +153,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
 
   // Only root writes to disk (every process has full matrices).
-  if (!root || post_dir.length() == 0)
+  if (!root)
   {
     return;
   }
@@ -165,7 +165,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
                                         const std::string &unit,
                                         const mfem::DenseMatrix &mat, double scale)
   {
-    TableWithCSVFile output(post_dir + file);
+    TableWithCSVFile output(post_dir / file);
     output.table.insert_column(Column("i", "i", 0, {}, {}, ""));
     int j = 0;
     for (const auto &[idx2, data2] : surf_j_op)
@@ -191,7 +191,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
 
   // Also write out a file with source current excitations.
   {
-    TableWithCSVFile terminal_I(post_dir + "terminal-I.csv");
+    TableWithCSVFile terminal_I(post_dir / "terminal-I.csv");
     terminal_I.table.insert_column(Column("i", "i", 0, {}, {}, ""));
     terminal_I.table.insert_column("Iinc", "I_inc[i] (A)");
     int i = 0;
@@ -206,27 +206,13 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
 }
 
 MagnetostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const std::string &post_dir, const PostOperator &post_op,
-    int n_post_)
-  : n_post(n_post_),  //
+    bool root, const fs::path &post_dir, const PostOperator &post_op, int n_post_)
+  : n_post(n_post_), write_paraview_fields(n_post_ > 0),
     domains{true, root, post_dir, post_op.GetDomainPostOp(), "i", n_post},
     surfaces{true, root, post_dir, post_op, "i", n_post},
     probes{true, root, post_dir, post_op, "i", n_post},
     error_indicator{true, root, post_dir}
 {
-  if (n_post > 0)
-  {
-    if (post_dir.length() == 0)
-    {
-      Mpi::Warning(post_op.GetComm(),
-                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
-                   "fields to disk in solve!\n");
-    }
-    else
-    {
-      write_paraview_fields = true;
-    }
-  }
 }
 
 void MagnetostaticSolver::PostprocessPrintResults::PostprocessStep(

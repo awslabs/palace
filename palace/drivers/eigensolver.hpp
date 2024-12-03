@@ -38,8 +38,7 @@ private:
     int stdout_int_print_width = 0;
 
     EigenPostPrinter() = default;
-    EigenPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
-                     int n_post);
+    EigenPostPrinter(bool do_measurement, bool root, const fs::path &post_dir, int n_post);
     void AddMeasurement(int eigen_print_idx, std::complex<double> omega, double error_bkwd,
                         double error_abs, const IoData &iodata);
   };
@@ -53,7 +52,7 @@ private:
 
   public:
     PortsPostPrinter() = default;
-    PortsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op, int n_expected_rows);
     void AddMeasurement(int eigen_print_idx, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
@@ -73,7 +72,7 @@ private:
 
   public:
     EPRPostPrinter() = default;
-    EPRPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    EPRPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                    const LumpedPortOperator &lumped_port_op, int n_expected_rows);
 
     void AddMeasurementEPR(double eigen_print_idx, const PostOperator &post_op,
@@ -101,7 +100,7 @@ private:
 
     ErrorIndicatorPostPrinter error_indicator;
 
-    PostprocessPrintResults(bool is_mpi_root, const std::string &post_dir,
+    PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             int n_post_);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
