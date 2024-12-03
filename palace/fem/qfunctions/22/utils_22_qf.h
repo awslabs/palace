@@ -77,7 +77,7 @@ CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[4
 }
 
 CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar A[4], const CeedScalar B[4],
-                                      CeedScalar C[/*3*/4])
+                                      CeedScalar C[4])
 {
   // A: 0 2   B: 0 2   C: 0 2
   //    1 3      1 3      1 3

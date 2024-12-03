@@ -37,9 +37,10 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   if (&trial_fespace == &test_fespace)
   {
     Mpi::Print("bilinearform.cpp creating non-symmetric op\n");
-    op = std::make_unique<ceed::/*Symmetric*/Operator>(test_fespace.GetVSize(),
-    //op = std::make_unique<ceed::SymmetricOperator>(test_fespace.GetVSize(),
-                                                   trial_fespace.GetVSize());
+    op = std::make_unique<ceed::/*Symmetric*/ Operator>(
+        test_fespace.GetVSize(),
+        // op = std::make_unique<ceed::SymmetricOperator>(test_fespace.GetVSize(),
+        trial_fespace.GetVSize());
   }
   else
   {
@@ -83,7 +84,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
                           data.geom_data, data.geom_data_restr, &sub_op_t);
           op->AddSubOperator(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
-          //op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
+          // op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
       else if (mfem::Geometry::Dimension[geom] == mesh.Dimension() - 1 &&
@@ -108,9 +109,9 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedOperator sub_op_t;
           integ->SetMapTypes(test_map_type, trial_map_type);
           integ->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
-                         data.geom_data, data.geom_data_restr, &sub_op_t);
+                          data.geom_data, data.geom_data_restr, &sub_op_t);
           op->AddSubOperator(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
-          //op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
+          // op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
     }

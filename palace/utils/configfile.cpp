@@ -1054,7 +1054,6 @@ void FloquetData::SetUp(json &boundaries)
       std::cout << "FloquetWaveVector: " << wave_vector << '\n';
     }
   }
-
 }
 
 void PeriodicBoundaryData::SetUp(json &boundaries)
@@ -1077,19 +1076,20 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();               // Required
+        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
     auto trslt = it->find("Translation");
-    if (trslt!= it->end())
+    if (trslt != it->end())
     {
       MFEM_VERIFY(trslt->is_array(),
                   "\"Translation\" should specify an array in the configuration file!");
       data.translation = trslt->get<std::array<double, 3>>();
     }
     auto trsfr = it->find("AffineTransformation");
-    if (trsfr!= it->end())
+    if (trsfr != it->end())
     {
-      MFEM_VERIFY(trsfr->is_array(),
-                  "\"AffineTransformation\" should specify an array in the configuration file!");
+      MFEM_VERIFY(
+          trsfr->is_array(),
+          "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = trsfr->get<std::array<double, 16>>();
     }
 

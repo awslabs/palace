@@ -52,7 +52,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    // A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
     /**/
     // A = [Ar, -Ai]
     //     [Ai,  Ar]

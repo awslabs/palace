@@ -12,9 +12,9 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/farfieldboundaryoperator.hpp"
-#include "models/periodicboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/periodicboundaryoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
@@ -159,9 +159,10 @@ public:
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   template <typename OperType, typename ScalarType>
-  std::unique_ptr<OperType>
-  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
-                  const OperType *C, const OperType *M, const OperType *A2 = nullptr, const OperType *P = nullptr);
+  std::unique_ptr<OperType> GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
+                                            const OperType *K, const OperType *C,
+                                            const OperType *M, const OperType *A2 = nullptr,
+                                            const OperType *P = nullptr);
 
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
   //                           B = a0 Kr + a2 Mr .

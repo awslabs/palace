@@ -806,7 +806,8 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 }
 
 void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                  const ComplexOperator &P, EigenvalueSolver::ScaleType type)
+                                  const ComplexOperator &P,
+                                  EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled operators which define the generalized
   // eigenvalue problem.

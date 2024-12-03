@@ -36,8 +36,8 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
   non_zero_wave_vector = (wave_vector.Norml2() > std::numeric_limits<double>::epsilon());
   MFEM_VERIFY(!non_zero_wave_vector ||
-              iodata.problem.type == config::ProblemData::Type::DRIVEN ||
-              iodata.problem.type == config::ProblemData::Type::EIGENMODE,
+                  iodata.problem.type == config::ProblemData::Type::DRIVEN ||
+                  iodata.problem.type == config::ProblemData::Type::EIGENMODE,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
 
@@ -51,11 +51,13 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   {
     if (wave_vector[i] > M_PI / bbmax[i])
     {
-      wave_vector[i] = - M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+      wave_vector[i] =
+          -M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
     }
     else if (wave_vector[i] < M_PI / bbmax[i])
     {
-      wave_vector[i] = M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+      wave_vector[i] =
+          M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
     }
   }
 
@@ -65,12 +67,12 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   //         |-k2  k1  0 |
   wave_vector_cross.SetSize(3);
   wave_vector_cross = 0.0;
-  wave_vector_cross(0,1) = -wave_vector[2];
-  wave_vector_cross(0,2) = wave_vector[1];
-  wave_vector_cross(1,0) = wave_vector[2];
-  wave_vector_cross(1,2) = -wave_vector[0];
-  wave_vector_cross(2,0) = -wave_vector[1];
-  wave_vector_cross(2,1) = wave_vector[0];
+  wave_vector_cross(0, 1) = -wave_vector[2];
+  wave_vector_cross(0, 2) = wave_vector[1];
+  wave_vector_cross(1, 0) = wave_vector[2];
+  wave_vector_cross(1, 2) = -wave_vector[0];
+  wave_vector_cross(2, 0) = -wave_vector[1];
+  wave_vector_cross(2, 1) = wave_vector[0];
 }
 
 mfem::Array<int>
@@ -110,8 +112,7 @@ PeriodicBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
     if (!bdr_warn_list.empty())
     {
       Mpi::Print("\n");
-      Mpi::Warning(
-          "Unknown periodic boundary attributes!\nSolver will just ignore them!");
+      Mpi::Warning("Unknown periodic boundary attributes!\nSolver will just ignore them!");
       utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
       Mpi::Print("\n");
     }
@@ -160,7 +161,8 @@ void PeriodicBoundaryOperator::AddRealMassCoefficients(double coeff,
     }
     mfem::DenseTensor kxTmuinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
     kxTmuinvkx = linalg::Mult(kxT, kxTmuinvkx);
-    MaterialPropertyCoefficient kxTmuinvkx_func(mat_op.GetAttributeToMaterial(), kxTmuinvkx);
+    MaterialPropertyCoefficient kxTmuinvkx_func(mat_op.GetAttributeToMaterial(),
+                                                kxTmuinvkx);
     f.AddCoefficient(kxTmuinvkx_func.GetAttributeToMaterial(),
                      kxTmuinvkx_func.GetMaterialProperties(), coeff);
   }

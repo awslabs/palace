@@ -473,7 +473,8 @@ public:
   // Vector defining the direction and distance for this periodic boundary condition.
   std::array<double, 3> translation = {0.0, 0.0, 0.0};
   // Vector defining the affine transformation matrix for this periodic boundary condition.
-  std::array<double, 16> affine_transform = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  std::array<double, 16> affine_transform = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   // List of boundary donor attributes for this periodic boundary condition.
   std::vector<int> donor_attributes = {};
   // List of boundary receiver attributes for this periodic boundary condition.
@@ -488,11 +489,11 @@ public:
 
 struct FloquetData
 {
-  public:
-    // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
-    std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
+public:
+  // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
+  std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
-    void SetUp(json &boundaries);
+  void SetUp(json &boundaries);
 };
 
 struct WavePortData
@@ -650,7 +651,7 @@ public:
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
-  FloquetData floquet;//?
+  FloquetData floquet;  //?
   BoundaryPostData postpro = {};
 
   void SetUp(json &config);
