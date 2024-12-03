@@ -1570,15 +1570,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
 
   if constexpr (false)
   {
-    if (dim == 3)
-    {
-      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})", normal(0),
-                 normal(1), normal(2));
-    }
-    else
-    {
-      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e})", normal(0), normal(1));
-    }
+    Mpi::Print(comm, " Surface normal = ({:+.3e})", fmt::join(normal, ", "));
   }
 
   return normal;
