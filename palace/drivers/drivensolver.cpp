@@ -155,10 +155,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
-  int step = step0;
   double omega = omega0;
   auto t0 = Timer::Now();
-  while (step < n_step)
+  for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
@@ -204,10 +203,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
 
     post_results.PostprocessStep(iodata, post_op, space_op, step, omega, E_elec, E_mag);
-
-    // Increment frequency.
-    step++;
-    omega += delta_omega;
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
@@ -349,9 +344,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  int step = step0;
   double omega = omega0;
-  while (step < n_step)
+  for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
@@ -379,10 +373,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
                  E_mag * J, (E_elec + E_mag) * J);
     }
     post_results.PostprocessStep(iodata, post_op, space_op, step, omega, E_elec, E_mag);
-
-    // Increment frequency.
-    step++;
-    omega += delta_omega;
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
