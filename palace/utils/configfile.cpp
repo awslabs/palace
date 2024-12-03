@@ -1643,8 +1643,9 @@ void MagnetostaticSolverData::SetUp(json &solver)
 PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
                            {{TransientSolverData::Type::DEFAULT, "Default"},
                             {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
-                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"}})
+                            {TransientSolverData::Type::RUNGE_KUTTA, "RungeKutta"},
+                            {TransientSolverData::Type::CVODE, "CVODE"},
+                            {TransientSolverData::Type::ARKODE, "ARKODE"}})
 PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
     {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
@@ -1675,6 +1676,33 @@ void TransientSolverData::SetUp(json &solver)
   max_t = transient->at("MaxTime");     // Required
   delta_t = transient->at("TimeStep");  // Required
   delta_post = transient->value("SaveStep", delta_post);
+  order = transient->value("Order", order);
+  rel_tol = transient->value("RelTol", rel_tol);
+  abs_tol = transient->value("AbsTol", abs_tol);
+
+  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
+  {
+    if (transient->contains("Order"))
+    {
+      MFEM_WARNING("GeneralizedAlpha and RungeKutta transient solvers do not use "
+                   "config[\"Transient\"][\"Order\"]!");
+    }
+    if (transient->contains("RelTol") || transient->contains("AbsTol"))
+    {
+      MFEM_WARNING(
+          "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
+          "config[\"Transient\"][\"RelTol\"] and config[\"Transient\"][\"AbsTol\"]!");
+    }
+  }
+  else
+  {
+    MFEM_VERIFY(rel_tol > 0,
+                "config[\"Transient\"][\"RelTol\"] must be strictly positive!");
+    MFEM_VERIFY(abs_tol > 0,
+                "config[\"Transient\"][\"AbsTol\"] must be strictly positive!");
+    MFEM_VERIFY(order >= 2 && order <= 5,
+                "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
+  }
 
   // Cleanup
   transient->erase("Type");
@@ -1684,6 +1712,9 @@ void TransientSolverData::SetUp(json &solver)
   transient->erase("MaxTime");
   transient->erase("TimeStep");
   transient->erase("SaveStep");
+  transient->erase("Order");
+  transient->erase("RelTol");
+  transient->erase("AbsTol");
   MFEM_VERIFY(transient->empty(),
               "Found an unsupported configuration file keyword under \"Transient\"!\n"
                   << transient->dump(2));
@@ -1698,6 +1729,9 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "MaxTime: " << max_t << '\n';
     std::cout << "TimeStep: " << delta_t << '\n';
     std::cout << "SaveStep: " << delta_post << '\n';
+    std::cout << "Order: " << order << '\n';
+    std::cout << "RelTol: " << rel_tol << '\n';
+    std::cout << "AbsTol: " << abs_tol << '\n';
   }
 }
 

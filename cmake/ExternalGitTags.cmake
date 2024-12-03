@@ -265,3 +265,17 @@ set(EXTERN_EIGEN_URL
   "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
   "URL for external Eigen build"
 )
+
+# SUNDIALS
+set(EXTERN_SUNDIALS_URL
+  "https://github.com/LLNL/sundials.git" CACHE STRING
+  "URL for external SUNDIALS build"
+)
+set(EXTERN_SUNDIALS_GIT_BRANCH
+  "main" CACHE STRING
+  "Git branch for external SUNDIALS build"
+)
+set(EXTERN_SUNDIALS_GIT_TAG
+  "aaeab8d907c6b7dfca86041401fdc1448f35f826" CACHE STRING
+  "Git tag for external SUNDIALS build"
+)

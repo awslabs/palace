@@ -324,9 +324,7 @@ void IoData::CheckConfiguration()
   // Resolve default values in configuration file.
   if (solver.linear.type == config::LinearSolverData::Type::DEFAULT)
   {
-    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        (problem.type == config::ProblemData::Type::TRANSIENT &&
-         solver.transient.type == config::TransientSolverData::Type::CENTRAL_DIFF))
+    if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
     {
       solver.linear.type = config::LinearSolverData::Type::BOOMER_AMG;
     }
