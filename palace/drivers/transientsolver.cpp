@@ -38,6 +38,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
   PostOperator post_op(iodata, space_op, "transient");
+  PostprocessPrintResults post_results(root, post_dir, post_op, space_op, n_step,
+                                       iodata.solver.transient.delta_post);
+
   {
     Mpi::Print("\nComputing transient response for:\n");
     bool first = true;
@@ -118,21 +121,21 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
-
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
 
-    // Postprocess port voltages/currents and optionally write solution to disk.
-    Postprocess(post_op, space_op.GetLumpedPortOp(), space_op.GetSurfaceCurrentOp(), step,
-                t, J_coef(t), E_elec, E_mag, (step == n_step - 1) ? &indicator : nullptr);
-
+    post_results.PostprocessStep(iodata, post_op, space_op, step, t, J_coef(t), E_elec,
+                                 E_mag);
+                                 
     // Increment time step.
     step++;
   }
+  // Final postprocessing & printing
   BlockTimer bt1(Timer::POSTPRO);
   time_op.PrintStats();
   SaveMetadata(time_op.GetLinearSolver());
+  post_results.PostprocessFinal(post_op, indicator);
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
@@ -245,236 +248,189 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void TransientSolver::Postprocess(const PostOperator &post_op,
-                                  const LumpedPortOperator &lumped_port_op,
-                                  const SurfaceCurrentOperator &surf_j_op, int step,
-                                  double t, double J_coef, double E_elec, double E_mag,
-                                  const ErrorIndicator *indicator) const
-{
-  // The internal GridFunctions for PostOperator have already been set from the E and B
-  // solutions in the main time integration loop.
-  const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
-  PostprocessCurrents(post_op, surf_j_op, step, t, J_coef);
-  PostprocessPorts(post_op, lumped_port_op, step, t, J_coef);
-  PostprocessDomains(post_op, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(post_op, "t (ns)", step, ts, E_elec + E_cap, E_mag + E_ind);
-  PostprocessProbes(post_op, "t (ns)", step, ts);
-  if (iodata.solver.transient.delta_post > 0 &&
-      step % iodata.solver.transient.delta_post == 0)
-  {
-    Mpi::Print("\n");
-    PostprocessFields(post_op, step / iodata.solver.transient.delta_post, ts);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
-  }
-  if (indicator)
-  {
-    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.transient.delta_post > 0);
-  }
-}
+// -----------------
+// Measurements / Postprocessing
 
-namespace
+TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(
+    bool do_measurement, bool root, const std::string &post_dir,
+    const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
+  : root_{root},                               //
+    do_measurement_(do_measurement             //
+                    && post_dir.length() > 0   // Valid output dir
+                    && (surf_j_op.Size() > 0)  // Needs surface currents
+    )
 {
-
-struct CurrentData
-{
-  const int idx;       // Current source index
-  const double I_inc;  // Excitation current
-};
-
-struct PortData
-{
-  const int idx;              // Port index
-  const bool excitation;      // Flag for excited ports
-  const double V_inc, I_inc;  // Incident voltage, current
-  const double V_i, I_i;      // Port voltage, current
-};
-
-}  // namespace
-
-void TransientSolver::PostprocessCurrents(const PostOperator &post_op,
-                                          const SurfaceCurrentOperator &surf_j_op, int step,
-                                          double t, double J_coef) const
-{
-  // Postprocess the time domain surface current excitations.
-  if (post_dir.length() == 0)
+  if (!do_measurement_ || !root_)
   {
     return;
   }
-  std::vector<CurrentData> j_data;
-  j_data.reserve(surf_j_op.Size());
+  using fmt::format;
+
+  surface_I = TableWithCSVFile(post_dir + "surface-I.csv");
+  surface_I.table.reserve(n_expected_rows, surf_j_op.Size());
+  surface_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
   for (const auto &[idx, data] : surf_j_op)
   {
-    const double I_inc = data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
-    j_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc)});
+    surface_I.table.insert_column(format("I_{}", idx), format("I_inc[{}] (A)", idx));
   }
-  if (root && !j_data.empty())
-  {
-    std::string path = post_dir + "surface-I.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", "t (ns)", table.w1);
-      for (const auto &data : j_data)
-      {
-        // clang-format off
-        output.print("{:>{}s}{}",
-                     "I_inc[" + std::to_string(data.idx) + "] (A)", table.w,
-                     (data.idx == j_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    // clang-format off
-    output.print("{:{}.{}e},",
-                 iodata.DimensionalizeValue(IoData::ValueType::TIME, t),
-                 table.w1, table.p1);
-    // clang-format on
-    for (const auto &data : j_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e}{}",
-                   data.I_inc, table.w, table.p,
-                   (data.idx == j_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
+  surface_I.AppendHeader();
 }
 
-void TransientSolver::PostprocessPorts(const PostOperator &post_op,
-                                       const LumpedPortOperator &lumped_port_op, int step,
-                                       double t, double J_coef) const
+void TransientSolver::CurrentsPostPrinter::AddMeasurement(
+    double t, double J_coef, const SurfaceCurrentOperator &surf_j_op, const IoData &iodata)
 {
-  // Postprocess the time domain lumped port voltages and currents, which can then be used
-  // to compute S- or Z-parameters.
-  if (post_dir.length() == 0)
+  if (!do_measurement_ || !root_)
   {
     return;
   }
-  std::vector<PortData> port_data;
-  port_data.reserve(lumped_port_op.Size());
+  using VT = IoData::ValueType;
+  using fmt::format;
+
+  surface_I.table["idx"] << iodata.DimensionalizeValue(VT::TIME, t);
+  for (const auto &[idx, data] : surf_j_op)
+  {
+    auto I_inc = data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
+    surface_I.table[format("I_{}", idx)] << iodata.DimensionalizeValue(VT::CURRENT, I_inc);
+  }
+  surface_I.AppendRow();
+}
+
+TransientSolver::PortsPostPrinter::PortsPostPrinter(
+    bool do_measurement, bool root, const std::string &post_dir,
+    const LumpedPortOperator &lumped_port_op, int n_expected_rows)
+  : do_measurement_{do_measurement}, root_{root}
+{
+  do_measurement_ = do_measurement_                  //
+                    && post_dir.length() > 0         // Valid output dir
+                    && (lumped_port_op.Size() > 0);  // Only works for lumped ports
+
+  if (!do_measurement_ || !root_)
+  {
+    return;
+  }
+  using fmt::format;
+  port_V = TableWithCSVFile(post_dir + "port-V.csv");
+  port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
+  port_V.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
+
+  port_I = TableWithCSVFile(post_dir + "port-I.csv");
+  port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
+  port_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
+
   for (const auto &[idx, data] : lumped_port_op)
   {
-    const double V_inc = data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
-    const double I_inc =
-        (std::abs(V_inc) > 0.0) ? data.GetExcitationPower() * J_coef * J_coef / V_inc : 0.0;
-    const double V_i = post_op.GetPortVoltage(lumped_port_op, idx).real();
-    const double I_i = post_op.GetPortCurrent(lumped_port_op, idx).real();
-    port_data.push_back({idx, data.excitation,
-                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_inc),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc),
-                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
-  }
-  if (root && !port_data.empty())
-  {
-    // Write the port voltages.
+    if (data.excitation)
     {
-      std::string path = post_dir + "port-V.csv";
-      auto output = OutputFile(path, (step > 0));
-      if (step == 0)
-      {
-        output.print("{:>{}s},", "t (ns)", table.w1);
-        for (const auto &data : port_data)
-        {
-          if (data.excitation)
-          {
-            // clang-format off
-            output.print("{:>{}s},",
-                         "V_inc[" + std::to_string(data.idx) + "] (V)", table.w);
-            // clang-format on
-          }
-        }
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s}{}",
-                       "V[" + std::to_string(data.idx) + "] (V)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   iodata.DimensionalizeValue(IoData::ValueType::TIME, t),
-                   table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        if (data.excitation)
-        {
-          // clang-format off
-          output.print("{:+{}.{}e},",
-                       data.V_inc, table.w, table.p);
-          // clang-format on
-        }
-      }
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e}{}",
-                     data.V_i, table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
+      port_V.table.insert_column(format("inc{}", idx), format("V_inc[{}] (V)", idx));
+      port_I.table.insert_column(format("inc{}", idx), format("I_inc[{}] (A)", idx));
+    }
+    port_V.table.insert_column(format("re{}", idx), format("V[{}] (V)", idx));
+    port_I.table.insert_column(format("re{}", idx), format("I[{}] (A)", idx));
+  }
+  port_V.AppendHeader();
+  port_I.AppendHeader();
+}
+
+void TransientSolver::PortsPostPrinter::AddMeasurement(
+    double t, double J_coef, const PostOperator &post_op,
+    const LumpedPortOperator &lumped_port_op, const IoData &iodata)
+{
+  if (!do_measurement_ || !root_)
+  {
+    return;
+  }
+  using fmt::format;
+  using VT = IoData::ValueType;
+
+  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
+  // = sqrt(2) * RMS).
+  auto time = iodata.DimensionalizeValue(VT::TIME, t);
+  port_V.table["idx"] << time;
+  port_I.table["idx"] << time;
+
+  auto unit_V = iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
+  auto unit_A = iodata.DimensionalizeValue(VT::CURRENT, 1.0);
+
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    if (data.excitation)
+    {
+      double V_inc = data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
+      double I_inc = (std::abs(V_inc) > 0.0)
+                         ? data.GetExcitationPower() * J_coef * J_coef / V_inc
+                         : 0.0;
+
+      port_V.table[format("inc{}", idx)] << V_inc * unit_V;
+      port_I.table[format("inc{}", idx)] << I_inc * unit_A;
     }
 
-    // Write the port currents.
+    std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
+    std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
+
+    port_V.table[format("re{}", idx)] << V_i.real() * unit_V;
+    port_I.table[format("re{}", idx)] << I_i.real() * unit_A;
+  }
+  port_V.AppendRow();
+  port_I.AppendRow();
+}
+
+TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
+    bool root, const std::string &post_dir, const PostOperator &post_op,
+    const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
+  : delta_post{delta_post_},
+    domains{true, root, post_dir, post_op.GetDomainPostOp(), "t (ns)", n_expected_rows},
+    surfaces{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
+    currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
+    probes{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
+    ports{true, root, post_dir, space_op.GetLumpedPortOp(), n_expected_rows},
+    error_indicator{true, root, post_dir}
+{
+  // If to print paraview fields
+  if (delta_post > 0)
+  {
+    if (post_dir.length() == 0)
     {
-      std::string path = post_dir + "port-I.csv";
-      auto output = OutputFile(path, (step > 0));
-      if (step == 0)
-      {
-        output.print("{:>{}s},", "t (ns)", table.w1);
-        for (const auto &data : port_data)
-        {
-          if (data.excitation)
-          {
-            // clang-format off
-            output.print("{:>{}s},",
-                         "I_inc[" + std::to_string(data.idx) + "] (A)", table.w);
-            // clang-format on
-          }
-        }
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s}{}",
-                       "I[" + std::to_string(data.idx) + "] (A)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   iodata.DimensionalizeValue(IoData::ValueType::TIME, t),
-                   table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        if (data.excitation)
-        {
-          // clang-format off
-          output.print("{:+{}.{}e},",
-                       data.I_inc, table.w, table.p);
-          // clang-format on
-        }
-      }
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e}{}",
-                     data.I_i, table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
+      Mpi::Warning(post_op.GetComm(),
+                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
+                   "fields to disk in solve!\n");
     }
+    else
+    {
+      write_paraview_fields = true;
+    }
+  }
+}
+
+void TransientSolver::PostprocessPrintResults::PostprocessStep(
+    const IoData &iodata, const PostOperator &post_op, const SpaceOperator &space_op,
+    int step, double t, double J_coef, double E_elec, double E_mag)
+{
+  auto time = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
+  auto E_cap = post_op.GetLumpedCapacitorEnergy(space_op.GetLumpedPortOp());
+  auto E_ind = post_op.GetLumpedInductorEnergy(space_op.GetLumpedPortOp());
+
+  domains.AddMeasurement(time, post_op, E_elec, E_mag, E_cap, E_ind, iodata);
+  surfaces.AddMeasurement(time, post_op, E_elec + E_cap, E_mag + E_ind, iodata);
+  currents.AddMeasurement(t, J_coef, space_op.GetSurfaceCurrentOp(), iodata);
+  probes.AddMeasurement(time, post_op, iodata);
+  ports.AddMeasurement(t, J_coef, post_op, space_op.GetLumpedPortOp(), iodata);
+  // The internal GridFunctions in PostOperator have already been set:
+  if (write_paraview_fields && (step % delta_post == 0))
+  {
+    Mpi::Print("\n");
+    post_op.WriteFields(step / delta_post, time);
+    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
+  }
+}
+
+void TransientSolver::PostprocessPrintResults::PostprocessFinal(
+    const PostOperator &post_op, const ErrorIndicator &indicator)
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  if (write_paraview_fields)
+  {
+    post_op.WriteFieldsFinal(&indicator);
   }
 }
 

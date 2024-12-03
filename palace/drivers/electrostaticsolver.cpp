@@ -40,6 +40,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   PostOperator post_op(iodata, laplace_op, "electrostatic");
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
+  PostprocessPrintResults post_results(root, post_dir, post_op,
+                                       iodata.solver.electrostatic.n_post);
 
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width()), E(Grad.Height());
@@ -89,7 +91,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(E, E_elec, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    Postprocess(post_op, step, idx, E_elec, (step == n_step - 1) ? &indicator : nullptr);
+    post_results.PostprocessStep(iodata, post_op, step, idx, E_elec);
 
     // Next terminal.
     step++;
@@ -99,26 +101,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+  post_results.PostprocessFinal(post_op, indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};
-}
-
-void ElectrostaticSolver::Postprocess(const PostOperator &post_op, int step, int idx,
-                                      double E_elec, const ErrorIndicator *indicator) const
-{
-  // The internal GridFunctions for PostOperator have already been set from the V solution
-  // in the main loop.
-  PostprocessDomains(post_op, "i", step, idx, E_elec, 0.0, 0.0, 0.0);
-  PostprocessSurfaces(post_op, "i", step, idx, E_elec, 0.0);
-  PostprocessProbes(post_op, "i", step, idx);
-  if (step < iodata.solver.electrostatic.n_post)
-  {
-    PostprocessFields(post_op, step, idx);
-    Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
-  }
-  if (indicator)
-  {
-    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.electrostatic.n_post > 0);
-  }
 }
 
 void ElectrostaticSolver::PostprocessTerminals(
@@ -167,6 +151,8 @@ void ElectrostaticSolver::PostprocessTerminals(
   {
     return;
   }
+  using VT = IoData::ValueType;
+  using fmt::format;
 
   // Write capactance matrix data.
   auto PrintMatrix = [&terminal_sources, this](const std::string &file,
@@ -174,59 +160,93 @@ void ElectrostaticSolver::PostprocessTerminals(
                                                const std::string &unit,
                                                const mfem::DenseMatrix &mat, double scale)
   {
-    std::string path = post_dir + file;
-    auto output = OutputFile(path, false);
-    output.print("{:>{}s},", "i", table.w1);
+    TableWithCSVFile output(post_dir + file);
+    output.table.insert_column(Column("i", "i", 0, {}, {}, ""));
+    int j = 0;
     for (const auto &[idx2, data2] : terminal_sources)
     {
-      // clang-format off
-      output.print("{:>{}s}{}",
-                   name + "[i][" + std::to_string(idx2) + "] " + unit, table.w,
-                   (idx2 == terminal_sources.rbegin()->first) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-    int i = 0;
-    for (const auto &[idx, data] : terminal_sources)
-    {
-      int j = 0;
-      output.print("{:{}.{}e},", static_cast<double>(idx), table.w1, table.p1);
-      for (const auto &[idx2, data2] : terminal_sources)
+      output.table.insert_column(format("i2{}", idx2),
+                                 format("{}[i][{}] {}", name, idx2, unit));
+      // Use the fact that iterator over i and j is the same span
+      output.table["i"] << idx2;
+
+      auto &col = output.table[format("i2{}", idx2)];
+      for (int i = 0; i < terminal_sources.size(); i++)
       {
-        // clang-format off
-        output.print("{:+{}.{}e}{}",
-                     mat(i, j) * scale, table.w, table.p,
-                     (idx2 == terminal_sources.rbegin()->first) ? "" : ",");
-        // clang-format on
-        j++;
+        col << mat(i, j) * scale;
       }
-      output.print("\n");
-      i++;
+      j++;
     }
+    output.WriteFullTableTrunc();
   };
-  const double F = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
+  const double F = iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
 
   // Also write out a file with terminal voltage excitations.
   {
-    std::string path = post_dir + "terminal-V.csv";
-    auto output = OutputFile(path, false);
-    // clang-format off
-    output.print("{:>{}s},{:>{}s}\n",
-                 "i", table.w1,
-                 "V_inc[i] (V)", table.w);
-    // clang-format on
+    TableWithCSVFile terminal_V(post_dir + "terminal-V.csv");
+    terminal_V.table.insert_column(Column("i", "i", 0, {}, {}, ""));
+    terminal_V.table.insert_column("Vinc", "V_inc[i] (V)");
+    int i = 0;
     for (const auto &[idx, data] : terminal_sources)
     {
-      // clang-format off
-      output.print("{:{}.{}e},{:+{}.{}e}\n",
-                   static_cast<double>(idx), table.w1, table.p1,
-                   iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0),
-                   table.w, table.p);
-      // clang-format on
+      terminal_V.table["i"] << double(idx);
+      terminal_V.table["Vinc"] << iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
+      i++;
     }
+    terminal_V.WriteFullTableTrunc();
+  }
+}
+
+ElectrostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
+    bool root, const std::string &post_dir, const PostOperator &post_op,
+    int n_post_)
+  : n_post(n_post_),  //
+    domains{true, root, post_dir, post_op.GetDomainPostOp(), "i", n_post},
+    surfaces{true, root, post_dir, post_op, "i", n_post},
+    probes{true, root, post_dir, post_op, "i", n_post},
+    error_indicator{true, root, post_dir}
+{
+  if (n_post > 0)
+  {
+    if (post_dir.length() == 0)
+    {
+      Mpi::Warning(post_op.GetComm(),
+                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
+                   "fields to disk in solve!\n");
+    }
+    else
+    {
+      write_paraview_fields = true;
+    }
+  }
+}
+
+void ElectrostaticSolver::PostprocessPrintResults::PostprocessStep(
+    const IoData &iodata, const PostOperator &post_op, int step, int idx, double E_elec)
+{
+  domains.AddMeasurement(idx, post_op, E_elec, 0.0, 0.0, 0.0, iodata);
+  surfaces.AddMeasurement(idx, post_op, E_elec, 0.0, iodata);
+  probes.AddMeasurement(idx, post_op, iodata);
+  // The internal GridFunctions in PostOperator have already been set from V:
+  if (write_paraview_fields && step < n_post)
+  {
+    Mpi::Print("\n");
+    post_op.WriteFields(step, idx);
+    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
+  }
+}
+
+void ElectrostaticSolver::PostprocessPrintResults::PostprocessFinal(
+    const PostOperator &post_op, const ErrorIndicator &indicator)
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  if (write_paraview_fields)
+  {
+    post_op.WriteFieldsFinal(&indicator);
   }
 }
 
