@@ -315,7 +315,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     B *= -1.0 / (1i * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());
+    post_op.SetFrequency(omega);
+    post_op.MeasureAll();
+
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
 
@@ -326,8 +328,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     // Postprocess state and write fields to file
-    post_results.PostprocessStep(iodata, post_op, space_op, i, omega, E_elec, E_mag,
-                                 error_abs, error_bkwd);
+    post_results.PostprocessStep(iodata, post_op, space_op, i, error_abs, error_bkwd);
 
     // Final write: Different condition than end of loop (i = num_conv - 1)
     if (i == iodata.solver.eigenmode.n - 1)
@@ -337,24 +338,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   return {indicator, space_op.GlobalTrueVSize()};
 }
-
-namespace
-{
-
-struct EprLData
-{
-  int idx;    // Lumped port index
-  double pj;  // Inductor energy-participation ratio
-};
-
-struct EprIOData
-{
-  int idx;    // Lumped port index
-  double Ql;  // Quality factor
-  double Kl;  // κ for loss rate
-};
-
-}  // namespace
 
 void EigenSolver::EigenPostPrinter::PrintStdoutHeader()
 {
@@ -419,9 +402,9 @@ void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
 }
 
 EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
-                                                const fs::path &post_dir, int n_eig)
+                                                const fs::path &post_dir, int n_post)
   : root_{root}, do_measurement_(do_measurement),
-    stdout_int_print_width(1 + static_cast<int>(std::log10(n_eig)))
+    stdout_int_print_width(1 + static_cast<int>(std::log10(n_post)))
 {
   // Note: we switch to n_eig rather than n_conv for padding since we don't know n_conv
   // until solve
@@ -430,7 +413,7 @@ EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
     return;
   }
   eig = TableWithCSVFile(post_dir / "eig.csv");
-  eig.table.reserve(n_eig, 6);
+  eig.table.reserve(n_post, 6);
   eig.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
   eig.table.insert_column("f_re", "Re{f} (GHz)");
   eig.table.insert_column("f_im", "Im{f} (GHz)");
@@ -441,7 +424,7 @@ EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
 }
 
 void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
-                                                   std::complex<double> omega,
+                                                   const PostOperator &post_op,
                                                    double error_bkwd, double error_abs,
                                                    const IoData &iodata)
 {
@@ -452,7 +435,8 @@ void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
   using VT = IoData::ValueType;
   using fmt::format;
 
-  std::complex<double> f = iodata.DimensionalizeValue(VT::FREQUENCY, omega);
+  std::complex<double> f =
+      iodata.DimensionalizeValue(VT::FREQUENCY, post_op.GetFrequency());
   double Q = (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
 
   eig.table["idx"] << eigen_print_idx;
@@ -521,8 +505,8 @@ void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
 
   for (const auto &[idx, data] : lumped_port_op)
   {
-    std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
-    std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
+    std::complex<double> V_i = post_op.GetPortVoltage(idx);
+    std::complex<double> I_i = post_op.GetPortCurrent(idx);
 
     port_V.table[fmt::format("re{}", idx)] << V_i.real() * unit_V;
     port_V.table[fmt::format("im{}", idx)] << V_i.imag() * unit_V;
@@ -592,33 +576,22 @@ EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
 
 void EigenSolver::EPRPostPrinter::AddMeasurementEPR(
     double eigen_print_idx, const PostOperator &post_op,
-    const LumpedPortOperator &lumped_port_op, double E_m, const IoData &iodata)
+    const LumpedPortOperator &lumped_port_op, const IoData &iodata)
 {
-  if (!do_measurement_EPR_)
-  {
-    return;
-  }
-
-  // TODO: Does this include a reduce?
-  // Write the mode EPR for lumped inductor elements.
-  std::vector<EprLData> epr_L_data;
-  epr_L_data.reserve(ports_with_L.size());
-  for (const auto idx : ports_with_L)
-  {
-    const double pj = post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
-    epr_L_data.push_back({idx, pj});
-  }
-
-  if (!root_)
+  if (!do_measurement_EPR_ || !root_)
   {
     return;
   }
   using fmt::format;
 
+  double E_elec = post_op.GetEFieldEnergy();
+  double E_cap = post_op.GetLumpedCapacitorEnergy();
+  double E_m = E_elec + E_cap;
+
   port_EPR.table["idx"] << eigen_print_idx;
-  for (const auto &[idx, pj] : epr_L_data)
+  for (const auto idx : ports_with_L)
   {
-    port_EPR.table[format("p_{}", idx)] << pj;
+    port_EPR.table[format("p_{}", idx)] << post_op.GetInductorParticipation(idx, E_m);
   }
   port_EPR.AppendRow();
 }
@@ -626,37 +599,28 @@ void EigenSolver::EPRPostPrinter::AddMeasurementEPR(
 void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
                                                   const PostOperator &post_op,
                                                   const LumpedPortOperator &lumped_port_op,
-                                                  std::complex<double> omega, double E_m,
                                                   const IoData &iodata)
 {
-  if (!do_measurement_Q_)
-  {
-    return;
-  }
-
-  // TODO: Does this include a reduce?
-  // Write the mode EPR for lumped resistor elements.
-  std::vector<EprIOData> epr_IO_data;
-  epr_IO_data.reserve(ports_with_R.size());
-  for (const auto idx : ports_with_R)
-  {
-    const double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
-    const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
-    epr_IO_data.push_back(
-        {idx, Ql, iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, Kl)});
-  }
-
-  if (!root_)
+  if (!do_measurement_Q_ || !root_)
   {
     return;
   }
   using fmt::format;
+  using VT = IoData::ValueType;
+
+  auto omega = post_op.GetFrequency();
+  double E_elec = post_op.GetEFieldEnergy();
+  double E_cap = post_op.GetLumpedCapacitorEnergy();
+  double E_m = E_elec + E_cap;
 
   port_EPR.table["idx"] << eigen_print_idx;
-  for (const auto &[idx, Ql, Kl] : epr_IO_data)
+  for (const auto idx : ports_with_R)
   {
+    double Kl = post_op.GetExternalKappa(idx, E_m);
+    double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
+
     port_Q.table[format("Ql_{}", idx)] << Ql;
-    port_Q.table[format("Kl_{}", idx)] << Kl;
+    port_Q.table[format("Kl_{}", idx)] << iodata.DimensionalizeValue(VT::FREQUENCY, Kl);
   }
   port_Q.AppendRow();
 }
@@ -664,11 +628,10 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
 void EigenSolver::EPRPostPrinter::AddMeasurement(double eigen_print_idx,
                                                  const PostOperator &post_op,
                                                  const LumpedPortOperator &lumped_port_op,
-                                                 std::complex<double> omega, double E_m,
                                                  const IoData &iodata)
 {
-  AddMeasurementEPR(eigen_print_idx, post_op, lumped_port_op, E_m, iodata);
-  AddMeasurementQ(eigen_print_idx, post_op, lumped_port_op, omega, E_m, iodata);
+  AddMeasurementEPR(eigen_print_idx, post_op, lumped_port_op, iodata);
+  AddMeasurementQ(eigen_print_idx, post_op, lumped_port_op, iodata);
 }
 
 EigenSolver::PostprocessPrintResults::PostprocessPrintResults(bool root,
@@ -677,7 +640,7 @@ EigenSolver::PostprocessPrintResults::PostprocessPrintResults(bool root,
                                                               const SpaceOperator &space_op,
                                                               int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op.GetDomainPostOp(), "m", n_post},
+    domains{true, root, post_dir, post_op, "m", n_post},
     surfaces{true, root, post_dir, post_op, "m", n_post},
     probes{true, root, post_dir, post_op, "m", n_post}, eigen{true, root, post_dir, n_post},
     epr{true, root, post_dir, space_op.GetLumpedPortOp(), n_post},
@@ -685,22 +648,19 @@ EigenSolver::PostprocessPrintResults::PostprocessPrintResults(bool root,
 {
 }
 
-void EigenSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator &post_op, const SpaceOperator &space_op,
-    int step, std::complex<double> omega, double E_elec, double E_mag, double error_abs,
-    double error_bkward)
+void EigenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,
+                                                           const PostOperator &post_op,
+                                                           const SpaceOperator &space_op,
+                                                           int step, double error_abs,
+                                                           double error_bkward)
 {
   int eigen_print_idx = step + 1;
 
-  auto E_cap = post_op.GetLumpedCapacitorEnergy(space_op.GetLumpedPortOp());
-  auto E_ind = post_op.GetLumpedInductorEnergy(space_op.GetLumpedPortOp());
-
-  domains.AddMeasurement(eigen_print_idx, post_op, E_elec, E_mag, E_cap, E_ind, iodata);
-  surfaces.AddMeasurement(eigen_print_idx, post_op, E_elec + E_cap, E_mag + E_ind, iodata);
+  domains.AddMeasurement(eigen_print_idx, post_op, iodata);
+  surfaces.AddMeasurement(eigen_print_idx, post_op, iodata);
   probes.AddMeasurement(eigen_print_idx, post_op, iodata);
-  eigen.AddMeasurement(eigen_print_idx, omega, error_bkward, error_abs, iodata);
-  epr.AddMeasurement(eigen_print_idx, post_op, space_op.GetLumpedPortOp(), omega,
-                     E_elec + E_cap, iodata);
+  eigen.AddMeasurement(eigen_print_idx, post_op, error_bkward, error_abs, iodata);
+  epr.AddMeasurement(eigen_print_idx, post_op, space_op.GetLumpedPortOp(), iodata);
   // The internal GridFunctions in PostOperator have already been set:
   if (write_paraview_fields && step < n_post)
   {
@@ -714,7 +674,8 @@ void EigenSolver::PostprocessPrintResults::PostprocessFinal(const PostOperator &
                                                             const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
+  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
   if (write_paraview_fields)
   {
     post_op.WriteFieldsFinal(&indicator);

@@ -144,7 +144,7 @@ std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFu
   }
   else
   {
-    return std::vector<std::complex<double>>(vr.begin(), vr.end());
+    return {vr.begin(), vr.end()};
   }
 }
 
