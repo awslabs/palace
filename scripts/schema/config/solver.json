@@ -67,7 +67,10 @@
         "ExcitationWidth": { "type": "number" },
         "MaxTime": { "type": "number" },
         "TimeStep": { "type": "number" },
-        "SaveStep": { "type": "integer" }
+        "SaveStep": { "type": "integer" },
+        "Order": {"type": "integer", "minimum": 2, "maximum": 5},
+        "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
+        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }
     },
     "Electrostatic":

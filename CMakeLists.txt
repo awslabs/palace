@@ -37,6 +37,8 @@ set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order fie
 set(PALACE_WITH_STRUMPACK_BUTTERFLYPACK OFF CACHE BOOL "Build with ButterflyPACK support for STRUMPACK solver")
 set(PALACE_WITH_STRUMPACK_ZFP OFF CACHE BOOL "Build with ZFP support for STRUMPACK solver")
 
+set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS differential/algebraic equations solver")
+
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 

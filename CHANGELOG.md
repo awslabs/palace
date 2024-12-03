@@ -42,6 +42,9 @@ The format of this changelog is based on
   - Nonconformal adaptation is now supported for WavePort boundary conditions. This was
     achieved through a patch applied to MFEM to support `mfem::ParSubMesh` on external
     nonconformal surface subdomains.
+  - Added adaptive time-stepping capability for transient simulations. The new ODE integrators
+    rely on the SUNDIALS library and can be specified by setting the
+    `config["Solver"]["Transient"]["Type"]` option to `"CVODE"` or `"ARKODE"`.
 
 ## [0.13.0] - 2024-05-20
 

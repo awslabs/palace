@@ -133,6 +133,7 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
   - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
+  - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -207,6 +208,7 @@ source code for these dependencies is downloaded during the build process:
     `PALACE_WITH_ARPACK=ON`)
   - [LIBXSMM](https://github.com/libxsmm/libxsmm) (optional, when `PALACE_WITH_LIBXSMM=ON`)
   - [MAGMA](https://icl.utk.edu/magma/) (optional, when `PALACE_WITH_MAGMA=ON`)
+  - [SUNDIALS](https://github.com/LLNL/sundials) (optional, when `PALACE_WITH_SUNDIALS=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
   - [fmt](https://fmt.dev/latest)
   - [Eigen](https://eigen.tuxfamily.org)

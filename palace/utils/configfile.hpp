@@ -741,10 +741,11 @@ public:
   // Time integration scheme type.
   enum class Type
   {
-    DEFAULT,
     GEN_ALPHA,
-    NEWMARK,
-    CENTRAL_DIFF
+    RUNGE_KUTTA,
+    ARKODE,
+    CVODE,
+    DEFAULT = GEN_ALPHA
   };
   Type type = Type::DEFAULT;
 
@@ -772,6 +773,15 @@ public:
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
+
+  // RK scheme order for SUNDIALS ARKODE integrators.
+  // Max order for SUNDIALS CVODE integrator.
+  // Not used for generalized α and Runge-Kutta integrators.
+  int order = 2;
+
+  // Adaptive time-stepping tolerances for CVODE and ARKODE.
+  double rel_tol = 1e-4;
+  double abs_tol = 1e-9;
 
   void SetUp(json &solver);
 };
