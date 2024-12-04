@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "models/portexcitationhelper.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
 // value corresponding to the string cannot be found. Also adds an overload for stream
@@ -1534,6 +1535,31 @@ void BoundaryData::SetUp(json &config)
                   fmt::format("Port index must be unique between \"LumpedPort\"s, "
                               "\"Terminal\"s, \"WavePort\"s, \"SurfaceCurrent\"s:\n{}",
                               fmt::to_string(buf)));
+    }
+  }
+
+  // Typical usecase: If the excitation is specified as a bool and there is only a single
+  // index (wave-port or lumped port) then set excitation index to be the port index, not 1.
+  if (lumpedport_setup_info.excitation_input_is_bool == TriBool::True ||
+      waveport_setup_info.excitation_input_is_bool == TriBool::True)
+  {
+    PortExcitationHelper excitation_view(lumpedport, waveport, current);
+    if (excitation_view.Size() == 1)
+    {
+      auto ex = excitation_view.excitations.begin();
+      auto n_lumped = ex->second.lumped_port.size();
+      auto n_wave = ex->second.wave_port.size();
+      auto n_current = ex->second.current_port.size();
+      if (n_current == 0 && n_lumped == 1 && n_wave == 0)
+      {
+        int port_idx = ex->second.lumped_port.at(0);
+        lumpedport.at(port_idx).excitation = port_idx;
+      }
+      else if (n_current == 0 && n_lumped == 0 && n_wave == 1)
+      {
+        int port_idx = ex->second.wave_port.at(0);
+        waveport.at(port_idx).excitation = port_idx;
+      }
     }
   }
 
