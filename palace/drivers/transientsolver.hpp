@@ -33,7 +33,7 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile surface_I = {};
+    TableWithCSVFile surface_I;
 
   public:
     CurrentsPostPrinter() = default;
@@ -47,8 +47,8 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile port_V = {};
-    TableWithCSVFile port_I = {};
+    TableWithCSVFile port_V;
+    TableWithCSVFile port_I;
 
   public:
     PortsPostPrinter() = default;

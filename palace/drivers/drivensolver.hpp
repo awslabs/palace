@@ -34,7 +34,7 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile surface_I = {};
+    TableWithCSVFile surface_I;
 
   public:
     CurrentsPostPrinter() = default;
@@ -48,8 +48,8 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile port_V = {};
-    TableWithCSVFile port_I = {};
+    TableWithCSVFile port_V;
+    TableWithCSVFile port_I;
 
   public:
     PortsPostPrinter() = default;
@@ -68,7 +68,7 @@ private:
 
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile port_S = {};
+    TableWithCSVFile port_S;
 
     // Currently can't mix lumped and sufrace ports for s-matrix
     bool src_lumped_port = true;
