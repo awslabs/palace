@@ -45,6 +45,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
       CHECK(it_bool->second.excitation == it_int->second.excitation);
     }
   }
+  // Excitation Specification
   {
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_1")));
@@ -67,5 +68,26 @@ TEST_CASE("Config Boundary Ports", "[config]")
     config::BoundaryData boundary_data;
     CHECK_THROWS(
         boundary_data.SetUp(*config.find("boundaries_excitation_no_mix_int_bool_3")));
+  }
+  // Index Specification
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_lumped")));
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_wave")));
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_mixed")));
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_1")));
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
   }
 }
