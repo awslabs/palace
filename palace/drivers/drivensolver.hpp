@@ -171,10 +171,7 @@ private:
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
                          const SpaceOperator &space_op, int step, int excitation_idx);
-    void PostprocessParaviewFinal(const PostOperator &post_op,
-                                  const ErrorIndicator *indicator);
-    void PostprocessIndicatorFinal(const PostOperator &post_op,
-                                   const ErrorIndicator &indicator);
+    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
   };
 
   ErrorIndicator SweepUniform(SpaceOperator &space_op,

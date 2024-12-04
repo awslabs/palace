@@ -132,6 +132,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
       post_op.SetNewParaviewOutput(
           ParaviewPath(iodata, excitation_idx, excitation_helper.Size()));
     }
+
     // Frequency loop
     double omega = omega0;
     for (int step = step0; step < n_step; step++, omega += delta_omega)
@@ -187,9 +188,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
     // Final postprocessing & printing
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(ksp);
-    post_results.PostprocessParaviewFinal(post_op, &indicator);
   }
-  post_results.PostprocessIndicatorFinal(post_op, indicator);
+  post_results.PostprocessFinal(post_op, indicator);
   return indicator;
 }
 
@@ -199,15 +199,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
                                            double delta_omega) const
 {
   // Initialize postprocessing operator and printers.
-  // Set paraview file for PROM and print PROM solutions separatley.
-  PostOperator post_op(iodata, space_op, "driven", ParaviewPath(iodata) / "prom");
+  // Initialize write directory with default path; will be changed if multiple excitations.
+  PostOperator post_op(iodata, space_op, "driven");
   PostprocessPrintResults post_results(root, post_dir, post_op, space_op, excitation_helper,
                                        n_step, iodata.solver.driven.delta_post);
-  // Paraview times are printed as excitation * padding + freq with padding gives enough
-  // space for f_max + 1, e.g. if f_max = 102 GHz, then we get time n0fff where n is the
-  // excitation index and fff is the frequency
-  double excitation_padding =
-      std::pow(10.0, 3.0 + static_cast<int>(std::log10(iodata.solver.driven.max_f)));
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -278,13 +273,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
     estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
-    if (post_results.write_paraview_fields && root)
-    {
-      auto freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-      post_op.WriteFields(paraview_step, excitation_idx * excitation_padding + freq);
-      paraview_step++;
-    }
-    Mpi::Barrier(space_op.GetComm());
   };
 
   // Loop excitations to add to PROM
@@ -354,9 +342,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
                        " Sampled frequencies (GHz):");
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
   }
-  // Error indicator only done during PROM solve: inlucde in PROM paraview only
-  post_results.PostprocessParaviewFinal(post_op, &indicator);
-  post_results.PostprocessIndicatorFinal(post_op, indicator);
 
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
@@ -379,11 +364,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       // Switch to multiple paraview subfolders: one for each excitation
       post_op.SetNewParaviewOutput(
           ParaviewPath(iodata, excitation_idx, excitation_helper.Size()));
-    }
-    else
-    {
-      // Previous default: no nested folders
-      post_op.SetNewParaviewOutput(ParaviewPath(iodata));
     }
 
     // Frequency loop
@@ -423,6 +403,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
+  post_results.PostprocessFinal(post_op, indicator);
   return indicator;
 }
 
@@ -1226,22 +1207,16 @@ void DrivenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata
   }
 }
 
-void DrivenSolver::PostprocessPrintResults::PostprocessParaviewFinal(
-    const PostOperator &post_op, const ErrorIndicator *indicator)
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  if (write_paraview_fields)
-  {
-    post_op.WriteFieldsFinal(indicator);
-  }
-}
-
-void DrivenSolver::PostprocessPrintResults::PostprocessIndicatorFinal(
+void DrivenSolver::PostprocessPrintResults::PostprocessFinal(
     const PostOperator &post_op, const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
   error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
+  if (write_paraview_fields)
+  {
+    post_op.WriteFieldsFinal(&indicator);
+  }
 }
 
 }  // namespace palace
