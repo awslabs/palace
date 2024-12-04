@@ -892,53 +892,55 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
-bool SpaceOperator::GetExcitationVector(Vector &RHS)
+bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
 {
   // Time domain excitation vector.
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz = AddExcitationVector1Internal(RHS);
+  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz;
 }
 
-bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
+bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
+                                        ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(RHS.Real());
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS.Real());
   RHS *= 1i * omega;
-  bool nnz2 = AddExcitationVector2Internal(omega, RHS);
+  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz1 || nnz2;
 }
 
-bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
+bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1.UseDevice(true);
   RHS1 = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(RHS1.Real());
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real());
   linalg::SetSubVector(RHS1.Real(), nd_dbc_tdof_lists.back(), 0.0);
   return nnz1;
 }
 
-bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
+bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
+                                         ComplexVector &RHS2)
 {
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
   RHS2.UseDevice(true);
   RHS2 = 0.0;
-  bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
+  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
   linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
   return nnz2;
 }
 
-bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
+bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
   // The g'(t) or iω factors are not accounted for here, they is accounted for in the time
@@ -946,8 +948,8 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
-  lumped_port_op.AddExcitationBdrCoefficients(fb);
-  surf_j_op.AddExcitationBdrCoefficients(fb);
+  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
+  surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
   int empty = (fb.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -964,14 +966,15 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   return true;
 }
 
-bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RHS2)
+bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omega,
+                                                 ComplexVector &RHS2)
 {
   // Assemble the contribution of wave ports to the frequency domain excitation term at the
   // specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
-  wave_port_op.AddExcitationBdrCoefficients(omega, fbr, fbi);
+  wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);
   int empty = (fbr.empty() && fbi.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)

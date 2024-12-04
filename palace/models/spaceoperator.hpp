@@ -14,6 +14,7 @@
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
@@ -80,8 +81,8 @@ private:
                                      MaterialPropertyCoefficient &fbi);
 
   // Helper functions for excitation vector assembly.
-  bool AddExcitationVector1Internal(Vector &RHS);
-  bool AddExcitationVector2Internal(double omega, ComplexVector &RHS);
+  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
+  bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
 public:
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
@@ -114,6 +115,11 @@ public:
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+
+  PortExcitationHelper BuildPortExcitationHelper() const
+  {
+    return {GetLumpedPortOp(), GetWavePortOp(), GetSurfaceCurrentOp()};
+  }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
@@ -190,13 +196,13 @@ public:
   // Assemble the right-hand side source term vector for an incident field or current source
   // applied on specified excited boundaries. The return value indicates whether or not the
   // excitation is nonzero (and thus is true most of the time).
-  bool GetExcitationVector(Vector &RHS);
-  bool GetExcitationVector(double omega, ComplexVector &RHS);
+  bool GetExcitationVector(int excitation_idx, Vector &RHS);
+  bool GetExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether
   // or not the excitation is nonzero (and thus is true most of the time).
-  bool GetExcitationVector1(ComplexVector &RHS1);
-  bool GetExcitationVector2(double omega, ComplexVector &RHS2);
+  bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
+  bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

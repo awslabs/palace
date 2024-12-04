@@ -169,8 +169,8 @@ public:
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries.
-  void AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
-                                    SumVectorCoefficient &fbi);
+  void AddExcitationBdrCoefficients(int excitation_idx, double omega,
+                                    SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
 };
 
 }  // namespace palace

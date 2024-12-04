@@ -9,6 +9,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -29,6 +30,14 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
+
+  MFEM_VERIFY(!excitation_helper.Empty(),
+              "No excitation specified for transient simulation!");
+  MFEM_VERIFY(
+      excitation_helper.Size() == 1,
+      "Transient solver currently only supports a single excitation per simulation!");
+
   TimeOperator time_op(iodata, space_op, dJdt_coef);
 
   double delta_t = iodata.solver.transient.delta_t;
@@ -41,38 +50,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   PostprocessPrintResults post_results(root, post_dir, post_op, space_op, n_step,
                                        iodata.solver.transient.delta_post);
 
-  {
-    Mpi::Print("\nComputing transient response for:\n");
-    bool first = true;
-    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
-    {
-      if (data.excitation)
-      {
-        if (first)
-        {
-          Mpi::Print(" Lumped port excitation specified on port{}",
-                     (space_op.GetLumpedPortOp().Size() > 1) ? "s" : "");
-          first = false;
-        }
-        Mpi::Print(" {:d}", idx);
-      }
-    }
-    int excitations = first;
-    first = true;
-    for (const auto &[idx, data] : space_op.GetSurfaceCurrentOp())
-    {
-      if (first)
-      {
-        Mpi::Print(" Surface current excitation specified on port{}",
-                   (space_op.GetSurfaceCurrentOp().Size() > 1) ? "s" : "");
-        first = false;
-      }
-      Mpi::Print(" {:d}", idx);
-    }
-    excitations += first;
-    MFEM_VERIFY(excitations > 0, "No excitation specified for transient simulation!");
-  }
-  Mpi::Print("\n");
+  Mpi::Print("\nComputing transient response for:\n{}", excitation_helper.FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
   TimeDependentFluxErrorEstimator<Vector> estimator(

@@ -43,7 +43,7 @@ public:
 
   template <typename LumpedportIt, typename WaveportIt, typename CurrentIt>
   PortExcitationHelper(const LumpedportIt &lumped_port_op, const WaveportIt &wave_port_op,
-                        const CurrentIt &surf_j_op)
+                       const CurrentIt &surf_j_op)
   {
     for (const auto &[idx, port] : lumped_port_op)
     {

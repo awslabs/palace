@@ -1190,7 +1190,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   // Print some information for excited wave ports.
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation == 0)
     {
       continue;
     }
@@ -1290,7 +1290,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   }
 }
 
-void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
+void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,
+                                                    SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by
@@ -1298,7 +1299,7 @@ void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoeff
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation != excitation_idx)
     {
       continue;
     }
