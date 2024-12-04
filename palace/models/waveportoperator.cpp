@@ -521,12 +521,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op)
+  : mat_op(mat_op), active(data.active), excitation(data.excitation)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
-  excitation = data.excitation;
-  active = data.active;
   kn0 = 0.0;
   omega0 = 0.0;
 

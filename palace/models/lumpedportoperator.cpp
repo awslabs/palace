@@ -18,7 +18,7 @@ using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op)
+  : mat_op(mat_op), active(data.active), excitation(data.excitation)
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
   // for the port boundary.
@@ -30,9 +30,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   MFEM_VERIFY(!(has_circ && has_surf),
               "Lumped port boundary has both R/L/C and Rs/Ls/Cs defined, "
               "should only use one!");
-  excitation = data.excitation;
-  active = data.active;
-  if (excitation)
+
+  if (excitation != 0)
   {
     if (has_circ)
     {

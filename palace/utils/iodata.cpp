@@ -22,9 +22,6 @@
 namespace palace
 {
 
-namespace
-{
-
 std::stringstream PreprocessFile(const char *filename)
 {
   // Read configuration file into memory and return as a stringstream.
@@ -149,8 +146,6 @@ std::stringstream PreprocessFile(const char *filename)
   }
   return output;
 }
-
-}  // namespace
 
 using json = nlohmann::json;
 
