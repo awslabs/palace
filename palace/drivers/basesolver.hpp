@@ -21,6 +21,7 @@ class IoData;
 class Mesh;
 class PostOperator;
 class Timer;
+class PortExcitationHelper;
 
 //
 // Base driver class for all simulation types.
@@ -135,6 +136,7 @@ public:
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;
+  void SaveMetadata(const PortExcitationHelper &excitation_helper) const;
 };
 
 }  // namespace palace
