@@ -30,6 +30,7 @@ class MaterialOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
+class PortExcitationHelper;
 
 //
 // A class to handle solution postprocessing.
@@ -215,7 +216,18 @@ public:
 
   // Postprocess the S-parameter for recieving lumped or wave port index using the electric
   // field solution.
+<<<<<<< HEAD
   std::complex<double> GetSParameter(bool is_lumped_port, int idx, int source_idx) const;
+=======
+  // std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
+  //                                    int source_idx) const;
+  // std::complex<double> GetSParameter(const WavePortOperator &wave_port_op, int idx,
+  //                                    int source_idx) const;
+  std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op,
+                                     const WavePortOperator &wave_port_op,
+                                     const PortExcitationHelper &excitation_helper,
+                                     int out_idx, int excitation_idx) const;
+>>>>>>> 9771d7fc (WIP2)
 
   // Postprocess the circuit voltage and current across lumped port index using the electric
   // field solution. When the internal grid functions are real-valued, the returned voltage
