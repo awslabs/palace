@@ -188,6 +188,7 @@ jobs:
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
 
           # Build and install (with unit tests)
+          # Compile so that MFEM throws exceptions rather then aborts for unit-tests
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
@@ -198,7 +199,8 @@ jobs:
             -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
             -DPALACE_WITH_SLEPC=$WITH_SLEPC \
-            -DPALACE_WITH_ARPACK=$WITH_ARPACK
+            -DPALACE_WITH_ARPACK=$WITH_ARPACK \
+            -DPALACE_MFEM_USE_EXCEPTIONS=ON
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
