@@ -1077,11 +1077,11 @@ DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
   : root_{root},
     do_measurement_{
         do_measurement  //
-        && ((lumped_port_op.Size() > 0) xor
-            (wave_port_op.Size() > 0))  // either lumped or wave but not both
-
+        && ((lumped_port_op.Size() > 0) !=
+            (wave_port_op.Size() > 0))           // either lumped or wave ports but not both
+        && excitation_helper.IsMultipleSimple()  // each excitation only has one port
     },
-    src_lumped_port{lumped_port_op.Size() > 0}
+    src_lumped_port{lumped_port_op.Size() > 0}, excitation_helper_{excitation_helper}
 {
   if (!do_measurement_ || !root_)
   {
@@ -1089,21 +1089,23 @@ DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
   }
   using fmt::format;
 
+  // Store all output indicies locally: for now one or the other is empty
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    all_port_indices.emplace_back(idx);
+  }
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    all_port_indices.emplace_back(idx);
+  }
+
   port_S = TableWithCSVFile(post_dir / "port-S.csv");
   port_S.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_S.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
 
   for (const auto &[ex_idx, data] : excitation_helper.excitations)
   {
-    // Already ensured that one of lumped or wave ports are empty
-    for (const auto &[o_idx, data] : lumped_port_op)
-    {
-      port_S.table.insert_column(format("abs_{}_{}", o_idx, ex_idx),
-                                 format("|S[{}][{}]| (dB)", o_idx, ex_idx));
-      port_S.table.insert_column(format("arg_{}_{}", o_idx, ex_idx),
-                                 format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx));
-    }
-    for (const auto &[o_idx, data] : wave_port_op)
+    for (const auto o_idx : all_port_indices)
     {
       port_S.table.insert_column(format("abs_{}_{}", o_idx, ex_idx),
                                  format("|S[{}][{}]| (dB)", o_idx, ex_idx));
@@ -1126,15 +1128,10 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
   using VT = IoData::ValueType;
   using fmt::format;
 
-  std::vector<int> all_port_indices;
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    all_port_indices.emplace_back(idx);
-  }
-  for (const auto &[idx, data] : wave_port_op)
-  {
-    all_port_indices.emplace_back(idx);
-  }
+  // Convent excitation_idx to port_idx since for GetSParameter: we have already checked
+  // that each excitation is_simple
+  int port_idx =
+      *excitation_helper_.excitations.at(excitation_idx).flatten_port_indices().begin();
 
   set_validate_freq_col_alignment(
       freq, port_S.table["idx"],
@@ -1142,9 +1139,7 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
 
   for (const auto o_idx : all_port_indices)
   {
-    // TODO: Fix this
-    std::complex<double> S_ij =
-        post_op.GetSParameter(src_lumped_port, o_idx, size_t(excitation_idx));
+    std::complex<double> S_ij = post_op.GetSParameter(src_lumped_port, o_idx, port_idx);
 
     auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
     auto arg_S_ij = std::arg(S_ij) * 180.8 / M_PI;

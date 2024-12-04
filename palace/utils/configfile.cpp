@@ -1534,25 +1534,20 @@ void BoundaryData::SetUp(json &config)
   }
 
   // Typical usecase: If the excitation is specified as a bool and there is only a single
-  // index (wave-port or lumped port) then set excitation index to be the port index, not 1.
+  // excited port (lumped or wave) then set excitation index to be the port index, not 1.
   if (lumpedport_setup_info.excitation_input_is_bool == TriBool::True ||
       waveport_setup_info.excitation_input_is_bool == TriBool::True)
   {
     PortExcitationHelper excitation_view(lumpedport, waveport, current);
-    if (excitation_view.Size() == 1)
+    auto [is_simple, ex_idx, port_type, port_idx] = excitation_view.IsSingleSimple();
+    if (is_simple)
     {
-      auto ex = excitation_view.excitations.begin();
-      auto n_lumped = ex->second.lumped_port.size();
-      auto n_wave = ex->second.wave_port.size();
-      auto n_current = ex->second.current_port.size();
-      if (n_current == 0 && n_lumped == 1 && n_wave == 0)
+      if (port_type == PortType::LumpedPort)
       {
-        int port_idx = ex->second.lumped_port.at(0);
         lumpedport.at(port_idx).excitation = ExcitationIdx(port_idx);
       }
-      else if (n_current == 0 && n_lumped == 0 && n_wave == 1)
+      else if (port_type == PortType::WavePort)
       {
-        int port_idx = ex->second.wave_port.at(0);
         waveport.at(port_idx).excitation = ExcitationIdx(port_idx);
       }
     }

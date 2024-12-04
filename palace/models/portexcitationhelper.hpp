@@ -15,6 +15,15 @@ namespace palace
 // Small helper class to collect data of what (lumped / wave / surface) ports are
 // excited in driven and transient simulation, as stored in space_op;
 // Manges indices.
+
+enum class PortType : std::uint8_t
+{
+  LumpedPort = 0,
+  WavePort = 1,
+  CurrentPort = 2,
+  Undefined = 3
+};
+
 class PortExcitationHelper
 {
 public:
@@ -32,6 +41,31 @@ public:
       out.insert(out.end(), wave_port.cbegin(), wave_port.cend());
       out.insert(out.end(), current_port.cbegin(), current_port.cend());
       return out;
+    }
+
+    // Only a single port is excitated in the excitation
+    std::tuple<bool, PortType, int> is_simple() const
+    {
+      auto n_lumped = lumped_port.size();
+      auto n_wave = wave_port.size();
+      auto n_current = current_port.size();
+
+      if (n_lumped == 1 && n_wave == 0 && n_current == 0)
+      {
+        return std::make_tuple(true, PortType::LumpedPort, lumped_port.at(0));
+      }
+      else if (n_lumped == 0 && n_wave == 1 && n_current == 0)
+      {
+        return std::make_tuple(true, PortType::WavePort, wave_port.at(0));
+      }
+      else if (n_lumped == 0 && n_wave == 0 && n_current == 1)
+      {
+        return std::make_tuple(true, PortType::CurrentPort, current_port.at(0));
+      }
+      else
+      {
+        return std::make_tuple(false, PortType::Undefined, 0);
+      }
     }
   };
 
@@ -95,6 +129,28 @@ public:
   [[nodiscard]] auto Empty() const { return excitations.empty(); }
 
   [[nodiscard]] std::string FmtLog() const;
+
+  // Single Simple (only 1 port per excitation) Excitation 
+  [[nodiscard]] std::tuple<bool, ExcitationIdx, PortType, int> IsSingleSimple() const
+  {
+    if (Size() == 1)
+    {
+      const auto &[ex_idx, ex_spec] = *excitations.begin();
+      const auto [is_simple, port_type, port_idx] = ex_spec.is_simple();
+      if (is_simple)
+      {
+        return std::make_tuple(true, ex_idx, port_type, port_idx);
+      }
+    }
+    return std::make_tuple(false, ExcitationIdx(0), PortType::Undefined, 0);
+  }
+
+  // Multiple Simple (only 1 port per excitation) Excitation 
+  [[nodiscard]] bool IsMultipleSimple() const
+  {
+    return std::all_of(excitations.begin(), excitations.end(),
+                       [](const auto &ex) { return std::get<0>(ex.second.is_simple()); });
+  }
 };
 
 void to_json(nlohmann::json &j, const PortExcitationHelper::SingleExcitationSpec &p);

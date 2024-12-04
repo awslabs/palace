@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "utils/strongtype.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -20,7 +21,6 @@ class PostOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
-class PortExcitationHelper;
 
 //
 // Driver class for driven terminal simulations.
@@ -139,6 +139,13 @@ private:
 
     // Currently can't mix lumped and sufrace ports for s-matrix
     bool src_lumped_port = true;
+
+    // Combine output lumped and wave port indices
+    std::vector<int> all_port_indices;
+
+    // Store locally to convert excitationto port index due to current limits of
+    // postop.GetSParameter.
+    PortExcitationHelper excitation_helper_;
 
   public:
     SParametersPostPrinter() = default;
