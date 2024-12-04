@@ -489,9 +489,7 @@ SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy)
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fpm(mat_op.MaxCeedAttribute()),
       fpwc(mat_op.MaxCeedAttribute()), fpc(mat_op.MaxCeedAttribute());
-  periodic_op.AddRealMassCoefficients(1.0, fpm);
-  periodic_op.AddWeakCurlCoefficients(1.0, fpwc);
-  periodic_op.AddCurlCoefficients(-1.0, fpc);
+  AddPeriodicCoefficients(1.0, fpm, fpwc, fpc);
   int empty[2] = {(fpm.empty()), (fpwc.empty() && fpc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -834,9 +832,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-    periodic_op.AddRealMassCoefficients(1.0, fmpr);
-    periodic_op.AddWeakCurlCoefficients(1.0, fpwi);
-    periodic_op.AddCurlCoefficients(-1.0, fpi);
+    AddPeriodicCoefficients(1.0, fmpr, fpwi, fpi);
     int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
                      fpwr.empty() && fpr.empty() && fmpr.empty()),
                     (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
@@ -853,6 +849,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     {
       bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fmpi, &fpwi, &fpi,
                                  skip_zeros, assemble_q_data);
+      //periodic_op.AddImagMassCoefficients(7.0, fi);//test - helps in some cases
       bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &fmpi, &fpwi, &fpi,
                                         &skip_zeros, assemble_q_data);
     }
@@ -870,9 +867,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-    periodic_op.AddRealMassCoefficients(1.0, fmpr);
-    periodic_op.AddWeakCurlCoefficients(1.0, fpwr);
-    periodic_op.AddCurlCoefficients(-1.0, fpr);
+    AddPeriodicCoefficients(1.0, fmpr, fpwr, fpr);
     int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fmpr.empty() &&
                  fpwr.empty() && fpr.empty());
     Mpi::GlobalMin(1, &empty, GetComm());
@@ -1011,6 +1006,16 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for numeric wave ports.
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SpaceOperator::AddPeriodicCoefficients(double coeff,
+                                            MaterialPropertyCoefficient &fm,
+                                            MaterialPropertyCoefficient &fwc,
+                                            MaterialPropertyCoefficient &fc)
+{
+  periodic_op.AddRealMassCoefficients(coeff, fm);
+  periodic_op.AddWeakCurlCoefficients(coeff, fwc);
+  periodic_op.AddCurlCoefficients(-coeff, fc);
 }
 
 bool SpaceOperator::GetExcitationVector(Vector &RHS)

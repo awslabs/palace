@@ -80,6 +80,9 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+  void AddPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &fm,
+                               MaterialPropertyCoefficient &fwc,
+                               MaterialPropertyCoefficient &fc);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(Vector &RHS);
