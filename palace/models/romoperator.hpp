@@ -18,6 +18,31 @@ namespace palace
 class IoData;
 class SpaceOperator;
 
+// Class for handling minimal-rational interpolation of solutions in frequency space. Used
+// as an error indicator and to efficiently selecting next frequency sample points in PROM
+// construciton. Each excitation gets a separate MRI, so sample frequencies are not shared.
+class MinimalRationInterpolation
+{
+private:
+  // (Complex-valued) upper-trianglar matrix R from orthogonalization of the HDM samples.
+  // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and
+  // support points z is used as an error indicator.
+  std::vector<ComplexVector> Q;
+  std::size_t dim_Q = 0;
+  Eigen::MatrixXcd R;
+  Eigen::VectorXcd q;
+  std::vector<double> z;
+
+public:
+  MinimalRationInterpolation(int max_size);
+  void AddSolutionSample(double omega, const ComplexVector &u,
+                         const SpaceOperator &space_op,
+                         GmresSolverBase::OrthogType orthog_type);
+  std::vector<double> FindMaxError(int N) const;
+
+  const auto &GetSamplePoints() const { return z; }
+};
+
 //
 // A class handling projection-based reduced order model (PROM) construction and use for
 // adaptive fast frequency sweeps.
@@ -28,31 +53,32 @@ private:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
+  // Used for constructing & resuse of RHS1
+  int excitation_idx_cache = -1;
+
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  bool has_A2, has_RHS1, has_RHS2;
+  // Defaults: will be toggeled by SetExcitationIndex & SolveHDM
+  bool has_A2 = true;
+  bool has_RHS1 = true;
+  bool has_RHS2 = true;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors.
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
-  Eigen::VectorXcd RHS1r, RHSr;
+  Eigen::VectorXcd RHS1r;
+  Eigen::VectorXcd RHSr;
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
-  std::size_t dim_V;
+  std::size_t dim_V = 0;
   GmresSolverBase::OrthogType orthog_type;
 
-  // (Complex-valued) upper-trianglar matrix R from orthogonalization of the HDM samples.
-  // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and
-  // support points z is used as an error indicator.
-  std::vector<ComplexVector> Q;
-  std::size_t dim_Q;
-  Eigen::MatrixXcd R;
-  Eigen::VectorXcd q;
-  std::vector<double> z;
+  // MRIs: one for each excitation index
+  std::map<int, MinimalRationInterpolation> mri;
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size);
@@ -61,24 +87,37 @@ public:
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
   // Return PROM dimension.
-  int GetReducedDimension() const { return dim_V; }
+  auto GetReducedDimension() const { return dim_V; }
 
   // Return set of sampled parameter points for basis construction.
-  const auto &GetSamplePoints() const { return z; }
+  const auto &GetSamplePoints(int excitation_idx) const
+  {
+    return mri.at(excitation_idx).GetSamplePoints();
+  }
+
+  // Set excitation index to build corresponding RHS vector (linear in frequency part)
+  void SetExcitationIndex(int excitation_idx);
 
   // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(double omega, ComplexVector &u);
+  void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
-  // Add the solution vector to the reduced-order basis and update the PROM.
-  void UpdatePROM(double omega, const ComplexVector &u);
+  // Add field configuration to the reduced-order basis and update the PROM.
+  void UpdatePROM(const ComplexVector &u);
+
+  // Add solution u to the minimal-rational interpolation for error estimation. MRI are
+  // separated by excitation index.
+  void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
-  void SolvePROM(double omega, ComplexVector &u);
+  void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int N = 1) const;
+  std::vector<double> FindMaxError(int excitation_idx, int N = 1) const
+  {
+    return mri.at(excitation_idx).FindMaxError(N);
+  }
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;

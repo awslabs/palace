@@ -18,6 +18,7 @@
 #include "models/domainpostoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "utils/filesystem.hpp"
 
 namespace palace
 {
@@ -31,6 +32,9 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
+fs::path ParaviewPath(const IoData &iodata, size_t excitation_idx = 0,
+                      size_t max_excitation = 1);
+
 //
 // A class to handle solution postprocessing.
 //
@@ -38,7 +42,9 @@ class PostOperator
 {
 private:
   // Reference to material property operator (not owned).
-  const MaterialOperator &mat_op;
+  std::reference_wrapper<const MaterialOperator> mat_op;
+  // Reference to mesh for paraview (re)-init
+  std::reference_wrapper<mfem::ParMesh> mesh_ND;
 
   // Objects for grid function postprocessing from the FE solution.
   std::unique_ptr<GridFunction> E, B, V, A;
@@ -47,8 +53,12 @@ private:
 
   // Data collection for writing fields to disk for visualization
   // Paraview fields are mutable as the writing is triggered by const solver printer
+  std::string name_;
   mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
   double mesh_Lc0;
+
+  // Set paraview options and register fields
+  void InitializeParaviewDataCollection();
 
   // ----- Measurements from Fields -----
 
@@ -117,13 +127,17 @@ private:
 
   void ValidateDoPortMeasurement() const;
 
-  void InitializeDataCollection(const IoData &iodata);
-
 public:
-  PostOperator(const IoData &iodata, SpaceOperator &space_op, const std::string &name);
-  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op, const std::string &name);
-  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
-               const std::string &name);
+  PostOperator(const IoData &iodata, SpaceOperator &space_op, std::string name,
+               const std::optional<fs::path> &paraview_path = {});
+  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op, std::string name,
+               const std::optional<fs::path> &paraview_path = {});
+  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op, std::string name,
+               const std::optional<fs::path> &paraview_path = {});
+
+  // Make new paraview output target for multiple excitations / prom
+  // Previous output must be correctly closed / deregistered
+  void SetNewParaviewOutput(const fs::path &paraview_path);
 
   // Access to surface and domain postprocessing objects.
   const auto &GetSurfacePostOp() const { return surf_post_op; }

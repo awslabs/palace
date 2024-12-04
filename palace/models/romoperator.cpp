@@ -186,141 +186,16 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size)
-  : space_op(space_op)
+MinimalRationInterpolation::MinimalRationInterpolation(int max_size)
 {
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. The damping matrix may be nullptr.
-  K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
-
-  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
-  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
-  has_RHS1 = space_op.GetExcitationVector1(RHS1);
-  if (!has_RHS1)
-  {
-    RHS1.SetSize(0);
-  }
-  has_A2 = has_RHS2 = true;
-
-  // Initialize working vector storage.
-  r.SetSize(K->Height());
-  r.UseDevice(true);
-
-  // Set up the linear solver and set operators but don't set the operators yet (this will
-  // be done during an HDM solve at a given parameter point). The preconditioner for the
-  // complex linear system is constructed from a real approximation to the complex system
-  // matrix.
-  ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                           &space_op.GetH1Spaces());
-
-  // The initial PROM basis is empty. The provided maximum dimension is the number of sample
-  // points (2 basis vectors per point). Basis orthogonalization method is configured using
-  // GMRES/FGMRES settings.
-  MFEM_VERIFY(max_size > 0, "Reduced order basis storage must have > 0 columns!");
-  V.resize(2 * max_size, Vector());
   Q.resize(max_size, ComplexVector());
-  dim_V = dim_Q = 0;
-  switch (iodata.solver.linear.gs_orthog_type)
-  {
-    case config::LinearSolverData::OrthogType::MGS:
-      orthog_type = GmresSolverBase::OrthogType::MGS;
-      break;
-    case config::LinearSolverData::OrthogType::CGS:
-      orthog_type = GmresSolverBase::OrthogType::CGS;
-      break;
-    case config::LinearSolverData::OrthogType::CGS2:
-      orthog_type = GmresSolverBase::OrthogType::CGS2;
-      break;
-  }
 }
 
-void RomOperator::SolveHDM(double omega, ComplexVector &u)
+void MinimalRationInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
+                                                   const SpaceOperator &space_op,
+                                                   GmresSolverBase::OrthogType orthog_type)
 {
-  // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
-  // A2(ω) is built by summing the underlying operator contributions.
-  A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-  has_A2 = (A2 != nullptr);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
-  auto P =
-      space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
-  ksp->SetOperators(*A, *P);
-
-  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
-  Mpi::Print("\n");
-  if (has_RHS2)
-  {
-    has_RHS2 = space_op.GetExcitationVector2(omega, r);
-  }
-  else
-  {
-    r = 0.0;
-  }
-  if (has_RHS1)
-  {
-    r.Add(1i * omega, RHS1);
-  }
-
-  // Solve the linear system.
-  ksp->Mult(r, u);
-}
-
-void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
-{
-  // Update V. The basis is always real (each complex solution adds two basis vectors if it
-  // has a nonzero real and imaginary parts).
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
-  const double normr = linalg::Norml2(comm, u.Real());
-  const double normi = linalg::Norml2(comm, u.Imag());
-  const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
-              "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + has_real + has_imag);
-  if (has_real)
-  {
-    V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    dim_V++;
-  }
-  if (has_imag)
-  {
-    V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    dim_V++;
-  }
-
-  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
-  // matrix and first dim0 entries of each vector and the projection uses the values
-  // computed for the unchanged basis vectors.
-  Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
-  if (C)
-  {
-    Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
-  }
-  Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  Ar.resize(dim_V, dim_V);
-  if (RHS1.Size())
-  {
-    RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
-  }
-  RHSr.resize(dim_V);
 
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
@@ -349,61 +224,7 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
   z.push_back(omega);
 }
 
-void RomOperator::SolvePROM(double omega, ComplexVector &u)
-{
-  // Assemble the PROM linear system at the given frequency. The PROM system is defined by
-  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
-  if (has_A2)
-  {
-    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
-  }
-  else
-  {
-    Ar.setZero();
-  }
-  Ar += Kr;
-  if (C)
-  {
-    Ar += (1i * omega) * Cr;
-  }
-  Ar += (-omega * omega) * Mr;
-
-  if (has_RHS2)
-  {
-    space_op.GetExcitationVector2(omega, RHS2);
-    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
-  }
-  else
-  {
-    RHSr.setZero();
-  }
-  if (has_RHS1)
-  {
-    RHSr += (1i * omega) * RHS1r;
-  }
-
-  // Compute PROM solution at the given frequency and expand into high-dimensional space.
-  // The PROM is solved on every process so the matrix-vector product for vector expansion
-  // does not require communication.
-  BlockTimer bt(Timer::SOLVE_PROM);
-  if constexpr (false)
-  {
-    // LDLT solve
-    RHSr = Ar.ldlt().solve(RHSr);
-    RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
-  }
-  else
-  {
-    // LU solve
-    RHSr = Ar.partialPivLu().solve(RHSr);
-  }
-  ProlongatePROMSolution(dim_V, V, RHSr, u);
-}
-
-std::vector<double> RomOperator::FindMaxError(int N) const
+std::vector<double> MinimalRationInterpolation::FindMaxError(int N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -482,14 +303,240 @@ std::vector<double> RomOperator::FindMaxError(int N) const
       }
       start += delta;
     }
-    MFEM_VERIFY(N == 0 || std::abs(z_star[0]) > 0.0,
-                "Could not locate a maximum error in the range [" << start << ", " << end
-                                                                  << "]!");
+    MFEM_VERIFY(
+        N == 0 || std::abs(z_star[0]) > 0.0,
+        fmt::format("Could not locate a maximum error in the range [{}, {}]!", start, end));
   }
   std::vector<double> vals(z_star.size());
   std::transform(z_star.begin(), z_star.end(), vals.begin(),
                  [](std::complex<double> z) { return std::real(z); });
   return vals;
+}
+
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size)
+  : space_op(space_op)
+{
+  // Construct the system matrices defining the linear operator. PEC boundaries are handled
+  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
+  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
+  // the RHS. The damping matrix may be nullptr.
+  K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
+
+  // Initialize working vector storage.
+  r.SetSize(K->Height());
+  r.UseDevice(true);
+
+  // Set up the linear solver and set operators but don't set the operators yet (this will
+  // be done during an HDM solve at a given parameter point). The preconditioner for the
+  // complex linear system is constructed from a real approximation to the complex system
+  // matrix.
+  ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                           &space_op.GetH1Spaces());
+
+  // The initial PROM basis is empty. The provided maximum dimension is the number of sample
+  // points (2 basis vectors per point). Basis orthogonalization method is configured using
+  // GMRES/FGMRES settings.
+  MFEM_VERIFY(max_size > 0, "Reduced order basis storage must have > 0 columns!");
+  V.resize(2 * max_size, Vector());
+  switch (iodata.solver.linear.gs_orthog_type)
+  {
+    case config::LinearSolverData::OrthogType::MGS:
+      orthog_type = GmresSolverBase::OrthogType::MGS;
+      break;
+    case config::LinearSolverData::OrthogType::CGS:
+      orthog_type = GmresSolverBase::OrthogType::CGS;
+      break;
+    case config::LinearSolverData::OrthogType::CGS2:
+      orthog_type = GmresSolverBase::OrthogType::CGS2;
+      break;
+  }
+  // Set up MRI
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  for (const auto &[excitation_idx, data] : excitation_helper)
+  {
+    mri.emplace(excitation_idx, MinimalRationInterpolation(max_size));
+  }
+}
+
+void RomOperator::SetExcitationIndex(int excitation_idx)
+{
+  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
+  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
+  excitation_idx_cache = excitation_idx;
+  has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
+  if (!has_RHS1)
+  {
+    RHS1.SetSize(0);
+  }
+  else
+  {
+    // Project RHS1 to RHS1r with current PROM
+    if (dim_V > 0)
+    {
+      auto comm = space_op.GetComm();
+      RHS1r.conservativeResize(dim_V);
+      ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
+    }
+  }
+}
+
+void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+{
+  if (excitation_idx_cache != excitation_idx)
+  {
+    SetExcitationIndex(excitation_idx);
+  }
+  // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
+  // A2(ω) is built by summing the underlying operator contributions.
+  A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  has_A2 = (A2 != nullptr);
+  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                    std::complex<double>(-omega * omega, 0.0), K.get(),
+                                    C.get(), M.get(), A2.get());
+  auto P =
+      space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
+  ksp->SetOperators(*A, *P);
+
+  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
+  Mpi::Print("\n");
+  if (has_RHS2)
+  {
+    has_RHS2 = space_op.GetExcitationVector2(excitation_idx, omega, r);
+  }
+  else
+  {
+    r = 0.0;
+  }
+  if (has_RHS1)
+  {
+    r.Add(1i * omega, RHS1);
+  }
+
+  // Solve the linear system.
+  ksp->Mult(r, u);
+}
+
+void RomOperator::UpdatePROM(const ComplexVector &u)
+{
+
+  // Update V. The basis is always real (each complex solution adds two basis vectors if it
+  // has a nonzero real and imaginary parts).
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = space_op.GetComm();
+  const double normr = linalg::Norml2(comm, u.Real());
+  const double normi = linalg::Norml2(comm, u.Imag());
+  const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
+  const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
+  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
+              "Unable to increase basis storage size, increase maximum number of vectors!");
+  const std::size_t dim_V0 = dim_V;
+  std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
+                        static_cast<std::size_t>(has_imag));
+  if (has_real)
+  {
+    V[dim_V] = u.Real();
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
+    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / H[dim_V];
+    dim_V++;
+  }
+  if (has_imag)
+  {
+    V[dim_V] = u.Imag();
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
+    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / H[dim_V];
+    dim_V++;
+  }
+
+  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
+  // matrix and first dim0 entries of each vector and the projection uses the values
+  // computed for the unchanged basis vectors.
+  Kr.conservativeResize(dim_V, dim_V);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
+  if (C)
+  {
+    Cr.conservativeResize(dim_V, dim_V);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
+  }
+  Mr.conservativeResize(dim_V, dim_V);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
+  Ar.resize(dim_V, dim_V);
+  if (RHS1.Size())
+  {
+    RHS1r.conservativeResize(dim_V);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
+  }
+  RHSr.resize(dim_V);
+}
+
+void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+}
+
+void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+{
+  auto comm = space_op.GetComm();
+  if (excitation_idx_cache != excitation_idx)
+  {
+    SetExcitationIndex(excitation_idx);
+  }
+
+  // Assemble the PROM linear system at the given frequency. The PROM system is defined by
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
+  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
+  // only nonzero on boundaries, will be empty if not needed.
+  if (has_A2)
+  {
+    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+  }
+  else
+  {
+    Ar.setZero();
+  }
+  Ar += Kr;
+  if (C)
+  {
+    Ar += (1i * omega) * Cr;
+  }
+  Ar += (-omega * omega) * Mr;
+
+  if (has_RHS2)
+  {
+    space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
+    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+  }
+  else
+  {
+    RHSr.setZero();
+  }
+  if (has_RHS1)
+  {
+    RHSr += (1i * omega) * RHS1r;
+  }
+
+  // Compute PROM solution at the given frequency and expand into high-dimensional space.
+  // The PROM is solved on every process so the matrix-vector product for vector expansion
+  // does not require communication.
+  BlockTimer bt(Timer::SOLVE_PROM);
+  if constexpr (false)
+  {
+    // LDLT solve
+    RHSr = Ar.ldlt().solve(RHSr);
+    RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
+  }
+  else
+  {
+    // LU solve
+    RHSr = Ar.partialPivLu().solve(RHSr);
+  }
+  ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const

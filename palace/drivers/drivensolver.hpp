@@ -19,6 +19,7 @@ class PostOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
+class PortExcitationHelper;
 
 //
 // Driver class for driven terminal simulations.
@@ -29,6 +30,68 @@ private:
   int GetNumSteps(double start, double end, double delta) const;
 
   // Printers for storing and printing postprocessing mesurements
+  // Don't use common printers due to multi-excitations
+
+  class DomainsPostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_ = false;
+    TableWithCSVFile domain_E = {};
+
+  public:
+    DomainsPostPrinter() = default;
+    DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                       const PostOperator &post_op,
+                       const PortExcitationHelper &excitation_helper, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, int idx_excitation,
+                        const PostOperator &post_op, const IoData &iodata);
+  };
+
+  class SurfacesPostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_flux_ = false;
+    bool do_measurement_eps_ = false;
+    TableWithCSVFile surface_F = {};
+    TableWithCSVFile surface_Q = {};
+
+  public:
+    SurfacesPostPrinter() = default;
+    SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                        const PostOperator &post_op,
+                        const PortExcitationHelper &excitation_helper, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, int excitation_idx,
+                        const PostOperator &post_op, const IoData &iodata);
+    void AddMeasurementFlux(double idx_value_dimensionful, int excitation_idx,
+                            const PostOperator &post_op, const IoData &iodata);
+    void AddMeasurementEps(double idx_value_dimensionful, int excitation_idx,
+                           const PostOperator &post_op, const IoData &iodata);
+  };
+
+  class ProbePostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_E_ = false;
+    bool do_measurement_B_ = false;
+    TableWithCSVFile probe_E = {};
+    TableWithCSVFile probe_B = {};
+
+    int v_dim = 0;
+    bool has_imag = false;
+
+  public:
+    ProbePostPrinter() = default;
+    ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                     const PostOperator &post_op,
+                     const PortExcitationHelper &excitation_helper, int n_expected_rows);
+
+    void AddMeasurementE(double idx_value_dimensionful, int excitation_idx,
+                         const PostOperator &post_op, const IoData &iodata);
+    void AddMeasurementB(double idx_value_dimensionful, int excitation_idx,
+                         const PostOperator &post_op, const IoData &iodata);
+    void AddMeasurement(double idx_value_dimensionful, int excitation_idx,
+                        const PostOperator &post_op, const IoData &iodata);
+  };
 
   class CurrentsPostPrinter
   {
@@ -39,9 +102,10 @@ private:
   public:
     CurrentsPostPrinter() = default;
     CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                        const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
-    void AddMeasurement(double freq, const SurfaceCurrentOperator &surf_j_op,
-                        const IoData &iodata);
+                        const SurfaceCurrentOperator &surf_j_op,
+                        const PortExcitationHelper &excitation_helper, int n_expected_rows);
+    void AddMeasurement(double freq, int excitation_idx,
+                        const SurfaceCurrentOperator &surf_j_op, const IoData &iodata);
   };
 
   class PortsPostPrinter
@@ -54,8 +118,9 @@ private:
   public:
     PortsPostPrinter() = default;
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                     const LumpedPortOperator &lumped_port_op, int n_expected_rows);
-    void AddMeasurement(double freq, const PostOperator &post_op,
+                     const LumpedPortOperator &lumped_port_op,
+                     const PortExcitationHelper &excitation_helper, int n_expected_rows);
+    void AddMeasurement(double freq, int excitation_idx, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
 
@@ -72,14 +137,16 @@ private:
 
     // Currently can't mix lumped and sufrace ports for s-matrix
     bool src_lumped_port = true;
-    int source_idx = -1;
+    int ex_idx = -1;
 
   public:
     SParametersPostPrinter() = default;
     SParametersPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                            const LumpedPortOperator &lumped_port_op,
-                           const WavePortOperator &wave_port_op, int n_expected_rows);
-    void AddMeasurement(double freq, const PostOperator &post_op,
+                           const WavePortOperator &wave_port_op,
+                           const PortExcitationHelper &excitation_helper,
+                           int n_expected_rows);
+    void AddMeasurement(double freq, int excitation_idx, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op,
                         const WavePortOperator &wave_port_op, const IoData &iodata);
   };
@@ -100,19 +167,23 @@ private:
 
     PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
                             const PostOperator &post_op, const SpaceOperator &space_op,
+                            const PortExcitationHelper &excitation_helper,
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
-                         const SpaceOperator &space_op, int step);
-    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
+                         const SpaceOperator &space_op, int step, int excitation_idx);
+    void PostprocessParaviewFinal(const PostOperator &post_op,
+                                  const ErrorIndicator *indicator);
+    void PostprocessIndicatorFinal(const PostOperator &post_op,
+                                   const ErrorIndicator &indicator);
   };
 
-  ErrorIndicator SweepUniform(SpaceOperator &space_op, PostOperator &post_op,
-                              PostprocessPrintResults &post_results, int n_step, int step0,
-                              double omega0, double delta_omega) const;
+  ErrorIndicator SweepUniform(SpaceOperator &space_op,
+                              const PortExcitationHelper &excitation_helper, int n_step,
+                              int step0, double omega0, double delta_omega) const;
 
-  ErrorIndicator SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op,
-                               PostprocessPrintResults &post_results, int n_step, int step0,
-                               double omega0, double delta_omega) const;
+  ErrorIndicator SweepAdaptive(SpaceOperator &space_op,
+                               const PortExcitationHelper &excitation_helper, int n_step,
+                               int step0, double omega0, double delta_omega) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
