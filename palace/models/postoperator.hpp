@@ -387,6 +387,10 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
                         int nr_expected_measurement_rows = 1);
 
+  // Make new paraview output target for multiple excitations / prom
+  // Previous output must be correctly closed / deregistered
+  void SetNewParaviewOutput(const fs::path &paraview_path);
+
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
   // solver type, since each solver has different fields and extra data required. These
   // functions all:
