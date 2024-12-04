@@ -42,7 +42,8 @@ public:
 
   // Lumped port properties.
   double R, L, C;
-  bool excitation, active;
+  int excitation;
+  bool active;
 
 private:
   // Linear forms for postprocessing integrated quantities on the port.
