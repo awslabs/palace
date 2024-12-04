@@ -4,6 +4,9 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <iterator>
+#include <string_view>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
@@ -922,20 +925,75 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-void LumpedPortBoundaryData::SetUp(json &boundaries)
+int ParsePortExcitation(json::iterator &port_it, TriBool &excitation_used_bool_input,
+                        int default_excitation = 0)
 {
+  auto it_excitation = port_it->find("Excitation");
+  if (it_excitation == port_it->end())
+  {
+    // Keep default; don't set input flag
+    return default_excitation;
+  }
+  // For error printing
+  int port_idx = port_it->at("Index");
+
+  if (it_excitation->is_boolean())
+  {
+    if (excitation_used_bool_input == TriBool::Uninitalized)
+    {
+      excitation_used_bool_input = TriBool::True;
+    }
+    MFEM_VERIFY(excitation_used_bool_input == TriBool::True,
+                fmt::format("\"Excitation\" on port index {:d} specified with a bool after "
+                            "using integers; consitantly use either one or the other!",
+                            port_idx));
+    return int(it_excitation->get<bool>());  // 0 false; 1 true
+  }
+  else if (it_excitation->is_number_integer())
+  {
+    if (excitation_used_bool_input == TriBool::Uninitalized)
+    {
+      excitation_used_bool_input = TriBool::False;
+    }
+    MFEM_VERIFY(
+        excitation_used_bool_input == TriBool::False,
+        fmt::format("\"Excitation\" on port index {:d} specified with an "
+                    "integer after using bools; consitantly use either one or the other!",
+                    port_idx));
+
+    auto excitation_parse = it_excitation->get<int>();
+    MFEM_VERIFY(excitation_parse >= 0,
+                fmt::format("\"Excitation\" on port index {:d} should be an "
+                            "positive integer (excited) or zero (not excited); got {:d}",
+                            port_idx, excitation_parse));
+    return excitation_parse;
+  }
+  else
+  {
+    MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
+                           "as a bool or non-negative integer; got {}",
+                           port_idx, it_excitation->dump(2)));
+  }
+}
+
+LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boundaries)
+{
+  SetUpReturnInfo out = {};
   auto port = boundaries.find("LumpedPort");
   auto terminal = boundaries.find("Terminal");
   if (port == boundaries.end() && terminal == boundaries.end())
   {
-    return;
+    return out;
   }
+
   if (port == boundaries.end())
   {
     port = terminal;
+    out.has_terminal_spec = TriBool::True;
   }
   else if (terminal == boundaries.end())  // Do nothing
   {
+    out.has_terminal_spec = TriBool::False;
   }
   else
   {
@@ -960,8 +1018,11 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     data.Rs = it->value("Rs", data.Rs);
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
-    data.excitation = it->value("Excitation", data.excitation);
+
+    data.excitation =
+        ParsePortExcitation(it, out.excitation_input_is_bool, data.excitation);
     data.active = it->value("Active", data.active);
+
     if (it->find("Attributes") != it->end())
     {
       MFEM_VERIFY(it->find("Elements") == it->end(),
@@ -1033,6 +1094,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
       }
     }
   }
+  return out;
 }
 
 void PeriodicBoundaryData::SetUp(json &boundaries)
@@ -1085,12 +1147,13 @@ PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
                             {WavePortData::EigenSolverType::SLEPC, "SLEPc"},
                             {WavePortData::EigenSolverType::ARPACK, "ARPACK"}})
 
-void WavePortBoundaryData::SetUp(json &boundaries)
+WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundaries)
 {
+  SetUpReturnInfo out{};
   auto port = boundaries.find("WavePort");
   if (port == boundaries.end())
   {
-    return;
+    return out;
   }
   MFEM_VERIFY(port->is_array(),
               "\"WavePort\" should specify an array in the configuration file!");
@@ -1112,7 +1175,9 @@ void WavePortBoundaryData::SetUp(json &boundaries)
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
     data.eigen_type = it->value("SolverType", data.eigen_type);
-    data.excitation = it->value("Excitation", data.excitation);
+
+    data.excitation =
+        ParsePortExcitation(it, out.excitation_input_is_bool, data.excitation);
     data.active = it->value("Active", data.active);
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
@@ -1151,6 +1216,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "Verbose: " << data.verbose << '\n';
     }
   }
+  return out;
 }
 
 void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
@@ -1390,11 +1456,19 @@ void BoundaryData::SetUp(json &config)
   farfield.SetUp(*boundaries);
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
-  lumpedport.SetUp(*boundaries);
+  auto lumpedport_info = lumpedport.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
-  waveport.SetUp(*boundaries);
+  auto waveport_info = waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
+
+  // Ensure consistent excitation specifier
+  MFEM_VERIFY(
+      (lumpedport_info.excitation_input_is_bool == TriBool::Uninitalized ||
+       waveport_info.excitation_input_is_bool == TriBool::Uninitalized ||
+       lumpedport_info.excitation_input_is_bool == waveport_info.excitation_input_is_bool),
+      "\"Excitation\" on lumped and wave ports should be specified using "
+      "either integers or using bools, but not both!")
 
   // Store all unique boundary attributes.
   attributes.insert(attributes.end(), pec.attributes.begin(), pec.attributes.end());
