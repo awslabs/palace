@@ -8,6 +8,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/solver.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -64,10 +65,8 @@ public:
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
+    // Already asserted that only that time dependant solver only has a single excitation
     auto excitation_helper = space_op.BuildPortExcitationHelper();
-    // Should have already asserted that time dependant solver only has a single excitation
-    MFEM_VERIFY(excitation_helper.Size() == 1,
-                "Transient evoluation currently only supports a single excitation!");
     int excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -287,6 +286,13 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
     order(iodata.solver.transient.order)
 {
+  // Must have one and only one excitation
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  // Should have already asserted that time dependant solver only has a single excitation
+  MFEM_VERIFY(excitation_helper.Size() == 1,
+              fmt::format("Transient evoluation currently only allows for a single "
+                          "excitation, recieved {}",
+                          excitation_helper.Size()));
 
   // Get sizes.
   int size_E = space_op.GetNDSpace().GetTrueVSize();
