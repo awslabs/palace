@@ -133,6 +133,14 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 }
 
 template <config::ProblemData::Type solver_t>
+void PostOperator<solver_t>::SetNewParaviewOutput(const fs::path &paraview_path)
+{
+  paraview = {paraview_path / name_, &mesh_ND.get()};
+  paraview_bdr = {paraview_path / (name_ + "_boundary"), &mesh_ND.get()};
+  InitializeParaviewDataCollection();
+}
+
+template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection()
 {
   if (!write_paraview_fields())
