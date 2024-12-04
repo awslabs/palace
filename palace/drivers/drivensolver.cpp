@@ -256,7 +256,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
   int paraview_step = 0;
-  auto UpdatePROM = [&](int excitation_idx, double omega)
+  auto UpdatePROM = [&](ExcitationIdx excitation_idx, double omega)
   {
     // Add the HDM solution to the PROM reduced basis.
     prom_op.UpdatePROM(E);
@@ -488,7 +488,7 @@ DrivenSolver::DomainsPostPrinter::DomainsPostPrinter(
 }
 
 void DrivenSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionful,
-                                                      int excitation_idx,
+                                                      ExcitationIdx excitation_idx,
                                                       const PostOperator &post_op,
                                                       const IoData &iodata)
 {
@@ -627,7 +627,7 @@ DrivenSolver::SurfacesPostPrinter::SurfacesPostPrinter(
 }
 
 void DrivenSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimensionful,
-                                                           int excitation_idx,
+                                                           ExcitationIdx excitation_idx,
                                                            const PostOperator &post_op,
                                                            const IoData &iodata)
 {
@@ -679,7 +679,7 @@ void DrivenSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dime
 }
 
 void DrivenSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimensionful,
-                                                          int excitation_idx,
+                                                          ExcitationIdx excitation_idx,
                                                           const PostOperator &post_op,
                                                           const IoData &iodata)
 {
@@ -711,7 +711,7 @@ void DrivenSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimen
 }
 
 void DrivenSolver::SurfacesPostPrinter::AddMeasurement(double idx_value_dimensionful,
-                                                       int excitation_idx,
+                                                       ExcitationIdx excitation_idx,
                                                        const PostOperator &post_op,
                                                        const IoData &iodata)
 {
@@ -832,7 +832,7 @@ DrivenSolver::ProbePostPrinter::ProbePostPrinter(
 }
 
 void DrivenSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful,
-                                                     int excitation_idx,
+                                                     ExcitationIdx excitation_idx,
                                                      const PostOperator &post_op,
                                                      const IoData &iodata)
 {
@@ -871,7 +871,7 @@ void DrivenSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionf
 }
 
 void DrivenSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful,
-                                                     int excitation_idx,
+                                                     ExcitationIdx excitation_idx,
                                                      const PostOperator &post_op,
                                                      const IoData &iodata)
 {
@@ -910,7 +910,7 @@ void DrivenSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionf
 }
 
 void DrivenSolver::ProbePostPrinter::AddMeasurement(double idx_value_dimensionful,
-                                                    int excitation_idx,
+                                                    ExcitationIdx excitation_idx,
                                                     const PostOperator &post_op,
                                                     const IoData &iodata)
 {
@@ -954,7 +954,7 @@ DrivenSolver::CurrentsPostPrinter::CurrentsPostPrinter(
 }
 
 void DrivenSolver::CurrentsPostPrinter::AddMeasurement(
-    double freq, int excitation_idx, const SurfaceCurrentOperator &surf_j_op,
+    double freq, ExcitationIdx excitation_idx, const SurfaceCurrentOperator &surf_j_op,
     const IoData &iodata)
 {
   if (!do_measurement_ || !root_)
@@ -1027,7 +1027,7 @@ DrivenSolver::PortsPostPrinter::PortsPostPrinter(
 }
 
 void DrivenSolver::PortsPostPrinter::AddMeasurement(
-    double freq, int excitation_idx, const PostOperator &post_op,
+    double freq, ExcitationIdx excitation_idx, const PostOperator &post_op,
     const LumpedPortOperator &lumped_port_op, const IoData &iodata)
 {
   if (!do_measurement_ || !root_)
@@ -1115,7 +1115,7 @@ DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
 }
 
 void DrivenSolver::SParametersPostPrinter::AddMeasurement(
-    double freq, int excitation_idx, const PostOperator &post_op,
+    double freq, ExcitationIdx excitation_idx, const PostOperator &post_op,
     const LumpedPortOperator &lumped_port_op, const WavePortOperator &wave_port_op,
     const IoData &iodata)
 {
@@ -1142,8 +1142,9 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
 
   for (const auto o_idx : all_port_indices)
   {
+    // TODO: Fix this
     std::complex<double> S_ij =
-        post_op.GetSParameter(src_lumped_port, o_idx, excitation_idx);
+        post_op.GetSParameter(src_lumped_port, o_idx, size_t(excitation_idx));
 
     auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
     auto arg_S_ij = std::arg(S_ij) * 180.8 / M_PI;
@@ -1186,7 +1187,8 @@ DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
 void DrivenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,
                                                             const PostOperator &post_op,
                                                             const SpaceOperator &space_op,
-                                                            int step, int excitation_idx)
+                                                            int step,
+                                                            ExcitationIdx excitation_idx)
 {
   double omega = post_op.GetFrequency().real();
   auto freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);

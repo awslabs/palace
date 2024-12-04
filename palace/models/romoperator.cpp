@@ -361,7 +361,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   }
 }
 
-void RomOperator::SetExcitationIndex(int excitation_idx)
+void RomOperator::SetExcitationIndex(ExcitationIdx excitation_idx)
 {
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
@@ -383,7 +383,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   }
 }
 
-void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+void RomOperator::SolveHDM(ExcitationIdx excitation_idx, double omega, ComplexVector &u)
 {
   if (excitation_idx_cache != excitation_idx)
   {
@@ -473,13 +473,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   RHSr.resize(dim_V);
 }
 
-void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
+void RomOperator::UpdateMRI(ExcitationIdx excitation_idx, double omega,
+                            const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
 }
 
-void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+void RomOperator::SolvePROM(ExcitationIdx excitation_idx, double omega, ComplexVector &u)
 {
   auto comm = space_op.GetComm();
   if (excitation_idx_cache != excitation_idx)

@@ -22,10 +22,11 @@ namespace palace
 
 using namespace std::complex_literals;
 
-fs::path ParaviewPath(const IoData &iodata, size_t excitation_idx, size_t max_excitation)
+fs::path ParaviewPath(const IoData &iodata, ExcitationIdx excitation_idx,
+                      size_t max_excitation)
 {
   auto out = fs::path(iodata.problem.output) / "paraview";
-  if (excitation_idx > 0)
+  if (excitation_idx > ExcitationIdx(0))
   {
     int spacing = 1 + int(std::log10(max_excitation));
     return out / fmt::format(FMT_STRING("excitation_{:0>{}}"), excitation_idx, spacing);
@@ -797,15 +798,15 @@ std::complex<double> PostOperator::GetSParameter(bool is_lumped_port, int idx,
                                                  int source_idx) const
 {
   ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
   // TODO: Merge lumped and wave port S_ij calcluations to allow both at same time.
   if (is_lumped_port)
   {
     const LumpedPortData &data = lumped_port_op->GetPort(idx);
     const LumpedPortData &src_data = lumped_port_op->GetPort(source_idx);
     const auto it = measurment_cache.lumped_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Lumped port index " << source_idx << " is not marked for excitation!");
+    MFEM_VERIFY(
+        src_data.HasExcitation(),
+        fmt::format("Lumped port index {} is not marked for excitation!", source_idx));
     MFEM_VERIFY(it != measurment_cache.lumped_port_vi->end(),
                 "Could not find lumped port when calculating port S-parameters!");
     std::complex<double> S_ij = it->second.S;
@@ -827,8 +828,9 @@ std::complex<double> PostOperator::GetSParameter(bool is_lumped_port, int idx,
     const WavePortData &data = wave_port_op->GetPort(idx);
     const WavePortData &src_data = wave_port_op->GetPort(source_idx);
     const auto it = measurment_cache.wave_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Wave port index " << source_idx << " is not marked for excitation!");
+    MFEM_VERIFY(
+        src_data.HasExcitation(),
+        fmt::format("Wave port index {} is not marked for excitation!", source_idx));
     MFEM_VERIFY(it != measurment_cache.wave_port_vi->end(),
                 "Could not find wave port when calculating port S-parameters!");
     std::complex<double> S_ij = it->second.S;

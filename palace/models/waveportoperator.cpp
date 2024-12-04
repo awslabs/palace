@@ -980,7 +980,7 @@ double WavePortData::GetExcitationPower() const
 {
   // The computed port modes are normalized such that the power integrated over the port is
   // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
-  return excitation ? 1.0 : 0.0;
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
@@ -1190,7 +1190,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   // Print some information for excited wave ports.
   for (const auto &[idx, data] : ports)
   {
-    if (data.excitation == 0)
+    if (!data.HasExcitation())
     {
       continue;
     }
@@ -1290,8 +1290,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   }
 }
 
-void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,
-                                                    SumVectorCoefficient &fbr,
+void WavePortOperator::AddExcitationBdrCoefficients(ExcitationIdx excitation_idx,
+                                                    double omega, SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by

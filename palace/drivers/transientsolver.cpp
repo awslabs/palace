@@ -291,7 +291,7 @@ TransientSolver::PortsPostPrinter::PortsPostPrinter(
 
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (data.excitation)
+    if (data.HasExcitation())
     {
       port_V.table.insert_column(format("inc{}", idx), format("V_inc[{}] (V)", idx));
       port_I.table.insert_column(format("inc{}", idx), format("I_inc[{}] (A)", idx));
@@ -325,7 +325,7 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
 
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (data.excitation)
+    if (data.HasExcitation())
     {
       double V_inc = data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
       double I_inc = (std::abs(V_inc) > 0.0)

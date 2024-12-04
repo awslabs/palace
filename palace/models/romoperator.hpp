@@ -11,6 +11,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -54,7 +55,7 @@ private:
   SpaceOperator &space_op;
 
   // Used for constructing & resuse of RHS1
-  int excitation_idx_cache = -1;
+  ExcitationIdx excitation_idx_cache = ExcitationIdx(0);
 
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
@@ -78,7 +79,7 @@ private:
   GmresSolverBase::OrthogType orthog_type;
 
   // MRIs: one for each excitation index
-  std::map<int, MinimalRationInterpolation> mri;
+  std::map<ExcitationIdx, MinimalRationInterpolation> mri;
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size);
@@ -90,31 +91,31 @@ public:
   auto GetReducedDimension() const { return dim_V; }
 
   // Return set of sampled parameter points for basis construction.
-  const auto &GetSamplePoints(int excitation_idx) const
+  const auto &GetSamplePoints(ExcitationIdx excitation_idx) const
   {
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part)
-  void SetExcitationIndex(int excitation_idx);
+  void SetExcitationIndex(ExcitationIdx excitation_idx);
 
   // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
+  void SolveHDM(ExcitationIdx excitation_idx, double omega, ComplexVector &u);
 
   // Add field configuration to the reduced-order basis and update the PROM.
   void UpdatePROM(const ComplexVector &u);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
-  void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
+  void UpdateMRI(ExcitationIdx excitation_idx, double omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
-  void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
+  void SolvePROM(ExcitationIdx excitation_idx, double omega, ComplexVector &u);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int excitation_idx, int N = 1) const
+  std::vector<double> FindMaxError(ExcitationIdx excitation_idx, int N = 1) const
   {
     return mri.at(excitation_idx).FindMaxError(N);
   }

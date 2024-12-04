@@ -19,6 +19,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -32,7 +33,7 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
-fs::path ParaviewPath(const IoData &iodata, size_t excitation_idx = 0,
+fs::path ParaviewPath(const IoData &iodata, ExcitationIdx excitation_idx = ExcitationIdx(0),
                       size_t max_excitation = 1);
 
 //

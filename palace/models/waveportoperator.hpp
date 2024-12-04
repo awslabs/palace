@@ -16,6 +16,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -45,7 +46,7 @@ public:
   // Wave port properties.
   int mode_idx;
   double d_offset;
-  int excitation;
+  ExcitationIdx excitation;
   bool active;
   std::complex<double> kn0;
   double omega0;
@@ -87,6 +88,11 @@ public:
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();
+
+  [[nodiscard]] constexpr bool HasExcitation() const
+  {
+    return excitation != ExcitationIdx(0);
+  }
 
   const auto &GetAttrList() const { return attr_list; }
 
@@ -169,7 +175,7 @@ public:
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries.
-  void AddExcitationBdrCoefficients(int excitation_idx, double omega,
+  void AddExcitationBdrCoefficients(ExcitationIdx excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
 };
 

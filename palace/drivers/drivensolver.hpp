@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "utils/strongtype.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace
@@ -43,7 +44,7 @@ private:
     DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                        const PostOperator &post_op,
                        const PortExcitationHelper &excitation_helper, int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, int idx_excitation,
+    void AddMeasurement(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                         const PostOperator &post_op, const IoData &iodata);
   };
 
@@ -60,11 +61,11 @@ private:
     SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const PostOperator &post_op,
                         const PortExcitationHelper &excitation_helper, int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurement(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                         const PostOperator &post_op, const IoData &iodata);
-    void AddMeasurementFlux(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurementFlux(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                             const PostOperator &post_op, const IoData &iodata);
-    void AddMeasurementEps(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurementEps(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                            const PostOperator &post_op, const IoData &iodata);
   };
 
@@ -85,11 +86,11 @@ private:
                      const PostOperator &post_op,
                      const PortExcitationHelper &excitation_helper, int n_expected_rows);
 
-    void AddMeasurementE(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurementE(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                          const PostOperator &post_op, const IoData &iodata);
-    void AddMeasurementB(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurementB(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                          const PostOperator &post_op, const IoData &iodata);
-    void AddMeasurement(double idx_value_dimensionful, int excitation_idx,
+    void AddMeasurement(double idx_value_dimensionful, ExcitationIdx excitation_idx,
                         const PostOperator &post_op, const IoData &iodata);
   };
 
@@ -104,7 +105,7 @@ private:
     CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const SurfaceCurrentOperator &surf_j_op,
                         const PortExcitationHelper &excitation_helper, int n_expected_rows);
-    void AddMeasurement(double freq, int excitation_idx,
+    void AddMeasurement(double freq, ExcitationIdx excitation_idx,
                         const SurfaceCurrentOperator &surf_j_op, const IoData &iodata);
   };
 
@@ -120,7 +121,8 @@ private:
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op,
                      const PortExcitationHelper &excitation_helper, int n_expected_rows);
-    void AddMeasurement(double freq, int excitation_idx, const PostOperator &post_op,
+    void AddMeasurement(double freq, ExcitationIdx excitation_idx,
+                        const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
 
@@ -137,7 +139,6 @@ private:
 
     // Currently can't mix lumped and sufrace ports for s-matrix
     bool src_lumped_port = true;
-    int ex_idx = -1;
 
   public:
     SParametersPostPrinter() = default;
@@ -146,7 +147,8 @@ private:
                            const WavePortOperator &wave_port_op,
                            const PortExcitationHelper &excitation_helper,
                            int n_expected_rows);
-    void AddMeasurement(double freq, int excitation_idx, const PostOperator &post_op,
+    void AddMeasurement(double freq, ExcitationIdx excitation_idx,
+                        const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op,
                         const WavePortOperator &wave_port_op, const IoData &iodata);
   };
@@ -170,7 +172,8 @@ private:
                             const PortExcitationHelper &excitation_helper,
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
-                         const SpaceOperator &space_op, int step, int excitation_idx);
+                         const SpaceOperator &space_op, int step,
+                         ExcitationIdx excitation_idx);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
   };
 

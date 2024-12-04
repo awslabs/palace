@@ -892,7 +892,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
-bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
+bool SpaceOperator::GetExcitationVector(ExcitationIdx excitation_idx, Vector &RHS)
 {
   // Time domain excitation vector.
   RHS.SetSize(GetNDSpace().GetTrueVSize());
@@ -903,7 +903,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   return nnz;
 }
 
-bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
+bool SpaceOperator::GetExcitationVector(ExcitationIdx excitation_idx, double omega,
                                         ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
@@ -917,7 +917,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
-bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
+bool SpaceOperator::GetExcitationVector1(ExcitationIdx excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
@@ -929,7 +929,7 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
   return nnz1;
 }
 
-bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
+bool SpaceOperator::GetExcitationVector2(ExcitationIdx excitation_idx, double omega,
                                          ComplexVector &RHS2)
 {
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
@@ -940,7 +940,7 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   return nnz2;
 }
 
-bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
+bool SpaceOperator::AddExcitationVector1Internal(ExcitationIdx excitation_idx, Vector &RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
   // The g'(t) or iω factors are not accounted for here, they is accounted for in the time
@@ -966,7 +966,7 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   return true;
 }
 
-bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omega,
+bool SpaceOperator::AddExcitationVector2Internal(ExcitationIdx excitation_idx, double omega,
                                                  ComplexVector &RHS2)
 {
   // Assemble the contribution of wave ports to the frequency domain excitation term at the

@@ -935,8 +935,9 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-int ParsePortExcitation(json::iterator &port_it, TriBool &excitation_used_bool_input,
-                        int default_excitation = 0)
+ExcitationIdx ParsePortExcitation(json::iterator &port_it,
+                                  TriBool &excitation_used_bool_input,
+                                  ExcitationIdx default_excitation = ExcitationIdx(0))
 {
   auto it_excitation = port_it->find("Excitation");
   if (it_excitation == port_it->end())
@@ -957,9 +958,9 @@ int ParsePortExcitation(json::iterator &port_it, TriBool &excitation_used_bool_i
                 fmt::format("\"Excitation\" on port index {:d} specified with a bool after "
                             "using integers; consitantly use either one or the other!",
                             port_idx));
-    return int(it_excitation->get<bool>());  // 0 false; 1 true
+    return ExcitationIdx(it_excitation->get<bool>());  // 0 false; 1 true
   }
-  else if (it_excitation->is_number_integer())
+  else if (it_excitation->is_number_unsigned())
   {
     if (excitation_used_bool_input == TriBool::Uninitalized)
     {
@@ -970,18 +971,12 @@ int ParsePortExcitation(json::iterator &port_it, TriBool &excitation_used_bool_i
         fmt::format("\"Excitation\" on port index {:d} specified with an "
                     "integer after using bools; consitantly use either one or the other!",
                     port_idx));
-
-    auto excitation_parse = it_excitation->get<int>();
-    MFEM_VERIFY(excitation_parse >= 0,
-                fmt::format("\"Excitation\" on port index {:d} should be an "
-                            "positive integer (excited) or zero (not excited); got {:d}",
-                            port_idx, excitation_parse));
-    return excitation_parse;
+    return it_excitation->get<ExcitationIdx>();
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
-                           "as a bool or non-negative integer; got {}",
+                           "as a bool or unsinged (non-negative) integer; got {}",
                            port_idx, it_excitation->dump(2)));
   }
 }
@@ -1100,7 +1095,7 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
       std::cout << "Rs: " << data.Rs << '\n';
       std::cout << "Ls: " << data.Ls << '\n';
       std::cout << "Cs: " << data.Cs << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
+      std::cout << fmt::format("Excitation: {}\n", data.excitation);
       std::cout << "Active: " << data.active << '\n';
       for (const auto &elem : data.elements)
       {
@@ -1223,7 +1218,7 @@ WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundari
       std::cout << "Mode: " << data.mode_idx << '\n';
       std::cout << "Offset: " << data.d_offset << '\n';
       std::cout << "SolverType: " << data.eigen_type << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
+      std::cout << fmt::format("Excitation: {}\n", data.excitation);
       std::cout << "Active: " << data.active << '\n';
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
       std::cout << "KSPTol: " << data.ksp_tol << '\n';
@@ -1553,12 +1548,12 @@ void BoundaryData::SetUp(json &config)
       if (n_current == 0 && n_lumped == 1 && n_wave == 0)
       {
         int port_idx = ex->second.lumped_port.at(0);
-        lumpedport.at(port_idx).excitation = port_idx;
+        lumpedport.at(port_idx).excitation = ExcitationIdx(port_idx);
       }
       else if (n_current == 0 && n_lumped == 0 && n_wave == 1)
       {
         int port_idx = ex->second.wave_port.at(0);
-        waveport.at(port_idx).excitation = port_idx;
+        waveport.at(port_idx).excitation = ExcitationIdx(port_idx);
       }
     }
   }

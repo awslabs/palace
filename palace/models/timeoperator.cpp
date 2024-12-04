@@ -67,7 +67,7 @@ public:
 
     // Already asserted that only that time dependant solver only has a single excitation
     auto excitation_helper = space_op.BuildPortExcitationHelper();
-    int excitation_idx = excitation_helper.excitations.begin()->first;
+    auto excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
     space_op.GetExcitationVector(excitation_idx, NegJ);
