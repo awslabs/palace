@@ -172,15 +172,23 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0 and !PF)
+  if (iodata.solver.linear.divfree_max_it > 0)
   {
-    Mpi::Print(" Configuring divergence-free projection\n");
-    constexpr int divfree_verbose = 0;
-    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
+    if (PF)
+    {
+      Mpi::Warning("Divergence-free projection is not compatible with non-zero "
+                   "Floquet wave vector!\n");
+    }
+    else
+    {
+      Mpi::Print(" Configuring divergence-free projection\n");
+      constexpr int divfree_verbose = 0;
+      divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
-    eigen->SetDivFreeProjector(*divfree);
+      eigen->SetDivFreeProjector(*divfree);
+    }
   }
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
