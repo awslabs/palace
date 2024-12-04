@@ -6,6 +6,7 @@ on:
 
 jobs:
   cleanup-preview-docs:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
