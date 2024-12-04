@@ -98,55 +98,35 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
   {
     return;
   }
-  Mpi::Print("\nConfiguring Robin impedance BC at attributes:\n");
+
+  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
+  auto to = [&buf](auto fmt, auto &&...args)
+  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+
+  using VT = IoData::ValueType;
+
+  to("\nConfiguring Robin impedance BC at attributes:\n");
   for (const auto &bdr : boundaries)
   {
     for (auto attr : bdr.attr_list)
     {
-      mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
-      bool comma = false;
-      Mpi::Print(" {:d}:", attr);
+      to(" {:d}:", attr);
       if (std::abs(bdr.Rs) > 0.0)
       {
-        Mpi::Print(" Rs = {:.3e} Ω/sq",
-                   iodata.DimensionalizeValue(IoData::ValueType::IMPEDANCE, bdr.Rs));
-        comma = true;
+        to(" Rs = {:.3e} Ω/sq,", iodata.DimensionalizeValue(VT::IMPEDANCE, bdr.Rs));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
-        if (comma)
-        {
-          Mpi::Print(",");
-        }
-        Mpi::Print(" Ls = {:.3e} H/sq",
-                   iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, bdr.Ls));
-        comma = true;
+        to(" Ls = {:.3e} H/sq,", iodata.DimensionalizeValue(VT::INDUCTANCE, bdr.Ls));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
-        if (comma)
-        {
-          Mpi::Print(",");
-        }
-        Mpi::Print(" Cs = {:.3e} F/sq",
-                   iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, bdr.Cs));
-        comma = true;
+        to(" Cs = {:.3e} F/sq,", iodata.DimensionalizeValue(VT::CAPACITANCE, bdr.Cs));
       }
-      if (comma)
-      {
-        Mpi::Print(",");
-      }
-      if (mesh.SpaceDimension() == 3)
-      {
-        Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
-      }
-      else
-      {
-        Mpi::Print(" n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
-      }
-      Mpi::Print("\n");
+      to(" n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }
   }
+  Mpi::Print("{}", fmt::to_string(buf));
 }
 
 mfem::Array<int> SurfaceImpedanceOperator::GetAttrList() const
