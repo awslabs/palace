@@ -44,7 +44,6 @@ protected:
     TableWithCSVFile domain_E;
 
   public:
-    DomainsPostPrinter() = default;
     DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                        const PostOperator &post_op, const std::string &idx_col_name,
                        int n_expected_rows);
@@ -62,7 +61,6 @@ protected:
     TableWithCSVFile surface_Q;
 
   public:
-    SurfacesPostPrinter() = default;
     SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const PostOperator &post_op, const std::string &idx_col_name,
                         int n_expected_rows);
@@ -87,7 +85,6 @@ protected:
     bool has_imag = false;
 
   public:
-    ProbePostPrinter() = default;
     ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const PostOperator &post_op, const std::string &idx_col_name,
                      int n_expected_rows);
@@ -110,7 +107,6 @@ protected:
     TableWithCSVFile error_indicator;
 
   public:
-    ErrorIndicatorPostPrinter() = default;
     ErrorIndicatorPostPrinter(bool do_measurement, bool root, const fs::path &post_dir);
 
     void PrintIndicatorStatistics(const PostOperator &post_op,

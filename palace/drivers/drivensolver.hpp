@@ -40,7 +40,6 @@ private:
     TableWithCSVFile domain_E = {};
 
   public:
-    DomainsPostPrinter() = default;
     DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                        const PostOperator &post_op,
                        const PortExcitationHelper &excitation_helper, int n_expected_rows);
@@ -57,7 +56,6 @@ private:
     TableWithCSVFile surface_Q = {};
 
   public:
-    SurfacesPostPrinter() = default;
     SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const PostOperator &post_op,
                         const PortExcitationHelper &excitation_helper, int n_expected_rows);
@@ -81,7 +79,6 @@ private:
     bool has_imag = false;
 
   public:
-    ProbePostPrinter() = default;
     ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const PostOperator &post_op,
                      const PortExcitationHelper &excitation_helper, int n_expected_rows);
@@ -101,7 +98,6 @@ private:
     TableWithCSVFile surface_I;
 
   public:
-    CurrentsPostPrinter() = default;
     CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const SurfaceCurrentOperator &surf_j_op,
                         const PortExcitationHelper &excitation_helper, int n_expected_rows);
@@ -117,7 +113,6 @@ private:
     TableWithCSVFile port_I;
 
   public:
-    PortsPostPrinter() = default;
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op,
                      const PortExcitationHelper &excitation_helper, int n_expected_rows);
@@ -148,7 +143,6 @@ private:
     PortExcitationHelper excitation_helper_;
 
   public:
-    SParametersPostPrinter() = default;
     SParametersPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                            const LumpedPortOperator &lumped_port_op,
                            const WavePortOperator &wave_port_op,

@@ -37,7 +37,6 @@ private:
   public:
     int stdout_int_print_width = 0;
 
-    EigenPostPrinter() = default;
     EigenPostPrinter(bool do_measurement, bool root, const fs::path &post_dir, int n_post);
     void AddMeasurement(int eigen_print_idx, const PostOperator &post_op, double error_bkwd,
                         double error_abs, const IoData &iodata);
@@ -51,7 +50,6 @@ private:
     TableWithCSVFile port_I;
 
   public:
-    PortsPostPrinter() = default;
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op, int n_expected_rows);
     void AddMeasurement(int eigen_print_idx, const PostOperator &post_op,
@@ -71,7 +69,6 @@ private:
     std::vector<int> ports_with_R;
 
   public:
-    EPRPostPrinter() = default;
     EPRPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                    const LumpedPortOperator &lumped_port_op, int n_expected_rows);
 
