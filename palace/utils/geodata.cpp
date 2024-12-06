@@ -1721,35 +1721,29 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
 namespace
 {
 
-void ComputeCentroid(std::unique_ptr<mfem::Mesh> &mesh,
-                     const std::unordered_set<int> &vertidxs, mfem::Vector &centroid,
-                     double &diameter)
+// Compute the centroid of a set of vertices.
+mfem::Vector ComputeCentroid(std::unique_ptr<mfem::Mesh> &mesh,
+                             const std::unordered_set<int> &vertidxs)
 {
-  int sdim = mesh->SpaceDimension();
-  mfem::Vector xMax(sdim), xMin(sdim), xDiff(sdim);
+  const int sdim = mesh->SpaceDimension();
+  mfem::Vector centroid(sdim);
   centroid = 0.0;
   for (const int v : vertidxs)
   {
     mfem::Vector coord(mesh->GetVertex(v), 3);
     centroid += coord;
-    for (int j = 0; j < sdim; j++)
-    {
-      xMax[j] = std::max(xMax[j], coord[j]);
-      xMin[j] = std::min(xMin[j], coord[j]);
-    }
   }
   centroid /= (double)vertidxs.size();
-
-  xDiff = xMax;
-  xDiff -= xMin;
-  diameter = xDiff.Norml2();  // mesh diameter
+  return centroid;
 }
 
+// Compute the normal vector for a set of elements. If "inside" is true, normal will
+// point inside the mesh, otherwise it will point outside the mesh.
 mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
                            const std::unordered_set<int> &elem_set, bool inside,
                            bool check_planar = true)
 {
-  int sdim = mesh->SpaceDimension();
+  const int sdim = mesh->SpaceDimension();
   mfem::IsoparametricTransformation T;
   mfem::Vector loc_normal(sdim), normal(sdim);
   normal = 0.0;
@@ -1757,16 +1751,16 @@ mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
 
   auto UpdateNormal = [&](int el, mfem::ElementTransformation &T)
   {
-    // Compute normal
+    // Compute normal.
     const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
     T.SetIntPoint(&ip);
     mfem::CalcOrtho(T.Jacobian(), loc_normal);
 
-    // Normalize it
+    // Normalize it.
     loc_normal /= loc_normal.Norml2();
 
-    // To find if the normal is pointing inside or outside the mesh
-    // we compare the boundary element position to its adjacement element
+    // To find if the normal is pointing inside or outside the mesh,
+    // we compare the boundary element position to its adjacent element.
     mfem::Array<int> vert_bdr;
     mesh->GetBdrElementVertices(el, vert_bdr);
     mfem::Vector bdr_elem_center(sdim), adj_elem_center(sdim);
@@ -1787,9 +1781,6 @@ mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
     bdr_elem_offset_p += loc_normal;
     bdr_elem_offset_n = bdr_elem_center;
     bdr_elem_offset_n -= loc_normal;
-    // Mpi::Print("dist_n: {:.3e}, dist_p: {:.3e}\n",
-    // adj_elem_center.DistanceTo(bdr_elem_offset_n),
-    // adj_elem_center.DistanceTo(bdr_elem_offset_p));
     if (inside && (adj_elem_center.DistanceTo(bdr_elem_offset_n) <
                    adj_elem_center.DistanceTo(bdr_elem_offset_p)))
     {
@@ -1802,14 +1793,14 @@ mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
     }
 
     // Check if the boundary is planar by comparing the current elem's
-    // normal to the average normal (accumulated so far)
+    // normal to the average normal (accumulated so far).
     if (count > 0 && check_planar)
     {
       mfem::Vector diff(sdim);
       diff = normal;
       diff /= count;
       diff -= loc_normal;
-      MFEM_VERIFY(diff.Norml2() < 1e-6,
+      MFEM_VERIFY(diff.Norml2() < 1e-8,
                   "Periodic boundary mapping is only supported for planar boundaries.");
     }
     normal += loc_normal;
@@ -1826,86 +1817,84 @@ mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
   return normal;
 }
 
-void FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
-                      const std::unordered_set<int> &vertidxs, const mfem::Vector &centroid,
-                      const double &diameter, std::vector<mfem::Vector> &unique_pts,
-                      const double &norm_tol = 1e-6)
+// Identify up to four unique points within a set.
+// 1. The centroid of the set.
+// 2. A point offset from the centroid by 1 mesh unit in the normal direction.
+// 3. The farthest point with a unique distance from the centroid.
+// 4. The 2nd-farthest point with a unique distance from the centroid.
+std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
+                                           const std::unordered_set<int> &vertidxs,
+                                           const mfem::Vector &centroid,
+                                           const mfem::Vector &normal,
+                                           const double &mesh_dim,
+                                           const double &tol = 1e-6)
 {
   const int sdim = mesh->SpaceDimension();
+  std::vector<mfem::Vector> unique_pts;
+
+  // For each point, compute its distance to the centroid.
   mfem::Vector coord(sdim);
-  std::unordered_map<int, std::unordered_set<int>> dist2points;
+  std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
   for (const int v : vertidxs)
   {
     coord = mesh->GetVertex(v);
     double dist = coord.DistanceTo(centroid);
-    // convert dist to integer to avoid floating differences
-    dist2points[std::round(dist / diameter * 1e8)].insert(v);
+    // Convert dist to integer to avoid floating point differences.
+    dist2points[std::round(dist / mesh_dim * 1e8)].insert(v);
   }
 
-  std::priority_queue<std::pair<int, int>, std::vector<std::pair<int, int>>,
-                      std::greater<std::pair<int, int>>>
-      q;
-  int k = 10;  // number of points to keep
-  int num_unique_dist = 0;
+  // Loop over the distances, points chosen have a unique distance and are not collinear.
+  // Centroid is always considered a unique point.
+  unique_pts.push_back(centroid);
+  mfem::Vector cross_product(sdim);
+  cross_product = 0.0;
   for (const auto &[dist, pts_set] : dist2points)
   {
-    // Only consider unique distances
-    if (pts_set.size() == 1)
+    // Only consider unique non-zero distances.
+    if (pts_set.size() == 1 && dist > 0)
     {
-      num_unique_dist++;
       int v = *pts_set.begin();
       coord = mesh->GetVertex(v);
-      if (q.size() < k)
+      unique_pts.push_back(coord); // Add point.
+      // Once we have 3 points, check for collinearity
+      if (unique_pts.size() == 3)
       {
-        q.push(std::pair<int, int>(dist, v));
-      }
-      else if (q.top().first < dist)
-      {
-        q.pop();
-        q.push(std::pair<int, int>(dist, v));
+        // v1 = P2 - P1, v2 = P3 - P1.
+        mfem::Vector v1(sdim), v2(sdim);
+        v1 = unique_pts[1];
+        v1 -= unique_pts[0];
+        v2 = unique_pts[2];
+        v2 -= unique_pts[0];
+        v1.cross3D(v2, cross_product);
+        // If normal is ~0, points are collinear. Remove last point and continue loop.
+        if (cross_product.Norml2() < tol)
+        {
+          unique_pts.pop_back();
+        }
+        else
+        {
+          break;
+        }
       }
     }
   }
 
-  unique_pts.push_back(centroid);
-  mfem::Vector normal(sdim);
-  normal = 0.0;  //
+  // Add point offset from centroid in normal direction.
+  coord = centroid;
+  coord += normal;
+  unique_pts.push_back(coord);
 
-  while (q.size() > 0 and normal.Norml2() < norm_tol)
-  {
-    coord = mesh->GetVertex(q.top().second);
-    // Mpi::Print("pts: {:d}, x/y/z: {:.3e}, {:.3e}, {:.3e}, dist: {:d}\n", q.top().second,
-    // coord[0], coord[1], coord[2], q.top().first); Mpi::Print("dist2points.size():
-    // {:d}\n",dist2points[q.top().first].size());
-    q.pop();
-    unique_pts.push_back(coord);
-    if (unique_pts.size() == 3)
-    {
-      // v1 = P2 - P1, v2 = P3 - P1
-      mfem::Vector v1(sdim), v2(sdim);
-      v1 = unique_pts[1];
-      v1 -= unique_pts[0];
-      v2 = unique_pts[2];
-      v2 -= unique_pts[0];
-      v1.cross3D(v2, normal);
-      // Mpi::Print("q.size: {:d}, normal.linf: {:.3e}\n", q.size(), normal.Normlinf());
-      if (normal.Norml2() < norm_tol)
-      {
-        unique_pts.pop_back();
-      }
-    }
-  }
+  return unique_pts;
 }
 
+// Use 4 point pairs (donor, receiver) to compute the affine transformation matrix.
 void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
                                  const std::vector<mfem::Vector> &receiver_pts,
                                  mfem::DenseMatrix &transformation)
 {
-  // Use 4 point pairs (donor, receiver) to compute the affine
-  // transformation matrix
   mfem::DenseMatrix A(12);
   A = 0.0;
-  mfem::Vector rhs(12), affine_coeffs(12);
+  mfem::Vector rhs(12);
   for (int i = 0; i < 4; i++)
   {
     A(3 * i, 0) = A(3 * i + 1, 4) = A(3 * i + 2, 8) = donor_pts[i][0];
@@ -1917,26 +1906,25 @@ void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
     rhs[3 * i + 2] = receiver_pts[i][2];
   }
 
-  // coeffs = A^-1 rhs
-  A.Invert();  // Invert in place
-  A.Mult(rhs, affine_coeffs);
+  // Solve linear system A * rhs = affine coeffs.
+  mfem::LinearSolve(A, rhs.GetData());
 
-  // Build affine transformation matrix
+  // Build affine transformation matrix.
   transformation = 0.0;
   for (int i = 0; i < 3; i++)
   {
     for (int j = 0; j < 4; j++)
     {
-      transformation(i, j) = affine_coeffs[i * 4 + j];
+      transformation(i, j) = rhs[i * 4 + j];
     }
   }
   transformation(3, 3) = 1.0;
 }
 
+// Calculate the rotation matrix between two vectors.
 void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
                      mfem::DenseMatrix &transformation)
 {
-  // Calculate the rotation matrix between two vectors
   mfem::DenseMatrix R(3), vx(3), vx2(3);
 
   mfem::Vector v(normal1.Size());
@@ -1976,11 +1964,10 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
 
   mfem::Vector coord(sdim), at(sdim), dx(sdim);
 
-  // Similar to MFEM's CreatePeriodicVertexMapping
-  // maps from replica to primary vertex
+  // Similar to MFEM's CreatePeriodicVertexMapping, maps from replica to primary vertex.
   std::unordered_map<int, int> replica2primary;
 
-  // KD-tree containing all the receiver points
+  // KD-tree containing all the receiver points.
   std::unique_ptr<mfem::KDTreeBase<int, double>> kdtree;
   if (sdim == 1)
   {
@@ -1999,14 +1986,14 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     MFEM_ABORT("Invalid space dimension.");
   }
 
-  // Add all receiver points to KD-tree
+  // Add all receiver points to KD-tree.
   for (const int v : receiver_v)
   {
     kdtree->AddPoint(mesh->GetVertex(v), v);
   }
   kdtree->Sort();
 
-  // Loop over donor points and find the corresponding receiver point
+  // Loop over donor points and find the corresponding receiver point.
   for (int vi : donor_v)
   {
     mfem::Vector donor_coord(4), receiver_coord(4);
@@ -2015,18 +2002,13 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     at.MakeRef(receiver_coord, 0);
 
     coord = mesh->GetVertex(vi);
-    // Mpi::Print("Mapping donor point: {:d} ({:.3e}, {:.3e}, {:.3e})", vi, donor_coord[0],
-    // donor_coord[1], donor_coord[2]);
-    //  Apply transformation
-    //  receiver = transform * donor
+    // Apply transformation, receiver = transform * donor.
     transform.Mult(donor_coord, receiver_coord);
 
     const int vj = kdtree->FindClosestPoint(at.GetData());
     coord = mesh->GetVertex(vj);
     dx = at;
     dx -= coord;
-    // Mpi::Print(" to receiver point: {:d} ({:.3e}, {:.3e}, {:.3e}), with transform error
-    // {:.3e}\n", vj, receiver_coord[0], receiver_coord[1], receiver_coord[2], dx.Norml2());
 
     MFEM_VERIFY(dx.Norml2() < tol,
                 "Could not match points on periodic boundaries, "
@@ -2050,6 +2032,174 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   }
 
   return v2v;
+}
+
+std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
+                                                const struct palace::config::PeriodicData &data,
+                                                const double tol = 1e-8)
+{
+  // Get mesh dimensions, will be used to define a reasonable tolerance in mesh units.
+  const int sdim = mesh->SpaceDimension();
+  mfem::Vector bbmin, bbmax;
+  mesh->GetBoundingBox(bbmin, bbmax);
+  bbmax -= bbmin;
+  const double mesh_dim = bbmax.Norml2();
+  const double mesh_tol = tol * mesh_dim;
+
+  // Identify donor and receiver vertices and elements.
+  const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
+  mfem::Vector coord(sdim);
+  std::unordered_set<int> bdr_v_donor, bdr_v_receiver;
+  std::unordered_set<int> bdr_e_donor, bdr_e_receiver;
+  bool has_tets = false;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    int attr = mesh->GetBdrAttribute(be);
+    auto donor = std::find(da.begin(), da.end(), attr) != da.end();
+    auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
+    if (donor || receiver)
+    {
+      int el, info;
+      mesh->GetBdrElementAdjacentElement(be, el, info);
+      if (mesh->GetElementType(el) == mfem::Element::TETRAHEDRON)
+      {
+        has_tets = true;
+      }
+      if (donor)
+      {
+        bdr_e_donor.insert(be);
+      }
+      if (receiver)
+      {
+        bdr_e_receiver.insert(be);
+      }
+      mfem::Array<int> vertidxs;
+      mesh->GetBdrElementVertices(be, vertidxs);
+      for (int i = 0; i < vertidxs.Size(); i++)
+      {
+        coord = mesh->GetVertex(vertidxs[i]);
+        if (donor)
+        {
+          bdr_v_donor.insert(vertidxs[i]);
+        }
+        else if (receiver)
+        {
+          bdr_v_receiver.insert(vertidxs[i]);
+        }
+      }
+    }
+  }
+
+  MFEM_VERIFY(
+    bdr_v_donor.size() == bdr_v_receiver.size(),
+    "Different number of "
+    "vertices on donor and receiver boundaries. Cannot create periodic mesh.");
+
+  const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
+  Mpi::Print("Total number of elements: {:d}\n", mesh->GetNE());
+  Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
+  // How to check if the mesh is OK?
+  // Count number of elems in the periodic direction?
+  // If hex/prism: Count boundary elements on donor+receiver,
+  // if total NE = ndonorE+nReceiverE: not enough cells?
+  // If pure tet mesh NE = 3*(ndonorE+nreceiverE): not enough
+  // Mixed mesh is trickier
+  // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
+  // ALREADY CREATED WITH PERIODICITY!!!
+  mfem::Array<mfem::Geometry::Type> geoms;
+  mesh->GetGeometries(3, geoms);
+  if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
+  {
+    // Pure tet mesh
+    MFEM_VERIFY(mesh->GetNE() > 3 * num_periodic_bc_elems,
+                "Not enough mesh elements in periodic direction!");
+  }
+  else if (geoms.Size() > 1 && has_tets)
+  {
+    // Mixed mesh
+    MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
+                "Not enough mesh elements in periodic direction!");
+  }
+  else
+  {
+    // No tets
+     MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
+                 "Not enough mesh elements in periodic direction!");
+    }
+
+  // Determine the affine transformation between donor and receiver points.
+  // Use the translation vector or affine transformation matrix if provided
+  // in the config file, otherwise automatically detect the transformation.
+  mfem::DenseMatrix transformation(4);
+  mfem::Vector translation(data.translation.size());
+  std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
+  mfem::Vector affine_vec(data.affine_transform.size());
+  std::copy(data.affine_transform.begin(), data.affine_transform.end(),
+            affine_vec.GetData());
+
+  if (translation.Norml2() > mesh_tol)
+  {
+    // Use user-provided translation.
+    for (int i = 0; i < 3; i++)
+    {
+      transformation(i, i) = 1.0;
+      transformation(i, 3) = translation[i];
+    }
+    transformation(3, 3) = 1.0;
+  }
+  else if (affine_vec.Norml2() > mesh_tol)
+  {
+    // Use user-provided affine transformation matrix.
+    for (int i = 0; i < 4; i++)
+    {
+      for (int j = 0; j < 4; j++)
+      {
+        transformation(i, j) = affine_vec[i * 4 + j];
+      }
+    }
+  }
+  else
+  {
+    // Automatically detect transformation.
+    // Compute the centroid for each boundary.
+    mfem::Vector donor_centroid, receiver_centroid;
+    donor_centroid = ComputeCentroid(mesh, bdr_v_donor);
+    receiver_centroid = ComputeCentroid(mesh, bdr_v_receiver);
+
+    // Compute the normal vector for each boundary.
+    mfem::Vector donor_normal, receiver_normal;
+    donor_normal = ComputeNormal(mesh, bdr_e_donor, true);
+    receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
+
+    // Compute a set of unique points for each boundary.
+    std::vector<mfem::Vector> donor_pts, receiver_pts;
+    donor_pts = FindUniquePoints(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
+    receiver_pts = FindUniquePoints(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
+    MFEM_VERIFY(donor_pts.size() == receiver_pts.size(),
+                "Different number of unique points on donor and receiver boundaries.");
+
+    // With 4 pairs of matching points, compute the unique affine transformation.
+    // With < 4, cannot determine a unique transformation. We assume there is no
+    // rotation along the boundary normal direction, compute the rotation between
+    // the two normals and the translation between the two centroids.
+    if (donor_pts.size() == 4)
+    {
+      ComputeAffineTransformation(donor_pts, receiver_pts, transformation);
+    }
+    else
+    {
+      // Use normals to compute a rotation matrix
+      ComputeRotation(donor_normal, receiver_normal, transformation);
+
+      // Add centroids translation to transform matrix
+      transformation(0, 3) = receiver_centroid[0] - donor_centroid[0];
+      transformation(1, 3) = receiver_centroid[1] - donor_centroid[1];
+      transformation(2, 3) = receiver_centroid[2] - donor_centroid[2];
+      transformation(3, 3) = 1.0;
+    }
+  }
+
+  return CreatePeriodicVertexMapping(mesh, bdr_v_donor, bdr_v_receiver, transformation, mesh_tol);
 }
 
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature,
@@ -2107,193 +2257,14 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
 
     for (const auto &data : boundaries.periodic)
     {
-      // Identify donor and receiver vertices
-      const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
-      double norm_tol = 1e-6;  //?
-      const int sdim = periodic_mesh->SpaceDimension();
-      mfem::Vector coord(sdim);
-      std::unordered_set<int> bdr_v_donor, bdr_v_receiver;
-      std::unordered_set<int> bdr_e_donor, bdr_e_receiver;
-      bool has_tets = false;
-      for (int be = 0; be < periodic_mesh->GetNBE(); be++)
-      {
-        int attr = periodic_mesh->GetBdrAttribute(be);
-        auto donor = std::find(da.begin(), da.end(), attr) != da.end();
-        auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
-        if (donor || receiver)
-        {
-          int el, info;
-          periodic_mesh->GetBdrElementAdjacentElement(be, el, info);
-          if (periodic_mesh->GetElementType(el) == mfem::Element::TETRAHEDRON)
-          {
-            has_tets = true;
-          }
-
-          if (donor)
-            bdr_e_donor.insert(be);
-          if (receiver)
-            bdr_e_receiver.insert(be);
-          mfem::Array<int> vertidxs;
-          periodic_mesh->GetBdrElementVertices(be, vertidxs);
-          for (int i = 0; i < vertidxs.Size(); i++)
-          {
-            coord = periodic_mesh->GetVertex(vertidxs[i]);
-            if (donor)
-              bdr_v_donor.insert(vertidxs[i]);
-            else if (receiver)
-              bdr_v_receiver.insert(vertidxs[i]);
-          }
-        }
-      }
-      const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
-      Mpi::Print("Total number of elements: {:d}\n", periodic_mesh->GetNE());
-      Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
-      // How to check if the mesh is OK?
-      // Count number of elems in the periodic direction?
-      // If hex/prism: Count boundary elements on donor+receiver,
-      // if total NE = ndonorE+nReceiverE: not enough cells?
-      // If pure tet mesh NE = 3*(ndonorE+nreceiverE): not enough
-      // Mixed mesh is trickier
-      // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
-      // ALREADY CREATED WITH PERIODICITY!!!
-      /**/
-      mfem::Array<mfem::Geometry::Type> geoms;
-      periodic_mesh->GetGeometries(3, geoms);
-      if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
-      {
-        // Pure tet mesh
-        MFEM_VERIFY(periodic_mesh->GetNE() > 3 * num_periodic_bc_elems,
-                    "Not enough mesh elements in periodic direction!");
-      }
-      else if (geoms.Size() > 1 && has_tets)
-      {
-        // Mixed mesh
-        MFEM_VERIFY(periodic_mesh->GetNE() > num_periodic_bc_elems,
-                    "Not enough mesh elements in periodic direction!");
-      }
-      else
-      {
-        // No tets
-        MFEM_VERIFY(periodic_mesh->GetNE() > num_periodic_bc_elems,
-                    "Not enough mesh elements in periodic direction!");
-      }
-      /**/
-      mfem::DenseMatrix transformation(4);
-      // If only translation is provided -> use it
-      // If only affine transfomr is provided -> use it
-      // If both affine transform and translation are provided -> error or warning?
-      // If neither -> automatic detection
-      mfem::Vector translation(data.translation.size());
-      std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
-      mfem::Vector affine_vec(data.affine_transform.size());
-      std::copy(data.affine_transform.begin(), data.affine_transform.end(),
-                affine_vec.GetData());
-
-      if (translation.Norml2() > 1e-12)  // which value to use?
-      {
-        // use user-provided translation
-        for (int i = 0; i < 3; i++)
-        {
-          transformation(i, i) = 1.0;
-          transformation(i, 3) = translation[i];
-        }
-        transformation(3, 3) = 1.0;
-      }
-      else if (affine_vec.Norml2() > 1e-12)  // which value to use?
-      {
-        // use affine transformation matrix
-        for (int i = 0; i < 4; i++)
-        {
-          for (int j = 0; j < 4; j++)
-          {
-            transformation(i, j) = affine_vec[i * 4 + j];
-          }
-        }
-      }
-      else
-      {
-        // automatically detect transformation
-        mfem::Vector donor_centroid(sdim), receiver_centroid(sdim);
-        mfem::Vector translation2(sdim);
-        mfem::Vector donor_normal(sdim), receiver_normal(sdim);
-
-        double donor_dia, receiver_dia, diameter;
-        MFEM_VERIFY(
-            bdr_v_donor.size() == bdr_v_receiver.size(),
-            "Different number of "
-            "vertices on donor and receiver boundaries. Cannot create periodic mesh.");
-        ComputeCentroid(periodic_mesh, bdr_v_donor, donor_centroid, donor_dia);
-        ComputeCentroid(periodic_mesh, bdr_v_receiver, receiver_centroid, receiver_dia);
-
-        translation2 = receiver_centroid;
-        translation2 -= donor_centroid;
-        Mpi::Print("computed translation: {:.9e}, {:.9e}, {:.9e}\n", translation2[0],
-                   translation2[1], translation2[2]);
-
-        diameter = std::max(donor_dia, receiver_dia);
-        norm_tol = 1e-6 * diameter;
-        // Compute normal so it points inside domain for donor and outside for receiver
-        // If not planar, error out
-        donor_normal = ComputeNormal(periodic_mesh, bdr_e_donor, true);
-        receiver_normal = ComputeNormal(periodic_mesh, bdr_e_receiver, false);
-        Mpi::Print("Donor normal: {:.9e}, {:.9e}, {:.9e}\n", donor_normal[0],
-                   donor_normal[1], donor_normal[2]);
-        Mpi::Print("Receiver normal: {:.9e}, {:.9e}, {:.9e}\n", receiver_normal[0],
-                   receiver_normal[1], receiver_normal[2]);
-
-        std::vector<mfem::Vector> donor_pts, receiver_pts;
-        FindUniquePoints(periodic_mesh, bdr_v_donor, donor_centroid, diameter, donor_pts,
-                         norm_tol);
-        FindUniquePoints(periodic_mesh, bdr_v_receiver, receiver_centroid, diameter,
-                         receiver_pts, norm_tol);
-
-        // Add point offset from centroid in normal direction
-        donor_centroid += donor_normal;
-        receiver_centroid += receiver_normal;
-        donor_pts.push_back(donor_centroid);
-        receiver_pts.push_back(receiver_centroid);
-
-        Mpi::Print("Number of unique donor pts: {:d}\n", donor_pts.size());
-        Mpi::Print("Number of unique receiver pts: {:d}\n", receiver_pts.size());
-
-        MFEM_VERIFY(donor_pts.size() == receiver_pts.size(),
-                    "Different number of unique points on donor and receiver boundaries.");
-
-        if (donor_pts.size() == 4)
-        {
-          ComputeAffineTransformation(donor_pts, receiver_pts, transformation);
-        }
-        else
-        {
-          // Use normals to compute a rotation matrix
-          ComputeRotation(donor_normal, receiver_normal, transformation);
-
-          // Add centroids translation to transform matrix
-          transformation(0, 3) = translation2[0];
-          transformation(1, 3) = translation2[1];
-          transformation(2, 3) = translation2[2];
-          transformation(3, 3) = 1.0;
-        }
-        Mpi::Print("Affine transformation matrix\n");
-        transformation.Print();
-      }
-      Mpi::Print("CreatePeriodicVertexMapping\n");
-      auto periodic_mapping = CreatePeriodicVertexMapping(
-          periodic_mesh, bdr_v_donor, bdr_v_receiver, transformation, norm_tol);
-
-      // mfem::Vector translation(data.translation.size());
-      // std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
-      // auto periodic_mapping =
-      //     periodic_mesh->CreatePeriodicVertexMapping({translation2}, 1E-6);
-      // periodic_mesh->
-      Mpi::Print("MFEM MakePeriodic\n");
+      auto periodic_mapping = DeterminePeriodicVertexMapping(periodic_mesh, data);
       auto p_mesh = std::make_unique<mfem::Mesh>(
           mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
       periodic_mesh = std::move(p_mesh);
     }
     mesh = std::move(periodic_mesh);
   }
-  Mpi::Print("Return mesh\n");
+
   return mesh;
 }
 
