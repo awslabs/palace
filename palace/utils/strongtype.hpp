@@ -54,7 +54,7 @@ template <typename Tag, typename T>
 struct fmt::formatter<StrongT<Tag, T>> : fmt::formatter<T>
 {
   template <typename FormatContext>
-  auto format(const StrongT<Tag, T> &v, FormatContext &ctx)
+  auto format(const StrongT<Tag, T> &v, FormatContext &ctx) const
   {
     return fmt::formatter<T>::format(v.get(), ctx);
   }
