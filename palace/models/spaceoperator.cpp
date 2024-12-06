@@ -818,7 +818,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddDampingBdrCoefficients(a1, fbi);
     AddRealMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-    Mpi::Print("Complex PC with a2: {:.3e}\n", a2);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
     AddPeriodicCoefficients(1.0, fr, fpwi, fpi);
