@@ -26,6 +26,7 @@ else
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
+        "cylinder/floquet",
         "coaxial/open",
         "coaxial/matched",
         "cpw/lumped_uniform",
@@ -104,6 +105,21 @@ if "cylinder/waveguide" in cases
         "cylinder",
         "waveguide.json",
         "waveguide";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
+    )
+end
+
+if "cylinder/floquet" in cases
+    @info "Testing cylinder/floquet (periodic)..."
+    @time testcase(
+        "cylinder",
+        "floquet.json",
+        "floquet";
         palace=palace,
         np=numprocs,
         rtol=reltol,
