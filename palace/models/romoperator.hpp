@@ -82,7 +82,7 @@ private:
   std::map<ExcitationIdx, MinimalRationInterpolation> mri;
 
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size);
+  RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
