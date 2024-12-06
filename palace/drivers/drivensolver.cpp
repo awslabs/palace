@@ -206,16 +206,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
-  int max_size = iodata.solver.driven.adaptive_max_size;
-  MFEM_VERIFY(max_size <= 0 || max_size > 2,
+  int max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
+  MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation > 2,
               "Adaptive frequency sweep must sample at least two frequency points!");
-  if (max_size <= 0)
+  if (max_size_per_excitation <= 0)
   {
-    max_size = 20 * excitation_helper.Size();  // Default value
+    max_size_per_excitation = 20;  // Default value
   }
-  max_size = std::min(max_size,
-                      (n_step - step0) *
-                          int(excitation_helper.Size()));  // Maximum size dictated by sweep
+  // Maximum size — no more than nr steps needed
+  max_size_per_excitation = std::min(max_size_per_excitation, (n_step - step0));
   int convergence_memory = iodata.solver.driven.adaptive_memory;
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
@@ -247,7 +246,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              n_step - step0, omega0 * unit_GHz,
              (omega0 + (n_step - step0 - 1) * delta_omega) * unit_GHz);
-  RomOperator prom_op(iodata, space_op, max_size);
+  RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(
       true);  // Suppress wave port output for offline
 
@@ -317,7 +316,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       {
         memory = 0;
       }
-      if (it == max_size)
+      if (it == max_size_per_excitation)
       {
         break;
       }
@@ -335,7 +334,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
-               (it == max_size) ? " reached maximum" : " converged with", it,
+               (it == max_size_per_excitation) ? " reached maximum" : " converged with", it,
                prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
                convergence_memory);
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
