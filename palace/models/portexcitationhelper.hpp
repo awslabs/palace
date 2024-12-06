@@ -130,7 +130,7 @@ public:
 
   [[nodiscard]] std::string FmtLog() const;
 
-  // Single Simple (only 1 port per excitation) Excitation 
+  // Single Simple (only 1 port per excitation) Excitation
   [[nodiscard]] std::tuple<bool, ExcitationIdx, PortType, int> IsSingleSimple() const
   {
     if (Size() == 1)
@@ -145,7 +145,7 @@ public:
     return std::make_tuple(false, ExcitationIdx(0), PortType::Undefined, 0);
   }
 
-  // Multiple Simple (only 1 port per excitation) Excitation 
+  // Multiple Simple (only 1 port per excitation) Excitation
   [[nodiscard]] bool IsMultipleSimple() const
   {
     return std::all_of(excitations.begin(), excitations.end(),
