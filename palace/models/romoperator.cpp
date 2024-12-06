@@ -438,12 +438,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   const std::size_t dim_V0 = dim_V;
   std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
                         static_cast<std::size_t>(has_imag));
+  voltage_norm_H.conservativeResize(dim_V + has_real + has_imag);
   if (has_real)
   {
     V[dim_V] = u.Real();
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = add_to_mri ? 1.0 : H[dim_V];
     dim_V++;
   }
   if (has_imag)
@@ -452,6 +454,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = add_to_mri ? 1.0 : H[dim_V];
     dim_V++;
   }
 

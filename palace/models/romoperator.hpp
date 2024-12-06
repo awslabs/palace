@@ -50,7 +50,8 @@ public:
 //
 class RomOperator
 {
-private:
+  // TODO: private:
+public:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
@@ -72,6 +73,7 @@ private:
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
   Eigen::VectorXcd RHS1r;
   Eigen::VectorXcd RHSr;
+  Eigen::VectorXd voltage_norm_H;  // Normalization
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;

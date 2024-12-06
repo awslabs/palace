@@ -41,7 +41,7 @@ fs::path ParaviewPath(const IoData &iodata, ExcitationIdx excitation_idx = Excit
 //
 class PostOperator
 {
-private:
+public:
   // Reference to material property operator (not owned).
   std::reference_wrapper<const MaterialOperator> mat_op;
   // Reference to mesh for paraview (re)-init

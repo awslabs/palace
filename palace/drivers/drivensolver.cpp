@@ -4,8 +4,15 @@
 #include "drivensolver.hpp"
 
 #include <complex>
+#include <iostream>
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/src/Core/IO.h>
+#include <fmt/core.h>
+#include <fmt/ostream.h>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
@@ -213,8 +220,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   {
     max_size_per_excitation = 20;  // Default value
   }
-  // Maximum size — no more than nr steps needed
-  max_size_per_excitation = std::min(max_size_per_excitation, (n_step - step0));
   int convergence_memory = iodata.solver.driven.adaptive_memory;
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
@@ -249,6 +254,84 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(
       true);  // Suppress wave port output for offline
+
+  auto &lumped_port_op = space_op.GetLumpedPortOp();
+  for (const auto &[port_idx, port_data] : lumped_port_op)
+  {
+    ComplexVector port_excitation_E;
+    space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
+    prom_op.UpdatePROM(port_excitation_E);
+
+    // Mpi::Barrier(post_op.GetComm());
+    // BlockTimer bt0(Timer::POSTPRO);
+    // post_op.SetEGridFunction(port_excitation_E, false);
+    // post_op.SetBGridFunction(port_excitation_E, false);
+    // post_op.WriteFields(100 + port_idx, 100.0 + port_idx);
+    // Mpi::Barrier(post_op.GetComm());
+
+    // // Debugging information:
+    // Mpi::Print("GetExcitationVoltage {}\n", port_data.GetExcitationVoltage());
+
+    // port_data.InitializeLinearForms(*(post_op.E)->ParFESpace());
+    // auto &voltage_form = *(port_data.v);
+
+    // Vector port_excitation_voltage_form;
+    // port_excitation_voltage_form.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    // port_excitation_voltage_form.UseDevice(true);
+    // port_excitation_voltage_form = 0.0;
+    // space_op.GetNDSpace().GetProlongationMatrix()->AddMultTranspose(
+    //     voltage_form, port_excitation_voltage_form);
+
+    // // Real GF Only
+    // auto GF = std::make_unique<GridFunction>(space_op.GetNDSpace(), false);
+    // GF->Real().SetFromTrueDofs(port_excitation_voltage_form);
+    // GF->Real().ExchangeFaceNbrData();
+    // auto v_self = port_data.GetVoltage(*GF);
+    // Mpi::Print("GetVoltage from port_excitation_voltage_form {} {}\n", v_self.real(),
+    //            v_self.imag());
+    // Mpi::Barrier(post_op.GetComm());
+
+    // GF->Real().SetFromTrueDofs(port_excitation_E.Real());
+    // GF->Real().ExchangeFaceNbrData();
+    // v_self = port_data.GetVoltage(*GF);
+    // Mpi::Print("GetVoltage from port_excitation_E (zero_metal true) {} {}\n",
+    // v_self.real(),
+    //            v_self.imag());
+    // Mpi::Barrier(post_op.GetComm());
+
+    // ComplexVector port_excitation_E_with_metal;
+    // port_excitation_E_with_metal.UseDevice(true);
+    // space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E_with_metal,
+    // false); prom_op.UpdatePROM(false, 0.0, port_excitation_E_with_metal);
+    // GF->Real().SetFromTrueDofs(port_excitation_E_with_metal.Real());
+    // GF->Real().ExchangeFaceNbrData();
+    // v_self = port_data.GetVoltage(*GF);
+    // Mpi::Print("GetVoltage from port_excitation_E_with_metal (zero_metal fasle) {} {}\n",
+    //            v_self.real(), v_self.imag());
+    // Mpi::Barrier(post_op.GetComm());
+
+    // {
+    //   ComplexVector tmp(port_excitation_E);
+    //   tmp.UseDevice(true);
+    //   tmp.Real() -= port_excitation_voltage_form;
+
+    //   post_op.SetEGridFunction(tmp, false);
+    //   post_op.SetBGridFunction(tmp, false);
+    //   post_op.WriteFields(200 + port_idx, 200.0 + port_idx);
+    //   Mpi::Barrier(post_op.GetComm());
+    // }
+    // {
+    //   ComplexVector tmp(port_excitation_E);
+    //   tmp.UseDevice(true);
+    //   tmp.Real() -= port_excitation_E_with_metal.Real();
+    //   tmp.Imag() -= port_excitation_E_with_metal.Imag();
+
+    //   post_op.SetEGridFunction(tmp, false);
+    //   post_op.SetBGridFunction(tmp, false);
+    //   post_op.WriteFields(300 + port_idx, 300.0 + port_idx);
+    //   Mpi::Barrier(post_op.GetComm());
+    // }
+  }
 
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
@@ -396,6 +479,24 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     SaveMetadata(prom_op.GetLinearSolver());
   }
   post_results.PostprocessFinal(post_op, indicator);
+
+  // Print out PROM
+  if (root)
+  {
+    Eigen::IOFormat eigenio(Eigen::FullPrecision, 0, "; ");
+
+    auto output_kr = OutputFile(post_dir + "prom-Kr.csv", false);
+    output_kr.print("{}", fmt::streamed(prom_op.Kr.format(eigenio)));
+
+    auto output_mr = OutputFile(post_dir + "prom-Mr.csv", false);
+    output_mr.print("{}", fmt::streamed(prom_op.Mr.format(eigenio)));
+
+    auto output_cr = OutputFile(post_dir + "prom-Cr.csv", false);
+    output_cr.print("{}", fmt::streamed(prom_op.Cr.format(eigenio)));
+
+    auto output_h = OutputFile(post_dir + "prom-voltage_norm_H.csv", false);
+    output_h.print("{}", fmt::streamed(prom_op.voltage_norm_H.format(eigenio)));
+  }
   return indicator;
 }
 

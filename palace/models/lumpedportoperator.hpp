@@ -46,7 +46,8 @@ public:
   bool active;
   ExcitationIdx excitation;
 
-private:
+  // TODO: private:
+public:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
