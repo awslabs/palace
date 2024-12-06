@@ -240,6 +240,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Eigenmode problem type does not support wave port boundary conditions!\n");
     }
+    if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
+    {
+      Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
+                   "with order > 1!\n");
+    }
   }
   else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
   {
