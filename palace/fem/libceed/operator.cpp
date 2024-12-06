@@ -546,10 +546,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   };
 
   // Initialize the coarse operator.
-  Mpi::Print("ceed operator.cpp L533 Creating non-symmetric op_coarse\n");
-  auto op_coarse = std::make_unique</*Symmetric*/ Operator>(
-      fespace_coarse.GetVSize(),
-      // auto op_coarse = std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
+  auto op_coarse = std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
       fespace_coarse.GetVSize());
 
   // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
@@ -570,19 +567,14 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
       }
     }
     CeedInt nsub_ops_fine;
-    CeedOperator *sub_ops_fine, *sub_ops_fine_t;
+    CeedOperator *sub_ops_fine;
     PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[id], &nsub_ops_fine));
     PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[id], &sub_ops_fine));
-    PalaceCeedCall(
-        ceed, CeedCompositeOperatorGetSubList(op_fine.GetTranspose(id), &sub_ops_fine_t));
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
-      CeedOperator sub_op_coarse, sub_op_coarse_t;
+      CeedOperator sub_op_coarse;
       SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
-      SingleOperatorCoarsen(ceed, sub_ops_fine_t[k], &sub_op_coarse_t);
-      op_coarse->AddSubOperator(sub_op_coarse,
-                                sub_op_coarse_t);  // Sub-operator owned by ceed::Operator
-      // op_coarse->AddSubOperator(sub_op_coarse);  // Sub-operator owned by ceed::Operator
+      op_coarse->AddSubOperator(sub_op_coarse);  // Sub-operator owned by ceed::Operator
     }
   }
 
