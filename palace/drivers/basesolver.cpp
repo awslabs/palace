@@ -14,6 +14,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
@@ -283,6 +284,16 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
     }
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const PortExcitationHelper &excitation_helper) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["Excitations"] = excitation_helper;
     WriteMetadata(post_dir, meta);
   }
 }

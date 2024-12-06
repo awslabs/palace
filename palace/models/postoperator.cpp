@@ -22,33 +22,41 @@ namespace palace
 
 using namespace std::complex_literals;
 
-namespace
+fs::path ParaviewPath(const IoData &iodata, ExcitationIdx excitation_idx,
+                      size_t max_excitation)
 {
-
-std::string CreateParaviewPath(const IoData &iodata, const std::string &name)
-{
-  return fs::path(iodata.problem.output) / "paraview" / name;
+  auto out = fs::path(iodata.problem.output) / "paraview";
+  if (excitation_idx > ExcitationIdx(0))
+  {
+    int spacing = 1 + int(std::log10(max_excitation));
+    return out / fmt::format(FMT_STRING("excitation_{:0>{}}"), excitation_idx, spacing);
+  }
+  else
+  {
+    return out;
+  }
 }
 
-}  // namespace
-
-PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
-                           const std::string &name)
-  : mat_op(space_op.GetMaterialOp()),
-    surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
-    dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
-                space_op.GetRTSpace()),
-    interp_op(iodata, space_op.GetNDSpace()), lumped_port_op(&(space_op.GetLumpedPortOp())),
-    wave_port_op(&(space_op.GetWavePortOp())),
+PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op, std::string name,
+                           const std::optional<fs::path> &paraview_path)
+  : mat_op(std::cref(space_op.GetMaterialOp())),
+    mesh_ND(std::ref(space_op.GetNDSpace().GetParMesh())),
     E(std::make_unique<GridFunction>(space_op.GetNDSpace(),
                                      iodata.problem.type !=
                                          config::ProblemData::Type::TRANSIENT)),
     B(std::make_unique<GridFunction>(space_op.GetRTSpace(),
                                      iodata.problem.type !=
                                          config::ProblemData::Type::TRANSIENT)),
-    paraview(CreateParaviewPath(iodata, name), &space_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &space_op.GetNDSpace().GetParMesh())
+    name_(std::move(name)), mesh_Lc0(iodata.GetMeshLengthScale()),
+    paraview(paraview_path.value_or(ParaviewPath(iodata)) / name_, &mesh_ND.get()),
+    paraview_bdr(paraview_path.value_or(ParaviewPath(iodata)) / (name_ + "_boundary"),
+                 &mesh_ND.get()),
+    dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
+                space_op.GetRTSpace()),
+    surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
+    interp_op(iodata, space_op.GetNDSpace()), lumped_port_op(&(space_op.GetLumpedPortOp())),
+    wave_port_op(&(space_op.GetWavePortOp()))
+
 {
   U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
   U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
@@ -76,20 +84,21 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
     ret.first->second.E0i = data.GetModeFieldCoefficientImag();
   }
 
-  // Initialize data collection objects.
-  InitializeDataCollection(iodata);
+  InitializeParaviewDataCollection();
 }
 
 PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
-                           const std::string &name)
-  : mat_op(laplace_op.GetMaterialOp()),
-    surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
-    dom_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
+                           std::string name, const std::optional<fs::path> &paraview_path)
+  : mat_op(std::cref(laplace_op.GetMaterialOp())),
+    mesh_ND(std::ref(laplace_op.GetNDSpace().GetParMesh())),
     E(std::make_unique<GridFunction>(laplace_op.GetNDSpace())),
-    V(std::make_unique<GridFunction>(laplace_op.GetH1Space())),
-    paraview(CreateParaviewPath(iodata, name), &laplace_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &laplace_op.GetNDSpace().GetParMesh()),
+    V(std::make_unique<GridFunction>(laplace_op.GetH1Space())), name_(std::move(name)),
+    mesh_Lc0(iodata.GetMeshLengthScale()),
+    paraview(paraview_path.value_or(ParaviewPath(iodata)) / name_, &mesh_ND.get()),
+    paraview_bdr(paraview_path.value_or(ParaviewPath(iodata)) / (name_ + "_boundary"),
+                 &mesh_ND.get()),
+    dom_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
+    surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
     interp_op(iodata, laplace_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
@@ -102,20 +111,21 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
   Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
 
-  // Initialize data collection objects.
-  InitializeDataCollection(iodata);
+  InitializeParaviewDataCollection();
 }
 
 PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
-                           const std::string &name)
-  : mat_op(curlcurl_op.GetMaterialOp()),
-    surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetH1Space()),
-    dom_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetNDSpace()),
+                           std::string name, const std::optional<fs::path> &paraview_path)
+  : mat_op(std::cref(curlcurl_op.GetMaterialOp())),
+    mesh_ND(std::ref(curlcurl_op.GetNDSpace().GetParMesh())),
     B(std::make_unique<GridFunction>(curlcurl_op.GetRTSpace())),
-    A(std::make_unique<GridFunction>(curlcurl_op.GetNDSpace())),
-    paraview(CreateParaviewPath(iodata, name), &curlcurl_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &curlcurl_op.GetNDSpace().GetParMesh()),
+    A(std::make_unique<GridFunction>(curlcurl_op.GetNDSpace())), name_(std::move(name)),
+    mesh_Lc0(iodata.GetMeshLengthScale()),
+    paraview(paraview_path.value_or(ParaviewPath(iodata)) / name_, &mesh_ND.get()),
+    paraview_bdr(paraview_path.value_or(ParaviewPath(iodata)) / (name_ + "_boundary"),
+                 &mesh_ND.get()),
+    dom_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetNDSpace()),
+    surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetH1Space()),
     interp_op(iodata, curlcurl_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the electric field related
@@ -127,14 +137,19 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
   A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real());
   J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
 
-  // Initialize data collection objects.
-  InitializeDataCollection(iodata);
+  InitializeParaviewDataCollection();
 }
 
-void PostOperator::InitializeDataCollection(const IoData &iodata)
+void PostOperator::SetNewParaviewOutput(const fs::path &paraview_path)
 {
-  // Set up postprocessing for output to disk. Results are stored in a directory at
-  // `iodata.problem.output/paraview`.
+  paraview = {paraview_path / name_, &mesh_ND.get()};
+  paraview_bdr = {paraview_path / (name_ + "_boundary"), &mesh_ND.get()};
+  InitializeParaviewDataCollection();
+}
+
+void PostOperator::InitializeParaviewDataCollection()
+{
+  // Set up postprocessing for output to disk.
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)
   const int compress = -1;  // Default compression level
@@ -144,7 +159,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   const bool use_ho = true;
   const int refine_ho = HasE() ? E->ParFESpace()->GetMaxElementOrder()
                                : B->ParFESpace()->GetMaxElementOrder();
-  mesh_Lc0 = iodata.GetMeshLengthScale();
 
   // Output mesh coordinate units same as input.
   paraview.SetCycle(-1);
@@ -784,15 +798,15 @@ std::complex<double> PostOperator::GetSParameter(bool is_lumped_port, int idx,
                                                  int source_idx) const
 {
   ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
   // TODO: Merge lumped and wave port S_ij calcluations to allow both at same time.
   if (is_lumped_port)
   {
     const LumpedPortData &data = lumped_port_op->GetPort(idx);
     const LumpedPortData &src_data = lumped_port_op->GetPort(source_idx);
     const auto it = measurment_cache.lumped_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Lumped port index " << source_idx << " is not marked for excitation!");
+    MFEM_VERIFY(
+        src_data.HasExcitation(),
+        fmt::format("Lumped port index {} is not marked for excitation!", source_idx));
     MFEM_VERIFY(it != measurment_cache.lumped_port_vi->end(),
                 "Could not find lumped port when calculating port S-parameters!");
     std::complex<double> S_ij = it->second.S;
@@ -814,8 +828,9 @@ std::complex<double> PostOperator::GetSParameter(bool is_lumped_port, int idx,
     const WavePortData &data = wave_port_op->GetPort(idx);
     const WavePortData &src_data = wave_port_op->GetPort(source_idx);
     const auto it = measurment_cache.wave_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Wave port index " << source_idx << " is not marked for excitation!");
+    MFEM_VERIFY(
+        src_data.HasExcitation(),
+        fmt::format("Wave port index {} is not marked for excitation!", source_idx));
     MFEM_VERIFY(it != measurment_cache.wave_port_vi->end(),
                 "Could not find wave port when calculating port S-parameters!");
     std::complex<double> S_ij = it->second.S;

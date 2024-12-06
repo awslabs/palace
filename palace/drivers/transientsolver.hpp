@@ -36,7 +36,6 @@ private:
     TableWithCSVFile surface_I;
 
   public:
-    CurrentsPostPrinter() = default;
     CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
     void AddMeasurement(double t, double J_coef, const SurfaceCurrentOperator &surf_j_op,
@@ -51,7 +50,6 @@ private:
     TableWithCSVFile port_I;
 
   public:
-    PortsPostPrinter() = default;
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op, int n_expected_rows);
     void AddMeasurement(double t, double J_coef, const PostOperator &post_op,

@@ -9,6 +9,7 @@ on:
 
 jobs:
   build-docs:
+    timeout-minutes: 15
     permissions:
       contents: write
     runs-on: ubuntu-latest
