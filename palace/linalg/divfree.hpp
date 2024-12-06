@@ -24,6 +24,7 @@ namespace palace
 class FiniteElementSpaceHierarchy;
 class FiniteElementSpace;
 class MaterialOperator;
+class PeriodicBoundaryOperator;
 
 //
 // This solver implements a projection onto a divergence-free space satisfying Gᵀ M x = 0,
@@ -55,7 +56,7 @@ private:
   mutable VecType psi, rhs;
 
 public:
-  DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+  DivFreeSolver(const MaterialOperator &mat_op, PeriodicBoundaryOperator &periodic_op, FiniteElementSpace &nd_fespace,
                 FiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
                 int max_it, int print);

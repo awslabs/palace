@@ -116,9 +116,11 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  auto &GetPeriodicOp() { return periodic_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetPeriodicOp() const { return periodic_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }

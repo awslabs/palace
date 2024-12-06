@@ -13,6 +13,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/periodicboundaryoperator.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -43,7 +44,7 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
 
 template <typename VecType>
 DivFreeSolver<VecType>::DivFreeSolver(
-    const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+    const MaterialOperator &mat_op, PeriodicBoundaryOperator &periodic_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
     int print)
@@ -85,6 +86,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
   // Create the mass and weak divergence operators for divergence-free projection.
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
+  //periodic_op.AddRealMassCoefficients(-1.0/(0.3144*0.3144), epsilon_func);
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(h1_fespaces.GetFinestFESpace());

@@ -207,7 +207,6 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
                     const MaterialPropertyCoefficient *fb,
-                    const MaterialPropertyCoefficient *fpm,
                     const MaterialPropertyCoefficient *fpw,
                     const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
 {
@@ -241,10 +240,6 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
       a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
   }
-  if (fpm && !fpm->empty())
-  {
-    a.AddDomainIntegrator<VectorFEMassIntegrator>(*fpm);
-  }
   if (fpw && !fpw->empty())
   {
     a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fpw);
@@ -261,7 +256,6 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
 
 void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
                        const MaterialPropertyCoefficient *fb,
-                       const MaterialPropertyCoefficient *fpm,
                        const MaterialPropertyCoefficient *fpw,
                        const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
 {
@@ -272,10 +266,6 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
   if (fb && !fb->empty())
   {
     a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
-  }
-  if (fpm && !fpm->empty())
-  {
-    a.AddDomainIntegrator<DiffusionIntegrator>(*fpm);
   }
   if (fpw && !fpw->empty())
   {
@@ -294,37 +284,36 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
 auto AssembleOperator(
     const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fpm,
-    const MaterialPropertyCoefficient *fpw, const MaterialPropertyCoefficient *fp,
+    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fpw,
+    const MaterialPropertyCoefficient *fp,
     bool skip_zeros = false, bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
-  AddIntegrators(a, df, f, dfb, fb, fpm, fpw, fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fpw, fp, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
 
 auto AssembleOperators(
     const FiniteElementSpaceHierarchy &fespaces, const MaterialPropertyCoefficient *df,
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fpm,
-    const MaterialPropertyCoefficient *fpw, const MaterialPropertyCoefficient *fp,
+    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fpw,
+    const MaterialPropertyCoefficient *fp,
     bool skip_zeros = false, bool assemble_q_data = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddIntegrators(a, df, f, dfb, fb, fpm, fpw, fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fpw, fp, assemble_q_data);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
 auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
-                          const MaterialPropertyCoefficient *fpm,
                           const MaterialPropertyCoefficient *fpw,
                           const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
                           bool assemble_q_data = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddAuxIntegrators(a, f, fb, fpm, fpw, fp, assemble_q_data);
+  AddAuxIntegrators(a, f, fb, fpw, fp, assemble_q_data);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
@@ -346,7 +335,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto k = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, nullptr,
+  auto k = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr,
                             skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -378,7 +367,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, nullptr,
+  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr,
                             nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -416,12 +405,12 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
+    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr,
                           nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
+    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr,
                           nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -458,12 +447,12 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, nullptr,
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr,
                           nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, nullptr,
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr,
                           nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -487,10 +476,10 @@ std::unique_ptr<OperType>
 SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient fpm(mat_op.MaxCeedAttribute()),
-      fpwc(mat_op.MaxCeedAttribute()), fpc(mat_op.MaxCeedAttribute());
-  AddPeriodicCoefficients(1.0, fpm, fpwc, fpc);
-  int empty[2] = {(fpm.empty()), (fpwc.empty() && fpc.empty())};
+  MaterialPropertyCoefficient fm(mat_op.MaxCeedAttribute()),
+      fwc(mat_op.MaxCeedAttribute()), fc(mat_op.MaxCeedAttribute());
+  AddPeriodicCoefficients(1.0, fm, fwc, fc);
+  int empty[2] = {(fm.empty()), (fwc.empty() && fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -500,13 +489,13 @@ SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy)
   std::unique_ptr<Operator> pr, pi;
   if (!empty[0])
   {
-    pr = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fpm, nullptr,
+    pr = AssembleOperator(GetNDSpace(), nullptr, &fm, nullptr, nullptr, nullptr,
                           nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    pi = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr, &fpwc,
-                          &fpc, skip_zeros);
+    pi = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fwc,
+                          &fc, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -822,35 +811,35 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
         fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
         fpwi(mat_op.MaxCeedAttribute()), fpr(mat_op.MaxCeedAttribute()),
-        fpwr(mat_op.MaxCeedAttribute()), fmpr(mat_op.MaxCeedAttribute()),
-        fmpi(mat_op.MaxCeedAttribute());
+        fpwr(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fi);
     AddDampingBdrCoefficients(a1, fbi);
     AddRealMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+    Mpi::Print("Complex PC with a2: {:.3e}\n", a2);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-    AddPeriodicCoefficients(1.0, fmpr, fpwi, fpi);
+    AddPeriodicCoefficients(1.0, fr, fpwi, fpi);
     int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
-                     fpwr.empty() && fpr.empty() && fmpr.empty()),
+                     fpwr.empty() && fpr.empty()),
                     (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
-                     fpwi.empty() && fpi.empty() && fmpi.empty())};
+                     fpwi.empty() && fpi.empty())};
     Mpi::GlobalMin(2, empty, GetComm());
     if (!empty[0])
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fmpr, &fpwr, &fpr,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr,
                                  skip_zeros, assemble_q_data);
-      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fmpr, &fpwr, &fpr,
+      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fpwr, &fpr,
                                         skip_zeros, assemble_q_data);
     }
     if (!empty[1])
     {
-      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fmpi, &fpwi, &fpi,
+      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi,
                                  skip_zeros, assemble_q_data);
       //periodic_op.AddImagMassCoefficients(7.0, fi);//test - helps in some cases
-      bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &fmpi, &fpwi, &fpi,
+      bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &fpwi, &fpi,
                                         &skip_zeros, assemble_q_data);
     }
   }
@@ -859,7 +848,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
         fbr(mat_op.MaxCeedBdrAttribute()), fpwr(mat_op.MaxCeedAttribute()),
-        fpr(mat_op.MaxCeedAttribute()), fmpr(mat_op.MaxCeedAttribute());
+        fpr(mat_op.MaxCeedAttribute());
     AddStiffnessCoefficients(a0, dfr, fr);
     AddStiffnessBdrCoefficients(a0, fbr);
     AddDampingCoefficients(a1, fr);
@@ -867,15 +856,15 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-    AddPeriodicCoefficients(1.0, fmpr, fpwr, fpr);
-    int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fmpr.empty() &&
+    AddPeriodicCoefficients(1.0, fr, fpwr, fpr);
+    int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
                  fpwr.empty() && fpr.empty());
     Mpi::GlobalMin(1, &empty, GetComm());
     if (!empty)
     {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fmpr, &fpwr, &fpr,
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,  &fpwr, &fpr,
                                  skip_zeros, assemble_q_data);
-      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fmpr, &fpwr, &fpr,
+      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fpwr, &fpr,
                                         skip_zeros, assemble_q_data);
     }
   }
@@ -1013,6 +1002,7 @@ void SpaceOperator::AddPeriodicCoefficients(double coeff,
                                             MaterialPropertyCoefficient &fwc,
                                             MaterialPropertyCoefficient &fc)
 {
+  // Floquet periodicity contributions.
   periodic_op.AddRealMassCoefficients(coeff, fm);
   periodic_op.AddWeakCurlCoefficients(coeff, fwc);
   periodic_op.AddCurlCoefficients(-coeff, fc);
