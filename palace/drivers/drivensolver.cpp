@@ -288,12 +288,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     UpdatePROM(excitation_idx, omega0);
     prom_op.SolveHDM(excitation_idx, omega0 + (n_step - step0 - 1) * delta_omega, E);
     UpdatePROM(excitation_idx, omega0 + (n_step - step0 - 1) * delta_omega);
+    int it0 = 2;  // Nr of initial solutions in PROM
 
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints.
-    int it = 2, it0 = it, memory = 0;
+    int memory = 0;
+    int it = it0;
     std::vector<double> max_errors = {0.0, 0.0};
-    while (true)
+    for (; (it < max_size_per_excitation) && (memory < convergence_memory); it++)
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
       // previous samples).
@@ -303,34 +305,25 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       prom_op.SolveHDM(excitation_idx, omega_star, E);
       prom_op.SolvePROM(excitation_idx, omega_star, Eh);
       linalg::AXPY(-1.0, E, Eh);
+
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
       if (max_errors.back() < offline_tol)
       {
-        if (++memory == convergence_memory)
-        {
-          break;
-        }
+        ++memory;
       }
       else
       {
         memory = 0;
       }
-      if (it == max_size_per_excitation)
-      {
-        break;
-      }
 
       // Sample HDM and add solution to basis.
-      Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
-                 "{:.3e}{}\n",
-                 it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
-                 omega_star, max_errors.back(),
-                 (memory == 0)
-                     ? ""
-                     : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
+      Mpi::Print(
+          "\nGreedy iteration {:d} (PROM n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
+          "{:.3e}, memory = {:d}/{:d}\n",
+          it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz, omega_star,
+          max_errors.back(), memory, convergence_memory);
       UpdatePROM(excitation_idx, omega_star);
-      it++;
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
