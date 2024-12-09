@@ -25,11 +25,11 @@ private:
   // List of all periodic boundary condition attributes.
   mfem::Array<int> periodic_attr;
 
-  // Bloch wave vector for Floquet boundary conditions.
+  // Floquet/Bloch wave vector for Floquet boundary conditions.
   mfem::Vector wave_vector;
 
   // Matrix representation of cross product with the wave vector.
-  mfem::DenseMatrix wave_vector_cross, wave_vector_diag; //test
+  mfem::DenseMatrix wave_vector_cross, wave_vector_diag; //test - remove wave_vector_diag later!
 
   // Check if the wave vector is zero to bypass additional terms.
   bool non_zero_wave_vector;
@@ -47,7 +47,7 @@ public:
   void AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddWeakCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f); // test - remove later
 };
 
 }  // namespace palace

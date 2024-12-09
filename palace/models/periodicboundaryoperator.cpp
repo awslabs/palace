@@ -26,28 +26,59 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
     std::sort(periodic_attr.begin(), periodic_attr.end());
     utils::PrettyPrint(periodic_attr);
   }
+  const int sdim = mesh.SpaceDimension();
+  const double tol = std::numeric_limits<double>::epsilon();
+
+  // Sum Floquet wave vector over periodic boundary pairs.
+  wave_vector.SetSize(sdim);
+  mfem::Vector local_wave_vector(sdim);
+  wave_vector = 0.0;
+  for (const auto &data : iodata.boundaries.periodic)
+  {
+    MFEM_VERIFY(data.wave_vector.size() == sdim,
+                "Floquet wave vector size must equal the spatial dimension.");
+    std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
+    wave_vector += local_wave_vector;
+  }
+  non_zero_wave_vector = (wave_vector.Norml2() > tol);
+
+  // Get Floquet wave vector specified outside of periodic boundary definitions.
   const auto &data = iodata.boundaries.floquet;
-  MFEM_VERIFY(data.wave_vector.size() == mesh.SpaceDimension(),
-              "Floquet/Bloch wave vector size must equal the spatial dimension.");
-  MFEM_VERIFY(mesh.SpaceDimension() == 3,
-              "Quasi-periodic Floquet periodic boundary conditions are only available "
-              " in 3D!");
-  wave_vector.SetSize(data.wave_vector.size());
-  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
-  non_zero_wave_vector = (wave_vector.Norml2() > std::numeric_limits<double>::epsilon());
+  MFEM_VERIFY(data.wave_vector.size() == sdim,
+              "Floquet wave vector size must equal the spatial dimension.");
+  std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
+  if (non_zero_wave_vector && local_wave_vector.Norml2() > tol)
+  {
+    mfem::Vector diff(sdim);
+    diff = wave_vector;
+    diff -= local_wave_vector;
+    MFEM_VERIFY(diff.Norml2() < tol, "Conflicting definitions of the Floquet wave vector in the "
+                "configuration file.");
+    wave_vector = local_wave_vector;
+  }
+  else if (!non_zero_wave_vector)
+  {
+    wave_vector = local_wave_vector;
+    non_zero_wave_vector = (wave_vector.Norml2() > tol);
+  }
+
   MFEM_VERIFY(!non_zero_wave_vector ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN ||
                   iodata.problem.type == config::ProblemData::Type::EIGENMODE,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
 
+  MFEM_VERIFY(non_zero_wave_vector && sdim == 3,
+              "Quasi-periodic Floquet periodic boundary conditions are only available "
+              " in 3D!");
+
   // Get mesh dimensions in x/y/z coordinates
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   bbmax -= bbmin;
 
-  // Ensure Floquet wave vector components are in range [-π/L, π/L]
-  for (int i = 0; i < mesh.SpaceDimension(); i++)
+  // Ensure Floquet wave vector components are in range [-π/L, π/L].
+  for (int i = 0; i < sdim; i++)
   {
     if (wave_vector[i] > M_PI / bbmax[i])
     {
@@ -221,6 +252,7 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
   }
 }
 
+// TEST - REMOVE LATER!!!
 void PeriodicBoundaryOperator::AddImagMassCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {

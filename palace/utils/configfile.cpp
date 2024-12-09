@@ -1092,12 +1092,20 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = trsfr->get<std::array<double, 16>>();
     }
+    auto floquet = it->find("FloquetWaveVector");
+    if (floquet != it->end())
+    {
+      MFEM_VERIFY(floquet->is_array(),
+                "\"FloquetWaveVector\" should specify an array in the configuration file!");
+      data.wave_vector = floquet->get<std::array<double, 3>>();
+    }
 
     // Cleanup
     it->erase("DonorAttributes");
     it->erase("ReceiverAttributes");
     it->erase("Translation");
     it->erase("AffineTransformation");
+    it->erase("FloquetWaveVector");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
@@ -1109,6 +1117,7 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
       std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
       std::cout << "Translation: " << data.translation << '\n';
       std::cout << "AffineTransformation: " << data.affine_transform << '\n';
+      std::cout << "FloquetWaveVector: " << data.wave_vector << '\n';
     }
   }
 }

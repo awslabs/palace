@@ -39,9 +39,9 @@
       {
         "DonorAttributes": [2],
         "ReceiverAttributes": [3],
+        "FloquetWaveVector": [0.0, 0.0, 0.2]
       }
     ],
-    "FloquetWaveVector": [0.0, 0.0, 0.2],
     "PEC":
     {
       "Attributes": [4]
