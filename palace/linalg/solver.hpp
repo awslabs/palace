@@ -83,6 +83,9 @@ private:
   // mfem::Solver::SetOperator (some solvers copy their input).
   bool save_assembled;
 
+  // Indices of real and imaginary parts of the complex system RHS/solution.
+  mfem::Array<int> idx1, idx2;
+
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
