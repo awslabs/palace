@@ -48,6 +48,7 @@ public:
   void AddWeakCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f); // test - remove later
+  void AddFloquetCrossCoefficients(double coeff, MaterialPropertyCoefficient &f); // test
 };
 
 }  // namespace palace

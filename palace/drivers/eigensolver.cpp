@@ -13,6 +13,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
+#include "linalg/jacobi.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -36,7 +37,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto PF = space_op.GetPeriodicMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto FP = space_op.GetFloquetMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO);
   A2 = nullptr;
 
@@ -128,9 +129,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (C)
   {
-    if (PF)
+    if (FP)
     {
-      eigen->SetOperators(*K, *C, *M, *PF, scale);
+      eigen->SetOperators(*K, *C, *M, *FP, scale);
     }
     else
     {
@@ -139,9 +140,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    if (PF)
+    if (FP)
     {
-      eigen->SetOperators(*K, *M, *PF, scale);
+      eigen->SetOperators(*K, *M, *FP, scale);
     }
     else
     {
@@ -174,7 +175,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0)
   {
-    if (PF) //BYPASS?!?!?! OR FIND WAY TO MAKE IT WORK?
+    if (FP) //BYPASS?!?!?! OR FIND WAY TO MAKE IT WORK?
     {
       Mpi::Warning("Divergence-free projection is not compatible with non-zero "
                    "Floquet wave vector!\n");
@@ -268,7 +269,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get(), PF.get());
+                                    C.get(), M.get(), A2.get(), FP.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
                                                              target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -331,6 +332,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
+    /**/
+    //  kp x E / omega, just a test, clean up later
+    if (FP)
+    {
+      auto FM = space_op.GetFloquetCorrectionMassMatrix<ComplexOperator>();
+      auto FC = space_op.GetFloquetCorrectionCrossMatrix<ComplexOperator>();
+      ComplexVector BF(Curl.Width()), RHS(Curl.Width());
+      BF.UseDevice(true);
+      RHS.UseDevice(true);
+
+      auto pcg = std::make_unique<CgSolver<ComplexOperator>>(space_op.GetComm(), 0);
+      pcg->SetInitialGuess(0);
+      pcg->SetRelTol(iodata.solver.linear.tol);
+      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+      pcg->SetMaxIter(iodata.solver.linear.max_it);
+      auto jac = std::make_unique<JacobiSmoother<ComplexOperator>>(space_op.GetComm());
+      auto kspM = std::make_unique<ComplexKspSolver>(std::move(pcg), std::move(jac));
+      kspM->SetOperators(*FM, *FM);
+
+      // Floquet correction = kp x E / omega = FC * E / omega
+      FC->Mult(E, RHS);
+      kspM->Mult(RHS, BF);
+
+      BF *= -1.0 / omega;
+      post_op.SetBFGridFunction(BF);
+    }
+    /**/
     B *= -1.0 / (1i * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);

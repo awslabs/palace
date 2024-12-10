@@ -473,7 +473,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetFloquetMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fm(mat_op.MaxCeedAttribute()),
@@ -510,6 +510,65 @@ SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy diag_policy)
     auto P = std::make_unique<ParOperator>(std::move(pr), GetNDSpace());
     P->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return P;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFloquetCorrectionCrossMatrix()
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  periodic_op.AddFloquetCrossCoefficients(1.0, f);
+  int empty = (f.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> m;
+  if (!empty)
+  {
+    m = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr,
+                          nullptr, skip_zeros);
+  }
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M =
+        std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    //M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+  else
+  {
+    auto M = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    //M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFloquetCorrectionMassMatrix()
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  constexpr bool skip_zeros = false;
+  BilinearForm a(GetNDSpace());
+  a.AddDomainIntegrator<VectorFEMassIntegrator>();
+  std::unique_ptr<Operator> m = a.Assemble(skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M =
+        std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    //M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+  else
+  {
+    auto M = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    //M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
   }
 }
 
@@ -1150,9 +1209,18 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy);
+    SpaceOperator::GetFloquetMatrix(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetPeriodicMatrix(Operator::DiagonalPolicy);
+    SpaceOperator::GetFloquetMatrix(Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+    SpaceOperator::GetFloquetCorrectionCrossMatrix();
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetFloquetCorrectionCrossMatrix();
+template std::unique_ptr<Operator>
+    SpaceOperator::GetFloquetCorrectionMassMatrix();
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetFloquetCorrectionMassMatrix();
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
