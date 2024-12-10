@@ -48,6 +48,8 @@ The format of this changelog is based on
   - Added an option to use the complex-valued system matrix for the coarse level solve (sparse
     direct solve) instead of the real-valued approximation. This can be specified with
     `config["Solver"]["Linear"]["ComplexCoarseSolve"]`.
+  - Fix bug in London equation implementation where a curl-curl term was added to the
+    stiffness operator instead of a mass term.
 
 ## [0.13.0] - 2024-05-20
 
