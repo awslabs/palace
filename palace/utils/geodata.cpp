@@ -1792,7 +1792,7 @@ mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
       loc_normal *= -1.0;
     }
 
-    // Check if the boundary is planar by comparing the current elem's
+    // Check if the boundary is planar by comparing the current element's
     // normal to the average normal (accumulated so far).
     if (count > 0 && check_planar)
     {
@@ -1847,7 +1847,6 @@ std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
   // Centroid is always considered a unique point.
   unique_pts.push_back(centroid);
   mfem::Vector cross_product(sdim);
-  cross_product = 0.0;
   for (const auto &[dist, pts_set] : dist2points)
   {
     // Only consider unique non-zero distances.
@@ -1866,7 +1865,7 @@ std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
         v2 = unique_pts[2];
         v2 -= unique_pts[0];
         v1.cross3D(v2, cross_product);
-        // If normal is ~0, points are collinear. Remove last point and continue loop.
+        // If cross product is ~0, points are collinear. Remove last point and continue loop.
         if (cross_product.Norml2() < tol)
         {
           unique_pts.pop_back();
@@ -1954,6 +1953,8 @@ void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
   }
 }
 
+// Create the vertex mapping between sets of donor and receiver pts related
+// by an affine transformation matrix.
 std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                              const std::unordered_set<int> &donor_v,
                                              const std::unordered_set<int> &receiver_v,
@@ -2034,6 +2035,10 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   return v2v;
 }
 
+// Determine the vertex mapping between donor and receiver boundary attributes.
+// Uses the translation vector or affine transformation matrix specified in the
+// configuration file. If not provided, attempts to automatically detect the
+// affine transformation between donor and receiver boundary vertices.
 std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                                 const struct palace::config::PeriodicData &data,
                                                 const double tol = 1e-8)
@@ -2048,7 +2053,6 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
 
   // Identify donor and receiver vertices and elements.
   const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
-  mfem::Vector coord(sdim);
   std::unordered_set<int> bdr_v_donor, bdr_v_receiver;
   std::unordered_set<int> bdr_e_donor, bdr_e_receiver;
   bool has_tets = false;
@@ -2069,7 +2073,7 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
       {
         bdr_e_donor.insert(be);
       }
-      if (receiver)
+      else if (receiver)
       {
         bdr_e_receiver.insert(be);
       }
@@ -2077,7 +2081,6 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
       mesh->GetBdrElementVertices(be, vertidxs);
       for (int i = 0; i < vertidxs.Size(); i++)
       {
-        coord = mesh->GetVertex(vertidxs[i]);
         if (donor)
         {
           bdr_v_donor.insert(vertidxs[i]);
@@ -2090,14 +2093,10 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
     }
   }
 
-  MFEM_VERIFY(
-    bdr_v_donor.size() == bdr_v_receiver.size(),
+  MFEM_VERIFY(bdr_v_donor.size() == bdr_v_receiver.size(),
     "Different number of "
     "vertices on donor and receiver boundaries. Cannot create periodic mesh.");
 
-  const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
-  Mpi::Print("Total number of elements: {:d}\n", mesh->GetNE());
-  Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
   // How to check if the mesh is OK?
   // Count number of elems in the periodic direction?
   // If hex/prism: Count boundary elements on donor+receiver,
@@ -2106,6 +2105,9 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
   // Mixed mesh is trickier
   // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
   // ALREADY CREATED WITH PERIODICITY!!!
+  const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
+  Mpi::Print("Total number of elements: {:d}\n", mesh->GetNE());
+  Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
   mfem::Array<mfem::Geometry::Type> geoms;
   mesh->GetGeometries(3, geoms);
   if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
@@ -2125,7 +2127,7 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
     // No tets
      MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
                  "Not enough mesh elements in periodic direction!");
-    }
+  }
 
   // Determine the affine transformation between donor and receiver points.
   // Use the translation vector or affine transformation matrix if provided
@@ -2176,7 +2178,7 @@ std::vector<int> DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mes
     donor_pts = FindUniquePoints(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
     receiver_pts = FindUniquePoints(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
     MFEM_VERIFY(donor_pts.size() == receiver_pts.size(),
-                "Different number of unique points on donor and receiver boundaries.");
+                "Different number of unique points on donor and receiver periodic boundaries.");
 
     // With 4 pairs of matching points, compute the unique affine transformation.
     // With < 4, cannot determine a unique transformation. We assume there is no
