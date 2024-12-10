@@ -821,7 +821,7 @@ void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoeff
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
-    df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coeff);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coeff);
   }
 }
 
