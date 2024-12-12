@@ -34,6 +34,7 @@ class MaterialOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
+class PortExcitationHelper;
 
 namespace config
 {
@@ -455,9 +456,103 @@ public:
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
 
+<<<<<<< HEAD
   // Expose MPI communicator from fem_op for electrostatic & magnetostatic matrix processing
   // (see above).
   auto GetComm() const { return fem_op->GetComm(); }
+=======
+  // Treat the frequency, for driven and eigemode solvers, as a "measurement", that other
+  // measurements can depend on. This has to be supplied during the solver loop separate
+  // from the fields.
+  void SetFrequency(double omega);
+  void SetFrequency(std::complex<double> omega);
+
+  // Return stored frequency that was given in SetFrequency. Always promotes to complex
+  // frequency.
+  std::complex<double> GetFrequency() const;
+
+  // Postprocess the total electric and magnetic field energies in the electric and magnetic
+  // fields.
+  double GetEFieldEnergy() const;
+  double GetHFieldEnergy() const;
+
+  // Postprocess the electric and magnetic field energies in the domain with the given
+  // index.
+  double GetEFieldEnergy(int idx) const;
+  double GetHFieldEnergy(int idx) const;
+
+  // Postprocess the electric or magnetic field flux for a surface index using the computed
+  // electcric field and/or magnetic flux density field solutions.
+  std::vector<FluxData> GetSurfaceFluxAll() const;
+  FluxData GetSurfaceFlux(int idx) const;
+
+  // Postprocess the partitipation ratio for interface lossy dielectric losses in the
+  // electric field mode.
+  double GetInterfaceParticipation(int idx, double E_m) const;
+  std::vector<InterfaceData> GetInterfaceEFieldEnergyAll() const;
+  InterfaceData GetInterfaceEFieldEnergy(int idx) const;
+
+  // Measure and cache port voltages and currents for lumped and wave port operators.
+  void MeasureLumpedPorts() const;
+  void MeasureWavePorts() const;
+
+  // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
+  // the provided set.
+  double GetLumpedInductorEnergy() const;
+  double GetLumpedCapacitorEnergy() const;
+
+  // Postprocess the S-parameter for recieving lumped or wave port index using the electric
+  // field solution.
+<<<<<<< HEAD
+  std::complex<double> GetSParameter(bool is_lumped_port, int idx, int source_idx) const;
+=======
+  // std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
+  //                                    int source_idx) const;
+  // std::complex<double> GetSParameter(const WavePortOperator &wave_port_op, int idx,
+  //                                    int source_idx) const;
+  std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op,
+                                     const WavePortOperator &wave_port_op,
+                                     const PortExcitationHelper &excitation_helper,
+                                     int out_idx, int excitation_idx) const;
+>>>>>>> 9771d7fc (WIP2)
+
+  // Postprocess the circuit voltage and current across lumped port index using the electric
+  // field solution. When the internal grid functions are real-valued, the returned voltage
+  // has only a nonzero real part.
+  std::complex<double> GetPortPower(int idx) const;
+  std::complex<double> GetPortVoltage(int idx) const;
+  std::complex<double>
+  GetPortCurrent(int idx,
+                 LumpedPortData::Branch branch = LumpedPortData::Branch::TOTAL) const;
+
+  // Postprocess the EPR for the electric field solution and lumped port index.
+  double GetInductorParticipation(int idx, double E_m) const;
+
+  // Postprocess the coupling rate for radiative loss to the given I-O port index.
+  double GetExternalKappa(int idx, double E_m) const;
+
+  // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
+  // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
+  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
+  void WriteFields(int step, double time) const;
+  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr) const;
+
+  // Probe the E- and B-fields for their vector-values at speceified locations in space.
+  // Locations of probes are set up in constructor from configuration file data. If
+  // the internal grid functions are real-valued, the returned fields have only nonzero real
+  // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
+  // v2y, v2z, ...].
+  int GetInterpolationOpVDim() const { return interp_op.GetVDim(); }
+  const auto &GetProbes() const { return interp_op.GetProbes(); }
+  std::vector<std::complex<double>> ProbeEField() const;
+  std::vector<std::complex<double>> ProbeBField() const;
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const
+  {
+    return (E) ? E->ParFESpace()->GetComm() : B->ParFESpace()->GetComm();
+  }
+>>>>>>> 5aeb7913 (WIP: Merge SParameters Lumped and Wave)
 };
 
 }  // namespace palace
