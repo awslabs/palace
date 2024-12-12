@@ -256,8 +256,7 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
 
 void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
                        const MaterialPropertyCoefficient *fb,
-                       const MaterialPropertyCoefficient *fpw,
-                       const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+                       bool assemble_q_data = false)
 {
   if (f && !f->empty())
   {
@@ -266,14 +265,6 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
   if (fb && !fb->empty())
   {
     a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
-  }
-  if (fpw && !fpw->empty())
-  {
-    // a.AddDomainIntegrator<DiffusionIntegrator>(*fpw);
-  }
-  if (fp && !fp->empty())
-  {
-    // a.AddDomainIntegrator<DiffusionIntegrator>(*fp);
   }
   if (assemble_q_data)
   {
@@ -307,13 +298,11 @@ auto AssembleOperators(
 
 auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
-                          const MaterialPropertyCoefficient *fb,
-                          const MaterialPropertyCoefficient *fpw,
-                          const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
+                          const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
                           bool assemble_q_data = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddAuxIntegrators(a, f, fb, fpw, fp, assemble_q_data);
+  AddAuxIntegrators(a, f, fb, assemble_q_data);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
@@ -830,14 +819,14 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     {
       br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpwr, &fpr,
                                  skip_zeros, assemble_q_data);
-      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fpwr, &fpr,
+      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr,
                                         skip_zeros, assemble_q_data);
     }
     if (!empty[1])
     {
       bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi,
                                  skip_zeros, assemble_q_data);
-      bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &fpwi, &fpi,
+      bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi,
                                         &skip_zeros, assemble_q_data);
     }
   }
@@ -862,7 +851,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     {
       br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,  &fpwr, &fpr,
                                  skip_zeros, assemble_q_data);
-      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &fpwr, &fpr,
+      br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr,
                                         skip_zeros, assemble_q_data);
     }
   }
