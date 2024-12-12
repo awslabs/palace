@@ -10,7 +10,6 @@
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
-//#include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
@@ -325,7 +324,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-
     B *= -1.0 / (1i * omega);
     if (FP)
     {
