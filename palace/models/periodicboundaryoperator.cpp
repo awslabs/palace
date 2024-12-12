@@ -67,8 +67,6 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
                   iodata.problem.type == config::ProblemData::Type::EIGENMODE,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
-  Mpi::Print("wave_vector.Norml2(): {:.3e}\n",wave_vector.Norml2());
-  wave_vector.Print();
   MFEM_VERIFY(!non_zero_wave_vector || sdim == 3,
               "Quasi-periodic Floquet periodic boundary conditions are only available "
               " in 3D!");
