@@ -29,7 +29,7 @@ private:
   mfem::Vector wave_vector;
 
   // Matrix representation of cross product with the wave vector.
-  mfem::DenseMatrix wave_vector_cross, wave_vector_diag; //test - remove wave_vector_diag later!
+  mfem::DenseMatrix wave_vector_cross;
 
   // Check if the wave vector is zero to bypass additional terms.
   bool non_zero_wave_vector;
@@ -43,12 +43,11 @@ public:
   // Returns array of periodic BC attributes.
   const auto &GetAttrList() const { return periodic_attr; }
 
-  // Add contributions to system matrices
+  // Add contributions to system matrices.
   void AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddWeakCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddCurlCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f); // test - remove later
-  void AddFloquetCrossCoefficients(double coeff, MaterialPropertyCoefficient &f); // test
+  void AddFloquetCrossCoefficients(double coeff, MaterialPropertyCoefficient &f);
 };
 
 }  // namespace palace

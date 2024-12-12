@@ -837,7 +837,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     {
       bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi,
                                  skip_zeros, assemble_q_data);
-      //periodic_op.AddImagMassCoefficients(7.0, fi);//test - helps in some cases
       bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &fpwi, &fpi,
                                         &skip_zeros, assemble_q_data);
     }

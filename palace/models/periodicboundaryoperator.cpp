@@ -105,19 +105,6 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   wave_vector_cross(1, 2) = -wave_vector[0];
   wave_vector_cross(2, 0) = -wave_vector[1];
   wave_vector_cross(2, 1) = wave_vector[0];
-
-  // Test for preconditioning
-  Mpi::Print("wave vector after clipping:\n");
-  wave_vector.Print();
-  const double wave_vector_norm2 = pow(wave_vector.Norml2(), 2);
-  Mpi::Print("wave vector norml2: {:.3e}\n", wave_vector_norm2);
-  wave_vector_diag.SetSize(3);
-  wave_vector_diag = 0.0;
-  wave_vector_diag(0, 0) = 1.0;//wave_vector_norm2;
-  wave_vector_diag(1, 1) = 1.0;//wave_vector_norm2;
-  wave_vector_diag(2, 2) = 1.0;//wave_vector_norm2;
-  //Mpi::Print("wave vector diag:\n");
-  //wave_vector_diag.Print();
 }
 
 mfem::Array<int>
@@ -253,28 +240,6 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
   }
 }
 
-// TEST - REMOVE LATER!!!
-void PeriodicBoundaryOperator::AddImagMassCoefficients(double coeff,
-                                                       MaterialPropertyCoefficient &f)
-{
-  if (non_zero_wave_vector)
-  {
-    // 1/mu [k x]
-    mfem::DenseTensor kx(mat_op.GetInvPermeability().SizeI(),
-                        mat_op.GetInvPermeability().SizeJ(),
-                        mat_op.GetInvPermeability().SizeK());
-    for (int k = 0; k < kx.SizeK(); k++)
-    {
-      kx(k) = wave_vector_diag;
-    }
-    mfem::DenseTensor muinvkx = linalg::Mult(mat_op.GetInvPermeability(), kx);
-    MaterialPropertyCoefficient muinvkx_func(mat_op.GetAttributeToMaterial(),
-                                             muinvkx);
-    f.AddCoefficient(muinvkx_func.GetAttributeToMaterial(),
-                     muinvkx_func.GetMaterialProperties(), coeff);
-  }
-}
-
 void PeriodicBoundaryOperator::AddFloquetCrossCoefficients(double coeff,
                                                        MaterialPropertyCoefficient &f)
 {
@@ -287,7 +252,6 @@ void PeriodicBoundaryOperator::AddFloquetCrossCoefficients(double coeff,
     for (int k = 0; k < kx.SizeK(); k++)
     {
       kx(k) = wave_vector_cross;
-      //kx(k) = wave_vector_diag;//test
     }
     MaterialPropertyCoefficient kx_func(mat_op.GetAttributeToMaterial(), kx);
     f.AddCoefficient(kx_func.GetAttributeToMaterial(),
