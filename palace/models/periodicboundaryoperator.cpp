@@ -37,7 +37,8 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
   {
     MFEM_VERIFY(data.wave_vector.size() == sdim,
                 "Floquet wave vector size must equal the spatial dimension.");
-    std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
+    std::copy(data.wave_vector.begin(), data.wave_vector.end(),
+              local_wave_vector.GetData());
     wave_vector += local_wave_vector;
   }
   non_zero_wave_vector = (wave_vector.Norml2() > tol);
@@ -52,7 +53,8 @@ PeriodicBoundaryOperator::PeriodicBoundaryOperator(const IoData &iodata,
     mfem::Vector diff(sdim);
     diff = wave_vector;
     diff -= local_wave_vector;
-    MFEM_VERIFY(diff.Norml2() < tol, "Conflicting definitions of the Floquet wave vector in the "
+    MFEM_VERIFY(diff.Norml2() < tol,
+                "Conflicting definitions of the Floquet wave vector in the "
                 "configuration file.");
     wave_vector = local_wave_vector;
   }
@@ -239,7 +241,7 @@ void PeriodicBoundaryOperator::AddCurlCoefficients(double coeff,
 }
 
 void PeriodicBoundaryOperator::AddFloquetCrossCoefficients(double coeff,
-                                                       MaterialPropertyCoefficient &f)
+                                                           MaterialPropertyCoefficient &f)
 {
   if (non_zero_wave_vector)
   {
@@ -252,8 +254,8 @@ void PeriodicBoundaryOperator::AddFloquetCrossCoefficients(double coeff,
       kx(k) = wave_vector_cross;
     }
     MaterialPropertyCoefficient kx_func(mat_op.GetAttributeToMaterial(), kx);
-    f.AddCoefficient(kx_func.GetAttributeToMaterial(),
-                     kx_func.GetMaterialProperties(), coeff);
+    f.AddCoefficient(kx_func.GetAttributeToMaterial(), kx_func.GetMaterialProperties(),
+                     coeff);
   }
 }
 

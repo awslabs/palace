@@ -18,11 +18,11 @@ namespace palace
 {
 
 template <typename VecType>
-FloquetCorrSolver<VecType>::FloquetCorrSolver(
-    const MaterialOperator &mat_op,
-    PeriodicBoundaryOperator &periodic_op,
-    FiniteElementSpace &nd_fespace, FiniteElementSpace &rt_fespace,
-    double tol, int max_it, int print)
+FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
+                                              PeriodicBoundaryOperator &periodic_op,
+                                              FiniteElementSpace &nd_fespace,
+                                              FiniteElementSpace &rt_fespace, double tol,
+                                              int max_it, int print)
 {
   // Create the mass and cross product operators for Floquet correction.
   {
@@ -49,7 +49,8 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(
     std::unique_ptr<Operator> m = a.Assemble(skip_zeros);
     if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
-      Cross = std::make_unique<ComplexParOperator>(std::move(m), nullptr, nd_fespace, rt_fespace, false);
+      Cross = std::make_unique<ComplexParOperator>(std::move(m), nullptr, nd_fespace,
+                                                   rt_fespace, false);
     }
     else
     {

@@ -1095,8 +1095,9 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     auto floquet = it->find("FloquetWaveVector");
     if (floquet != it->end())
     {
-      MFEM_VERIFY(floquet->is_array(),
-                "\"FloquetWaveVector\" should specify an array in the configuration file!");
+      MFEM_VERIFY(
+          floquet->is_array(),
+          "\"FloquetWaveVector\" should specify an array in the configuration file!");
       data.wave_vector = floquet->get<std::array<double, 3>>();
     }
 

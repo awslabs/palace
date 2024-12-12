@@ -83,16 +83,16 @@ incorporating periodicity as part of the meshing process.
     A lumped port applies a similar boundary condition to a
     [surface impedance](#Impedance-boundary) boundary, but takes on a special meaning for
     each simulation type.
-
+    
     For frequency domain driven simulations, ports are used to provide a lumped port
     excitation and postprocess voltages, currents, and scattering parameters. Likewise, for
     transient simulations, they perform a similar purpose but for time domain computed
     quantities.
-
+    
     For eigenmode simulations where there is no excitation, lumped ports are used to specify
     properties and postprocess energy-participation ratios (EPRs) corresponding to
     linearized circuit elements.
-
+    
     Note that a single lumped port (given by a single integer `"Index"`) can be made up of
     multiple boundary attributes in the mesh in order to model, for example, a multielement
     lumped port. To use this functionality, use the `"Elements"` object under
@@ -104,18 +104,18 @@ incorporating periodicity as part of the meshing process.
     shape which is computed by solving a 2D boundary mode eigenproblem on each wave port
     boundary. This allows for more accurate scattering parameter calculations when modeling
     waveguides or transmission lines with arbitrary cross sections.
-
+    
     The homogeneous Dirichlet boundary conditions for the wave port boundary mode analysis
     are taken from the `"PEC"` boundaries of the full 3D model, as well as any optional
     additional boundary attributes given under `"WavePortPEC"`. Any boundary of the wave
     port not labeled with with a PEC condition has the natural boundary condition for zero
     tangential magnetic field prescribed for the purpose of port mode calculation.
-
+    
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
-
+    
     Wave ports are not currently compatible with nonconformal mesh refinement.
 
 The incident field excitation at a lumped or wave port is controlled by setting

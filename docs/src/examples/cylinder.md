@@ -6,7 +6,7 @@
 # Eigenmodes of a Cylinder
 
 !!! note
-
+    
     The files for this example can be found in the
     [`examples/cylinder/`](https://github.com/awslabs/palace/blob/main/examples/cylinder)
     directory of the *Palace* source code.

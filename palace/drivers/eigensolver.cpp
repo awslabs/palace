@@ -331,8 +331,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // B = -1/(iω) ∇ x E - 1/ω kp x E.
       std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
       floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
-        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+          space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
+          space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
       floquet_corr->AddMult(E, B, -1.0 / omega);
     }
     post_op.SetEGridFunction(E);

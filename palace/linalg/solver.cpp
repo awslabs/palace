@@ -52,12 +52,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    //Mpi::Print("Using real coarse solve\n");
-    //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    // Mpi::Print("Using real coarse solve\n");
+    // A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
     /**/
-    //Mpi::Print("Using complex coarse solve\n");
-    // A = [Ar, -Ai]
-    //     [Ai,  Ar]
+    // Mpi::Print("Using complex coarse solve\n");
+    //  A = [Ar, -Ai]
+    //      [Ai,  Ar]
     mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
     mfem::Array2D<double> block_coeffs(2, 2);
     blocks(0, 0) = hAr;

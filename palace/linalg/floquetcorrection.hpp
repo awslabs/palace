@@ -50,17 +50,15 @@ private:
   mutable VecType rhs;
 
 public:
-  FloquetCorrSolver(const MaterialOperator &mat_op,
-                    PeriodicBoundaryOperator &periodic_op,
-                    FiniteElementSpace &nd_fespace,
-                    FiniteElementSpace &rt_fespace,
+  FloquetCorrSolver(const MaterialOperator &mat_op, PeriodicBoundaryOperator &periodic_op,
+                    FiniteElementSpace &nd_fespace, FiniteElementSpace &rt_fespace,
                     double tol, int max_it, int print);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute
   // the Raviart-Thomas space field y = [kp x] x, where [kp x] is a matrix
   // representing the action of the cross product with the Floquet wave vector.
   void Mult(const VecType &x, VecType &y) const;
-  void AddMult(const VecType &x, VecType &y, ScalarType a=1.0) const;
+  void AddMult(const VecType &x, VecType &y, ScalarType a = 1.0) const;
 };
 
 }  // namespace palace
