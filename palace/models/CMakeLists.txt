@@ -14,6 +14,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/portexcitationhelper.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceconductivityoperator.cpp

@@ -16,6 +16,7 @@ env:
 
 jobs:
   build-and-test-singularity:
+    timeout-minutes: 60
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
