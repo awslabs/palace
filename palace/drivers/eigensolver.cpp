@@ -565,7 +565,7 @@ EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
     port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
     port_Q.table.reserve(n_expected_rows, 1 + ports_with_R.size());
     port_Q.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-    for (const auto idx : ports_with_L)
+    for (const auto idx : ports_with_R)
     {
       port_Q.table.insert_column(format("Ql_{}", idx), format("Q_ext[{}]", idx));
       port_Q.table.insert_column(format("Kl_{}", idx), format("κ_ext[{}] (GHz)", idx));
