@@ -55,7 +55,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     //Mpi::Print("Using real coarse solve\n");
     //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
     /**/
-    Mpi::Print("Using complex coarse solve\n");
+    //Mpi::Print("Using complex coarse solve\n");
     // A = [Ar, -Ai]
     //     [Ai,  Ar]
     mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
@@ -137,7 +137,6 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   }
   else
   {
-    // Is there a better way than idx1, idx2 + SetSubVector?
     Vector X(2 * x.Size()), Y(2 * y.Size()), yr, yi;
     X.UseDevice(true);
     Y.UseDevice(true);
