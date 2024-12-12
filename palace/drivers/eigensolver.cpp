@@ -9,11 +9,12 @@
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/floquetcorrection.hpp"
+//#include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
-#include "linalg/jacobi.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -173,23 +174,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0)
+  if (iodata.solver.linear.divfree_max_it > 0 && !FP)
   {
-    if (FP) //BYPASS?!?!?! OR FIND WAY TO MAKE IT WORK?
-    {
-      Mpi::Warning("Divergence-free projection is not compatible with non-zero "
-                   "Floquet wave vector!\n");
-    }
-    else
-    {
-      Mpi::Print(" Configuring divergence-free projection\n");
-      constexpr int divfree_verbose = 0;
-      divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
+    Mpi::Print(" Configuring divergence-free projection\n");
+    constexpr int divfree_verbose = 0;
+    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
-      eigen->SetDivFreeProjector(*divfree);
-    }
+    eigen->SetDivFreeProjector(*divfree);
   }
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
@@ -332,34 +325,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-    /**/
-    //  kp x E / omega, just a test, clean up later
+
+    B *= -1.0 / (1i * omega);
     if (FP)
     {
-      auto FM = space_op.GetFloquetCorrectionMassMatrix<ComplexOperator>();
-      auto FC = space_op.GetFloquetCorrectionCrossMatrix<ComplexOperator>();
-      ComplexVector BF(Curl.Width()), RHS(Curl.Width());
-      BF.UseDevice(true);
-      RHS.UseDevice(true);
-
-      auto pcg = std::make_unique<CgSolver<ComplexOperator>>(space_op.GetComm(), 0);
-      pcg->SetInitialGuess(0);
-      pcg->SetRelTol(iodata.solver.linear.tol);
-      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-      pcg->SetMaxIter(iodata.solver.linear.max_it);
-      auto jac = std::make_unique<JacobiSmoother<ComplexOperator>>(space_op.GetComm());
-      auto kspM = std::make_unique<ComplexKspSolver>(std::move(pcg), std::move(jac));
-      kspM->SetOperators(*FM, *FM);
-
-      // Floquet correction = kp x E / omega = FC * E / omega
-      FC->Mult(E, RHS);
-      kspM->Mult(RHS, BF);
-
-      BF *= -1.0 / omega;
-      post_op.SetBFGridFunction(BF);
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E - 1/ω kp x E.
+      std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+      floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
+        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+      floquet_corr->AddMult(E, B, -1.0 / omega);
     }
-    /**/
-    B *= -1.0 / (1i * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());

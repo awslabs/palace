@@ -48,9 +48,6 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
     B(std::make_unique<GridFunction>(space_op.GetRTSpace(),
                                      iodata.problem.type !=
                                          config::ProblemData::Type::TRANSIENT)),
-    BF(std::make_unique<GridFunction>(space_op.GetNDSpace(),
-                                      iodata.problem.type !=
-                                         config::ProblemData::Type::TRANSIENT)),
     lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &space_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
@@ -63,7 +60,6 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
 
   E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
   B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-  BF_sr = std::make_unique<BdrFieldVectorCoefficient>(BF->Real());
   J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
   Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
@@ -71,7 +67,6 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
     B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-    BF_si = std::make_unique<BdrFieldVectorCoefficient>(BF->Imag());
     J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(), mat_op);
     Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
         &E->Imag(), nullptr, mat_op, true, mfem::Vector());
@@ -206,21 +201,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
       paraview_bdr.RegisterVCoeffField("B", B_sr.get());
     }
   }
-  if (BF)
-  {
-    if (HasImag())
-    {
-      paraview.RegisterField("BF_real", &BF->Real());
-      paraview.RegisterField("BF_imag", &BF->Imag());
-      paraview_bdr.RegisterVCoeffField("BF_real", BF_sr.get());
-      paraview_bdr.RegisterVCoeffField("BF_imag", BF_si.get());
-    }
-    else
-    {
-      paraview.RegisterField("BF", &BF->Real());
-      paraview_bdr.RegisterVCoeffField("BF", BF_sr.get());
-    }
-  }
   if (V)
   {
     paraview.RegisterField("V", &V->Real());
@@ -299,21 +279,6 @@ void PostOperator::SetEGridFunction(const ComplexVector &e, bool exchange_face_n
     E->Imag().ExchangeFaceNbrData();
   }
   lumped_port_init = wave_port_init = false;
-}
-
-void PostOperator::SetBFGridFunction(const ComplexVector &bf, bool exchange_face_nbr_data)
-{
-  MFEM_VERIFY(HasImag(),
-              "SetBFGridFunction for complex-valued output called when HasImag() == false!");
-  MFEM_VERIFY(BF, "Incorrect usage of PostOperator::SetBFGridFunction!");
-  BF->Real().SetFromTrueDofs(bf.Real());  // Parallel distribute
-  BF->Imag().SetFromTrueDofs(bf.Imag());
-  if (exchange_face_nbr_data)
-  {
-    BF->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-    BF->Imag().ExchangeFaceNbrData();
-  }
-  has_floquet = true;
 }
 
 void PostOperator::SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data)
@@ -704,7 +669,7 @@ namespace
 {
 
 template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A, T &BF)
+void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 {
   // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
   // the mesh which would carry into the fields during the mapping from reference to
@@ -737,17 +702,6 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A, T 
       B->Imag().FaceNbrData() *= Ld;
     }
   }
-  if (BF)
-  {
-    // Piola transform: J^-T
-    BF->Real() *= L;
-    BF->Real().FaceNbrData() *= L;
-    if (imag)
-    {
-      BF->Imag() *= L;
-      BF->Imag().FaceNbrData() *= L;
-    }
-  }
   if (A)
   {
     // Piola transform: J^-T
@@ -765,7 +719,7 @@ void PostOperator::WriteFields(int step, double time) const
   mfem::ParMesh &mesh =
       HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A, BF);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
   paraview.SetCycle(step);
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
@@ -773,7 +727,7 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.Save();
   paraview_bdr.Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A, BF);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
 }
 
 void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
@@ -860,20 +814,7 @@ std::vector<std::complex<double>> PostOperator::ProbeEField() const
 std::vector<std::complex<double>> PostOperator::ProbeBField() const
 {
   MFEM_VERIFY(B, "PostOperator is not configured for magnetic flux density probes!");
-  if (has_floquet)
-  {
-    auto probe_B = interp_op.ProbeField(*B);
-    auto probe_BF = interp_op.ProbeField(*BF);
-    for (int i = 0; i < probe_B.size(); i++)
-    {
-      probe_B[i] += probe_BF[i];
-    }
-    return probe_B;
-  }
-  else
-  {
-    return interp_op.ProbeField(*B);
-  }
+  return interp_op.ProbeField(*B);
 }
 
 }  // namespace palace

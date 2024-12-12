@@ -157,10 +157,6 @@ public:
                                                  Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
   std::unique_ptr<OperType> GetFloquetMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
-  std::unique_ptr<OperType> GetFloquetCorrectionCrossMatrix();
-  template <typename OperType>
-  std::unique_ptr<OperType> GetFloquetCorrectionMassMatrix();
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

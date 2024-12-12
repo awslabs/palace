@@ -8,6 +8,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -117,7 +118,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
-  auto PF = space_op.GetFloquetMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto FP = space_op.GetFloquetMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver and set operators for the first frequency step. The
@@ -125,7 +126,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega0,
                                     std::complex<double>(-omega0 * omega0, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get(), PF.get());
+                                    C.get(), M.get(), A2.get(), FP.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
                                                              omega0);
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
@@ -164,7 +165,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
       A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                   C.get(), M.get(), A2.get(), PF.get());
+                                   C.get(), M.get(), A2.get(), FP.get());
       P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
                                                             omega);
       ksp.SetOperators(*A, *P);
@@ -179,6 +180,16 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
+    if (FP)
+    {
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E - 1/ω kp x E
+      std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+      floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
+        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+      floquet_corr->AddMult(E, B, -1.0 / omega);
+    }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);

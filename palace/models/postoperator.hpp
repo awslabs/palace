@@ -44,10 +44,9 @@ private:
   const DomainPostOperator dom_post_op;
 
   // Objects for grid function postprocessing from the FE solution.
-  mutable std::unique_ptr<GridFunction> E, B, V, A, BF;
-  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si, BF_sr, BF_si;
+  mutable std::unique_ptr<GridFunction> E, B, V, A;
+  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
-  bool has_floquet = false;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
@@ -92,7 +91,6 @@ public:
   // nondimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
   void SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true);
   void SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true);
-  void SetBFGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true);
   void SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true);
   void SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true);
   void SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true);
