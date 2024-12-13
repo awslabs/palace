@@ -2107,8 +2107,6 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
   // ALREADY CREATED WITH PERIODICITY!!!
   const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
-  Mpi::Print("Total number of elements: {:d}\n", mesh->GetNE());
-  Mpi::Print("Number of periodic BC elements: {:d}\n", num_periodic_bc_elems);
   mfem::Array<mfem::Geometry::Type> geoms;
   mesh->GetGeometries(3, geoms);
   if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
