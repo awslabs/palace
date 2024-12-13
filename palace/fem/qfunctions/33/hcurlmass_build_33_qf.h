@@ -22,7 +22,7 @@ CEED_QFUNCTION(f_build_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
       qd1[i + Q * 0] = coeff * wdetJ[i];
     }
     {
-      CeedScalar coeff[6], adjJt_loc[9], qd_loc[6];
+      CeedScalar coeff[9], adjJt_loc[9], qd_loc[9];
       CoeffUnpack3(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
       MatUnpack33(adjJt + i, Q, adjJt_loc);
       MultAtBA33(adjJt_loc, coeff, qd_loc);
@@ -33,6 +33,9 @@ CEED_QFUNCTION(f_build_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
       qd2[i + Q * 3] = wdetJ[i] * qd_loc[3];
       qd2[i + Q * 4] = wdetJ[i] * qd_loc[4];
       qd2[i + Q * 5] = wdetJ[i] * qd_loc[5];
+      qd2[i + Q * 6] = wdetJ[i] * qd_loc[6];
+      qd2[i + Q * 7] = wdetJ[i] * qd_loc[7];
+      qd2[i + Q * 8] = wdetJ[i] * qd_loc[8];
     }
   }
   return 0;

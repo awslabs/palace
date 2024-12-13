@@ -15,6 +15,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorestimator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/floquetcorrection.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hypre.cpp
