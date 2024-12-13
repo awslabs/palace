@@ -125,7 +125,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"superlu-dist{cuda_variant}", when=f"+superlu-dist{cuda_variant}")
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant}")
-            depends_on(f"slepc{cuda_variant} ^petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
+            depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
+            depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"+magma{cuda_variant}")
     with when("+rocm"):
         for arch in ROCmPackage.amdgpu_targets:
@@ -134,7 +135,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}")
             depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant}")
-            depends_on(f"slepc{rocm_variant} ^petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
+            depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
+            depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"+magma{rocm_variant}")
 
     # Palace always builds its own internal MFEM, libCEED, and GSLIB
