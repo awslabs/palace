@@ -184,6 +184,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetDivFreeProjector(*divfree);
   }
 
+  // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
+  std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+  if (FP)
+  {
+    floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
+        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
+
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
   // projected appropriately.
   if (iodata.solver.eigenmode.init_v0)
@@ -329,10 +338,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       // Calculate B field correction for Floquet BCs.
       // B = -1/(iω) ∇ x E - 1/ω kp x E.
-      std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
-      floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
-          space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
-          space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
       floquet_corr->AddMult(E, B, -1.0 / omega);
     }
     post_op.SetEGridFunction(E);

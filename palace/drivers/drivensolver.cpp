@@ -148,6 +148,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
+  // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
+  std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+  if (FP)
+  {
+    floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
+        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
+
   // Main frequency sweep loop.
   int step = step0;
   double omega = omega0;
@@ -184,10 +193,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     {
       // Calculate B field correction for Floquet BCs.
       // B = -1/(iω) ∇ x E - 1/ω kp x E
-      std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
-      floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
-          space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
-          space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
       floquet_corr->AddMult(E, B, -1.0 / omega);
     }
     post_op.SetEGridFunction(E);
