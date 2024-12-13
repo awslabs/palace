@@ -2098,14 +2098,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
               "Different number of "
               "vertices on donor and receiver boundaries. Cannot create periodic mesh.");
 
-  // How to check if the mesh is OK?
-  // Count number of elems in the periodic direction?
-  // If hex/prism: Count boundary elements on donor+receiver,
-  // if total NE = ndonorE+nReceiverE: not enough cells?
-  // If pure tet mesh NE = 3*(ndonorE+nreceiverE): not enough
-  // Mixed mesh is trickier
-  // MOVE THIS TEST SOMEWHERE ELSE. IT SHOULD ALSO APPLY TO MESHES
-  // ALREADY CREATED WITH PERIODICITY!!!
+  // Check if mesh has enough elements in periodic direction. MFEM's periodicity
+  // fails for meshes with <=2 elements in the period direction.
   const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
   mfem::Array<mfem::Geometry::Type> geoms;
   mesh->GetGeometries(3, geoms);
