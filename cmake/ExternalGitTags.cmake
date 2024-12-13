@@ -104,7 +104,7 @@ set(EXTERN_MAGMA_GIT_BRANCH
   "Git branch for external MAGMA build"
 )
 set(EXTERN_MAGMA_GIT_TAG
-  "2716e3f19e85f389e3f1b3d259086b0d98fe0503" CACHE STRING
+  "95903129f839bb401d9d9c53bd3d8e1b5e14c238" CACHE STRING
   "Git tag for external MAGMA build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "e9a3cc1ded6d3d842da75525b2dcadad03cfaa66" CACHE STRING
+  "9af88572697b61d0164082ce67f8c8966cf92630" CACHE STRING
   "Git tag for external SLEPc build"
 )
 
