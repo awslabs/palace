@@ -39,7 +39,7 @@
       {
         "DonorAttributes": [2],
         "ReceiverAttributes": [3],
-        "Translation": [0.0, 0.0, 5.48] // in L0 units
+        "Translation": [0.0, 0.0, -5.48] // in L0 units
       }
     ],
     "PEC":
