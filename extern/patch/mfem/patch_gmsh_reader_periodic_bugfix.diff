@@ -1,0 +1,15 @@
+diff --git a/mesh/mesh_readers.cpp b/mesh/mesh_readers.cpp
+index 62bd0b8d8..d04762567 100644
+--- a/mesh/mesh_readers.cpp
++++ b/mesh/mesh_readers.cpp
+@@ -2690,10 +2690,6 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+    }
+ 
+    this->RemoveUnusedVertices();
+-   if (periodic)
+-   {
+-      this->RemoveInternalBoundaries();
+-   }
+    this->FinalizeTopology();
+ 
+    // If a high order coordinate field was created project it onto the mesh

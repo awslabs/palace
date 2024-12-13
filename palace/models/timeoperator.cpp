@@ -328,11 +328,11 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         // Use implicit setup/solve defined in SUNImplicit*.
         arkode->UseMFEMLinearSolver();
         // Implicit solve is linear and J is not time-dependent.
-        ARKStepSetLinear(arkode->GetMem(), 0);
+        ARKodeSetLinear(arkode->GetMem(), 0);
         // Relative and absolute tolerances.
         arkode->SetSStolerances(rel_tol, abs_tol);
         // Set the order of the RK scheme.
-        ARKStepSetOrder(arkode->GetMem(), order);
+        ARKodeSetOrder(arkode->GetMem(), order);
         // Set the ODE solver to ARKODE.
         ode = std::move(arkode);
 #else
@@ -405,7 +405,7 @@ void TimeOperator::PrintStats()
                                &nfe_evals, &nfi_evals, &nlinsetups, &netfails);
 
     long int nniters;
-    ARKStepGetNumNonlinSolvIters(arkode->GetMem(), &nniters);
+    ARKodeGetNumNonlinSolvIters(arkode->GetMem(), &nniters);
 
     Mpi::Print("\nARKODE time-stepper statistics\n");
     Mpi::Print(" Stability-limited steps: {:d}\n", expsteps);
