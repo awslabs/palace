@@ -20,8 +20,8 @@ CEED_QFUNCTION(f_apply_l2_2)(void *__restrict__ ctx, CeedInt Q, const CeedScalar
 
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = w * (coeff[0] * u0 + coeff[1] * u1);
-    v[i + Q * 1] = w * (coeff[1] * u0 + coeff[2] * u1);
+    v[i + Q * 0] = w * (coeff[0] * u0 + coeff[2] * u1);
+    v[i + Q * 1] = w * (coeff[1] * u0 + coeff[3] * u1);
   }
   return 0;
 }
