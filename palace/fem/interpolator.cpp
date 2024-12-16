@@ -15,7 +15,11 @@ namespace
 {
 
 constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding box
+#ifdef MFEM_USE_SINGLE
+constexpr auto GSLIB_NEWTON_TOL = 1.0e-6;
+#else
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
+#endif
 
 }  // namespace
 

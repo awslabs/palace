@@ -265,13 +265,13 @@ void ComplexVector::Reciprocal()
 std::complex<mfem::real_t> ComplexVector::Dot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) + (Imag() * y.Imag()),
-          (this == &y) ? 0.0 : ((Imag() * y.Real()) - (Real() * y.Imag()))};
+          (this == &y) ? mfem::real_t(0.0) : ((Imag() * y.Real()) - (Real() * y.Imag()))};
 }
 
 std::complex<mfem::real_t> ComplexVector::TransposeDot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) - (Imag() * y.Imag()),
-          (this == &y) ? (2.0 * (Imag() * y.Real()))
+          (this == &y) ? (mfem::real_t(2.0) * (Imag() * y.Real()))
                        : ((Imag() * y.Real()) + (Real() * y.Imag()))};
 }
 
@@ -328,7 +328,7 @@ void ComplexVector::AXPBY(std::complex<mfem::real_t> alpha, const Vector &xr,
   const mfem::real_t ai = alpha.imag();
   const auto *XR = xr.Read(use_dev);
   const auto *XI = xi.Read(use_dev);
-  if (beta == 0.0)
+  if (beta == mfem::real_t(0.0))
   {
     auto *YR = yr.Write(use_dev);
     auto *YI = yi.Write(use_dev);
@@ -403,7 +403,7 @@ void ComplexVector::AXPBYPCZ(std::complex<mfem::real_t> alpha, const Vector &xr,
   const auto *XI = xi.Read(use_dev);
   const auto *YR = yr.Read(use_dev);
   const auto *YI = yi.Read(use_dev);
-  if (gamma == 0.0)
+  if (gamma == mfem::real_t(0.0))
   {
     auto *ZR = zr.Write(use_dev);
     auto *ZI = zi.Write(use_dev);

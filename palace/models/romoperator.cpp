@@ -30,7 +30,11 @@ using namespace std::complex_literals;
 namespace
 {
 
+#ifdef MFEM_USE_SINGLE
+constexpr auto ORTHOG_TOL = 1.0e-6;
+#else
 constexpr auto ORTHOG_TOL = 1.0e-12;
+#endif
 
 template <typename VecType, typename ScalarType>
 inline void OrthogonalizeColumn(GmresSolverBase::OrthogType type, MPI_Comm comm,
@@ -53,7 +57,7 @@ inline void OrthogonalizeColumn(GmresSolverBase::OrthogType type, MPI_Comm comm,
 }
 
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexOperator &A, Eigen::MatrixXcd &Ar,
+                               const ComplexOperator &A, EigenMatrixXc &Ar,
                                ComplexVector &r, int n0)
 {
   // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
@@ -95,7 +99,7 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
 }
 
 inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexVector &b, Eigen::VectorXcd &br, int n0)
+                               const ComplexVector &b, EigenVectorXc &br, int n0)
 {
   // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
   // processes as a sequential n-dimensional vector.
@@ -109,7 +113,7 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   Mpi::GlobalSum(n - n0, br.data() + n0, comm);
 }
 
-inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
+inline void ComputeMRI(const EigenMatrixXc &R, EigenVectorXc &q)
 {
   // Compute the coefficients of the minimal rational interpolation (MRI):
   // u = [sum_i u_i q_i / (z - z_i)] / [sum_i q_i / (z - z_i)]. The coefficients are given
@@ -117,7 +121,7 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
   const auto S = R.rows();
   MFEM_ASSERT(S > 0 && R.cols() == S, "Invalid dimension mismatch when computing MRI!");
   // For Eigen = v3.4.0 (latest tagged release as of 10/2023)
-  Eigen::JacobiSVD<Eigen::MatrixXcd> svd;
+  Eigen::JacobiSVD<EigenMatrixXc> svd;
   svd.compute(R, Eigen::ComputeFullV);
   // For Eigen > v3.4.0 (GitLab repo is at v3.4.90 as of 10/2023)
   // Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd;
@@ -157,8 +161,8 @@ inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
   D.resize(n);
   for (int i = 0; i < n; i++)
   {
-    D(i) = (beta[i] == 0.0)
-               ? ((alpha[i] == 0.0)
+    D(i) = (beta[i] == mfem::real_t(0.0))
+               ? ((alpha[i] == mfem::real_t(0.0))
                       ? std::numeric_limits<std::complex<mfem::real_t>>::quiet_NaN()
                       : mfem::infinity())
                : alpha[i] / beta[i];
@@ -175,8 +179,8 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
   {
     if (j + 1 < n)
     {
-      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
-      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
+      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], mfem::real_t(1.0), u.Real());
+      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], mfem::real_t(1.0), u.Imag());
     }
     else
     {
@@ -247,7 +251,7 @@ void RomOperator::SolveHDM(mfem::real_t omega, ComplexVector &u)
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * omega,
+  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), std::complex<mfem::real_t>(0.0, 1.0) * omega,
                                     std::complex<mfem::real_t>(-omega * omega, 0.0),
                                     K.get(), C.get(), M.get(), A2.get());
   auto P =
@@ -266,7 +270,7 @@ void RomOperator::SolveHDM(mfem::real_t omega, ComplexVector &u)
   }
   if (has_RHS1)
   {
-    r.Add(1i * omega, RHS1);
+    r.Add(std::complex<mfem::real_t>(0.0, 1.0) * omega, RHS1);
   }
 
   // Solve the linear system.
@@ -329,17 +333,17 @@ void RomOperator::UpdatePROM(mfem::real_t omega, const ComplexVector &u)
   // stored by its QR decomposition.
   MFEM_VERIFY(dim_Q + 1 <= Q.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
+  R.conservativeResizeLike(EigenMatrixX::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<mfem::real_t>> s = {1.0, 1i * omega};
+    std::vector<std::complex<mfem::real_t>> s = {1.0, std::complex<mfem::real_t>(0.0, 1.0) * omega};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
   }
   OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
-  Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
+  Q[dim_Q] *= mfem::real_t(1.0) / R(dim_Q, dim_Q);
   dim_Q++;
   ComputeMRI(R, q);
   // if (Mpi::Root(comm))
@@ -369,7 +373,7 @@ void RomOperator::SolvePROM(mfem::real_t omega, ComplexVector &u)
   Ar += Kr;
   if (C)
   {
-    Ar += (1i * omega) * Cr;
+    Ar += (std::complex<mfem::real_t>(0.0, 1.0) * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
 
@@ -384,7 +388,7 @@ void RomOperator::SolvePROM(mfem::real_t omega, ComplexVector &u)
   }
   if (has_RHS1)
   {
-    RHSr += (1i * omega) * RHS1r;
+    RHSr += (std::complex<mfem::real_t>(0.0, 1.0) * omega) * RHS1r;
   }
 
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
@@ -416,7 +420,7 @@ std::vector<mfem::real_t> RomOperator::FindMaxError(int N) const
                       "added to the PROM to define the parameter domain!");
   mfem::real_t start = *std::min_element(z.begin(), z.end());
   mfem::real_t end = *std::max_element(z.begin(), z.end());
-  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
+  Eigen::Map<const EigenVectorX> z_map(z.data(), S);
   std::vector<std::complex<mfem::real_t>> z_star(N, 0.0);
 
   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow

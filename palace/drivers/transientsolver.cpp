@@ -115,7 +115,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
     {
-      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, mfem::real_t(1.0));
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }

@@ -448,15 +448,15 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::str
     switch (data.type)
     {
       case SurfaceFluxType::ELECTRIC:
-        scale = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
-        scale *= iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0);
+        scale = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, mfem::real_t(1.0));
+        scale *= iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, mfem::real_t(1.0));
         break;
       case SurfaceFluxType::MAGNETIC:
-        scale = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
-        scale *= iodata.DimensionalizeValue(IoData::ValueType::CURRENT, 1.0);
+        scale = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, mfem::real_t(1.0));
+        scale *= iodata.DimensionalizeValue(IoData::ValueType::CURRENT, mfem::real_t(1.0));
         break;
       case SurfaceFluxType::POWER:
-        scale = iodata.DimensionalizeValue(IoData::ValueType::POWER, 1.0);
+        scale = iodata.DimensionalizeValue(IoData::ValueType::POWER, mfem::real_t(1.0));
         break;
     }
     flux_data.push_back({idx, Phi * scale, data.type});
@@ -614,7 +614,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &post_op, const std::strin
       probe_data.push_back(
           {idx, iodata.DimensionalizeValue(type, vF[i * dim]),
            iodata.DimensionalizeValue(type, vF[i * dim + 1]),
-           (dim == 3) ? iodata.DimensionalizeValue(type, vF[i * dim + 2]) : 0.0});
+           (dim == 3) ? iodata.DimensionalizeValue(type, vF[i * dim + 2]) : mfem::real_t(0.0)});
       i++;
     }
     if (root && !probe_data.empty())

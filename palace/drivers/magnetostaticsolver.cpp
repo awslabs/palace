@@ -82,7 +82,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
                linalg::Norml2(curlcurl_op.GetComm(), RHS));
     {
-      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, mfem::real_t(1.0));
       Mpi::Print(" Field energy H = {:.3e} J\n", E_mag * J);
     }
     I_inc[step] = data.GetExcitationCurrent();
@@ -112,8 +112,8 @@ void MagnetostaticSolver::Postprocess(const PostOperator &post_op, int step, int
 {
   // The internal GridFunctions for PostOperator have already been set from the A solution
   // in the main loop.
-  PostprocessDomains(post_op, "i", step, idx, 0.0, E_mag, 0.0, 0.0);
-  PostprocessSurfaces(post_op, "i", step, idx, 0.0, E_mag);
+  PostprocessDomains(post_op, "i", step, idx, mfem::real_t(0.0), E_mag, mfem::real_t(0.0), mfem::real_t(0.0));
+  PostprocessSurfaces(post_op, "i", step, idx, mfem::real_t(0.0), E_mag);
   PostprocessProbes(post_op, "i", step, idx);
   if (step < iodata.solver.magnetostatic.n_post)
   {
@@ -211,7 +211,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
       i++;
     }
   };
-  const mfem::real_t H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
+  const mfem::real_t H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, mfem::real_t(1.0));
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);

@@ -107,7 +107,7 @@ void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecTy
 
     // y = y + G B_G Gᵀ (x - A y)
     A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
+    linalg::AXPBY(mfem::real_t(1.0), x, mfem::real_t(-1.0), r);
     RealMultTranspose(*G, r, x_G);
     if (dbc_tdof_list_G)
     {
@@ -130,7 +130,7 @@ void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType 
     if (this->initial_guess || it > 0)
     {
       A->Mult(y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      linalg::AXPBY(mfem::real_t(1.0), x, mfem::real_t(-1.0), r);
       RealMultTranspose(*G, r, x_G);
     }
     else

@@ -206,7 +206,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (C)
   {
     // Search for eigenvalues closest to λ = iσ.
-    eigen->SetShiftInvert(1i * target);
+    eigen->SetShiftInvert(std::complex<mfem::real_t>(0.0, 1.0) * target);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
@@ -240,7 +240,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * target,
+  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), std::complex<mfem::real_t>(0.0, 1.0) * target,
                                     std::complex<mfem::real_t>(-target * target, 0.0),
                                     K.get(), C.get(), M.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
@@ -297,7 +297,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       // Quadratic EVP solves for eigenvalue λ = iω.
-      omega /= 1i;
+      omega /= std::complex<mfem::real_t>(0.0, 1.0);
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -305,7 +305,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
+    B *= -1.0 / (std::complex<mfem::real_t>(0.0, 1.0) * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());

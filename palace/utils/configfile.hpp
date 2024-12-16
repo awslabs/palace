@@ -516,7 +516,11 @@ public:
   int ksp_max_its = 45;
 
   // Tolerance for linear solver.
+#ifdef MFEM_USE_SINGLE
+  mfem::real_t ksp_tol = 1e-6;
+#else
   mfem::real_t ksp_tol = 1e-8;
+#endif
 
   // Tolerance for eigenvalue solver.
   mfem::real_t eig_tol = 1e-6;
@@ -930,7 +934,11 @@ public:
   int amg_agg_coarsen = -1;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
+#ifdef MFEM_USE_SINGLE
+  mfem::real_t divfree_tol = 1.0e-6;
+#else
   mfem::real_t divfree_tol = 1.0e-12;
+#endif
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;

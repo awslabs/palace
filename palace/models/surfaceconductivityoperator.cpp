@@ -173,7 +173,7 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
         Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
       }
       // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-      std::complex<mfem::real_t> s(1i * omega / Z);
+      std::complex<mfem::real_t> s(std::complex<mfem::real_t>(0.0, 1.0) * omega / Z);
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.real());
       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.imag());
     }

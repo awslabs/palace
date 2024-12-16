@@ -80,7 +80,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(laplace_op.GetComm(), V[step]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
     {
-      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, mfem::real_t(1.0));
       Mpi::Print(" Field energy E = {:.3e} J\n", E_elec * J);
     }
 
@@ -108,8 +108,8 @@ void ElectrostaticSolver::Postprocess(const PostOperator &post_op, int step, int
 {
   // The internal GridFunctions for PostOperator have already been set from the V solution
   // in the main loop.
-  PostprocessDomains(post_op, "i", step, idx, E_elec, 0.0, 0.0, 0.0);
-  PostprocessSurfaces(post_op, "i", step, idx, E_elec, 0.0);
+  PostprocessDomains(post_op, "i", step, idx, E_elec, mfem::real_t(0.0), mfem::real_t(0.0), mfem::real_t(0.0));
+  PostprocessSurfaces(post_op, "i", step, idx, E_elec, mfem::real_t(0.0));
   PostprocessProbes(post_op, "i", step, idx);
   if (step < iodata.solver.electrostatic.n_post)
   {
@@ -205,7 +205,7 @@ void ElectrostaticSolver::PostprocessTerminals(
       i++;
     }
   };
-  const mfem::real_t F = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
+  const mfem::real_t F = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, mfem::real_t(1.0));
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
@@ -224,7 +224,7 @@ void ElectrostaticSolver::PostprocessTerminals(
       // clang-format off
       output.print("{:{}.{}e},{:+{}.{}e}\n",
                    static_cast<mfem::real_t>(idx), table.w1, table.p1,
-                   iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0),
+                   iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, mfem::real_t(1.0)),
                    table.w, table.p);
       // clang-format on
     }

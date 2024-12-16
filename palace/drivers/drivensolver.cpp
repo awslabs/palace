@@ -122,7 +122,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * omega0,
+  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), std::complex<mfem::real_t>(0.0, 1.0) * omega0,
                                     std::complex<mfem::real_t>(-omega0 * omega0, 0.0),
                                     K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
@@ -163,7 +163,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     {
       // Update frequency-dependent excitation and operators.
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-      A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * omega,
+      A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), std::complex<mfem::real_t>(0.0, 1.0) * omega,
                                    std::complex<mfem::real_t>(-omega * omega, 0.0), K.get(),
                                    C.get(), M.get(), A2.get());
       P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
@@ -179,7 +179,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     BlockTimer bt0(Timer::POSTPRO);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
+    B *= mfem::real_t(-1.0) / (std::complex<mfem::real_t>(0.0, 1.0) * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
@@ -189,7 +189,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), RHS));
     {
-      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, mfem::real_t(1.0));
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -250,7 +250,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
   auto t0 = Timer::Now();
-  const mfem::real_t f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
+  const mfem::real_t f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, mfem::real_t(1.0));
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              n_step - step0, omega0 * f0,
@@ -273,7 +273,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     BlockTimer bt0(Timer::POSTPRO);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
+    B *= mfem::real_t(-1.0) / (std::complex<mfem::real_t>(0.0, 1.0) * omega);
     post_op.SetEGridFunction(E, false);
     post_op.SetBGridFunction(B, false);
     const mfem::real_t E_elec = post_op.GetEFieldEnergy();
@@ -298,7 +298,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     // Compute the actual solution error at the given parameter point.
     prom_op.SolveHDM(omega_star, E);
     prom_op.SolvePROM(omega_star, Eh);
-    linalg::AXPY(-1.0, E, Eh);
+    linalg::AXPY(mfem::real_t(-1.0), E, Eh);
     max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                          linalg::Norml2(space_op.GetComm(), E));
     if (max_errors.back() < offline_tol)
@@ -334,7 +334,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
              prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
              convergence_memory);
   utils::PrettyPrint(prom_op.GetSamplePoints(), f0, " Sampled frequencies (GHz):");
-  utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
+  utils::PrettyPrint(max_errors, mfem::real_t(1.0), " Sample errors:");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
@@ -362,7 +362,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     BlockTimer bt0(Timer::POSTPRO);
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
+    B *= mfem::real_t(-1.0) / (std::complex<mfem::real_t>(0.0, 1.0) * omega);
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
@@ -370,7 +370,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     const mfem::real_t E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
     {
-      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, mfem::real_t(1.0));
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }

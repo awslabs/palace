@@ -50,11 +50,16 @@ UniformElementData::UniformElementData(const std::array<mfem::real_t, 3> &input_
   direction /= direction.Norml2();
 
   // Compute the length from the most aligned normal direction.
+#ifdef MFEM_USE_SINGLE
+  constexpr mfem::real_t rel_tol = 1.0e-4;
+#else
   constexpr mfem::real_t rel_tol = 1.0e-6;
+#endif
   auto l_component =
       std::distance(deviations_deg.begin(),
                     std::min_element(deviations_deg.begin(), deviations_deg.end()));
   l = lengths[l_component];
+  Mpi::Print("Check if {:.3e} < {:.3e}\n", std::abs(l - mesh::GetProjectedLength(mesh, attr_marker, true, input_dir)), rel_tol*l);
   MFEM_VERIFY(std::abs(l - mesh::GetProjectedLength(mesh, attr_marker, true, input_dir)) <
                   rel_tol * l,
               "Bounding box discovered length should match projected length!");

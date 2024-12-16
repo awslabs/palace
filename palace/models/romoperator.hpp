@@ -18,6 +18,18 @@ namespace palace
 class IoData;
 class SpaceOperator;
 
+#ifdef MFEM_USE_SINGLE
+using EigenVectorX = Eigen::VectorXf;
+using EigenVectorXc = Eigen::VectorXcf;
+using EigenMatrixX = Eigen::MatrixXf;
+using EigenMatrixXc = Eigen::MatrixXcf;
+#else
+using EigenVectorX = Eigen::VectorXd;
+using EigenVectorXc = Eigen::VectorXcd;
+using EigenMatrixX = Eigen::MatrixXd;
+using EigenMatrixXc = Eigen::MatrixXcd;
+#endif
+
 //
 // A class handling projection-based reduced order model (PROM) construction and use for
 // adaptive fast frequency sweeps.
@@ -37,8 +49,8 @@ private:
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors.
-  Eigen::MatrixXcd Kr, Mr, Cr, Ar;
-  Eigen::VectorXcd RHS1r, RHSr;
+  EigenMatrixXc Kr, Mr, Cr, Ar;
+  EigenVectorXc RHS1r, RHSr;
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
@@ -50,8 +62,8 @@ private:
   // support points z is used as an error indicator.
   std::vector<ComplexVector> Q;
   std::size_t dim_Q;
-  Eigen::MatrixXcd R;
-  Eigen::VectorXcd q;
+  EigenMatrixXc R;
+  EigenVectorXc q;
   std::vector<mfem::real_t> z;
 
 public:

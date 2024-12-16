@@ -506,7 +506,7 @@ auto BuildParSumOperator(int h, int w, std::complex<mfem::real_t> a0,
       }
     }
   }
-  if (C && a1 != 0.0)
+  if (C && a1 != mfem::real_t(0.0))
   {
     if (a1.real() != 0.0)
     {
@@ -531,7 +531,7 @@ auto BuildParSumOperator(int h, int w, std::complex<mfem::real_t> a0,
       }
     }
   }
-  if (M && a2 != 0.0)
+  if (M && a2 != mfem::real_t(0.0))
   {
     if (a2.real() != 0.0)
     {
@@ -920,7 +920,7 @@ bool SpaceOperator::GetExcitationVector(mfem::real_t omega, ComplexVector &RHS)
   RHS.UseDevice(true);
   RHS = 0.0;
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
-  RHS *= 1i * omega;
+  RHS *= std::complex<mfem::real_t>(0.0, 1.0) * omega;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz1 || nnz2;

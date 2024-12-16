@@ -120,15 +120,15 @@ LumpedPortData::GetCharacteristicImpedance(mfem::real_t omega,
   }
   if (std::abs(L) > 0.0 && (branch == Branch::TOTAL || branch == Branch::L))
   {
-    Y += 1.0 / (1i * omega * L);
+    Y += mfem::real_t(1.0) / (std::complex<mfem::real_t>(0.0, 1.0) * omega * L);
   }
   if (std::abs(C) > 0.0 && (branch == Branch::TOTAL || branch == Branch::C))
   {
-    Y += 1i * omega * C;
+    Y += std::complex<mfem::real_t>(0.0, 1.0) * omega * C;
   }
   MFEM_VERIFY(std::abs(Y) > 0.0,
               "Characteristic impedance requested for lumped port with zero admittance!")
-  return 1.0 / Y;
+  return mfem::real_t(1.0) / Y;
 }
 
 mfem::real_t LumpedPortData::GetExcitationPower() const
@@ -258,7 +258,7 @@ std::complex<mfem::real_t> LumpedPortData::GetPower(GridFunction &E, GridFunctio
     pr.UseDevice(false);
     pr.Assemble();
     pr.UseDevice(true);
-    dot = -(pr * E.Real()) + (has_imag ? -1i * (pr * E.Imag()) : 0.0);
+    dot = -(pr * E.Real()) + (has_imag ? -std::complex<mfem::real_t>(0.0, 1.0) * (pr * E.Imag()) : 0.0);
   }
   if (has_imag)
   {
@@ -268,7 +268,7 @@ std::complex<mfem::real_t> LumpedPortData::GetPower(GridFunction &E, GridFunctio
     pi.UseDevice(false);
     pi.Assemble();
     pi.UseDevice(true);
-    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
+    dot += -(pi * E.Imag()) + std::complex<mfem::real_t>(0.0, 1.0) * (pi * E.Real());
     Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
     return dot;
   }

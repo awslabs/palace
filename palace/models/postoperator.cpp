@@ -561,8 +561,8 @@ std::complex<mfem::real_t> PostOperator::GetSParameter(const WavePortOperator &w
   }
   // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
   // unless specified).
-  S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-  S_ij *= std::exp(1i * data.kn0 * data.d_offset);
+  S_ij *= std::exp(std::complex<mfem::real_t>(0.0, 1.0) * src_data.kn0 * src_data.d_offset);
+  S_ij *= std::exp(std::complex<mfem::real_t>(0.0, 1.0) * data.kn0 * data.d_offset);
   return S_ij;
 }
 

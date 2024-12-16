@@ -907,7 +907,7 @@ void WavePortData::Initialize(mfem::real_t omega)
     e0nr.UseDevice(true);
     e0ti.UseDevice(true);
     e0ni.UseDevice(true);
-    ComplexVector::AXPBY(1.0 / (1i * kn0), e0nr, e0ni, 0.0, e0nr, e0ni);
+    ComplexVector::AXPBY(1.0 / (std::complex<mfem::real_t>(0.0, 1.0) * kn0), e0nr, e0ni, 0.0, e0nr, e0ni);
     port_E0t->Real().SetFromTrueDofs(e0tr);  // Parallel distribute
     port_E0t->Imag().SetFromTrueDofs(e0ti);
     port_E0n->Real().SetFromTrueDofs(e0nr);
@@ -1010,7 +1010,7 @@ std::complex<mfem::real_t> WavePortData::GetPower(GridFunction &E, GridFunction 
     pr.UseDevice(false);
     pr.Assemble();
     pr.UseDevice(true);
-    dot = -(pr * E.Real()) - 1i * (pr * E.Imag());
+    dot = -(pr * E.Real()) - std::complex<mfem::real_t>(0.0, 1.0) * (pr * E.Imag());
   }
   {
     mfem::LinearForm pi(&nd_fespace);
@@ -1019,7 +1019,7 @@ std::complex<mfem::real_t> WavePortData::GetPower(GridFunction &E, GridFunction 
     pi.UseDevice(false);
     pi.Assemble();
     pi.UseDevice(true);
-    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
+    dot += -(pi * E.Imag()) + std::complex<mfem::real_t>(0.0, 1.0) * (pi * E.Real());
   }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
   return dot;
@@ -1045,8 +1045,8 @@ WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator 
                                    mfem::ParFiniteElementSpace &nd_fespace,
                                    mfem::ParFiniteElementSpace &h1_fespace)
   : suppress_output(false),
-    fc(iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0)),
-    kc(1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0))
+    fc(iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, mfem::real_t(1.0))),
+    kc(1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, mfem::real_t(1.0)))
 {
   // Set up wave port boundary conditions.
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),

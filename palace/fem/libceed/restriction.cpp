@@ -72,7 +72,7 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
       {
         norm2_e += elem_pm(n, m) * elem_pm(n, m);
       }
-      mfem::real_t relative_tol = tol * std::max(std::max(norm2_f, norm2_e), 1.0E-6);
+      mfem::real_t relative_tol = tol * std::max(std::max(norm2_f, norm2_e), mfem::real_t(1.0E-6));
       mfem::real_t diff = 0.0;
       for (int o = 0; o < elem_pm.Height(); o++)
       {

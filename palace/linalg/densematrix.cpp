@@ -141,12 +141,12 @@ MatrixFunction(const mfem::DenseMatrix &M,
     {
       if (std::abs(x) <= tol)
       {
-        return 0.0;
+        return mfem::real_t(0.0);
       }
       if (std::abs(x) >= tol && std::abs(y) <= tol)
       {
         MFEM_ABORT("Logic error: Zero denominator with nonzero numerator!");
-        return 0.0;
+        return mfem::real_t(0.0);
       }
       return x / y;
     };

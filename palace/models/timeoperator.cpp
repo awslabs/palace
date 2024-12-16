@@ -89,8 +89,8 @@ public:
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
-        A = space_op.GetSystemMatrix(dt * dt, dt, 1.0, K.get(), C.get(), M.get());
-        B = space_op.GetPreconditionerMatrix<Operator>(dt * dt, dt, 1.0, 0.0);
+        A = space_op.GetSystemMatrix(dt * dt, dt, mfem::real_t(1.0), K.get(), C.get(), M.get());
+        B = space_op.GetPreconditionerMatrix<Operator>(dt * dt, dt, mfem::real_t(1.0), mfem::real_t(0.0));
 
         // Configure the solver.
         if (!kspA)
@@ -131,7 +131,7 @@ public:
     {
       C->AddMult(u1, rhs1, 1.0);
     }
-    linalg::AXPBYPCZ(-1.0, rhs1, dJ_coef(t), NegJ, 0.0, rhs1);
+    linalg::AXPBYPCZ(mfem::real_t(-1.0), rhs1, dJ_coef(t), NegJ, mfem::real_t(0.0), rhs1);
 
     rhs2 = u1;
 
@@ -209,7 +209,7 @@ public:
     kspA->Mult(RHS1, k1);
 
     // k2 = rhs2 + dt k1
-    linalg::AXPBYPCZ(1.0, RHS2, dt, k1, 0.0, k2);
+    linalg::AXPBYPCZ(mfem::real_t(1.0), RHS2, dt, k1, mfem::real_t(0.0), k2);
 
     // k3 = rhs3 - dt curl k2
     k3 = RHS3;
@@ -265,7 +265,7 @@ public:
     kspA->Mult(RHS1, x1);
 
     // x2 = b2 + dt x1
-    linalg::AXPBYPCZ(1.0, b2, saved_gamma, x1, 0.0, x2);
+    linalg::AXPBYPCZ(mfem::real_t(1.0), b2, saved_gamma, x1, mfem::real_t(0.0), x2);
 
     // x3 = b3 - dt curl x2
     x3 = b3;
@@ -298,7 +298,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 
   // Create ODE solver for 1st-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::IMPLICIT;
-  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0,
+  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, mfem::real_t(0.0),
                                                          type);
   switch (iodata.solver.transient.type)
   {
@@ -328,11 +328,11 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
         // Use implicit setup/solve defined in SUNImplicit*.
         arkode->UseMFEMLinearSolver();
         // Implicit solve is linear and J is not time-dependent.
-        ARKStepSetLinear(arkode->GetMem(), 0);
+        ARKodeSetLinear(arkode->GetMem(), 0);
         // Relative and absolute tolerances.
         arkode->SetSStolerances(rel_tol, abs_tol);
         // Set the order of the RK scheme.
-        ARKStepSetOrder(arkode->GetMem(), order);
+        ARKodeSetOrder(arkode->GetMem(), order);
         // Set the ODE solver to ARKODE.
         ode = std::move(arkode);
 #else
@@ -405,7 +405,7 @@ void TimeOperator::PrintStats()
                                &nfe_evals, &nfi_evals, &nlinsetups, &netfails);
 
     long int nniters;
-    ARKStepGetNumNonlinSolvIters(arkode->GetMem(), &nniters);
+    ARKodeGetNumNonlinSolvIters(arkode->GetMem(), &nniters);
 
     Mpi::Print("\nARKODE time-stepper statistics\n");
     Mpi::Print(" Stability-limited steps: {:d}\n", expsteps);

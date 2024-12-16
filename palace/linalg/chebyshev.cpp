@@ -197,7 +197,7 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
     if (this->initial_guess || it > 0)
     {
       ApplyOp(*A, y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      linalg::AXPBY(mfem::real_t(1.0), x, mfem::real_t(-1.0), r);
     }
     else
     {
@@ -269,7 +269,7 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
     if (this->initial_guess || it > 0)
     {
       ApplyOp(*A, y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      linalg::AXPBY(mfem::real_t(1.0), x, mfem::real_t(-1.0), r);
     }
     else
     {

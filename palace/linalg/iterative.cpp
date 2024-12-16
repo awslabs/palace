@@ -117,13 +117,13 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   // where cs is real and cs² + |sn|² = 1. See LAPACK's c/zlartg.
   const T safmin = SafeMin<T>();
   const T safmax = SafeMax<T>();
-  if (dy == 0.0)
+  if (dy == mfem::real_t(0.0))
   {
     cs = 1.0;
     sn = 0.0;
     return;
   }
-  if (dx == 0.0)
+  if (dx == mfem::real_t(0.0))
   {
     cs = 0.0;
     if (dy.real() == 0.0)
@@ -259,7 +259,7 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
     if (initial_guess)
     {
       A->Mult(x, z);
-      linalg::AXPBY(1.0, b, -1.0, z);
+      linalg::AXPBY(mfem::real_t(1.0), b, mfem::real_t(-1.0), z);
       ApplyB(B, z, r, use_timer);
     }
     else
@@ -273,7 +273,7 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
     if (initial_guess)
     {
       A->Mult(x, r);
-      linalg::AXPBY(1.0, b, -1.0, r);
+      linalg::AXPBY(mfem::real_t(1.0), b, mfem::real_t(-1.0), r);
     }
     else
     {
@@ -377,7 +377,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   if (this->initial_guess)
   {
     A->Mult(x, r);
-    linalg::AXPBY(1.0, b, -1.0, r);
+    linalg::AXPBY(mfem::real_t(1.0), b, mfem::real_t(-1.0), r);
   }
   else
   {
@@ -614,7 +614,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      w *= mfem::real_t(1.0) / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
       {
@@ -793,7 +793,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
-      w *= 1.0 / Hj[j + 1];
+      w *= mfem::real_t(1.0) / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
       {

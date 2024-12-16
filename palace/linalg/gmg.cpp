@@ -185,13 +185,13 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
-  linalg::AXPBY(1.0, X[l], -1.0, R[l]);
+  linalg::AXPBY(mfem::real_t(1.0), X[l], mfem::real_t(-1.0), R[l]);
 
   // Coarse grid correction.
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
   if (dbc_tdof_lists[l - 1])
   {
-    linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
+    linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], mfem::real_t(0.0));
   }
   VCycle(l - 1, false);
 
