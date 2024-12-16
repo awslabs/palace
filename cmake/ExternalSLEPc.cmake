@@ -42,9 +42,9 @@ else()
   list(APPEND PETSC_OPTIONS "--known-64-bit-blas-indices=0")
 endif()
 if(PALACE_WITH_SINGLE_PRECISION)
-  list(APPEND PETSC_OPTIONS "--with-precision=single"
-else
-  list(APPEND PETSC_OPTIONS "--with-precision=double"
+  list(APPEND PETSC_OPTIONS "--with-precision=single")
+else()
+  list(APPEND PETSC_OPTIONS "--with-precision=double")
 endif()
 if(PALACE_WITH_OPENMP)
   list(APPEND PETSC_OPTIONS "--with-openmp")
