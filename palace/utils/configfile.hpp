@@ -944,7 +944,11 @@ public:
   int divfree_max_it = 1000;
 
   // Relative tolerance for solving linear systems in the error estimator.
+#ifdef MFEM_USE_SINGLE
+  mfem::real_t estimator_tol = 1.0e-4;
+#else
   mfem::real_t estimator_tol = 1.0e-6;
+#endif
 
   // Maximum number of iterations for solving linear systems in the error estimator.
   int estimator_max_it = 10000;
