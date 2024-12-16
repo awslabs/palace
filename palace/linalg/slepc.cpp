@@ -366,7 +366,7 @@ void SlepcEigenvalueSolver::SetBMat(const Operator &B)
   opB = &B;
 }
 
-void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
+void SlepcEigenvalueSolver::SetShiftInvert(std::complex<mfem::real_t> s, bool precond)
 {
   ST st = GetST();
   if (precond)
@@ -695,7 +695,7 @@ int SlepcEPSSolverBase::Solve()
   return (int)num_conv;
 }
 
-std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
+std::complex<mfem::real_t> SlepcEPSSolverBase::GetEigenvalue(int i) const
 {
   PetscScalar l;
   PalacePetscCall(EPSGetEigenvalue(eps, i, &l, nullptr));
@@ -1173,7 +1173,7 @@ int SlepcPEPSolverBase::Solve()
   return (int)num_conv;
 }
 
-std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const
+std::complex<mfem::real_t> SlepcPEPSolverBase::GetEigenvalue(int i) const
 {
   PetscScalar l;
   PalacePetscCall(PEPGetEigenpair(pep, i, &l, nullptr, nullptr, nullptr));
@@ -1420,7 +1420,7 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);
   ctx->y2 *= ctx->gamma;
-  ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<mfem::real_t>(1.0, 0.0));
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -1500,7 +1500,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   else
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
-    ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<mfem::real_t>(1.0, 0.0));
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {

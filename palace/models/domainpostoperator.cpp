@@ -139,12 +139,12 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   }
 }
 
-double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
+mfem::real_t DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
 {
   if (M_elec)
   {
     M_elec->Mult(E.Real(), D);
-    double dot = linalg::LocalDot(E.Real(), D);
+    mfem::real_t dot = linalg::LocalDot(E.Real(), D);
     if (E.HasImag())
     {
       M_elec->Mult(E.Imag(), D);
@@ -158,12 +158,12 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
   return 0.0;
 }
 
-double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
+mfem::real_t DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)
   {
     M_mag->Mult(B.Real(), H);
-    double dot = linalg::LocalDot(B.Real(), H);
+    mfem::real_t dot = linalg::LocalDot(B.Real(), H);
     if (B.HasImag())
     {
       M_mag->Mult(B.Imag(), H);
@@ -177,8 +177,8 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
   return 0.0;
 }
 
-double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
-                                                        const GridFunction &E) const
+mfem::real_t DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
+                                                              const GridFunction &E) const
 {
   // Compute the electric field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -189,7 +189,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
     return 0.0;
   }
   it->second.first->Mult(E.Real(), D);
-  double dot = linalg::LocalDot(E.Real(), D);
+  mfem::real_t dot = linalg::LocalDot(E.Real(), D);
   if (E.HasImag())
   {
     it->second.first->Mult(E.Imag(), D);
@@ -199,8 +199,8 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   return 0.5 * dot;
 }
 
-double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
-                                                        const GridFunction &B) const
+mfem::real_t DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
+                                                              const GridFunction &B) const
 {
   // Compute the magnetic field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -211,7 +211,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
     return 0.0;
   }
   it->second.second->Mult(B.Real(), H);
-  double dot = linalg::LocalDot(B.Real(), H);
+  mfem::real_t dot = linalg::LocalDot(B.Real(), H);
   if (B.HasImag())
   {
     it->second.second->Mult(B.Imag(), H);

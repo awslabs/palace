@@ -151,7 +151,7 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
 }
 
 void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
+    mfem::real_t omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
 {
   // If the provided conductor thickness is empty (zero), prescribe a surface impedance
   // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
@@ -162,18 +162,18 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   {
     if (std::abs(bdr.sigma) > 0.0)
     {
-      double delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
-      std::complex<double> Z = 1.0 / (bdr.sigma * delta);
+      mfem::real_t delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
+      std::complex<mfem::real_t> Z = 1.0 / (bdr.sigma * delta);
       Z.imag(Z.real());
       if (bdr.h > 0.0)
       {
-        double nu = bdr.h / delta;
-        double den = std::cosh(nu) - std::cos(nu);
+        mfem::real_t nu = bdr.h / delta;
+        mfem::real_t den = std::cosh(nu) - std::cos(nu);
         Z.real(Z.real() * (std::sinh(nu) + std::sin(nu)) / den);
         Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
       }
       // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-      std::complex<double> s(1i * omega / Z);
+      std::complex<mfem::real_t> s(1i * omega / Z);
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.real());
       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.imag());
     }

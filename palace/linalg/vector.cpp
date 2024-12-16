@@ -28,7 +28,7 @@ ComplexVector::ComplexVector(const Vector &yr, const Vector &yi) : ComplexVector
   Set(yr, yi);
 }
 
-ComplexVector::ComplexVector(const std::complex<double> *py, int size, bool on_dev)
+ComplexVector::ComplexVector(const std::complex<mfem::real_t> *py, int size, bool on_dev)
   : ComplexVector(size)
 {
   Set(py, size, on_dev);
@@ -76,11 +76,12 @@ void ComplexVector::Set(const Vector &yr, const Vector &yi)
   Imag() = yi;
 }
 
-void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
+void ComplexVector::Set(const std::complex<mfem::real_t> *py, int size, bool on_dev)
 {
-  MFEM_ASSERT(size == Size(),
-              "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
-  auto SetImpl = [this](const double *Y, const int N, bool use_dev)
+  MFEM_ASSERT(
+      size == Size(),
+      "Mismatch in dimension for array of std::complex<mfem::real_t> in ComplexVector!");
+  auto SetImpl = [this](const mfem::real_t *Y, const int N, bool use_dev)
   {
     auto *XR = Real().Write(use_dev);
     auto *XI = Imag().Write(use_dev);
@@ -96,7 +97,7 @@ void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    SetImpl(reinterpret_cast<const double *>(py), size, use_dev);
+    SetImpl(reinterpret_cast<const mfem::real_t *>(py), size, use_dev);
   }
   else if (!on_dev)
   {
@@ -121,11 +122,12 @@ void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
   }
 }
 
-void ComplexVector::Get(std::complex<double> *py, int size, bool on_dev) const
+void ComplexVector::Get(std::complex<mfem::real_t> *py, int size, bool on_dev) const
 {
-  MFEM_ASSERT(size == Size(),
-              "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
-  auto GetImpl = [this](double *Y, const int N, bool use_dev)
+  MFEM_ASSERT(
+      size == Size(),
+      "Mismatch in dimension for array of std::complex<mfem::real_t> in ComplexVector!");
+  auto GetImpl = [this](mfem::real_t *Y, const int N, bool use_dev)
   {
     const auto *XR = Real().Read(use_dev);
     const auto *XI = Imag().Read(use_dev);
@@ -141,7 +143,7 @@ void ComplexVector::Get(std::complex<double> *py, int size, bool on_dev) const
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    GetImpl(reinterpret_cast<double *>(py), size, use_dev);
+    GetImpl(reinterpret_cast<mfem::real_t *>(py), size, use_dev);
   }
   else if (!on_dev)
   {
@@ -162,7 +164,7 @@ void ComplexVector::Get(std::complex<double> *py, int size, bool on_dev) const
   }
 }
 
-ComplexVector &ComplexVector::operator=(std::complex<double> s)
+ComplexVector &ComplexVector::operator=(std::complex<mfem::real_t> s)
 {
   Real() = s.real();
   Imag() = s.imag();
@@ -170,7 +172,7 @@ ComplexVector &ComplexVector::operator=(std::complex<double> s)
 }
 
 void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
-                              const std::vector<std::complex<double>> &s)
+                              const std::vector<std::complex<mfem::real_t>> &s)
 {
   MFEM_ASSERT(s.empty() || y.size() == s.size(),
               "Mismatch in dimension of vector blocks and scaling coefficients!");
@@ -182,8 +184,8 @@ void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
     MFEM_VERIFY(y[b] && ((b < y.size() - 1 && offset + y[b]->Size() < Size()) ||
                          (b == y.size() - 1 && offset + y[b]->Size() == Size())),
                 "Mistmatch between sum of block dimensions and parent vector dimension!");
-    const double sr = s.empty() ? 1.0 : s[b].real();
-    const double si = s.empty() ? 0.0 : s[b].imag();
+    const mfem::real_t sr = s.empty() ? 1.0 : s[b].real();
+    const mfem::real_t si = s.empty() ? 0.0 : s[b].imag();
     const bool use_dev = UseDevice() || y[b]->UseDevice();
     const int N = y[b]->Size();
     const auto *YR = y[b]->Real().Read();
@@ -200,10 +202,10 @@ void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
   }
 }
 
-ComplexVector &ComplexVector::operator*=(std::complex<double> s)
+ComplexVector &ComplexVector::operator*=(std::complex<mfem::real_t> s)
 {
-  const double sr = s.real();
-  const double si = s.imag();
+  const mfem::real_t sr = s.real();
+  const mfem::real_t si = s.imag();
   if (si == 0.0)
   {
     Real() *= sr;
@@ -260,31 +262,31 @@ void ComplexVector::Reciprocal()
                       });
 }
 
-std::complex<double> ComplexVector::Dot(const ComplexVector &y) const
+std::complex<mfem::real_t> ComplexVector::Dot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) + (Imag() * y.Imag()),
           (this == &y) ? 0.0 : ((Imag() * y.Real()) - (Real() * y.Imag()))};
 }
 
-std::complex<double> ComplexVector::TransposeDot(const ComplexVector &y) const
+std::complex<mfem::real_t> ComplexVector::TransposeDot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) - (Imag() * y.Imag()),
           (this == &y) ? (2.0 * (Imag() * y.Real()))
                        : ((Imag() * y.Real()) + (Real() * y.Imag()))};
 }
 
-void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
+void ComplexVector::AXPY(std::complex<mfem::real_t> alpha, const ComplexVector &x)
 {
   AXPY(alpha, x.Real(), x.Imag(), Real(), Imag());
 }
 
-void ComplexVector::AXPY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
-                         Vector &yr, Vector &yi)
+void ComplexVector::AXPY(std::complex<mfem::real_t> alpha, const Vector &xr,
+                         const Vector &xi, Vector &yr, Vector &yi)
 {
   const bool use_dev = yr.UseDevice() || xr.UseDevice();
   const int N = yr.Size();
-  const double ar = alpha.real();
-  const double ai = alpha.imag();
+  const mfem::real_t ar = alpha.real();
+  const mfem::real_t ai = alpha.imag();
   const auto *XR = xr.Read(use_dev);
   const auto *XI = xi.Read(use_dev);
   auto *YR = yr.ReadWrite(use_dev);
@@ -310,19 +312,20 @@ void ComplexVector::AXPY(std::complex<double> alpha, const Vector &xr, const Vec
   }
 }
 
-void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &x,
-                          std::complex<double> beta)
+void ComplexVector::AXPBY(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+                          std::complex<mfem::real_t> beta)
 {
   AXPBY(alpha, x.Real(), x.Imag(), beta, Real(), Imag());
 }
 
-void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
-                          std::complex<double> beta, Vector &yr, Vector &yi)
+void ComplexVector::AXPBY(std::complex<mfem::real_t> alpha, const Vector &xr,
+                          const Vector &xi, std::complex<mfem::real_t> beta, Vector &yr,
+                          Vector &yi)
 {
   const bool use_dev = yr.UseDevice() || xr.UseDevice();
   const int N = yr.Size();
-  const double ar = alpha.real();
-  const double ai = alpha.imag();
+  const mfem::real_t ar = alpha.real();
+  const mfem::real_t ai = alpha.imag();
   const auto *XR = xr.Read(use_dev);
   const auto *XI = xi.Read(use_dev);
   if (beta == 0.0)
@@ -351,8 +354,8 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Ve
   }
   else
   {
-    const double br = beta.real();
-    const double bi = beta.imag();
+    const mfem::real_t br = beta.real();
+    const mfem::real_t bi = beta.imag();
     auto *YR = yr.ReadWrite(use_dev);
     auto *YI = yi.ReadWrite(use_dev);
     if (ai == 0.0 && bi == 0.0)
@@ -378,23 +381,24 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Ve
   }
 }
 
-void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
-                             std::complex<double> beta, const ComplexVector &y,
-                             std::complex<double> gamma)
+void ComplexVector::AXPBYPCZ(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+                             std::complex<mfem::real_t> beta, const ComplexVector &y,
+                             std::complex<mfem::real_t> gamma)
 {
   AXPBYPCZ(alpha, x.Real(), x.Imag(), beta, y.Real(), y.Imag(), gamma, Real(), Imag());
 }
 
-void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
-                             std::complex<double> beta, const Vector &yr, const Vector &yi,
-                             std::complex<double> gamma, Vector &zr, Vector &zi)
+void ComplexVector::AXPBYPCZ(std::complex<mfem::real_t> alpha, const Vector &xr,
+                             const Vector &xi, std::complex<mfem::real_t> beta,
+                             const Vector &yr, const Vector &yi,
+                             std::complex<mfem::real_t> gamma, Vector &zr, Vector &zi)
 {
   const bool use_dev = zr.UseDevice() || xr.UseDevice() || yr.UseDevice();
   const int N = zr.Size();
-  const double ar = alpha.real();
-  const double ai = alpha.imag();
-  const double br = beta.real();
-  const double bi = beta.imag();
+  const mfem::real_t ar = alpha.real();
+  const mfem::real_t ai = alpha.imag();
+  const mfem::real_t br = beta.real();
+  const mfem::real_t bi = beta.imag();
   const auto *XR = xr.Read(use_dev);
   const auto *XI = xi.Read(use_dev);
   const auto *YR = yr.Read(use_dev);
@@ -426,8 +430,8 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const
   }
   else
   {
-    const double gr = gamma.real();
-    const double gi = gamma.imag();
+    const mfem::real_t gr = gamma.real();
+    const mfem::real_t gi = gamma.imag();
     auto *ZR = zr.ReadWrite(use_dev);
     auto *ZI = zi.ReadWrite(use_dev);
     if (ai == 0.0 && bi == 0.0 && gi == 0.0)
@@ -458,11 +462,11 @@ namespace linalg
 {
 
 template <>
-void SetSubVector(Vector &x, const mfem::Array<int> &rows, double s)
+void SetSubVector(Vector &x, const mfem::Array<int> &rows, mfem::real_t s)
 {
   const bool use_dev = x.UseDevice();
   const int N = rows.Size();
-  const double sr = s;
+  const mfem::real_t sr = s;
   const auto *idx = rows.Read(use_dev);
   auto *X = x.ReadWrite(use_dev);
   mfem::forall_switch(use_dev, N,
@@ -474,11 +478,11 @@ void SetSubVector(Vector &x, const mfem::Array<int> &rows, double s)
 }
 
 template <>
-void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, double s)
+void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, mfem::real_t s)
 {
   const bool use_dev = x.UseDevice();
   const int N = rows.Size();
-  const double sr = s;
+  const mfem::real_t sr = s;
   const auto *idx = rows.Read(use_dev);
   auto *XR = x.Real().ReadWrite(use_dev);
   auto *XI = x.Imag().ReadWrite(use_dev);
@@ -527,25 +531,25 @@ void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, const ComplexV
 }
 
 template <>
-void SetSubVector(Vector &x, int start, int end, double s)
+void SetSubVector(Vector &x, int start, int end, mfem::real_t s)
 {
   const bool use_dev = x.UseDevice();
   MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
               "Invalid range for SetSubVector!");
   const int N = end - start;
-  const double sr = s;
+  const mfem::real_t sr = s;
   auto *X = x.ReadWrite(use_dev) + start;
   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { X[i] = sr; });
 }
 
 template <>
-void SetSubVector(ComplexVector &x, int start, int end, double s)
+void SetSubVector(ComplexVector &x, int start, int end, mfem::real_t s)
 {
   const bool use_dev = x.UseDevice();
   MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
               "Invalid range for SetSubVector!");
   const int N = end - start;
-  const double sr = s;
+  const mfem::real_t sr = s;
   auto *XR = x.Real().ReadWrite(use_dev) + start;
   auto *XI = x.Imag().ReadWrite(use_dev) + start;
   mfem::forall_switch(use_dev, N,
@@ -627,7 +631,7 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                       });
 }
 
-double LocalDot(const Vector &x, const Vector &y)
+mfem::real_t LocalDot(const Vector &x, const Vector &y)
 {
   static hypre::HypreVector X, Y;
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
@@ -636,7 +640,7 @@ double LocalDot(const Vector &x, const Vector &y)
   return hypre_SeqVectorInnerProd(X, Y);
 }
 
-std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
+std::complex<mfem::real_t> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
   if (&x == &y)
   {
@@ -649,20 +653,20 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
   }
 }
 
-double LocalSum(const Vector &x)
+mfem::real_t LocalSum(const Vector &x)
 {
   static hypre::HypreVector X;
   X.Update(x);
   return hypre_SeqVectorSumElts(X);
 }
 
-std::complex<double> LocalSum(const ComplexVector &x)
+std::complex<mfem::real_t> LocalSum(const ComplexVector &x)
 {
   return {LocalSum(x.Real()), LocalSum(x.Imag())};
 }
 
 template <>
-void AXPY(double alpha, const Vector &x, Vector &y)
+void AXPY(mfem::real_t alpha, const Vector &x, Vector &y)
 {
   if (alpha == 1.0)
   {
@@ -675,39 +679,39 @@ void AXPY(double alpha, const Vector &x, Vector &y)
 }
 
 template <>
-void AXPY(double alpha, const ComplexVector &x, ComplexVector &y)
+void AXPY(mfem::real_t alpha, const ComplexVector &x, ComplexVector &y)
 {
   y.AXPY(alpha, x);
 }
 
 template <>
-void AXPY(std::complex<double> alpha, const ComplexVector &x, ComplexVector &y)
+void AXPY(std::complex<mfem::real_t> alpha, const ComplexVector &x, ComplexVector &y)
 {
   y.AXPY(alpha, x);
 }
 
 template <>
-void AXPBY(double alpha, const Vector &x, double beta, Vector &y)
+void AXPBY(mfem::real_t alpha, const Vector &x, mfem::real_t beta, Vector &y)
 {
   add(alpha, x, beta, y, y);
 }
 
 template <>
-void AXPBY(std::complex<double> alpha, const ComplexVector &x, std::complex<double> beta,
-           ComplexVector &y)
+void AXPBY(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+           std::complex<mfem::real_t> beta, ComplexVector &y)
 {
   y.AXPBY(alpha, x, beta);
 }
 
 template <>
-void AXPBY(double alpha, const ComplexVector &x, double beta, ComplexVector &y)
+void AXPBY(mfem::real_t alpha, const ComplexVector &x, mfem::real_t beta, ComplexVector &y)
 {
   y.AXPBY(alpha, x, beta);
 }
 
 template <>
-void AXPBYPCZ(double alpha, const Vector &x, double beta, const Vector &y, double gamma,
-              Vector &z)
+void AXPBYPCZ(mfem::real_t alpha, const Vector &x, mfem::real_t beta, const Vector &y,
+              mfem::real_t gamma, Vector &z)
 {
   if (gamma == 0.0)
   {
@@ -721,20 +725,21 @@ void AXPBYPCZ(double alpha, const Vector &x, double beta, const Vector &y, doubl
 }
 
 template <>
-void AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x, std::complex<double> beta,
-              const ComplexVector &y, std::complex<double> gamma, ComplexVector &z)
+void AXPBYPCZ(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+              std::complex<mfem::real_t> beta, const ComplexVector &y,
+              std::complex<mfem::real_t> gamma, ComplexVector &z)
 {
   z.AXPBYPCZ(alpha, x, beta, y, gamma);
 }
 
 template <>
-void AXPBYPCZ(double alpha, const ComplexVector &x, double beta, const ComplexVector &y,
-              double gamma, ComplexVector &z)
+void AXPBYPCZ(mfem::real_t alpha, const ComplexVector &x, mfem::real_t beta,
+              const ComplexVector &y, mfem::real_t gamma, ComplexVector &z)
 {
   z.AXPBYPCZ(alpha, x, beta, y, gamma);
 }
 
-void Sqrt(Vector &x, double s)
+void Sqrt(Vector &x, mfem::real_t s)
 {
   const bool use_dev = x.UseDevice();
   const int N = x.Size();

@@ -31,7 +31,7 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &post_op, int step, int idx, double E_elec,
+  void Postprocess(const PostOperator &post_op, int step, int idx, mfem::real_t E_elec,
                    const ErrorIndicator *indicator) const;
 
   void PostprocessTerminals(PostOperator &post_op,

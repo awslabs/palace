@@ -229,8 +229,9 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   }
 }
 
-std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
-                                                         const GridFunction *B) const
+std::complex<mfem::real_t> SurfacePostOperator::GetSurfaceFlux(int idx,
+                                                               const GridFunction *E,
+                                                               const GridFunction *B) const
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
@@ -244,12 +245,12 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
   auto f =
       it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
-  std::complex<double> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);
+  std::complex<mfem::real_t> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);
   if (has_imag)
   {
     f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
                                   mat_op);
-    double doti = GetLocalSurfaceIntegral(*f, attr_marker);
+    mfem::real_t doti = GetLocalSurfaceIntegral(*f, attr_marker);
     if (it->second.type == SurfaceFluxType::POWER)
     {
       dot += doti;
@@ -263,7 +264,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   return dot;
 }
 
-double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
+mfem::real_t SurfacePostOperator::GetInterfaceLossTangent(int idx) const
 {
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
@@ -271,8 +272,8 @@ double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
   return it->second.tandelta;
 }
 
-double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
-                                                            const GridFunction &E) const
+mfem::real_t
+SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const
 {
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
@@ -281,12 +282,12 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
   auto f = it->second.GetCoefficient(E, mat_op);
-  double dot = GetLocalSurfaceIntegral(*f, attr_marker);
+  mfem::real_t dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
 }
 
-double
+mfem::real_t
 SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                              const mfem::Array<int> &attr_marker) const
 {

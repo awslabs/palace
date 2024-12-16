@@ -28,7 +28,7 @@ private:
   // electrical conductivity and London penetration depth for superconductors).
   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
       mat_c0, mat_sigma, mat_invLondon;
-  mfem::Array<double> mat_c0_min, mat_c0_max;
+  mfem::Array<mfem::real_t> mat_c0_min, mat_c0_max;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // of London penetration depth.
@@ -47,7 +47,7 @@ private:
   const auto Wrap(const mfem::DenseTensor &data, int attr) const
   {
     const int k = AttrToMat(attr);
-    return mfem::DenseMatrix(const_cast<double *>(data.GetData(k)), data.SizeI(),
+    return mfem::DenseMatrix(const_cast<mfem::real_t *>(data.GetData(k)), data.SizeI(),
                              data.SizeJ());
   }
 
@@ -122,7 +122,7 @@ private:
 public:
   MaterialPropertyCoefficient(int attr_max);
   MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat_,
-                              const mfem::DenseTensor &mat_coeff_, double a = 1.0);
+                              const mfem::DenseTensor &mat_coeff_, mfem::real_t a = 1.0);
 
   bool empty() const { return mat_coeff.TotalSize() == 0; }
 
@@ -130,20 +130,20 @@ public:
   const auto &GetMaterialProperties() const { return mat_coeff; }
 
   void AddCoefficient(const mfem::Array<int> &attr_mat_,
-                      const mfem::DenseTensor &mat_coeff_, double a = 1.0);
+                      const mfem::DenseTensor &mat_coeff_, mfem::real_t a = 1.0);
 
   template <typename T>
   void AddMaterialProperty(const mfem::Array<int> &attr_list, const T &coeff,
-                           double a = 1.0);
+                           mfem::real_t a = 1.0);
   template <typename T>
-  void AddMaterialProperty(int attr, const T &coeff, double a = 1.0)
+  void AddMaterialProperty(int attr, const T &coeff, mfem::real_t a = 1.0)
   {
     mfem::Array<int> attr_list(1);
     attr_list[0] = attr;
     AddMaterialProperty(attr_list, coeff, a);
   }
 
-  MaterialPropertyCoefficient &operator*=(double a);
+  MaterialPropertyCoefficient &operator*=(mfem::real_t a);
 
   void RestrictCoefficient(const mfem::Array<int> &attr_list);
 

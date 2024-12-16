@@ -154,14 +154,14 @@ void HypreAmsSolver::InitializeSolver()
   // Set additional AMS options.
   int coarsen_type = 10;                     // 10 = HMIS, 8 = PMIS, 6 = Falgout, 0 = CLJP
   int amg_agg_levels = agg_coarsen ? 1 : 0;  // Number of aggressive coarsening levels
-  double theta = 0.5;      // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
-  int amg_relax_type = 8;  // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
-                           // 18 = l1-Jacobi, 16 = Chebyshev
-  int interp_type = 6;     // 6 = Extended+i, 0 = Classical, 13 = FF1
-  int Pmax = 4;            // Interpolation width
-  int relax_type = 2;      // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
-  double weight = 1.0;
-  double omega = 1.0;
+  mfem::real_t theta = 0.5;  // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
+  int amg_relax_type = 8;    // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
+                             // 18 = l1-Jacobi, 16 = Chebyshev
+  int interp_type = 6;       // 6 = Extended+i, 0 = Classical, 13 = FF1
+  int Pmax = 4;              // Interpolation width
+  int relax_type = 2;  // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
+  mfem::real_t weight = 1.0;
+  mfem::real_t omega = 1.0;
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     // Modify options for GPU-supported features.

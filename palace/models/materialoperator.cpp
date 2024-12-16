@@ -26,9 +26,9 @@ bool IsValid(const config::SymmetricMatrixData<N> &data)
 
   // All the vectors are normalized.
   constexpr auto tol = 1.0e-6;
-  auto UnitNorm = [&](const std::array<double, N> &x)
+  auto UnitNorm = [&](const std::array<mfem::real_t, N> &x)
   {
-    double s = -1.0;
+    mfem::real_t s = -1.0;
     for (const auto &i : x)
     {
       s += std::pow(i, 2);
@@ -44,7 +44,7 @@ bool IsValid(const config::SymmetricMatrixData<N> &data)
     for (std::size_t i2 = i1 + 1; i2 < N; i2++)
     {
       const auto &v2 = data.v.at(i2);
-      double s = 0.0;
+      mfem::real_t s = 0.0;
       for (std::size_t j = 0; j < N; j++)
       {
         s += v1[j] * v2[j];
@@ -315,7 +315,7 @@ MaterialPropertyCoefficient::MaterialPropertyCoefficient(int attr_max)
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
-    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
+    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, mfem::real_t a)
   : attr_mat(attr_mat_), mat_coeff(mat_coeff_)
 {
   *this *= a;
@@ -324,7 +324,7 @@ MaterialPropertyCoefficient::MaterialPropertyCoefficient(
 namespace
 {
 
-void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a)
+void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, mfem::real_t coeff, mfem::real_t a)
 {
   // Constant diagonal coefficient.
   if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
@@ -347,7 +347,7 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a)
 }
 
 void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix &coeff,
-                    double a)
+                    mfem::real_t a)
 {
   if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
   {
@@ -385,11 +385,11 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix
   }
 }
 
-bool Equals(const mfem::DenseMatrix &mat_coeff, double coeff, double a)
+bool Equals(const mfem::DenseMatrix &mat_coeff, mfem::real_t coeff, mfem::real_t a)
 {
   MFEM_VERIFY(mat_coeff.Height() == mat_coeff.Width(),
               "Invalid dimensions for MaterialPropertyCoefficient update!");
-  constexpr double tol = 1.0e-9;
+  constexpr mfem::real_t tol = 1.0e-9;
   for (int i = 0; i < mat_coeff.Height(); i++)
   {
     if (std::abs(mat_coeff(i, i) - a * coeff) >= tol * std::abs(mat_coeff(i, i)))
@@ -407,7 +407,8 @@ bool Equals(const mfem::DenseMatrix &mat_coeff, double coeff, double a)
   return true;
 }
 
-bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, double a)
+bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff,
+            mfem::real_t a)
 {
   if (coeff.Height() == 1 && coeff.Width() == 1)
   {
@@ -415,7 +416,7 @@ bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, 
   }
   else
   {
-    constexpr double tol = 1.0e-9;
+    constexpr mfem::real_t tol = 1.0e-9;
     mfem::DenseMatrix T(mat_coeff);
     T.Add(-a, coeff);
     return (T.MaxMaxNorm() < tol * mat_coeff.MaxMaxNorm());
@@ -426,7 +427,7 @@ bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, 
 
 void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_mat_,
                                                  const mfem::DenseTensor &mat_coeff_,
-                                                 double a)
+                                                 mfem::real_t a)
 {
   if (empty())
   {
@@ -469,7 +470,7 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
 
 template <typename T>
 void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &attr_list,
-                                                      const T &coeff, double a)
+                                                      const T &coeff, mfem::real_t a)
 {
   // Preprocess the attribute list. If any of the given attributes already have material
   // properties assigned, then they all need to point to the same material and it is
@@ -533,7 +534,7 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
   UpdateProperty(mat_coeff, mat_idx, coeff, a);
 }
 
-MaterialPropertyCoefficient &MaterialPropertyCoefficient::operator*=(double a)
+MaterialPropertyCoefficient &MaterialPropertyCoefficient::operator*=(mfem::real_t a)
 {
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
@@ -594,8 +595,9 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
 
 template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
                                                                const mfem::DenseMatrix &,
-                                                               double);
+                                                               mfem::real_t);
 template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
-                                                               const double &, double);
+                                                               const mfem::real_t &,
+                                                               mfem::real_t);
 
 }  // namespace palace

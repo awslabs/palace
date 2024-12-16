@@ -153,7 +153,7 @@ public:
   PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
+  void SetShiftInvert(std::complex<mfem::real_t> s, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -226,7 +226,7 @@ public:
 
   int Solve() override;
 
-  std::complex<double> GetEigenvalue(int i) const override;
+  std::complex<mfem::real_t> GetEigenvalue(int i) const override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
 
@@ -361,7 +361,7 @@ public:
 
   int Solve() override;
 
-  std::complex<double> GetEigenvalue(int i) const override;
+  std::complex<mfem::real_t> GetEigenvalue(int i) const override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
 

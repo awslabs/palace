@@ -27,7 +27,7 @@ private:
   // and permeability, and (optionally) thickness.
   struct ConductivityData
   {
-    double sigma, mu, h;
+    mfem::real_t sigma, mu, h;
     mfem::Array<int> attr_list;
   };
   std::vector<ConductivityData> boundaries;
@@ -43,7 +43,7 @@ public:
   mfem::Array<int> GetAttrList() const;
 
   // Add contributions to system matrix for a finite conductivity boundary condition.
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
+  void AddExtraSystemBdrCoefficients(mfem::real_t omega, MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 };
 

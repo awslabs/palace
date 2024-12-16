@@ -197,9 +197,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
-  const double target = iodata.solver.eigenmode.target;
+  const mfem::real_t target = iodata.solver.eigenmode.target;
   {
-    const double f_target =
+    const mfem::real_t f_target =
         iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
@@ -240,9 +240,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get());
+  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * target,
+                                    std::complex<mfem::real_t>(-target * target, 0.0),
+                                    K.get(), C.get(), M.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
                                                              target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -262,7 +262,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   {
-    std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
+    std::complex<mfem::real_t> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
                (num_conv > 1) ? "s" : "",
                (num_conv > 0)
@@ -286,9 +286,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigen->GetEigenvalue(i);
-    double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    std::complex<mfem::real_t> omega = eigen->GetEigenvalue(i);
+    mfem::real_t error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    mfem::real_t error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
     if (!C)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
@@ -309,8 +309,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
+    const mfem::real_t E_elec = post_op.GetEFieldEnergy();
+    const mfem::real_t E_mag = post_op.GetHFieldEnergy();
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
@@ -328,14 +328,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 void EigenSolver::Postprocess(const PostOperator &post_op,
                               const LumpedPortOperator &lumped_port_op, int i,
-                              std::complex<double> omega, double error_bkwd,
-                              double error_abs, int num_conv, double E_elec, double E_mag,
-                              const ErrorIndicator *indicator) const
+                              std::complex<mfem::real_t> omega, mfem::real_t error_bkwd,
+                              mfem::real_t error_abs, int num_conv, mfem::real_t E_elec,
+                              mfem::real_t E_mag, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues.
-  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
+  const mfem::real_t E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
+  const mfem::real_t E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
   PostprocessPorts(post_op, lumped_port_op, i);
   PostprocessEPR(post_op, lumped_port_op, i, omega, E_elec + E_cap);
@@ -358,34 +358,35 @@ namespace
 
 struct PortVIData
 {
-  const int idx;                        // Lumped port index
-  const std::complex<double> V_i, I_i;  // Port voltage, current
+  const int idx;                              // Lumped port index
+  const std::complex<mfem::real_t> V_i, I_i;  // Port voltage, current
 };
 
 struct EprLData
 {
-  const int idx;    // Lumped port index
-  const double pj;  // Inductor energy-participation ratio
+  const int idx;          // Lumped port index
+  const mfem::real_t pj;  // Inductor energy-participation ratio
 };
 
 struct EprIOData
 {
-  const int idx;    // Lumped port index
-  const double Ql;  // Quality factor
-  const double Kl;  // κ for loss rate
+  const int idx;          // Lumped port index
+  const mfem::real_t Ql;  // Quality factor
+  const mfem::real_t Kl;  // κ for loss rate
 };
 
 }  // namespace
 
-void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double error_bkwd,
-                                   double error_abs, int num_conv) const
+void EigenSolver::PostprocessEigen(int i, std::complex<mfem::real_t> omega,
+                                   mfem::real_t error_bkwd, mfem::real_t error_abs,
+                                   int num_conv) const
 {
   // Dimensionalize the result and print in a nice table of frequencies and Q-factors. Save
   // to file if user has specified.
-  const std::complex<double> f = {
+  const std::complex<mfem::real_t> f = {
       iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.real()),
       iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.imag())};
-  const double Q =
+  const mfem::real_t Q =
       (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
 
   // Print table to stdout.
@@ -434,7 +435,7 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
     }
     // clang-format off
     output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
-                 static_cast<double>(i + 1), table.w1, table.p1,
+                 static_cast<mfem::real_t>(i + 1), table.w1, table.p1,
                  f.real(), table.w, table.p,
                  f.imag(), table.w, table.p,
                  Q, table.w, table.p,
@@ -457,8 +458,8 @@ void EigenSolver::PostprocessPorts(const PostOperator &post_op,
   port_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    const std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
-    const std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
+    const std::complex<mfem::real_t> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
+    const std::complex<mfem::real_t> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
     port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
   }
@@ -484,7 +485,7 @@ void EigenSolver::PostprocessPorts(const PostOperator &post_op,
       }
       // clang-format off
       output.print("{:{}.{}e},",
-                   static_cast<double>(i + 1), table.w1, table.p1);
+                   static_cast<mfem::real_t>(i + 1), table.w1, table.p1);
       // clang-format on
       for (const auto &data : port_data)
       {
@@ -518,7 +519,7 @@ void EigenSolver::PostprocessPorts(const PostOperator &post_op,
       }
       // clang-format off
       output.print("{:{}.{}e},",
-                   static_cast<double>(i + 1), table.w1, table.p1);
+                   static_cast<mfem::real_t>(i + 1), table.w1, table.p1);
       // clang-format on
       for (const auto &data : port_data)
       {
@@ -536,7 +537,7 @@ void EigenSolver::PostprocessPorts(const PostOperator &post_op,
 
 void EigenSolver::PostprocessEPR(const PostOperator &post_op,
                                  const LumpedPortOperator &lumped_port_op, int i,
-                                 std::complex<double> omega, double E_m) const
+                                 std::complex<mfem::real_t> omega, mfem::real_t E_m) const
 {
   // If ports have been specified in the model, compute the corresponding energy-
   // participation ratios (EPR) and write out to disk.
@@ -552,7 +553,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &post_op,
   {
     if (std::abs(data.L) > 0.0)
     {
-      const double pj = post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
+      const mfem::real_t pj = post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
       epr_L_data.push_back({idx, pj});
     }
   }
@@ -573,7 +574,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &post_op,
       }
       output.print("\n");
     }
-    output.print("{:{}.{}e},", static_cast<double>(i + 1), table.w1, table.p1);
+    output.print("{:{}.{}e},", static_cast<mfem::real_t>(i + 1), table.w1, table.p1);
     for (const auto &data : epr_L_data)
     {
       // clang-format off
@@ -592,8 +593,8 @@ void EigenSolver::PostprocessEPR(const PostOperator &post_op,
   {
     if (std::abs(data.R) > 0.0)
     {
-      const double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
-      const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
+      const mfem::real_t Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
+      const mfem::real_t Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
       epr_IO_data.push_back(
           {idx, Ql, iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, Kl)});
     }
@@ -616,7 +617,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &post_op,
       }
       output.print("\n");
     }
-    output.print("{:{}.{}e},", static_cast<double>(i + 1), table.w1, table.p1);
+    output.print("{:{}.{}e},", static_cast<mfem::real_t>(i + 1), table.w1, table.p1);
     for (const auto &data : epr_IO_data)
     {
       // clang-format off

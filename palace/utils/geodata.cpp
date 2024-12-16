@@ -36,7 +36,7 @@ namespace
 
 // Floating point precision for mesh IO. This precision is important, make sure nothing is
 // lost!
-constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
+constexpr auto MSH_FLT_PRECISION = std::numeric_limits<mfem::real_t>::max_digits10;
 
 // Load the serial mesh from disk.
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
@@ -404,7 +404,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
         pointmat.SetSize(dim, nv);
         for (int j = 0; j < nv; j++)
         {
-          const double *coord = mesh.back()->GetVertex(verts[j]);
+          const mfem::real_t *coord = mesh.back()->GetVertex(verts[j]);
           for (int d = 0; d < dim; d++)
           {
             pointmat(d, j) = coord[d];
@@ -450,10 +450,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
           for (int j = 0; j < pointmat.Width(); j++)
           {
             // Check if the point is inside the sphere.
-            double dist = 0.0;
+            mfem::real_t dist = 0.0;
             for (int d = 0; d < pointmat.Height(); d++)
             {
-              double s = pointmat(d, j) - sphere.center[d];
+              mfem::real_t s = pointmat(d, j) - sphere.center[d];
               dist += s * s;
             }
             if (dist <= sphere.r * sphere.r)
@@ -504,7 +504,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // Print some mesh information.
   mfem::Vector bbmin, bbmax;
   GetAxisAlignedBoundingBox(*mesh[0], bbmin, bbmax);
-  const double Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
+  const mfem::real_t Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
   Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
              mesh[0]->GetNodes()
                  ? std::to_string(mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder())
@@ -536,21 +536,23 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 namespace
 {
 
-void ScaleMesh(mfem::Mesh &mesh, double L)
+void ScaleMesh(mfem::Mesh &mesh, mfem::real_t L)
 {
   PalacePragmaOmp(parallel for schedule(static))
   for (int i = 0; i < mesh.GetNV(); i++)
   {
-    double *v = mesh.GetVertex(i);
-    std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+    mfem::real_t *v = mesh.GetVertex(i);
+    std::transform(v, v + mesh.SpaceDimension(), v,
+                   [L](mfem::real_t val) { return val * L; });
   }
   if (auto *pmesh = dynamic_cast<mfem::ParMesh *>(&mesh))
   {
     PalacePragmaOmp(parallel for schedule(static))
     for (int i = 0; i < pmesh->face_nbr_vertices.Size(); i++)
     {
-      double *v = pmesh->face_nbr_vertices[i]();
-      std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+      mfem::real_t *v = pmesh->face_nbr_vertices[i]();
+      std::transform(v, v + mesh.SpaceDimension(), v,
+                     [L](mfem::real_t val) { return val * L; });
     }
   }
   if (mesh.GetNodes())
@@ -565,12 +567,12 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
 
 }  // namespace
 
-void DimensionalizeMesh(mfem::Mesh &mesh, double L)
+void DimensionalizeMesh(mfem::Mesh &mesh, mfem::real_t L)
 {
   ScaleMesh(mesh, L);
 }
 
-void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
+void NondimensionalizeMesh(mfem::Mesh &mesh, mfem::real_t L)
 {
   ScaleMesh(mesh, 1.0 / L);
 }
@@ -676,7 +678,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
     {
       for (int j = 0; j < nv; j++)
       {
-        const double *coord = mesh.GetVertex(v[j]);
+        const mfem::real_t *coord = mesh.GetVertex(v[j]);
         for (int d = 0; d < dim; d++)
         {
           if (coord[d] < min(d))
@@ -810,36 +812,37 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
 }
 
-double BoundingBox::Area() const
+mfem::real_t BoundingBox::Area() const
 {
   return 4.0 * CVector3dMap(axes[0].data()).cross(CVector3dMap(axes[1].data())).norm();
 }
 
-double BoundingBox::Volume() const
+mfem::real_t BoundingBox::Volume() const
 {
   return planar ? 0.0 : 2.0 * CVector3dMap(axes[2].data()).norm() * Area();
 }
 
-std::array<std::array<double, 3>, 3> BoundingBox::Normals() const
+std::array<std::array<mfem::real_t, 3>, 3> BoundingBox::Normals() const
 {
-  std::array<std::array<double, 3>, 3> normals = {axes[0], axes[1], axes[2]};
+  std::array<std::array<mfem::real_t, 3>, 3> normals = {axes[0], axes[1], axes[2]};
   Vector3dMap(normals[0].data()).normalize();
   Vector3dMap(normals[1].data()).normalize();
   Vector3dMap(normals[2].data()).normalize();
   return normals;
 }
 
-std::array<double, 3> BoundingBox::Lengths() const
+std::array<mfem::real_t, 3> BoundingBox::Lengths() const
 {
   return {2.0 * CVector3dMap(axes[0].data()).norm(),
           2.0 * CVector3dMap(axes[1].data()).norm(),
           2.0 * CVector3dMap(axes[2].data()).norm()};
 }
 
-std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direction) const
+std::array<mfem::real_t, 3>
+BoundingBox::Deviations(const std::array<mfem::real_t, 3> &direction) const
 {
   const auto eig_dir = CVector3dMap(direction.data());
-  std::array<double, 3> deviation_deg;
+  std::array<mfem::real_t, 3> deviation_deg;
   for (std::size_t i = 0; i < 3; i++)
   {
     deviation_deg[i] =
@@ -1000,7 +1003,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   }
 
   // Gather the data to the dominant rank.
-  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
+  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(mfem::real_t));
   MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
               recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
 
@@ -1009,7 +1012,8 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   {
     auto vertex_equality = [](const auto &x, const auto &y)
     {
-      constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
+      constexpr mfem::real_t tolerance =
+          10.0 * std::numeric_limits<mfem::real_t>::epsilon();
       return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
              std::abs(x[2] - y[2]) < tolerance;
     };
@@ -1095,7 +1099,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // Collect the furthest point from the plane to determine if the box is planar. Look for
     // a component that maximizes distance from the planar system: complete the axes with a
     // cross, then use a dot product to pick the greatest deviation.
-    constexpr double rel_tol = 1.0e-6;
+    constexpr mfem::real_t rel_tol = 1.0e-6;
     auto max_distance = PerpendicularDistance(
         {n_1, n_2}, origin,
         *std::max_element(vertices.begin(), vertices.end(),
@@ -1145,7 +1149,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
       {
         std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
         Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
-        double dot_min = mfem::infinity();
+        mfem::real_t dot_min = mfem::infinity();
         for (int i_0 = 0; i_0 < 4; i_0++)
         {
           for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
@@ -1184,7 +1188,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     }
 
     // Scale axes by length of the box in each direction.
-    std::array<double, 3> l = {0.0};
+    std::array<mfem::real_t, 3> l = {0.0};
     for (const auto &v : {v_000, v_001, v_011, v_111})
     {
       const auto v_0 = v - Vector3dMap(box.center.data());
@@ -1214,7 +1218,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
 struct BoundingBall
 {
   Eigen::Vector3d origin;
-  double radius;
+  mfem::real_t radius;
   bool planar;
 };
 
@@ -1247,7 +1251,7 @@ BoundingBall SphereFromPoints(const std::vector<std::size_t> &indices,
   }
 
   // Check for coplanarity.
-  constexpr double rel_tol = 1.0e-6;
+  constexpr mfem::real_t rel_tol = 1.0e-6;
   const Eigen::Vector3d AB = vertices[indices[1]] - vertices[indices[0]];
   const Eigen::Vector3d AC = vertices[indices[2]] - vertices[indices[0]];
   const Eigen::Vector3d ABAC = AB.cross(AC);
@@ -1320,7 +1324,7 @@ BoundingBall Welzl(std::vector<std::size_t> P, std::vector<std::size_t> R,
   BoundingBall D = Welzl(P, R, vertices);
 
   // If p is outside the sphere, recurse for (P \ {p}, R U {p}).
-  constexpr double rel_tol = 1.0e-6;
+  constexpr mfem::real_t rel_tol = 1.0e-6;
   if ((vertices[p] - D.origin).norm() >= (1.0 + rel_tol) * D.radius)
   {
     R.push_back(p);
@@ -1425,12 +1429,12 @@ BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir)
+mfem::real_t GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                                bool bdr, const std::array<mfem::real_t, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  double length;
+  mfem::real_t length;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
     CVector3dMap direction(dir.data());
@@ -1444,12 +1448,13 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
   return length;
 }
 
-double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin, bool max)
+mfem::real_t GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                                  bool bdr, const std::array<mfem::real_t, 3> &origin,
+                                  bool max)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  double dist;
+  mfem::real_t dist;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
     CVector3dMap x0(origin.data());
@@ -1584,9 +1589,9 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   return normal;
 }
 
-double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+mfem::real_t GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {
-  double area = 0.0;
+  mfem::real_t area = 0.0;
   PalacePragmaOmp(parallel reduction(+ : area))
   {
     mfem::IsoparametricTransformation T;
@@ -1611,9 +1616,9 @@ double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
   return area;
 }
 
-double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+mfem::real_t GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {
-  double volume = 0.0;
+  mfem::real_t volume = 0.0;
   PalacePragmaOmp(parallel reduction(+ : volume))
   {
     mfem::IsoparametricTransformation T;
@@ -1638,7 +1643,7 @@ double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
   return volume;
 }
 
-double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
+mfem::real_t RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
@@ -1692,8 +1697,8 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
   min_elem = max_elem = mesh->GetNE();
   Mpi::GlobalMin(1, &min_elem, comm);
   Mpi::GlobalMax(1, &max_elem, comm);
-  const double ratio = double(max_elem) / min_elem;
-  const double tol = iodata.model.refinement.maximum_imbalance;
+  const mfem::real_t ratio = mfem::real_t(max_elem) / min_elem;
+  const mfem::real_t tol = iodata.model.refinement.maximum_imbalance;
   if constexpr (false)
   {
     Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
@@ -1956,7 +1961,7 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
   // Add midpoints of edges, faces, and elements.
   auto AddCentroid = [&orig_mesh, &hex_mesh](const int *verts, int nv)
   {
-    double coord[3] = {0.0, 0.0, 0.0};
+    mfem::real_t coord[3] = {0.0, 0.0, 0.0};
     for (int i = 0; i < nv; i++)
     {
       for (int d = 0; d < orig_mesh.SpaceDimension(); d++)
@@ -2266,11 +2271,11 @@ void ReorderMeshElements(mfem::Mesh &mesh, bool print)
     // Gecko reordering.
     mfem::Array<int> tentative;
     int outer = 3, inner = 3, window = 4, period = 2;
-    double best_cost = mfem::infinity();
+    mfem::real_t best_cost = mfem::infinity();
     for (int i = 0; i < outer; i++)
     {
       int seed = i + 1;
-      double cost =
+      mfem::real_t cost =
           mesh.GetGeckoElementOrdering(tentative, inner, window, period, seed, true);
       if (cost < best_cost)
       {
@@ -3042,7 +3047,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // Compute the displacement as the average normal of the attached boundary elements.
     mfem::Vector displacements(nv * sdim);
     displacements = 0.0;
-    double h_min = mfem::infinity();
+    mfem::real_t h_min = mfem::infinity();
     const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
     const mfem::Table &new_elem_to_face = new_mesh->ElementToFaceTable();
     for (auto be : crack_bdr_elem)
@@ -3077,7 +3082,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
               mfem::Geometries.GetCenter(T.GetGeometryType());
           T.SetIntPoint(&ip);
           mfem::CalcOrtho(T.Jacobian(), normal);
-          double s = normal.Norml2();
+          mfem::real_t s = normal.Norml2();
           h_min = std::min(h_min, std::sqrt(s));
           normal /= -s;  // We could also area-weight the average normal
         }
@@ -3116,7 +3121,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     }
     for (int v = 0; v < nv; v++)
     {
-      double s = 0.0;
+      mfem::real_t s = 0.0;
       for (int d = 0; d < sdim; d++)
       {
         const int idx = Index(v, d);

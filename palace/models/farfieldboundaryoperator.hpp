@@ -42,8 +42,8 @@ public:
 
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.
-  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+  void AddDampingBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddExtraSystemBdrCoefficients(mfem::real_t omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi);
 };
 

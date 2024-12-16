@@ -38,13 +38,13 @@ private:
   VecType dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
-  double lambda_max, sf_max;
+  mfem::real_t lambda_max, sf_max;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
 public:
-  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
+  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, mfem::real_t sf_max);
 
   void SetOperator(const OperType &op) override;
 
@@ -102,14 +102,14 @@ private:
 
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
   // polynomial smoothing.
-  double theta, delta, sf_max, sf_min;
+  mfem::real_t theta, delta, sf_max, sf_min;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
 public:
-  ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
-                           double sf_min);
+  ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order,
+                           mfem::real_t sf_max, mfem::real_t sf_min);
 
   void SetOperator(const OperType &op) override;
 

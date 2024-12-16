@@ -25,13 +25,13 @@ void HypreVector::Update(const Vector &x)
   {
     vec = hypre_SeqVectorCreate(N);
     hypre_SeqVectorSetDataOwner(vec, 0);
-    hypre_VectorData(vec) = const_cast<double *>(x.Read());
+    hypre_VectorData(vec) = const_cast<mfem::real_t *>(x.Read());
     hypre_SeqVectorInitialize(vec);
   }
   else
   {
     hypre_SeqVectorSetSize(vec, N);
-    hypre_VectorData(vec) = const_cast<double *>(x.Read());
+    hypre_VectorData(vec) = const_cast<mfem::real_t *>(x.Read());
   }
 }
 
@@ -54,7 +54,7 @@ HypreCSRMatrix::HypreCSRMatrix(const mfem::SparseMatrix &m)
   const int nnz = m.NumNonZeroElems();
   mat = hypre_CSRMatrixCreate(height, width, nnz);
   hypre_CSRMatrixSetDataOwner(mat, 0);
-  hypre_CSRMatrixData(mat) = const_cast<double *>(m.ReadData());
+  hypre_CSRMatrixData(mat) = const_cast<mfem::real_t *>(m.ReadData());
 #if !defined(HYPRE_BIGINT)
   hypre_CSRMatrixI(mat) = const_cast<int *>(m.ReadI());
   hypre_CSRMatrixJ(mat) = const_cast<int *>(m.ReadJ());
@@ -102,7 +102,7 @@ void HypreCSRMatrix::Mult(const Vector &x, Vector &y) const
   hypre_CSRMatrixMatvec(1.0, mat, X, 0.0, Y);
 }
 
-void HypreCSRMatrix::AddMult(const Vector &x, Vector &y, const double a) const
+void HypreCSRMatrix::AddMult(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   X.Update(x);
   Y.Update(y);
@@ -116,7 +116,8 @@ void HypreCSRMatrix::MultTranspose(const Vector &x, Vector &y) const
   hypre_CSRMatrixMatvecT(1.0, mat, X, 0.0, Y);
 }
 
-void HypreCSRMatrix::AddMultTranspose(const Vector &x, Vector &y, const double a) const
+void HypreCSRMatrix::AddMultTranspose(const Vector &x, Vector &y,
+                                      const mfem::real_t a) const
 {
   X.Update(x);
   Y.Update(y);

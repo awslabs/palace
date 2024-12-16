@@ -95,7 +95,7 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
   v.SetSize(nd_size + h1_size);
   v.UseDevice(true);
-  v = std::complex<double>(1.0, 0.0);
+  v = std::complex<mfem::real_t>(1.0, 0.0);
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
   linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
   linalg::SetSubVector(v, dbc_tdof_list, 0.0);
@@ -107,7 +107,8 @@ constexpr bool skip_zeros = false;
 
 ComplexHypreParMatrix GetAtt(const MaterialOperator &mat_op,
                              const FiniteElementSpace &nd_fespace,
-                             const mfem::Vector &normal, double omega, double sigma)
+                             const mfem::Vector &normal, mfem::real_t omega,
+                             mfem::real_t sigma)
 {
   // Stiffness matrix (shifted): Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) - σ (μ⁻¹ u, v).
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
@@ -292,7 +293,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
 
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
   // Et, En. Update linear forms for postprocessing too.
-  std::complex<double> dot[2] = {
+  std::complex<mfem::real_t> dot[2] = {
       {sr * S0t.Real(), si * S0t.Real()},
       {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
   Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
@@ -374,7 +375,7 @@ public:
 
     // Compute Eₜ + n ⋅ Eₙ . The normal returned by GetNormal points out of the
     // computational domain, so we reverse it (direction of propagation is into the domain).
-    double normal_data[3];
+    mfem::real_t normal_data[3];
     mfem::Vector normal(normal_data, vdim);
     BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
     if constexpr (Type == ValueType::REAL)
@@ -404,15 +405,15 @@ private:
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
   mfem::IsoparametricTransformation T_loc;
-  std::complex<double> kn;
-  double omega;
+  std::complex<mfem::real_t> kn;
+  mfem::real_t omega;
 
 public:
   BdrSubmeshHVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const MaterialOperator &mat_op,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems,
-                               std::complex<double> kn, double omega)
+                               std::complex<mfem::real_t> kn, mfem::real_t omega)
     : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), mat_op(mat_op),
       submesh(submesh), submesh_parent_elems(submesh_parent_elems), kn(kn), omega(omega)
   {
@@ -484,14 +485,14 @@ public:
     }();
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
-    double U_data[3];
+    mfem::real_t U_data[3];
     mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
+      mfem::real_t dU_data[3];
       mfem::Vector dU(dU_data, vdim);
       En.Imag().GetGradient(*T_submesh, dU);
       U -= dU;
@@ -501,7 +502,7 @@ public:
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
+      mfem::real_t dU_data[3];
       mfem::Vector dU(dU_data, vdim);
       En.Real().GetGradient(*T_submesh, dU);
       U += dU;
@@ -599,7 +600,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //            given frequency, Math. Comput. (2003).
   // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
   //           transmission line, arXiv:2302.11994 (2023).
-  const double c_max = mat_op.GetLightSpeedMax().Max();
+  const mfem::real_t c_max = mat_op.GetLightSpeedMax().Max();
   MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_min = 1.0 / (c_max * c_max) * 0.5;  // Add a safety factor for minimum propagation
@@ -785,11 +786,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mesh::GetAxisAlignedBoundingBox(*port_mesh, bbmin, bbmax);
     const int dim = port_mesh->SpaceDimension();
 
-    double la = 0.0, lb = 0.0;
+    mfem::real_t la = 0.0, lb = 0.0;
     int da = -1, db = -1;
     for (int d = 0; d < dim; d++)
     {
-      double diff = bbmax(d) - bbmin(d);
+      mfem::real_t diff = bbmax(d) - bbmin(d);
       if (diff > la)
       {
         lb = la;
@@ -805,7 +806,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
     MFEM_VERIFY(da >= 0 && db >= 0 && da != db,
                 "Unexpected wave port geometry for normalization!");
-    double ca = 0.5 * (bbmax[da] + bbmin[da]), cb = 0.5 * (bbmax[db] + bbmin[db]);
+    mfem::real_t ca = 0.5 * (bbmax[da] + bbmin[da]), cb = 0.5 * (bbmax[db] + bbmin[db]);
 
     auto TDirection = [da, db, ca, cb, dim](const Vector &x, Vector &f)
     {
@@ -838,7 +839,7 @@ WavePortData::~WavePortData()
   }
 }
 
-void WavePortData::Initialize(double omega)
+void WavePortData::Initialize(mfem::real_t omega)
 {
   if (omega == omega0)
   {
@@ -849,7 +850,7 @@ void WavePortData::Initialize(double omega)
   // port mode. The B matrix is operating frequency-independent and has already been
   // constructed.
   std::unique_ptr<ComplexOperator> opA;
-  const double sigma = -omega * omega * mu_eps_min;
+  const mfem::real_t sigma = -omega * omega * mu_eps_min;
   {
     auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
     auto [Ar, Ai] =
@@ -861,7 +862,7 @@ void WavePortData::Initialize(double omega)
   // Configure and solve the (inverse) eigenvalue problem for the desired boundary mode.
   // Linear solves are preconditioned with the real part of the system matrix (ignore loss
   // tangent).
-  std::complex<double> lambda;
+  std::complex<mfem::real_t> lambda;
   if (port_comm != MPI_COMM_NULL)
   {
     ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
@@ -978,14 +979,14 @@ std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientIm
       attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
 }
 
-double WavePortData::GetExcitationPower() const
+mfem::real_t WavePortData::GetExcitationPower() const
 {
   // The computed port modes are normalized such that the power integrated over the port is
   // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
   return excitation ? 1.0 : 0.0;
 }
 
-std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
+std::complex<mfem::real_t> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
   // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
@@ -1001,7 +1002,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  std::complex<double> dot;
+  std::complex<mfem::real_t> dot;
   {
     mfem::LinearForm pr(&nd_fespace);
     pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
@@ -1024,7 +1025,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   return dot;
 }
 
-std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
+std::complex<mfem::real_t> WavePortData::GetSParameter(GridFunction &E) const
 {
   // Compute port S-parameter, or the projection of the field onto the port mode:
   // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
@@ -1033,8 +1034,9 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
               "calculation!");
   port_nd_transfer->Transfer(E.Real(), port_E->Real());
   port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
-  std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
-                           -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
+  std::complex<mfem::real_t> dot(
+      -((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
+      -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
   return dot;
 }
@@ -1234,7 +1236,7 @@ mfem::Array<int> WavePortOperator::GetAttrList() const
   return attr_list;
 }
 
-void WavePortOperator::Initialize(double omega)
+void WavePortOperator::Initialize(mfem::real_t omega)
 {
   bool init = false, first = true;
   for (const auto &[idx, data] : ports)
@@ -1270,7 +1272,7 @@ void WavePortOperator::Initialize(double omega)
   }
 }
 
-void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
+void WavePortOperator::AddExtraSystemBdrCoefficients(mfem::real_t omega,
                                                      MaterialPropertyCoefficient &fbr,
                                                      MaterialPropertyCoefficient &fbi)
 {
@@ -1297,7 +1299,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   }
 }
 
-void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
+void WavePortOperator::AddExcitationBdrCoefficients(mfem::real_t omega,
+                                                    SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by

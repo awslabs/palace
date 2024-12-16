@@ -55,25 +55,25 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   T->Transform(fe_elem->GetNodes(), elem_pm);
 
   // Find the dofs
-  double tol = 1E-5;
+  mfem::real_t tol = 1E-5;
   mfem::Array<int> elem_dofs, dofs(P);
   fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);
   for (int l = 0; l < P; l++)
   {
-    double norm2_f = 0.0;
+    mfem::real_t norm2_f = 0.0;
     for (int m = 0; m < face_pm.Height(); m++)
     {
       norm2_f += face_pm(m, l) * face_pm(m, l);
     }
     for (int m = 0; m < elem_pm.Width(); m++)
     {
-      double norm2_e = 0.0;
+      mfem::real_t norm2_e = 0.0;
       for (int n = 0; n < elem_pm.Height(); n++)
       {
         norm2_e += elem_pm(n, m) * elem_pm(n, m);
       }
-      double relative_tol = tol * std::max(std::max(norm2_f, norm2_e), 1.0E-6);
-      double diff = 0.0;
+      mfem::real_t relative_tol = tol * std::max(std::max(norm2_f, norm2_e), 1.0E-6);
+      mfem::real_t diff = 0.0;
       for (int o = 0; o < elem_pm.Height(); o++)
       {
         diff += std::fabs(elem_pm(o, m) - face_pm(o, l));
@@ -291,7 +291,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           {
             dof_trans.InvTransformPrimal(el_trans_j);
           }
-          double sign_j = (sgid < 0) ? -1.0 : 1.0;
+          mfem::real_t sign_j = (sgid < 0) ? -1.0 : 1.0;
           tp_el_curl_orients[3 * (j + 0 + P * i) + 1] =
               static_cast<int8_t>(sign_j * el_trans_j(j));
           if (j > 0)

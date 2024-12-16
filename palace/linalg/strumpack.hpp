@@ -25,8 +25,8 @@ private:
 
 public:
   StrumpackSolverBase(MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
-                      config::LinearSolverData::CompressionType compression, double lr_tol,
-                      int butterfly_l, int lossy_prec, int print);
+                      config::LinearSolverData::CompressionType compression,
+                      mfem::real_t lr_tol, int butterfly_l, int lossy_prec, int print);
 
   StrumpackSolverBase(MPI_Comm comm, const IoData &iodata, int print)
     : StrumpackSolverBase(comm, iodata.solver.linear.sym_fact_type,

@@ -4,7 +4,6 @@
 #include "configfile.hpp"
 
 #include <algorithm>
-#include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
@@ -73,12 +72,12 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
   if (it != mat.end() && it->is_array())
   {
     // Attempt to parse as an array.
-    data.s = it->get<std::array<double, N>>();
+    data.s = it->get<std::array<mfem::real_t, N>>();
   }
   else
   {
     // Fall back to scalar parsing with default.
-    double s = mat.value(name, data.s[0]);
+    mfem::real_t s = mat.value(name, data.s[0]);
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
@@ -96,7 +95,7 @@ void ParseElementData(json &elem, const std::string &name, bool required,
   if (it != elem.end() && it->is_array())
   {
     // Attempt to parse as an array.
-    data.direction = it->get<std::array<double, 3>>();
+    data.direction = it->get<std::array<mfem::real_t, 3>>();
     data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
   }
   else
@@ -359,9 +358,9 @@ void RefinementData::SetUp(json &model)
                   "config[\"Refinement\"][\"Boxes\"][\"BoundingBoxMin/Max\"] should "
                   "specify an array in the configuration file!");
       BoxRefinementData &data = box_list.emplace_back();
-      data.ref_levels = it->at("Levels");                // Required
-      data.bbmin = bbmin->get<std::array<double, 3>>();  // Required
-      data.bbmax = bbmax->get<std::array<double, 3>>();  // Required
+      data.ref_levels = it->at("Levels");                      // Required
+      data.bbmin = bbmin->get<std::array<mfem::real_t, 3>>();  // Required
+      data.bbmax = bbmax->get<std::array<mfem::real_t, 3>>();  // Required
 
       // Cleanup
       it->erase("Levels");
@@ -398,9 +397,9 @@ void RefinementData::SetUp(json &model)
                   "config[\"Refinement\"][\"Spheres\"][\"Center\"] should specify "
                   "an array in the configuration file!");
       SphereRefinementData &data = sphere_list.emplace_back();
-      data.ref_levels = it->at("Levels");               // Required
-      data.r = it->at("Radius");                        // Required
-      data.center = ctr->get<std::array<double, 3>>();  // Required
+      data.ref_levels = it->at("Levels");                     // Required
+      data.r = it->at("Radius");                              // Required
+      data.center = ctr->get<std::array<mfem::real_t, 3>>();  // Required
 
       // Cleanup
       it->erase("Levels");
@@ -622,7 +621,7 @@ void ProbePostData::SetUp(json &postpro)
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Probe\" points in "
                             "the configuration file!");
     auto &data = ret.first->second;
-    data.center = ctr->get<std::array<double, 3>>();  // Required
+    data.center = ctr->get<std::array<mfem::real_t, 3>>();  // Required
 
     // Cleanup
     it->erase("Index");
@@ -1058,8 +1057,9 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     PeriodicData &data = vecdata.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();               // Required
-    data.translation = it->at("Translation").get<std::array<double, 3>>();  // Required
+        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    data.translation =
+        it->at("Translation").get<std::array<mfem::real_t, 3>>();  // Required
 
     // Cleanup
     it->erase("DonorAttributes");
@@ -1264,7 +1264,7 @@ void SurfaceFluxPostData::SetUp(json &postpro)
     {
       MFEM_VERIFY(ctr->is_array(),
                   "\"Center\" should specify an array in the configuration file!");
-      data.center = ctr->get<std::array<double, 3>>();
+      data.center = ctr->get<std::array<mfem::real_t, 3>>();
       data.no_center = false;
     }
 

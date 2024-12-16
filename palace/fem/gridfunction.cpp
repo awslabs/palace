@@ -22,7 +22,7 @@ GridFunction::GridFunction(FiniteElementSpace &fespace, bool complex)
 {
 }
 
-GridFunction &GridFunction::operator=(std::complex<double> s)
+GridFunction &GridFunction::operator=(std::complex<mfem::real_t> s)
 {
   Real() = s.real();
   if (HasImag())
@@ -38,7 +38,7 @@ GridFunction &GridFunction::operator=(std::complex<double> s)
   return *this;
 }
 
-GridFunction &GridFunction::operator*=(double s)
+GridFunction &GridFunction::operator*=(mfem::real_t s)
 {
   Real() *= s;
   if (HasImag())

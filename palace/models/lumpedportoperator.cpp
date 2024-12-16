@@ -77,11 +77,11 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   {
     // If defined by surface properties, need to compute circuit properties for the
     // multielement port.
-    double ooR = 0.0, ooL = 0.0;
+    mfem::real_t ooR = 0.0, ooL = 0.0;
     R = L = C = 0.0;
     for (const auto &elem : elems)
     {
-      const double sq = elem->GetGeometryWidth() / elem->GetGeometryLength();
+      const mfem::real_t sq = elem->GetGeometryWidth() / elem->GetGeometryLength();
       if (std::abs(data.Rs) > 0.0)
       {
         ooR += sq / data.Rs;
@@ -106,14 +106,14 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   }
 }
 
-std::complex<double>
-LumpedPortData::GetCharacteristicImpedance(double omega,
+std::complex<mfem::real_t>
+LumpedPortData::GetCharacteristicImpedance(mfem::real_t omega,
                                            LumpedPortData::Branch branch) const
 {
   MFEM_VERIFY((L == 0.0 && C == 0.0) || branch == Branch::R || omega > 0.0,
               "Lumped port with nonzero reactance requires frequency in order to define "
               "characteristic impedance!");
-  std::complex<double> Y = 0.0;
+  std::complex<mfem::real_t> Y = 0.0;
   if (std::abs(R) > 0.0 && (branch == Branch::TOTAL || branch == Branch::R))
   {
     Y += 1.0 / R;
@@ -131,23 +131,23 @@ LumpedPortData::GetCharacteristicImpedance(double omega,
   return 1.0 / Y;
 }
 
-double LumpedPortData::GetExcitationPower() const
+mfem::real_t LumpedPortData::GetExcitationPower() const
 {
   // The lumped port excitation is normalized such that the power integrated over the port
   // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1.
   return excitation ? 1.0 : 0.0;
 }
 
-double LumpedPortData::GetExcitationVoltage() const
+mfem::real_t LumpedPortData::GetExcitationVoltage() const
 {
   // Incident voltage should be the same across all elements of an excited lumped port.
   if (excitation)
   {
-    double V_inc = 0.0;
+    mfem::real_t V_inc = 0.0;
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
-      const double E_inc = std::sqrt(
+      const mfem::real_t Rs = R * GetToSquare(*elem);
+      const mfem::real_t E_inc = std::sqrt(
           Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size()));
       V_inc += E_inc * elem->GetGeometryLength() / elems.size();
     }
@@ -181,11 +181,11 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     SumVectorCoefficient fb(mesh.SpaceDimension());
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
-      const double Hinc = (std::abs(Rs) > 0.0)
-                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                                elem->GetGeometryLength() * elems.size())
-                              : 0.0;
+      const mfem::real_t Rs = R * GetToSquare(*elem);
+      const mfem::real_t Hinc =
+          (std::abs(Rs) > 0.0) ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                                 elem->GetGeometryLength() * elems.size())
+                               : 0.0;
       fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
     }
     s = std::make_unique<mfem::LinearForm>(&nd_fespace);
@@ -220,7 +220,7 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
   }
 }
 
-std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
+std::complex<mfem::real_t> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
   // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
@@ -250,7 +250,7 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  std::complex<double> dot;
+  std::complex<mfem::real_t> dot;
   {
     mfem::LinearForm pr(&nd_fespace);
     pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), attr_marker);
@@ -274,17 +274,17 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   }
   else
   {
-    double rdot = dot.real();
+    mfem::real_t rdot = dot.real();
     Mpi::GlobalSum(1, &rdot, E.ParFESpace()->GetComm());
     return rdot;
   }
 }
 
-std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
+std::complex<mfem::real_t> LumpedPortData::GetSParameter(GridFunction &E) const
 {
   // Compute port S-parameter, or the projection of the field onto the port mode.
   InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*s) * E.Real(), 0.0);
+  std::complex<mfem::real_t> dot((*s) * E.Real(), 0.0);
   if (E.HasImag())
   {
     dot.imag((*s) * E.Imag());
@@ -293,11 +293,11 @@ std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
   return dot;
 }
 
-std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
+std::complex<mfem::real_t> LumpedPortData::GetVoltage(GridFunction &E) const
 {
   // Compute the average voltage across the port.
   InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*v) * E.Real(), 0.0);
+  std::complex<mfem::real_t> dot((*v) * E.Real(), 0.0);
   if (E.HasImag())
   {
     dot.imag((*v) * E.Imag());
@@ -370,9 +370,9 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
       for (auto attr : elem->GetAttrList())
       {
         mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
-        const double Rs = data.R * data.GetToSquare(*elem);
-        const double Ls = data.L * data.GetToSquare(*elem);
-        const double Cs = data.C / data.GetToSquare(*elem);
+        const mfem::real_t Rs = data.R * data.GetToSquare(*elem);
+        const mfem::real_t Ls = data.L * data.GetToSquare(*elem);
+        const mfem::real_t Cs = data.C / data.GetToSquare(*elem);
         bool comma = false;
         Mpi::Print(" {:d}:", attr);
         if (std::abs(Rs) > 0.0)
@@ -568,7 +568,7 @@ mfem::Array<int> LumpedPortOperator::GetCsAttrList() const
   return attr_list;
 }
 
-void LumpedPortOperator::AddStiffnessBdrCoefficients(double coeff,
+void LumpedPortOperator::AddStiffnessBdrCoefficients(mfem::real_t coeff,
                                                      MaterialPropertyCoefficient &fb)
 {
   // Add lumped inductor boundaries to the bilinear form.
@@ -582,7 +582,7 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coeff,
     {
       for (const auto &elem : data.elems)
       {
-        const double Ls = data.L * data.GetToSquare(*elem);
+        const mfem::real_t Ls = data.L * data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
                                coeff / Ls);
       }
@@ -590,7 +590,7 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
+void LumpedPortOperator::AddDampingBdrCoefficients(mfem::real_t coeff,
                                                    MaterialPropertyCoefficient &fb)
 {
   // Add lumped resistor boundaries to the bilinear form.
@@ -604,7 +604,7 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
     {
       for (const auto &elem : data.elems)
       {
-        const double Rs = data.R * data.GetToSquare(*elem);
+        const mfem::real_t Rs = data.R * data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
                                coeff / Rs);
       }
@@ -612,7 +612,7 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
+void LumpedPortOperator::AddMassBdrCoefficients(mfem::real_t coeff,
                                                 MaterialPropertyCoefficient &fb)
 {
   // Add lumped capacitance boundaries to the bilinear form.
@@ -626,7 +626,7 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
     {
       for (const auto &elem : data.elems)
       {
-        const double Cs = data.C / data.GetToSquare(*elem);
+        const mfem::real_t Cs = data.C / data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
                                coeff * Cs);
       }
@@ -652,9 +652,10 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(SumVectorCoefficient &fb)
                 "Unexpected zero resistance in excited lumped port!");
     for (const auto &elem : data.elems)
     {
-      const double Rs = data.R * data.GetToSquare(*elem);
-      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                          elem->GetGeometryLength() * data.elems.size());
+      const mfem::real_t Rs = data.R * data.GetToSquare(*elem);
+      const mfem::real_t Hinc =
+          1.0 / std::sqrt(Rs * elem->GetGeometryWidth() * elem->GetGeometryLength() *
+                          data.elems.size());
       fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
     }
   }

@@ -36,7 +36,7 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  ComplexVector(const std::complex<double> *py, int size, bool on_dev);
+  ComplexVector(const std::complex<mfem::real_t> *py, int size, bool on_dev);
 
   // Create a vector referencing the memory of another vector, at the given base offset and
   // size.
@@ -75,25 +75,25 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int size, bool on_dev);
+  void Set(const std::complex<mfem::real_t> *py, int size, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int size, bool on_dev) const;
+  void Get(std::complex<mfem::real_t> *py, int size, bool on_dev) const;
 
   // Set all entries equal to s.
-  ComplexVector &operator=(std::complex<double> s);
-  ComplexVector &operator=(double s)
+  ComplexVector &operator=(std::complex<mfem::real_t> s);
+  ComplexVector &operator=(mfem::real_t s)
   {
-    *this = std::complex<double>(s, 0.0);
+    *this = std::complex<mfem::real_t>(s, 0.0);
     return *this;
   }
 
   // Set the vector from an array of blocks and coefficients, without resizing.
   void SetBlocks(const std::vector<const ComplexVector *> &y,
-                 const std::vector<std::complex<double>> &s);
+                 const std::vector<std::complex<mfem::real_t>> &s);
 
   // Scale all entries by s.
-  ComplexVector &operator*=(std::complex<double> s);
+  ComplexVector &operator*=(std::complex<mfem::real_t> s);
 
   // Replace entries with their complex conjugate.
   void Conj();
@@ -105,13 +105,13 @@ public:
   void Reciprocal();
 
   // Vector dot product (yᴴ x) or indefinite dot product (yᵀ x) for complex vectors.
-  std::complex<double> Dot(const ComplexVector &y) const;
-  std::complex<double> TransposeDot(const ComplexVector &y) const;
-  std::complex<double> operator*(const ComplexVector &y) const { return Dot(y); }
+  std::complex<mfem::real_t> Dot(const ComplexVector &y) const;
+  std::complex<mfem::real_t> TransposeDot(const ComplexVector &y) const;
+  std::complex<mfem::real_t> operator*(const ComplexVector &y) const { return Dot(y); }
 
   // In-place addition (*this) += alpha * x.
-  void AXPY(std::complex<double> alpha, const ComplexVector &x);
-  void Add(std::complex<double> alpha, const ComplexVector &x) { AXPY(alpha, x); }
+  void AXPY(std::complex<mfem::real_t> alpha, const ComplexVector &x);
+  void Add(std::complex<mfem::real_t> alpha, const ComplexVector &x) { AXPY(alpha, x); }
   ComplexVector &operator+=(const ComplexVector &x)
   {
     AXPY(1.0, x);
@@ -119,22 +119,23 @@ public:
   }
 
   // In-place addition (*this) = alpha * x + beta * (*this).
-  void AXPBY(std::complex<double> alpha, const ComplexVector &x, std::complex<double> beta);
+  void AXPBY(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+             std::complex<mfem::real_t> beta);
 
   // In-place addition (*this) = alpha * x + beta * y + gamma * (*this).
-  void AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
-                std::complex<double> beta, const ComplexVector &y,
-                std::complex<double> gamma);
+  void AXPBYPCZ(std::complex<mfem::real_t> alpha, const ComplexVector &x,
+                std::complex<mfem::real_t> beta, const ComplexVector &y,
+                std::complex<mfem::real_t> gamma);
 
-  static void AXPY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+  static void AXPY(std::complex<mfem::real_t> alpha, const Vector &xr, const Vector &xi,
                    Vector &yr, Vector &yi);
 
-  static void AXPBY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
-                    std::complex<double> beta, Vector &yr, Vector &yi);
+  static void AXPBY(std::complex<mfem::real_t> alpha, const Vector &xr, const Vector &xi,
+                    std::complex<mfem::real_t> beta, Vector &yr, Vector &yi);
 
-  static void AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
-                       std::complex<double> beta, const Vector &yr, const Vector &yi,
-                       std::complex<double> gamma, Vector &zr, Vector &zi);
+  static void AXPBYPCZ(std::complex<mfem::real_t> alpha, const Vector &xr, const Vector &xi,
+                       std::complex<mfem::real_t> beta, const Vector &yr, const Vector &yi,
+                       std::complex<mfem::real_t> gamma, Vector &zr, Vector &zi);
 };
 
 namespace linalg
@@ -162,13 +163,13 @@ inline std::pair<HYPRE_BigInt, HYPRE_BigInt> GlobalSize2(MPI_Comm comm, const Ve
 // Sets all entries of the vector corresponding to the given indices to the given (real)
 // value or vector of values.
 template <typename VecType>
-void SetSubVector(VecType &x, const mfem::Array<int> &rows, double s);
+void SetSubVector(VecType &x, const mfem::Array<int> &rows, mfem::real_t s);
 template <typename VecType>
 void SetSubVector(VecType &x, const mfem::Array<int> &rows, const VecType &y);
 
 // Sets all entries in the range [start, end) to  the given value.
 template <typename VecType>
-void SetSubVector(VecType &x, int start, int end, double s);
+void SetSubVector(VecType &x, int start, int end, mfem::real_t s);
 
 // Sets all entries of the vector to random numbers sampled from the [-1, 1] or [-1 - 1i,
 // 1 + 1i] for complex-valued vectors.
@@ -180,8 +181,8 @@ template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
 // Calculate the local inner product yᴴ x or yᵀ x.
-double LocalDot(const Vector &x, const Vector &y);
-std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
+mfem::real_t LocalDot(const Vector &x, const Vector &y);
+std::complex<mfem::real_t> LocalDot(const ComplexVector &x, const ComplexVector &y);
 
 // Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
@@ -210,8 +211,8 @@ inline auto Normalize(MPI_Comm comm, VecType &x)
 }
 
 // Calculate the local sum of all elements in the vector.
-double LocalSum(const Vector &x);
-std::complex<double> LocalSum(const ComplexVector &x);
+mfem::real_t LocalSum(const Vector &x);
+std::complex<mfem::real_t> LocalSum(const ComplexVector &x);
 
 // Calculate the sum of all elements in the vector.
 template <typename VecType>
@@ -226,8 +227,9 @@ inline auto Sum(MPI_Comm comm, const VecType &x)
 template <typename VecType>
 inline auto Mean(MPI_Comm comm, const VecType &x)
 {
-  using ScalarType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                               std::complex<double>, double>::type;
+  using ScalarType =
+      typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                std::complex<mfem::real_t>, mfem::real_t>::type;
   ScalarType sum[2] = {LocalSum(x), ScalarType(x.Size())};
   Mpi::GlobalSum(2, sum, comm);
   return sum[0] / sum[1];
@@ -248,7 +250,7 @@ void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType
 
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
-void Sqrt(Vector &x, double s = 1.0);
+void Sqrt(Vector &x, mfem::real_t s = 1.0);
 
 }  // namespace linalg
 

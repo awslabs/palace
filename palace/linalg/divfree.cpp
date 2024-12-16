@@ -45,7 +45,7 @@ template <typename VecType>
 DivFreeSolver<VecType>::DivFreeSolver(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces,
-    const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
+    const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, mfem::real_t tol, int max_it,
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
@@ -138,7 +138,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
       std::make_unique<CgSolver<OperType>>(h1_fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
-  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  pcg->SetAbsTol(std::numeric_limits<mfem::real_t>::epsilon());
   pcg->SetMaxIter(max_it);
 
   ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));

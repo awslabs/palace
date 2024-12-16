@@ -34,7 +34,7 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
   }
 }
 
-double SurfaceCurrentData::GetExcitationCurrent() const
+mfem::real_t SurfaceCurrentData::GetExcitationCurrent() const
 {
   // Ideal unit current source for each index.
   return 1.0;
@@ -165,7 +165,7 @@ void SurfaceCurrentOperator::AddExcitationBdrCoefficients(const SurfaceCurrentDa
   // all elements of the current source in parallel.
   for (const auto &elem : data.elems)
   {
-    const double Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size());
+    const mfem::real_t Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size());
     fb.AddCoefficient(elem->GetModeCoefficient(-Jinc));
   }
 }

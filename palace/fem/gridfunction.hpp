@@ -54,15 +54,15 @@ public:
   int VectorDim() const { return gfr.VectorDim(); }
 
   // Set all entries equal to s.
-  GridFunction &operator=(std::complex<double> s);
-  GridFunction &operator=(double s)
+  GridFunction &operator=(std::complex<mfem::real_t> s);
+  GridFunction &operator=(mfem::real_t s)
   {
-    *this = std::complex<double>(s, 0.0);
+    *this = std::complex<mfem::real_t>(s, 0.0);
     return *this;
   }
 
   // Scale all entries by s.
-  GridFunction &operator*=(double s);
+  GridFunction &operator*=(mfem::real_t s);
 
   // Transform for space update (for example on mesh change).
   void Update();

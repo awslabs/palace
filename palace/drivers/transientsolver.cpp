@@ -26,12 +26,12 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   BlockTimer bt0(Timer::CONSTRUCT);
-  std::function<double(double)> J_coef = GetTimeExcitation(false);
-  std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
+  std::function<mfem::real_t(mfem::real_t)> J_coef = GetTimeExcitation(false);
+  std::function<mfem::real_t(mfem::real_t)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
   TimeOperator time_op(iodata, space_op, dJdt_coef);
 
-  double delta_t = iodata.solver.transient.delta_t;
+  mfem::real_t delta_t = iodata.solver.transient.delta_t;
   int n_step = GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);
   SaveMetadata(space_op.GetNDSpaces());
 
@@ -80,11 +80,12 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Main time integration loop.
   int step = 0;
-  double t = -delta_t;
+  mfem::real_t t = -delta_t;
   auto t0 = Timer::Now();
   while (step < n_step)
   {
-    const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
+    const mfem::real_t ts =
+        iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, n_step - 1,
                ts, Timer::Duration(Timer::Now() - t0).count());
 
@@ -108,13 +109,13 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp());
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
+    const mfem::real_t E_elec = post_op.GetEFieldEnergy();
+    const mfem::real_t E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -136,10 +137,10 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
-std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
+std::function<mfem::real_t(mfem::real_t)> TransientSolver::GetTimeExcitation(bool dot) const
 {
   using namespace excitations;
-  using F = std::function<double(double)>;
+  using F = std::function<mfem::real_t(mfem::real_t)>;
   const config::TransientSolverData &data = iodata.solver.transient;
   const config::TransientSolverData::ExcitationType &type = data.excitation;
   if (type == config::TransientSolverData::ExcitationType::SINUSOIDAL ||
@@ -156,7 +157,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
     MFEM_VERIFY(data.pulse_tau > 0.0,
                 "Excitation width is missing for transient simulation!");
   }
-  const double delay =
+  const mfem::real_t delay =
       (type == config::TransientSolverData::ExcitationType::GAUSSIAN ||
        type == config::TransientSolverData::ExcitationType::DIFF_GAUSSIAN ||
        type == config::TransientSolverData::ExcitationType::MOD_GAUSSIAN)
@@ -167,80 +168,85 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
     case config::TransientSolverData::ExcitationType::SINUSOIDAL:
       if (dot)
       {
-        return F{[=](double t) { return dpulse_sinusoidal(t, data.pulse_f, delay); }};
+        return F{[=](mfem::real_t t) { return dpulse_sinusoidal(t, data.pulse_f, delay); }};
       }
       else
       {
-        return F{[=](double t) { return pulse_sinusoidal(t, data.pulse_f, delay); }};
+        return F{[=](mfem::real_t t) { return pulse_sinusoidal(t, data.pulse_f, delay); }};
       }
       break;
     case config::TransientSolverData::ExcitationType::GAUSSIAN:
       if (dot)
       {
-        return F{[=](double t) { return dpulse_gaussian(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t) { return dpulse_gaussian(t, data.pulse_tau, delay); }};
       }
       else
       {
-        return F{[=](double t) { return pulse_gaussian(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t) { return pulse_gaussian(t, data.pulse_tau, delay); }};
       }
       break;
     case config::TransientSolverData::ExcitationType::DIFF_GAUSSIAN:
       if (dot)
       {
-        return F{[=](double t) { return dpulse_gaussian_diff(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t)
+                 { return dpulse_gaussian_diff(t, data.pulse_tau, delay); }};
       }
       else
       {
-        return F{[=](double t) { return pulse_gaussian_diff(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t)
+                 { return pulse_gaussian_diff(t, data.pulse_tau, delay); }};
       }
       break;
     case config::TransientSolverData::ExcitationType::MOD_GAUSSIAN:
       if (dot)
       {
-        return F{[=](double t)
+        return F{[=](mfem::real_t t)
                  { return dpulse_gaussian_mod(t, data.pulse_f, data.pulse_tau, delay); }};
       }
       else
       {
-        return F{[=](double t)
+        return F{[=](mfem::real_t t)
                  { return pulse_gaussian_mod(t, data.pulse_f, data.pulse_tau, delay); }};
       }
       break;
     case config::TransientSolverData::ExcitationType::RAMP_STEP:
       if (dot)
       {
-        return F{[=](double t) { return dpulse_ramp(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t) { return dpulse_ramp(t, data.pulse_tau, delay); }};
       }
       else
       {
-        return F{[=](double t) { return pulse_ramp(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t) { return pulse_ramp(t, data.pulse_tau, delay); }};
       }
       break;
     case config::TransientSolverData::ExcitationType::SMOOTH_STEP:
       if (dot)
       {
-        return F{[=](double t) { return dpulse_smootherstep(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t)
+                 { return dpulse_smootherstep(t, data.pulse_tau, delay); }};
       }
       else
       {
-        return F{[=](double t) { return pulse_smootherstep(t, data.pulse_tau, delay); }};
+        return F{[=](mfem::real_t t)
+                 { return pulse_smootherstep(t, data.pulse_tau, delay); }};
       }
       break;
   }
   return F{};
 }
 
-int TransientSolver::GetNumSteps(double start, double end, double delta) const
+int TransientSolver::GetNumSteps(mfem::real_t start, mfem::real_t end,
+                                 mfem::real_t delta) const
 {
   if (end < start)
   {
     return 1;
   }
   MFEM_VERIFY(delta > 0.0, "Zero time step is not allowed!");
-  constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dnfreq = std::abs(end - start) / std::abs(delta);
+  constexpr mfem::real_t delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
+  mfem::real_t dnfreq = std::abs(end - start) / std::abs(delta);
   int n_step = 1 + static_cast<int>(dnfreq);
-  double dfinal = start + n_step * delta;
+  mfem::real_t dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
@@ -248,14 +254,14 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
 void TransientSolver::Postprocess(const PostOperator &post_op,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
-                                  double t, double J_coef, double E_elec, double E_mag,
-                                  const ErrorIndicator *indicator) const
+                                  mfem::real_t t, mfem::real_t J_coef, mfem::real_t E_elec,
+                                  mfem::real_t E_mag, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
-  const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
+  const mfem::real_t ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
+  const mfem::real_t E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
+  const mfem::real_t E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessCurrents(post_op, surf_j_op, step, t, J_coef);
   PostprocessPorts(post_op, lumped_port_op, step, t, J_coef);
   PostprocessDomains(post_op, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
@@ -279,23 +285,23 @@ namespace
 
 struct CurrentData
 {
-  const int idx;       // Current source index
-  const double I_inc;  // Excitation current
+  const int idx;             // Current source index
+  const mfem::real_t I_inc;  // Excitation current
 };
 
 struct PortData
 {
-  const int idx;              // Port index
-  const bool excitation;      // Flag for excited ports
-  const double V_inc, I_inc;  // Incident voltage, current
-  const double V_i, I_i;      // Port voltage, current
+  const int idx;                    // Port index
+  const bool excitation;            // Flag for excited ports
+  const mfem::real_t V_inc, I_inc;  // Incident voltage, current
+  const mfem::real_t V_i, I_i;      // Port voltage, current
 };
 
 }  // namespace
 
 void TransientSolver::PostprocessCurrents(const PostOperator &post_op,
                                           const SurfaceCurrentOperator &surf_j_op, int step,
-                                          double t, double J_coef) const
+                                          mfem::real_t t, mfem::real_t J_coef) const
 {
   // Postprocess the time domain surface current excitations.
   if (post_dir.length() == 0)
@@ -306,7 +312,8 @@ void TransientSolver::PostprocessCurrents(const PostOperator &post_op,
   j_data.reserve(surf_j_op.Size());
   for (const auto &[idx, data] : surf_j_op)
   {
-    const double I_inc = data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
+    const mfem::real_t I_inc =
+        data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
     j_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc)});
   }
   if (root && !j_data.empty())
@@ -345,7 +352,7 @@ void TransientSolver::PostprocessCurrents(const PostOperator &post_op,
 
 void TransientSolver::PostprocessPorts(const PostOperator &post_op,
                                        const LumpedPortOperator &lumped_port_op, int step,
-                                       double t, double J_coef) const
+                                       mfem::real_t t, mfem::real_t J_coef) const
 {
   // Postprocess the time domain lumped port voltages and currents, which can then be used
   // to compute S- or Z-parameters.
@@ -357,11 +364,12 @@ void TransientSolver::PostprocessPorts(const PostOperator &post_op,
   port_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    const double V_inc = data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
-    const double I_inc =
+    const mfem::real_t V_inc =
+        data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
+    const mfem::real_t I_inc =
         (std::abs(V_inc) > 0.0) ? data.GetExcitationPower() * J_coef * J_coef / V_inc : 0.0;
-    const double V_i = post_op.GetPortVoltage(lumped_port_op, idx).real();
-    const double I_i = post_op.GetPortCurrent(lumped_port_op, idx).real();
+    const mfem::real_t V_i = post_op.GetPortVoltage(lumped_port_op, idx).real();
+    const mfem::real_t I_i = post_op.GetPortCurrent(lumped_port_op, idx).real();
     port_data.push_back({idx, data.excitation,
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_inc),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc),

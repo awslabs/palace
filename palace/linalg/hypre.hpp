@@ -71,11 +71,12 @@ public:
 
   void Mult(const Vector &x, Vector &y) const override;
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMult(const Vector &x, Vector &y, const mfem::real_t a = 1.0) const override;
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMultTranspose(const Vector &x, Vector &y,
+                        const mfem::real_t a = 1.0) const override;
 
   operator hypre_CSRMatrix *() const { return mat; }
 };

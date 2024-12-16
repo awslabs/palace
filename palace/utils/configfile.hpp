@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <mfem.hpp>
 #include <nlohmann/json_fwd.hpp>
 
 namespace palace::config
@@ -73,7 +74,7 @@ struct ElementData
 {
   // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
   // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
-  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+  std::array<mfem::real_t, 3> direction{{0.0, 0.0, 0.0}};
 
   // Coordinate system that the normal vector is expressed in.
   enum class CoordinateSystem
@@ -118,7 +119,7 @@ struct BoxRefinementData
   int ref_levels = 0;
 
   // Region bounding box limits [m].
-  std::array<double, 3> bbmin{{0.0, 0.0, 0.0}}, bbmax{{0.0, 0.0, 0.0}};
+  std::array<mfem::real_t, 3> bbmin{{0.0, 0.0, 0.0}}, bbmax{{0.0, 0.0, 0.0}};
 };
 
 struct SphereRefinementData
@@ -127,17 +128,17 @@ struct SphereRefinementData
   int ref_levels = 0;
 
   // Sphere radius [m].
-  double r = 0.0;
+  mfem::real_t r = 0.0;
 
   // Sphere center [m].
-  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+  std::array<mfem::real_t, 3> center{{0.0, 0.0, 0.0}};
 };
 
 struct RefinementData
 {
 public:
   // Non-dimensional tolerance used to specify convergence of adaptive mesh refinement.
-  double tol = 1.0e-2;
+  mfem::real_t tol = 1.0e-2;
 
   // Maximum number of iterations to perform during adaptive mesh refinement.
   int max_it = 0;
@@ -155,11 +156,11 @@ public:
 
   // Dörfler update fraction. The set of marked elements is the minimum set that contains
   // update_fraction of the total error.
-  double update_fraction = 0.7;
+  mfem::real_t update_fraction = 0.7;
 
   // Maximum allowable ratio of number of elements across processors before rebalancing is
   // performed.
-  double maximum_imbalance = 1.1;
+  mfem::real_t maximum_imbalance = 1.1;
 
   // Whether to save off results of each adaptation iteration as a subfolder within the post
   // processing directory.
@@ -199,8 +200,8 @@ public:
 
   // Mesh length unit and optional characteristic length scale for nondimensionalization
   // [m].
-  double L0 = 1.0e-6;
-  double Lc = -1.0;
+  mfem::real_t L0 = 1.0e-6;
+  mfem::real_t Lc = -1.0;
 
   // Remove high-order curvature information from the mesh.
   bool remove_curvature = false;
@@ -229,7 +230,7 @@ public:
 
   // Factor for displacing duplicated interior boundary elements, usually added just for
   // visualization.
-  double crack_displ_factor = 1.0e-3;
+  mfem::real_t crack_displ_factor = 1.0e-3;
 
   // Add new boundary elements for faces are on the computational domain boundary or which
   // have attached elements on either side with different domain attributes.
@@ -252,10 +253,10 @@ template <std::size_t N>
 struct SymmetricMatrixData
 {
 public:
-  std::array<double, N> s;
-  std::array<std::array<double, N>, N> v;
+  std::array<mfem::real_t, N> s;
+  std::array<std::array<mfem::real_t, N>, N> v;
 
-  SymmetricMatrixData(double diag)
+  SymmetricMatrixData(mfem::real_t diag)
   {
     s.fill(diag);
     std::size_t i = 0;
@@ -283,7 +284,7 @@ public:
   SymmetricMatrixData<3> sigma = 0.0;
 
   // London penetration depth [m].
-  double lambda_L = 0.0;
+  mfem::real_t lambda_L = 0.0;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
@@ -312,7 +313,7 @@ struct ProbeData
 {
 public:
   // Physical space coordinates for the probe location [m].
-  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+  std::array<mfem::real_t, 3> center{{0.0, 0.0, 0.0}};
 };
 
 struct ProbePostData : public internal::DataMap<ProbeData>
@@ -398,13 +399,13 @@ struct ConductivityData
 {
 public:
   // Electrical conductivity of the conductor [S/m].
-  double sigma = 0.0;
+  mfem::real_t sigma = 0.0;
 
   // Conductor relative permeability.
-  double mu_r = 1.0;
+  mfem::real_t mu_r = 1.0;
 
   // Optional conductor thickness [m].
-  double h = 0.0;
+  mfem::real_t h = 0.0;
 
   // Optional flag for an external boundary surface, relevant for the thickness correction.
   bool external = false;
@@ -423,9 +424,9 @@ struct ImpedanceData
 {
 public:
   // Boundary surface resistance, inductance, and capacitance [Ω/sq, H/sq, F/sq].
-  double Rs = 0.0;
-  double Ls = 0.0;
-  double Cs = 0.0;
+  mfem::real_t Rs = 0.0;
+  mfem::real_t Ls = 0.0;
+  mfem::real_t Cs = 0.0;
 
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
@@ -441,14 +442,14 @@ struct LumpedPortData
 {
 public:
   // Port circuit resistance, inductance, and capacitance [Ω/sq, H/sq, F/sq].
-  double R = 0.0;
-  double L = 0.0;
-  double C = 0.0;
+  mfem::real_t R = 0.0;
+  mfem::real_t L = 0.0;
+  mfem::real_t C = 0.0;
 
   // Port surface resistance, inductance, and capacitance [Ω/sq, H/sq, F/sq].
-  double Rs = 0.0;
-  double Ls = 0.0;
-  double Cs = 0.0;
+  mfem::real_t Rs = 0.0;
+  mfem::real_t Ls = 0.0;
+  mfem::real_t Cs = 0.0;
 
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
@@ -471,7 +472,7 @@ struct PeriodicData
 {
 public:
   // Vector defining the direction and distance for this periodic boundary condition.
-  std::array<double, 3> translation = {0.0, 0.0, 0.0};
+  std::array<mfem::real_t, 3> translation = {0.0, 0.0, 0.0};
   // List of boundary donor attributes for this periodic boundary condition.
   std::vector<int> donor_attributes = {};
   // List of boundary receiver attributes for this periodic boundary condition.
@@ -491,7 +492,7 @@ public:
   int mode_idx = 1;
 
   // Port offset for de-embedding [m].
-  double d_offset = 0.0;
+  mfem::real_t d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
   enum class EigenSolverType
@@ -515,10 +516,10 @@ public:
   int ksp_max_its = 45;
 
   // Tolerance for linear solver.
-  double ksp_tol = 1e-8;
+  mfem::real_t ksp_tol = 1e-8;
 
   // Tolerance for eigenvalue solver.
-  double eig_tol = 1e-6;
+  mfem::real_t eig_tol = 1e-6;
 
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
@@ -562,7 +563,7 @@ public:
 
   // Coordinates of a point away from which to compute the outward flux (for orienting the
   // surface normal) [m].
-  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+  std::array<mfem::real_t, 3> center{{0.0, 0.0, 0.0}};
 
   // Flag which indicates whether or not the center point was specified.
   bool no_center = true;
@@ -591,13 +592,13 @@ public:
   Type type = Type::DEFAULT;
 
   // Dielectric interface thickness [m].
-  double t = 0.0;
+  mfem::real_t t = 0.0;
 
   // Relative permittivity.
-  double epsilon_r = 0.0;
+  mfem::real_t epsilon_r = 0.0;
 
   // Loss tangent.
-  double tandelta = 0.0;
+  mfem::real_t tandelta = 0.0;
 
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
@@ -648,13 +649,13 @@ struct DrivenSolverData
 {
 public:
   // Lower bound of frequency sweep [GHz].
-  double min_f = 0.0;
+  mfem::real_t min_f = 0.0;
 
   // Upper bound of frequency sweep [GHz].
-  double max_f = 0.0;
+  mfem::real_t max_f = 0.0;
 
   // Step size for frequency sweep [GHz].
-  double delta_f = 0.0;
+  mfem::real_t delta_f = 0.0;
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
@@ -663,7 +664,7 @@ public:
   int rst = 1;
 
   // Error tolerance for enabling adaptive frequency sweep.
-  double adaptive_tol = 0.0;
+  mfem::real_t adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
   int adaptive_max_size = 0;
@@ -678,10 +679,10 @@ struct EigenSolverData
 {
 public:
   // Target for shift-and-invert spectral transformation [GHz].
-  double target = 0.0;
+  mfem::real_t target = 0.0;
 
   // Eigenvalue solver relative tolerance.
-  double tol = 1.0e-6;
+  mfem::real_t tol = 1.0e-6;
 
   // Maximum iterations for eigenvalue solver.
   int max_it = -1;
@@ -762,14 +763,14 @@ public:
   ExcitationType excitation = ExcitationType::SINUSOIDAL;
 
   // Excitation parameters: frequency [GHz] and pulse width [ns].
-  double pulse_f = 0.0;
-  double pulse_tau = 0.0;
+  mfem::real_t pulse_f = 0.0;
+  mfem::real_t pulse_tau = 0.0;
 
   // Upper bound of time interval [ns].
-  double max_t = 1.0;
+  mfem::real_t max_t = 1.0;
 
   // Step size for time stepping [ns].
-  double delta_t = 1.0e-2;
+  mfem::real_t delta_t = 1.0e-2;
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
@@ -780,8 +781,8 @@ public:
   int order = 2;
 
   // Adaptive time-stepping tolerances for CVODE and ARKODE.
-  double rel_tol = 1e-4;
-  double abs_tol = 1e-9;
+  mfem::real_t rel_tol = 1e-4;
+  mfem::real_t abs_tol = 1e-9;
 
   void SetUp(json &solver);
 };
@@ -816,7 +817,7 @@ public:
   KspType ksp_type = KspType::DEFAULT;
 
   // Iterative solver relative tolerance.
-  double tol = 1.0e-6;
+  mfem::real_t tol = 1.0e-6;
 
   // Maximum iterations for iterative solver.
   int max_it = 100;
@@ -858,8 +859,8 @@ public:
 
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
   // geometric multigrid.
-  double mg_smooth_sf_max = 1.0;
-  double mg_smooth_sf_min = 0.0;
+  mfem::real_t mg_smooth_sf_max = 1.0;
+  mfem::real_t mg_smooth_sf_min = 0.0;
 
   // Smooth based on 4th-kind Chebyshev polynomials for geometric multigrid, otherwise
   // use standard 1st-kind polynomials.
@@ -910,7 +911,7 @@ public:
     ZFP_BLR_HODLR
   };
   CompressionType strumpack_compression_type = CompressionType::NONE;
-  double strumpack_lr_tol = 1.0e-3;
+  mfem::real_t strumpack_lr_tol = 1.0e-3;
   int strumpack_lossy_precision = 16;
   int strumpack_butterfly_l = 1;
 
@@ -929,13 +930,13 @@ public:
   int amg_agg_coarsen = -1;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
-  double divfree_tol = 1.0e-12;
+  mfem::real_t divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;
 
   // Relative tolerance for solving linear systems in the error estimator.
-  double estimator_tol = 1.0e-6;
+  mfem::real_t estimator_tol = 1.0e-6;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
   int estimator_max_it = 10000;

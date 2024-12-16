@@ -30,10 +30,10 @@ public:
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
   // returns g'(t).
-  std::function<double(double)> dJ_coef;
+  std::function<mfem::real_t(mfem::real_t)> dJ_coef;
 
   // Internal objects for solution of linear systems during time stepping.
-  double dt_, saved_gamma;
+  mfem::real_t dt_, saved_gamma;
   std::unique_ptr<KspSolver> kspM, kspA;
   std::unique_ptr<Operator> A, B;
   mutable Vector RHS;
@@ -43,12 +43,12 @@ public:
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
-  std::function<void(double dt)> ConfigureLinearSolver;
+  std::function<void(mfem::real_t dt)> ConfigureLinearSolver;
 
 public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
-                                  std::function<double(double)> dJ_coef, double t0,
-                                  mfem::TimeDependentOperator::Type type)
+                                  std::function<mfem::real_t(mfem::real_t)> dJ_coef,
+                                  mfem::real_t t0, mfem::TimeDependentOperator::Type type)
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
                                       space_op.GetRTSpace().GetTrueVSize(),
                                   t0, type),
@@ -75,7 +75,7 @@ public:
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(0);
       pcg->SetRelTol(iodata.solver.linear.tol);
-      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+      pcg->SetAbsTol(std::numeric_limits<mfem::real_t>::epsilon());
       pcg->SetMaxIter(iodata.solver.linear.max_it);
       auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
       kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
@@ -85,7 +85,7 @@ public:
       // For explicit schemes, recommended to just use cheaper preconditioners. Otherwise,
       // use AMS or a direct solver. The system matrix is formed as a sequence of matrix
       // vector products, and is only assembled for preconditioning.
-      ConfigureLinearSolver = [this, &iodata, &space_op](double dt)
+      ConfigureLinearSolver = [this, &iodata, &space_op](mfem::real_t dt)
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
@@ -173,7 +173,7 @@ public:
     du3 = RHS3;
   }
 
-  void ImplicitSolve(double dt, const Vector &u, Vector &k) override
+  void ImplicitSolve(mfem::real_t dt, const Vector &u, Vector &k) override
   {
     // Solve: M k = f(u + dt k, t)
     // Use block elimination to avoid solving a 3n x 3n linear system
@@ -220,7 +220,7 @@ public:
 
   // Setup A = M - gamma J = M + gamma C + gamma^2 K
   int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur,
-                       double gamma) override
+                       mfem::real_t gamma) override
   {
     // Update Jacobian matrix
     if (!kspA || gamma != saved_gamma)
@@ -238,7 +238,7 @@ public:
   }
 
   // Solve (Mass - dt Jacobian) x = Mass b
-  int SUNImplicitSolve(const Vector &b, Vector &x, double tol) override
+  int SUNImplicitSolve(const Vector &b, Vector &x, mfem::real_t tol) override
   {
     Vector b1, b2, b3, x1, x2, x3, RHS1;
     b1.UseDevice(true);
@@ -278,7 +278,7 @@ public:
 }  // namespace
 
 TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-                           std::function<double(double)> dJ_coef)
+                           std::function<mfem::real_t(mfem::real_t)> dJ_coef)
   : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
     order(iodata.solver.transient.order)
 {
@@ -304,7 +304,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
       {
-        constexpr double rho_inf = 1.0;
+        constexpr mfem::real_t rho_inf = 1.0;
         use_mfem_integrator = true;
         ode = std::make_unique<mfem::GeneralizedAlphaSolver>(rho_inf);
       }
@@ -387,9 +387,9 @@ void TimeOperator::Init()
   }
 }
 
-void TimeOperator::Step(double &t, double &dt)
+void TimeOperator::Step(mfem::real_t &t, mfem::real_t &dt)
 {
-  double dt_input = dt;
+  mfem::real_t dt_input = dt;
   ode->Step(sol, t, dt);
   // Ensure user-specified dt does not change.
   dt = dt_input;
@@ -420,7 +420,7 @@ void TimeOperator::PrintStats()
   {
     long int nsteps, nfevals, nlinsetups, netfails;
     int qlast, qcur;
-    double hinused, hlast, hcur, tcur;
+    mfem::real_t hinused, hlast, hcur, tcur;
 
     // Get integrator stats.
     CVodeGetIntegratorStats(cvode->GetMem(), &nsteps, &nfevals, &nlinsetups, &netfails,

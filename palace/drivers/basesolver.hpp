@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include <mfem.hpp>
 
 namespace palace
 {
@@ -54,19 +55,20 @@ protected:
 
   // Common domain postprocessing for all simulation types.
   void PostprocessDomains(const PostOperator &post_op, const std::string &name, int step,
-                          double time, double E_elec, double E_mag, double E_cap,
-                          double E_ind) const;
+                          mfem::real_t time, mfem::real_t E_elec, mfem::real_t E_mag,
+                          mfem::real_t E_cap, mfem::real_t E_ind) const;
 
   // Common surface postprocessing for all simulation types.
   void PostprocessSurfaces(const PostOperator &post_op, const std::string &name, int step,
-                           double time, double E_elec, double E_mag) const;
+                           mfem::real_t time, mfem::real_t E_elec,
+                           mfem::real_t E_mag) const;
 
   // Common probe postprocessing for all simulation types.
   void PostprocessProbes(const PostOperator &post_op, const std::string &name, int step,
-                         double time) const;
+                         mfem::real_t time) const;
 
   // Common field visualization postprocessing for all simulation types.
-  void PostprocessFields(const PostOperator &post_op, int step, double time) const;
+  void PostprocessFields(const PostOperator &post_op, int step, mfem::real_t time) const;
 
   // Common error indicator postprocessing for all simulation types.
   void PostprocessErrorIndicator(const PostOperator &post_op,

@@ -49,8 +49,8 @@ private:
 public:
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
-                const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
-                bool use_mg);
+                const FiniteElementSpace &rhs_fespace, mfem::real_t tol, int max_it,
+                int print, bool use_mg);
 
   void Mult(const VecType &x, VecType &y) const;
 };
@@ -77,13 +77,14 @@ private:
 
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                         FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
-                         int print, bool use_mg);
+                         FiniteElementSpaceHierarchy &rt_fespaces, mfem::real_t tol,
+                         int max_it, int print, bool use_mg);
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
   // and fold into an existing indicator. The indicators are nondimensionalized using the
   // total field energy.
-  void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+  void AddErrorIndicator(const VecType &E, mfem::real_t Et,
+                         ErrorIndicator &indicator) const;
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
@@ -109,13 +110,14 @@ private:
 
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
-                         FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
-                         int print, bool use_mg);
+                         FiniteElementSpaceHierarchy &nd_fespaces, mfem::real_t tol,
+                         int max_it, int print, bool use_mg);
 
   // Compute elemental error indicators given the magnetic flux density as a vector of true
   // dofs, and fold into an existing indicator. The indicators are nondimensionalized using
   // the total field energy.
-  void AddErrorIndicator(const VecType &B, double Et, ErrorIndicator &indicator) const;
+  void AddErrorIndicator(const VecType &B, mfem::real_t Et,
+                         ErrorIndicator &indicator) const;
 };
 
 // Class used for computing sum of the gradient flux and curl flux error estimates,
@@ -132,13 +134,13 @@ private:
 public:
   TimeDependentFluxErrorEstimator(const MaterialOperator &mat_op,
                                   FiniteElementSpaceHierarchy &nd_fespaces,
-                                  FiniteElementSpaceHierarchy &rt_fespaces, double tol,
-                                  int max_it, int print, bool use_mg);
+                                  FiniteElementSpaceHierarchy &rt_fespaces,
+                                  mfem::real_t tol, int max_it, int print, bool use_mg);
 
   // Compute elemental error indicators given the electric field and magnetic flux density
   // as a vectors of true dofs, and fold into an existing indicator. The indicators are
   // nondimensionalized using the total field energy.
-  void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
+  void AddErrorIndicator(const VecType &E, const VecType &B, mfem::real_t Et,
                          ErrorIndicator &indicator) const;
 };
 

@@ -65,23 +65,23 @@ private:
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
-  void AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
+  void AddStiffnessCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &df,
                                 MaterialPropertyCoefficient &f);
-  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+  void AddStiffnessBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &f);
+  void AddDampingBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddRealMassCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &f);
+  void AddRealMassBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddImagMassCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &f);
+  void AddAbsMassCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &f);
+  void AddExtraSystemBdrCoefficients(mfem::real_t omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(Vector &RHS);
-  bool AddExcitationVector2Internal(double omega, ComplexVector &RHS);
+  bool AddExcitationVector2Internal(mfem::real_t omega, ComplexVector &RHS);
 
 public:
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
@@ -146,7 +146,7 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
-  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
+  std::unique_ptr<OperType> GetExtraSystemMatrix(mfem::real_t omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
@@ -165,7 +165,7 @@ public:
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
   // returned operator.
-  std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
+  std::unique_ptr<Operator> GetInnerProductMatrix(mfem::real_t a0, mfem::real_t a2,
                                                   const ComplexOperator *K,
                                                   const ComplexOperator *M);
 
@@ -174,8 +174,8 @@ public:
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3) .
   template <typename OperType>
-  std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
-                                                    double a3);
+  std::unique_ptr<OperType> GetPreconditionerMatrix(mfem::real_t a0, mfem::real_t a1,
+                                                    mfem::real_t a2, mfem::real_t a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
@@ -191,12 +191,12 @@ public:
   // applied on specified excited boundaries. The return value indicates whether or not the
   // excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector(Vector &RHS);
-  bool GetExcitationVector(double omega, ComplexVector &RHS);
+  bool GetExcitationVector(mfem::real_t omega, ComplexVector &RHS);
 
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether
   // or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(ComplexVector &RHS1);
-  bool GetExcitationVector2(double omega, ComplexVector &RHS2);
+  bool GetExcitationVector2(mfem::real_t omega, ComplexVector &RHS2);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

@@ -34,12 +34,12 @@ private:
 
   // Adaptive time-stepping parameters.
   int order;
-  double rel_tol, abs_tol;
+  mfem::real_t rel_tol, abs_tol;
   bool use_mfem_integrator = false;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-               std::function<double(double)> dJ_coef);
+               std::function<mfem::real_t(mfem::real_t)> dJ_coef);
 
   // Access solution vectors for E- and B-fields.
   const Vector &GetE() const { return E; }
@@ -52,7 +52,7 @@ public:
   void Init();
 
   // Perform time step from t -> t + dt.
-  void Step(double &t, double &dt);
+  void Step(mfem::real_t &t, mfem::real_t &dt);
 
   // Print ODE integrator statistics.
   void PrintStats();

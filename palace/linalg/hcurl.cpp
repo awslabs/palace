@@ -44,7 +44,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
-    const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
+    const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, mfem::real_t tol, int max_it,
     int print)
 {
   MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),

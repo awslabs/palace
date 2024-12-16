@@ -6,7 +6,6 @@
 #include <array>
 #include <complex>
 #include <numeric>
-#include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
@@ -91,7 +90,7 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
 }
 
 // Returns an array of indices corresponding to marked elements.
-mfem::Array<int> MarkedElements(const Vector &e, double threshold)
+mfem::Array<int> MarkedElements(const Vector &e, mfem::real_t threshold)
 {
   mfem::Array<int> ind;
   ind.Reserve(e.Size());
@@ -159,7 +158,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
-  double err = indicators.Norml2(comm);
+  mfem::real_t err = indicators.Norml2(comm);
 
   // Collection of all tests that might exhaust resources.
   auto ExhaustedResources = [&refinement](auto it, auto ntdof)
@@ -233,7 +232,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         min_elem = max_elem = mesh.back()->GetNE();
         Mpi::GlobalMin(1, &min_elem, comm);
         Mpi::GlobalMax(1, &max_elem, comm);
-        const auto ratio_post = double(max_elem) / min_elem;
+        const auto ratio_post = mfem::real_t(max_elem) / min_elem;
         Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
@@ -320,36 +319,37 @@ namespace
 
 struct EnergyData
 {
-  const int idx;        // Domain index
-  const double E_elec;  // Electric field energy
-  const double E_mag;   // Magnetic field energy
+  const int idx;              // Domain index
+  const mfem::real_t E_elec;  // Electric field energy
+  const mfem::real_t E_mag;   // Magnetic field energy
 };
 
 struct FluxData
 {
-  const int idx;                   // Surface index
-  const std::complex<double> Phi;  // Integrated flux
-  const SurfaceFluxType type;      // Flux type
+  const int idx;                         // Surface index
+  const std::complex<mfem::real_t> Phi;  // Integrated flux
+  const SurfaceFluxType type;            // Flux type
 };
 
 struct EpsData
 {
-  const int idx;   // Interface index
-  const double p;  // Participation ratio
-  const double Q;  // Quality factor
+  const int idx;         // Interface index
+  const mfem::real_t p;  // Participation ratio
+  const mfem::real_t Q;  // Quality factor
 };
 
 struct ProbeData
 {
-  const int idx;                          // Probe index
-  const std::complex<double> Fx, Fy, Fz;  // Field values at probe location
+  const int idx;                                // Probe index
+  const std::complex<mfem::real_t> Fx, Fy, Fz;  // Field values at probe location
 };
 
 }  // namespace
 
 void BaseSolver::PostprocessDomains(const PostOperator &post_op, const std::string &name,
-                                    int step, double time, double E_elec, double E_mag,
-                                    double E_cap, double E_ind) const
+                                    int step, mfem::real_t time, mfem::real_t E_elec,
+                                    mfem::real_t E_mag, mfem::real_t E_cap,
+                                    mfem::real_t E_ind) const
 {
   // If domains have been specified for postprocessing, compute the corresponding values
   // and write out to disk.
@@ -363,8 +363,8 @@ void BaseSolver::PostprocessDomains(const PostOperator &post_op, const std::stri
   energy_data.reserve(post_op.GetDomainPostOp().M_i.size());
   for (const auto &[idx, data] : post_op.GetDomainPostOp().M_i)
   {
-    const double E_elec_i = (E_elec > 0.0) ? post_op.GetEFieldEnergy(idx) : 0.0;
-    const double E_mag_i = (E_mag > 0.0) ? post_op.GetHFieldEnergy(idx) : 0.0;
+    const mfem::real_t E_elec_i = (E_elec > 0.0) ? post_op.GetEFieldEnergy(idx) : 0.0;
+    const mfem::real_t E_mag_i = (E_mag > 0.0) ? post_op.GetHFieldEnergy(idx) : 0.0;
     energy_data.push_back({idx, E_elec_i, E_mag_i});
   }
   if (root)
@@ -426,8 +426,8 @@ void BaseSolver::PostprocessDomains(const PostOperator &post_op, const std::stri
 }
 
 void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::string &name,
-                                     int step, double time, double E_elec,
-                                     double E_mag) const
+                                     int step, mfem::real_t time, mfem::real_t E_elec,
+                                     mfem::real_t E_mag) const
 {
   // If surfaces have been specified for postprocessing, compute the corresponding values
   // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
@@ -443,8 +443,8 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::str
   flux_data.reserve(post_op.GetSurfacePostOp().flux_surfs.size());
   for (const auto &[idx, data] : post_op.GetSurfacePostOp().flux_surfs)
   {
-    const std::complex<double> Phi = post_op.GetSurfaceFlux(idx);
-    double scale = 1.0;
+    const std::complex<mfem::real_t> Phi = post_op.GetSurfaceFlux(idx);
+    mfem::real_t scale = 1.0;
     switch (data.type)
     {
       case SurfaceFluxType::ELECTRIC:
@@ -535,9 +535,9 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::str
   eps_data.reserve(post_op.GetSurfacePostOp().eps_surfs.size());
   for (const auto &[idx, data] : post_op.GetSurfacePostOp().eps_surfs)
   {
-    const double p = post_op.GetInterfaceParticipation(idx, E_elec);
-    const double tandelta = post_op.GetSurfacePostOp().GetInterfaceLossTangent(idx);
-    const double Q =
+    const mfem::real_t p = post_op.GetInterfaceParticipation(idx, E_elec);
+    const mfem::real_t tandelta = post_op.GetSurfacePostOp().GetInterfaceLossTangent(idx);
+    const mfem::real_t Q =
         (p == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * p);
     eps_data.push_back({idx, p, Q});
   }
@@ -574,7 +574,7 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::str
 }
 
 void BaseSolver::PostprocessProbes(const PostOperator &post_op, const std::string &name,
-                                   int step, double time) const
+                                   int step, mfem::real_t time) const
 {
 #if defined(MFEM_USE_GSLIB)
   // If probe locations have been specified for postprocessing, compute the corresponding
@@ -743,7 +743,8 @@ void BaseSolver::PostprocessProbes(const PostOperator &post_op, const std::strin
 #endif
 }
 
-void BaseSolver::PostprocessFields(const PostOperator &post_op, int step, double time) const
+void BaseSolver::PostprocessFields(const PostOperator &post_op, int step,
+                                   mfem::real_t time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   BlockTimer bt(Timer::IO);
@@ -768,8 +769,8 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &post_op,
     return;
   }
   MPI_Comm comm = post_op.GetComm();
-  std::array<double, 4> data = {indicator.Norml2(comm), indicator.Min(comm),
-                                indicator.Max(comm), indicator.Mean(comm)};
+  std::array<mfem::real_t, 4> data = {indicator.Norml2(comm), indicator.Min(comm),
+                                      indicator.Max(comm), indicator.Mean(comm)};
   if (root)
   {
     std::string path = post_dir + "error-indicators.csv";

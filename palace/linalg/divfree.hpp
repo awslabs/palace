@@ -57,7 +57,7 @@ private:
 public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                 FiniteElementSpaceHierarchy &h1_fespaces,
-                const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
+                const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, mfem::real_t tol,
                 int max_it, int print);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs

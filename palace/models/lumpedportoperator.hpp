@@ -41,7 +41,7 @@ public:
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
   // Lumped port properties.
-  double R, L, C;
+  mfem::real_t R, L, C;
   bool excitation, active;
 
 private:
@@ -54,7 +54,7 @@ public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);
 
-  double GetToSquare(const LumpedElementData &elem) const
+  mfem::real_t GetToSquare(const LumpedElementData &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
@@ -66,15 +66,15 @@ public:
     L,
     C
   };
-  std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
-                                                  Branch branch = Branch::TOTAL) const;
+  std::complex<mfem::real_t>
+  GetCharacteristicImpedance(mfem::real_t omega = 0.0, Branch branch = Branch::TOTAL) const;
 
-  double GetExcitationPower() const;
-  double GetExcitationVoltage() const;
+  mfem::real_t GetExcitationPower() const;
+  mfem::real_t GetExcitationVoltage() const;
 
-  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
-  std::complex<double> GetSParameter(GridFunction &E) const;
-  std::complex<double> GetVoltage(GridFunction &E) const;
+  std::complex<mfem::real_t> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<mfem::real_t> GetSParameter(GridFunction &E) const;
+  std::complex<mfem::real_t> GetVoltage(GridFunction &E) const;
 };
 
 //
@@ -112,9 +112,9 @@ public:
 
   // Add contributions to system matrices from lumped elements with nonzero inductance,
   // resistance, and/or capacitance.
-  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddStiffnessBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for

@@ -346,7 +346,7 @@ void PostOperator::SetAGridFunction(const Vector &a, bool exchange_face_nbr_data
   }
 }
 
-double PostOperator::GetEFieldEnergy() const
+mfem::real_t PostOperator::GetEFieldEnergy() const
 {
   if (V)
   {
@@ -359,7 +359,7 @@ double PostOperator::GetEFieldEnergy() const
   }
 }
 
-double PostOperator::GetHFieldEnergy() const
+mfem::real_t PostOperator::GetHFieldEnergy() const
 {
   if (A)
   {
@@ -372,7 +372,7 @@ double PostOperator::GetHFieldEnergy() const
   }
 }
 
-double PostOperator::GetEFieldEnergy(int idx) const
+mfem::real_t PostOperator::GetEFieldEnergy(int idx) const
 {
   if (V)
   {
@@ -385,7 +385,7 @@ double PostOperator::GetEFieldEnergy(int idx) const
   }
 }
 
-double PostOperator::GetHFieldEnergy(int idx) const
+mfem::real_t PostOperator::GetHFieldEnergy(int idx) const
 {
   if (A)
   {
@@ -398,7 +398,7 @@ double PostOperator::GetHFieldEnergy(int idx) const
   }
 }
 
-std::complex<double> PostOperator::GetSurfaceFlux(int idx) const
+std::complex<mfem::real_t> PostOperator::GetSurfaceFlux(int idx) const
 {
   // Compute the flux through a surface as Φ_j = ∫ F ⋅ n_j dS, with F = B, F = ε D, or F =
   // E x H. The special coefficient is used to avoid issues evaluating MFEM GridFunctions
@@ -406,7 +406,7 @@ std::complex<double> PostOperator::GetSurfaceFlux(int idx) const
   return surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
 }
 
-double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
+mfem::real_t PostOperator::GetInterfaceParticipation(int idx, mfem::real_t E_m) const
 {
   // Compute the surface dielectric participation ratio and associated quality factor for
   // the material interface given by index idx. We have:
@@ -417,7 +417,7 @@ double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
   return surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E) / E_m;
 }
 
-void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
+void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, mfem::real_t omega)
 {
   MFEM_VERIFY(E && B, "Incorrect usage of PostOperator::UpdatePorts!");
   if (lumped_port_init)
@@ -460,7 +460,7 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
   lumped_port_init = true;
 }
 
-void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omega)
+void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, mfem::real_t omega)
 {
   MFEM_VERIFY(HasImag() && E && B, "Incorrect usage of PostOperator::UpdatePorts!");
   if (wave_port_init)
@@ -480,16 +480,17 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
   wave_port_init = true;
 }
 
-double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
+mfem::real_t
+PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
 {
   // Add contribution due to all inductive lumped boundaries in the model:
   //                      E_ind = ∑_j 1/2 L_j I_mj².
-  double U = 0.0;
+  mfem::real_t U = 0.0;
   for (const auto &[idx, data] : lumped_port_op)
   {
     if (std::abs(data.L) > 0.0)
     {
-      std::complex<double> I_j =
+      std::complex<mfem::real_t> I_j =
           GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
       U += 0.5 * std::abs(data.L) * std::real(I_j * std::conj(I_j));
     }
@@ -497,25 +498,26 @@ double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_po
   return U;
 }
 
-double
+mfem::real_t
 PostOperator::GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op) const
 {
   // Add contribution due to all capacitive lumped boundaries in the model:
   //                      E_cap = ∑_j 1/2 C_j V_mj².
-  double U = 0.0;
+  mfem::real_t U = 0.0;
   for (const auto &[idx, data] : lumped_port_op)
   {
     if (std::abs(data.C) > 0.0)
     {
-      std::complex<double> V_j = GetPortVoltage(lumped_port_op, idx);
+      std::complex<mfem::real_t> V_j = GetPortVoltage(lumped_port_op, idx);
       U += 0.5 * std::abs(data.C) * std::real(V_j * std::conj(V_j));
     }
   }
   return U;
 }
 
-std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumped_port_op,
-                                                 int idx, int source_idx) const
+std::complex<mfem::real_t>
+PostOperator::GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
+                            int source_idx) const
 {
   MFEM_VERIFY(lumped_port_init,
               "Port S-parameters not defined until ports are initialized!");
@@ -526,7 +528,7 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
               "Lumped port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != lumped_port_vi.end(),
               "Could not find lumped port when calculating port S-parameters!");
-  std::complex<double> S_ij = it->second.S;
+  std::complex<mfem::real_t> S_ij = it->second.S;
   if (idx == source_idx)
   {
     S_ij.real(S_ij.real() - 1.0);
@@ -539,8 +541,8 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
   return S_ij;
 }
 
-std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_port_op,
-                                                 int idx, int source_idx) const
+std::complex<mfem::real_t> PostOperator::GetSParameter(const WavePortOperator &wave_port_op,
+                                                       int idx, int source_idx) const
 {
   // Wave port modes are not normalized to a characteristic impedance so no generalized
   // S-parameters are available.
@@ -552,7 +554,7 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
               "Wave port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != wave_port_vi.end(),
               "Could not find wave port when calculating port S-parameters!");
-  std::complex<double> S_ij = it->second.S;
+  std::complex<mfem::real_t> S_ij = it->second.S;
   if (idx == source_idx)
   {
     S_ij.real(S_ij.real() - 1.0);
@@ -564,8 +566,8 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
   return S_ij;
 }
 
-std::complex<double> PostOperator::GetPortPower(const LumpedPortOperator &lumped_port_op,
-                                                int idx) const
+std::complex<mfem::real_t>
+PostOperator::GetPortPower(const LumpedPortOperator &lumped_port_op, int idx) const
 {
   MFEM_VERIFY(lumped_port_init,
               "Lumped port quantities not defined until ports are initialized!");
@@ -575,8 +577,8 @@ std::complex<double> PostOperator::GetPortPower(const LumpedPortOperator &lumped
   return it->second.P;
 }
 
-std::complex<double> PostOperator::GetPortPower(const WavePortOperator &wave_port_op,
-                                                int idx) const
+std::complex<mfem::real_t> PostOperator::GetPortPower(const WavePortOperator &wave_port_op,
+                                                      int idx) const
 {
   MFEM_VERIFY(wave_port_init,
               "Wave port quantities not defined until ports are initialized!");
@@ -586,8 +588,8 @@ std::complex<double> PostOperator::GetPortPower(const WavePortOperator &wave_por
   return it->second.P;
 }
 
-std::complex<double> PostOperator::GetPortVoltage(const LumpedPortOperator &lumped_port_op,
-                                                  int idx) const
+std::complex<mfem::real_t>
+PostOperator::GetPortVoltage(const LumpedPortOperator &lumped_port_op, int idx) const
 {
   MFEM_VERIFY(lumped_port_init,
               "Lumped port quantities not defined until ports are initialized!");
@@ -597,16 +599,16 @@ std::complex<double> PostOperator::GetPortVoltage(const LumpedPortOperator &lump
   return it->second.V;
 }
 
-std::complex<double> PostOperator::GetPortVoltage(const WavePortOperator &wave_port_op,
-                                                  int idx) const
+std::complex<mfem::real_t>
+PostOperator::GetPortVoltage(const WavePortOperator &wave_port_op, int idx) const
 {
   MFEM_ABORT("GetPortVoltage is not yet implemented for wave port boundaries!");
   return 0.0;
 }
 
-std::complex<double> PostOperator::GetPortCurrent(const LumpedPortOperator &lumped_port_op,
-                                                  int idx,
-                                                  LumpedPortData::Branch branch) const
+std::complex<mfem::real_t>
+PostOperator::GetPortCurrent(const LumpedPortOperator &lumped_port_op, int idx,
+                             LumpedPortData::Branch branch) const
 {
   MFEM_VERIFY(lumped_port_init,
               "Lumped port quantities not defined until ports are initialized!");
@@ -624,15 +626,16 @@ std::complex<double> PostOperator::GetPortCurrent(const LumpedPortOperator &lump
               : 0.0);
 }
 
-std::complex<double> PostOperator::GetPortCurrent(const WavePortOperator &wave_port_op,
-                                                  int idx) const
+std::complex<mfem::real_t>
+PostOperator::GetPortCurrent(const WavePortOperator &wave_port_op, int idx) const
 {
   MFEM_ABORT("GetPortCurrent is not yet implemented for wave port boundaries!");
   return 0.0;
 }
 
-double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_port_op,
-                                              int idx, double E_m) const
+mfem::real_t
+PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
+                                       mfem::real_t E_m) const
 {
   // Compute energy-participation ratio of junction given by index idx for the field mode.
   // We first get the port line voltage, and use lumped port circuit impedance to get peak
@@ -643,14 +646,14 @@ double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_p
   // An element with no assigned inductance will be treated as having zero admittance and
   // thus zero current.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> I_mj =
+  std::complex<mfem::real_t> I_mj =
       GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
   return std::copysign(0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj)) / E_m,
                        I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
-double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                                      double E_m) const
+mfem::real_t PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op,
+                                            int idx, mfem::real_t E_m) const
 {
   // Compute participation ratio of external ports (given as any port boundary with nonzero
   // resistance). Currently no reactance of the ports is supported. The κ of the port
@@ -659,7 +662,7 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   // from which the mode coupling quality factor is computed as:
   //                              Q_mj = ω_m / κ_mj.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> I_mj =
+  std::complex<mfem::real_t> I_mj =
       GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::R);
   return std::copysign(0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj)) / E_m,
                        I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
@@ -669,7 +672,7 @@ namespace
 {
 
 template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
+void ScaleGridFunctions(mfem::real_t L, int dim, bool imag, T &E, T &B, T &V, T &A)
 {
   // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
   // the mesh which would carry into the fields during the mapping from reference to
@@ -712,7 +715,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 
 }  // namespace
 
-void PostOperator::WriteFields(int step, double time) const
+void PostOperator::WriteFields(int step, mfem::real_t time) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
@@ -805,13 +808,13 @@ void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
 }
 
-std::vector<std::complex<double>> PostOperator::ProbeEField() const
+std::vector<std::complex<mfem::real_t>> PostOperator::ProbeEField() const
 {
   MFEM_VERIFY(E, "PostOperator is not configured for electric field probes!");
   return interp_op.ProbeField(*E);
 }
 
-std::vector<std::complex<double>> PostOperator::ProbeBField() const
+std::vector<std::complex<mfem::real_t>> PostOperator::ProbeBField() const
 {
   MFEM_VERIFY(B, "PostOperator is not configured for magnetic flux density probes!");
   return interp_op.ProbeField(*B);

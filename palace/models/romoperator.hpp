@@ -52,7 +52,7 @@ private:
   std::size_t dim_Q;
   Eigen::MatrixXcd R;
   Eigen::VectorXcd q;
-  std::vector<double> z;
+  std::vector<mfem::real_t> z;
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size);
@@ -67,21 +67,21 @@ public:
   const auto &GetSamplePoints() const { return z; }
 
   // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(double omega, ComplexVector &u);
+  void SolveHDM(mfem::real_t omega, ComplexVector &u);
 
   // Add the solution vector to the reduced-order basis and update the PROM.
-  void UpdatePROM(double omega, const ComplexVector &u);
+  void UpdatePROM(mfem::real_t omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
-  void SolvePROM(double omega, ComplexVector &u);
+  void SolvePROM(mfem::real_t omega, ComplexVector &u);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int N = 1) const;
+  std::vector<mfem::real_t> FindMaxError(int N = 1) const;
 
   // Compute eigenvalue estimates for the current PROM system.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+  std::vector<std::complex<mfem::real_t>> ComputeEigenvalueEstimates() const;
 };
 
 }  // namespace palace

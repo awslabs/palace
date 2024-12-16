@@ -24,22 +24,22 @@ class SurfaceCurrentOperator;
 class TransientSolver : public BaseSolver
 {
 private:
-  std::function<double(double)> GetTimeExcitation(bool dot) const;
+  std::function<mfem::real_t(mfem::real_t)> GetTimeExcitation(bool dot) const;
 
-  int GetNumSteps(double start, double end, double delta) const;
+  int GetNumSteps(mfem::real_t start, mfem::real_t end, mfem::real_t delta) const;
 
   void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-                   const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag,
+                   const SurfaceCurrentOperator &surf_j_op, int step, mfem::real_t t,
+                   mfem::real_t J_coef, mfem::real_t E_elec, mfem::real_t E_mag,
                    const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &post_op,
-                           const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                           double J_coef) const;
+                           const SurfaceCurrentOperator &surf_j_op, int step,
+                           mfem::real_t t, mfem::real_t J_coef) const;
 
   void PostprocessPorts(const PostOperator &post_op,
-                        const LumpedPortOperator &lumped_port_op, int step, double t,
-                        double J_coef) const;
+                        const LumpedPortOperator &lumped_port_op, int step, mfem::real_t t,
+                        mfem::real_t J_coef) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

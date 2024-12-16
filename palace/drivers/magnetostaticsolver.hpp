@@ -23,12 +23,12 @@ class SurfaceCurrentOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &post_op, int step, int idx, double I_inc,
-                   double E_mag, const ErrorIndicator *indicator) const;
+  void Postprocess(const PostOperator &post_op, int step, int idx, mfem::real_t I_inc,
+                   mfem::real_t E_mag, const ErrorIndicator *indicator) const;
 
   void PostprocessTerminals(PostOperator &post_op, const SurfaceCurrentOperator &surf_j_op,
                             const std::vector<Vector> &A,
-                            const std::vector<double> &I_inc) const;
+                            const std::vector<mfem::real_t> &I_inc) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

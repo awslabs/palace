@@ -26,11 +26,11 @@ public:
 
   const auto &GetAttrList() const { return attr_list; }
 
-  virtual double GetGeometryLength() const = 0;
-  virtual double GetGeometryWidth() const = 0;
+  virtual mfem::real_t GetGeometryLength() const = 0;
+  virtual mfem::real_t GetGeometryWidth() const = 0;
 
   virtual std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coeff = 1.0) const = 0;
+  GetModeCoefficient(mfem::real_t coeff = 1.0) const = 0;
 };
 
 class UniformElementData : public LumpedElementData
@@ -40,40 +40,40 @@ private:
   mfem::Vector direction;
 
   // Lumped element length and width.
-  double l, w;
+  mfem::real_t l, w;
 
 public:
-  UniformElementData(const std::array<double, 3> &input_dir,
+  UniformElementData(const std::array<mfem::real_t, 3> &input_dir,
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
 
-  double GetGeometryLength() const override { return l; }
-  double GetGeometryWidth() const override { return w; }
+  mfem::real_t GetGeometryLength() const override { return l; }
+  mfem::real_t GetGeometryWidth() const override { return w; }
 
   std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coeff = 1.0) const override;
+  GetModeCoefficient(mfem::real_t coeff = 1.0) const override;
 };
 
 class CoaxialElementData : public LumpedElementData
 {
 private:
   // Sign of incident field, +1 for +r̂, -1 for -r̂.
-  double direction;
+  mfem::real_t direction;
 
   // Origin of the coaxial annulus.
   mfem::Vector origin;
 
   // Outer and inner radii of coaxial annulus.
-  double r_outer, r_inner;
+  mfem::real_t r_outer, r_inner;
 
 public:
-  CoaxialElementData(const std::array<double, 3> &input_dir,
+  CoaxialElementData(const std::array<mfem::real_t, 3> &input_dir,
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
 
-  double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
-  double GetGeometryWidth() const override { return 2.0 * M_PI; }
+  mfem::real_t GetGeometryLength() const override { return std::log(r_outer / r_inner); }
+  mfem::real_t GetGeometryWidth() const override { return 2.0 * M_PI; }
 
   std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coeff = 1.0) const override;
+  GetModeCoefficient(mfem::real_t coeff = 1.0) const override;
 };
 
 }  // namespace palace

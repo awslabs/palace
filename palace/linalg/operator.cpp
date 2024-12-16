@@ -38,19 +38,19 @@ void ComplexOperator::MultHermitianTranspose(const ComplexVector &x, ComplexVect
 }
 
 void ComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
-                              const std::complex<double> a) const
+                              const std::complex<mfem::real_t> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMult!");
 }
 
 void ComplexOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                       const std::complex<double> a) const
+                                       const std::complex<mfem::real_t> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMultTranspose!");
 }
 
 void ComplexOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                                const std::complex<double> a) const
+                                                const std::complex<mfem::real_t> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMultHermitianTranspose!");
 }
@@ -211,7 +211,7 @@ void ComplexWrapperOperator::MultHermitianTranspose(const ComplexVector &x,
 }
 
 void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
-                                     const std::complex<double> a) const
+                                     const std::complex<mfem::real_t> a) const
 {
   constexpr bool zero_real = false;
   constexpr bool zero_imag = false;
@@ -278,7 +278,7 @@ void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 }
 
 void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                              const std::complex<double> a) const
+                                              const std::complex<mfem::real_t> a) const
 {
   constexpr bool zero_real = false;
   constexpr bool zero_imag = false;
@@ -344,9 +344,8 @@ void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVec
   }
 }
 
-void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
-                                                       ComplexVector &y,
-                                                       const std::complex<double> a) const
+void ComplexWrapperOperator::AddMultHermitianTranspose(
+    const ComplexVector &x, ComplexVector &y, const std::complex<mfem::real_t> a) const
 {
   constexpr bool zero_real = false;
   constexpr bool zero_imag = false;
@@ -412,13 +411,14 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   }
 }
 
-SumOperator::SumOperator(const Operator &op, double a) : Operator(op.Height(), op.Width())
+SumOperator::SumOperator(const Operator &op, mfem::real_t a)
+  : Operator(op.Height(), op.Width())
 {
   AddOperator(op, a);
   z.UseDevice(true);
 }
 
-void SumOperator::AddOperator(const Operator &op, double a)
+void SumOperator::AddOperator(const Operator &op, mfem::real_t a)
 {
   MFEM_VERIFY(op.Height() == height && op.Width() == width,
               "Invalid Operator dimensions for SumOperator!");
@@ -455,7 +455,7 @@ void SumOperator::MultTranspose(const Vector &x, Vector &y) const
   AddMultTranspose(x, y);
 }
 
-void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
+void SumOperator::AddMult(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   z.SetSize(y.Size());
   for (const auto &[op, c] : ops)
@@ -465,7 +465,7 @@ void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
   }
 }
 
-void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
+void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   z.SetSize(y.Size());
   for (const auto &[op, c] : ops)
@@ -508,7 +508,7 @@ void BaseDiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x,
 
 template <>
 void BaseDiagonalOperator<Operator>::AddMult(const Vector &x, Vector &y,
-                                             const double a) const
+                                             const mfem::real_t a) const
 {
   const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
@@ -519,14 +519,13 @@ void BaseDiagonalOperator<Operator>::AddMult(const Vector &x, Vector &y,
 }
 
 template <>
-void BaseDiagonalOperator<ComplexOperator>::AddMult(const ComplexVector &x,
-                                                    ComplexVector &y,
-                                                    const std::complex<double> a) const
+void BaseDiagonalOperator<ComplexOperator>::AddMult(
+    const ComplexVector &x, ComplexVector &y, const std::complex<mfem::real_t> a) const
 {
   const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const double ar = a.real();
-  const double ai = a.imag();
+  const mfem::real_t ar = a.real();
+  const mfem::real_t ai = a.imag();
   const auto *DR = d.Real().Read(use_dev);
   const auto *DI = d.Imag().Read(use_dev);
   const auto *XR = x.Real().Read(use_dev);
@@ -569,14 +568,14 @@ void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>,
 template <>
 void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>, ComplexOperator>::
     AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                              const std::complex<double> a) const
+                              const std::complex<mfem::real_t> a) const
 {
   const ComplexVector &d =
       static_cast<const BaseDiagonalOperator<ComplexOperator> *>(this)->d;
   const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const double ar = a.real();
-  const double ai = a.imag();
+  const mfem::real_t ar = a.real();
+  const mfem::real_t ai = a.imag();
   const auto *DR = d.Real().Read(use_dev);
   const auto *DI = d.Imag().Read(use_dev);
   const auto *XR = x.Real().Read(use_dev);
@@ -597,35 +596,37 @@ namespace linalg
 {
 
 template <>
-double Norml2(MPI_Comm comm, const Vector &x, const Operator &B, Vector &Bx)
+mfem::real_t Norml2(MPI_Comm comm, const Vector &x, const Operator &B, Vector &Bx)
 {
   B.Mult(x, Bx);
-  double dot = Dot(comm, Bx, x);
+  mfem::real_t dot = Dot(comm, Bx, x);
   MFEM_ASSERT(dot > 0.0,
               "Non-positive vector norm in normalization (dot = " << dot << ")!");
   return std::sqrt(dot);
 }
 
 template <>
-double Norml2(MPI_Comm comm, const ComplexVector &x, const Operator &B, ComplexVector &Bx)
+mfem::real_t Norml2(MPI_Comm comm, const ComplexVector &x, const Operator &B,
+                    ComplexVector &Bx)
 {
   // For SPD B, xᴴ B x is real.
   B.Mult(x.Real(), Bx.Real());
   B.Mult(x.Imag(), Bx.Imag());
-  std::complex<double> dot = Dot(comm, Bx, x);
+  std::complex<mfem::real_t> dot = Dot(comm, Bx, x);
   MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
               "Non-positive vector norm in normalization (dot = " << dot << ")!");
   return std::sqrt(dot.real());
 }
 
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
+mfem::real_t SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, mfem::real_t tol,
+                          int max_it)
 {
   ComplexWrapperOperator Ar(const_cast<Operator *>(&A), nullptr);  // Non-owning constructor
   return SpectralNorm(comm, Ar, sym, tol, max_it);
 }
 
-double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double tol,
-                    int max_it)
+mfem::real_t SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm,
+                          mfem::real_t tol, int max_it)
 {
   // XX TODO: Use ARPACK or SLEPc for this when configured.
 #if defined(PALACE_WITH_SLEPC)
@@ -633,8 +634,8 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
 #else
   // Power iteration loop: ||A||₂² = λₙ(Aᴴ A).
   int it = 0;
-  double res = 0.0;
-  double l = 0.0, l0 = 0.0;
+  mfem::real_t res = 0.0;
+  mfem::real_t l = 0.0, l0 = 0.0;
   ComplexVector u(A.Height()), v(A.Height());
   u.UseDevice(true);
   v.UseDevice(true);

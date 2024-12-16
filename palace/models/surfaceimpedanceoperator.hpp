@@ -27,7 +27,7 @@ private:
   // and inductance.
   struct ImpedanceData
   {
-    double Rs, Ls, Cs;
+    mfem::real_t Rs, Ls, Cs;
     mfem::Array<int> attr_list;
   };
   std::vector<ImpedanceData> boundaries;
@@ -48,9 +48,9 @@ public:
   // Add contributions to system matrices from impedance boundaries with nonzero inductance,
   // resistance, and/or capacitance. For boundaries with more than R/L/C, impedances add in
   // parallel.
-  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
-  void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddStiffnessBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(mfem::real_t coeff, MaterialPropertyCoefficient &fb);
 };
 
 }  // namespace palace

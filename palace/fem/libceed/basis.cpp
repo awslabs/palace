@@ -22,7 +22,7 @@ void InitTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule 
   const int P = maps.ndof;
   const int Q = maps.nqpt;
   mfem::Vector qX(Q), qW(Q);
-  double w_sum = 0.0;
+  mfem::real_t w_sum = 0.0;
   for (int i = 0; i < Q; i++)
   {
     const mfem::IntegrationPoint &ip = ir.IntPoint(i);

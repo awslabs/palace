@@ -75,12 +75,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
     post_op.SetVGridFunction(V[step]);
     post_op.SetEGridFunction(E);
-    const double E_elec = post_op.GetEFieldEnergy();
+    const mfem::real_t E_elec = post_op.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplace_op.GetComm(), V[step]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       Mpi::Print(" Field energy E = {:.3e} J\n", E_elec * J);
     }
 
@@ -103,7 +103,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 }
 
 void ElectrostaticSolver::Postprocess(const PostOperator &post_op, int step, int idx,
-                                      double E_elec, const ErrorIndicator *indicator) const
+                                      mfem::real_t E_elec,
+                                      const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the V solution
   // in the main loop.
@@ -169,10 +170,10 @@ void ElectrostaticSolver::PostprocessTerminals(
   }
 
   // Write capactance matrix data.
-  auto PrintMatrix = [&terminal_sources, this](const std::string &file,
-                                               const std::string &name,
-                                               const std::string &unit,
-                                               const mfem::DenseMatrix &mat, double scale)
+  auto PrintMatrix =
+      [&terminal_sources, this](const std::string &file, const std::string &name,
+                                const std::string &unit, const mfem::DenseMatrix &mat,
+                                mfem::real_t scale)
   {
     std::string path = post_dir + file;
     auto output = OutputFile(path, false);
@@ -190,7 +191,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     for (const auto &[idx, data] : terminal_sources)
     {
       int j = 0;
-      output.print("{:{}.{}e},", static_cast<double>(idx), table.w1, table.p1);
+      output.print("{:{}.{}e},", static_cast<mfem::real_t>(idx), table.w1, table.p1);
       for (const auto &[idx2, data2] : terminal_sources)
       {
         // clang-format off
@@ -204,7 +205,7 @@ void ElectrostaticSolver::PostprocessTerminals(
       i++;
     }
   };
-  const double F = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
+  const mfem::real_t F = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
@@ -222,7 +223,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     {
       // clang-format off
       output.print("{:{}.{}e},{:+{}.{}e}\n",
-                   static_cast<double>(idx), table.w1, table.p1,
+                   static_cast<mfem::real_t>(idx), table.w1, table.p1,
                    iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0),
                    table.w, table.p);
       // clang-format on

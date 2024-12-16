@@ -63,7 +63,7 @@ auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpa
 }
 
 template <typename OperType>
-auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
+auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, mfem::real_t tol,
                            int max_it, int print, bool use_mg)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
@@ -96,7 +96,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
       std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
-  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  pcg->SetAbsTol(std::numeric_limits<mfem::real_t>::epsilon());
   pcg->SetMaxIter(max_it);
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
@@ -106,8 +106,8 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
 template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       const FiniteElementSpaceHierarchy &smooth_fespaces,
-                                      const FiniteElementSpace &rhs_fespace, double tol,
-                                      int max_it, int print, bool use_mg)
+                                      const FiniteElementSpace &rhs_fespace,
+                                      mfem::real_t tol, int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
@@ -252,7 +252,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
 template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
+    FiniteElementSpaceHierarchy &rt_fespaces, mfem::real_t tol, int max_it, int print,
     bool use_mg)
   : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
@@ -359,7 +359,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
 }
 
 template <typename VecType>
-void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
+void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, mfem::real_t Et,
                                                         ErrorIndicator &indicator) const
 {
   auto estimates =
@@ -371,7 +371,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
-    FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
+    FiniteElementSpaceHierarchy &nd_fespaces, mfem::real_t tol, int max_it, int print,
     bool use_mg)
   : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
@@ -472,7 +472,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
 }
 
 template <typename VecType>
-void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double Et,
+void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, mfem::real_t Et,
                                                         ErrorIndicator &indicator) const
 {
   auto estimates =
@@ -484,7 +484,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
 template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
-    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
+    FiniteElementSpaceHierarchy &rt_fespaces, mfem::real_t tol, int max_it, int print,
     bool use_mg)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
                    use_mg),
@@ -495,7 +495,7 @@ TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
 
 template <typename VecType>
 void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
+    const VecType &E, const VecType &B, mfem::real_t Et, ErrorIndicator &indicator) const
 {
   auto grad_estimates =
       ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,

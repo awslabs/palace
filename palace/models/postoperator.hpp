@@ -59,7 +59,7 @@ private:
   // the grid functions are set.
   struct PortPostData
   {
-    std::complex<double> P, V, I[3], S;
+    std::complex<mfem::real_t> P, V, I[3], S;
   };
   std::map<int, PortPostData> lumped_port_vi, wave_port_vi;
   bool lumped_port_init, wave_port_init;
@@ -67,7 +67,7 @@ private:
   // Data collection for writing fields to disk for visualization and sampling points.
   mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
   mutable InterpolationOperator interp_op;
-  double mesh_Lc0;
+  mfem::real_t mesh_Lc0;
   void InitializeDataCollection(const IoData &iodata);
 
 public:
@@ -120,70 +120,73 @@ public:
 
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
-  double GetEFieldEnergy() const;
-  double GetHFieldEnergy() const;
+  mfem::real_t GetEFieldEnergy() const;
+  mfem::real_t GetHFieldEnergy() const;
 
   // Postprocess the electric and magnetic field energies in the domain with the given
   // index.
-  double GetEFieldEnergy(int idx) const;
-  double GetHFieldEnergy(int idx) const;
+  mfem::real_t GetEFieldEnergy(int idx) const;
+  mfem::real_t GetHFieldEnergy(int idx) const;
 
   // Postprocess the electric or magnetic field flux for a surface index using the computed
   // electcric field and/or magnetic flux density field solutions.
-  std::complex<double> GetSurfaceFlux(int idx) const;
+  std::complex<mfem::real_t> GetSurfaceFlux(int idx) const;
 
   // Postprocess the partitipation ratio for interface lossy dielectric losses in the
   // electric field mode.
-  double GetInterfaceParticipation(int idx, double E_m) const;
+  mfem::real_t GetInterfaceParticipation(int idx, mfem::real_t E_m) const;
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
-                   const WavePortOperator &wave_port_op, double omega = 0.0)
+                   const WavePortOperator &wave_port_op, mfem::real_t omega = 0.0)
   {
     UpdatePorts(lumped_port_op, omega);
     UpdatePorts(wave_port_op, omega);
   }
-  void UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega = 0.0);
-  void UpdatePorts(const WavePortOperator &wave_port_op, double omega = 0.0);
+  void UpdatePorts(const LumpedPortOperator &lumped_port_op, mfem::real_t omega = 0.0);
+  void UpdatePorts(const WavePortOperator &wave_port_op, mfem::real_t omega = 0.0);
 
   // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
   // the provided set.
-  double GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const;
-  double GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op) const;
+  mfem::real_t GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const;
+  mfem::real_t GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op) const;
 
   // Postprocess the S-parameter for recieving lumped or wave port index using the electric
   // field solution.
-  std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
-                                     int source_idx) const;
-  std::complex<double> GetSParameter(const WavePortOperator &wave_port_op, int idx,
-                                     int source_idx) const;
+  std::complex<mfem::real_t> GetSParameter(const LumpedPortOperator &lumped_port_op,
+                                           int idx, int source_idx) const;
+  std::complex<mfem::real_t> GetSParameter(const WavePortOperator &wave_port_op, int idx,
+                                           int source_idx) const;
 
   // Postprocess the circuit voltage and current across lumped port index using the electric
   // field solution. When the internal grid functions are real-valued, the returned voltage
   // has only a nonzero real part.
-  std::complex<double> GetPortPower(const LumpedPortOperator &lumped_port_op,
-                                    int idx) const;
-  std::complex<double> GetPortPower(const WavePortOperator &wave_port_op, int idx) const;
-  std::complex<double> GetPortVoltage(const LumpedPortOperator &lumped_port_op,
-                                      int idx) const;
-  std::complex<double> GetPortVoltage(const WavePortOperator &wave_port_op, int idx) const;
-  std::complex<double>
+  std::complex<mfem::real_t> GetPortPower(const LumpedPortOperator &lumped_port_op,
+                                          int idx) const;
+  std::complex<mfem::real_t> GetPortPower(const WavePortOperator &wave_port_op,
+                                          int idx) const;
+  std::complex<mfem::real_t> GetPortVoltage(const LumpedPortOperator &lumped_port_op,
+                                            int idx) const;
+  std::complex<mfem::real_t> GetPortVoltage(const WavePortOperator &wave_port_op,
+                                            int idx) const;
+  std::complex<mfem::real_t>
   GetPortCurrent(const LumpedPortOperator &lumped_port_op, int idx,
                  LumpedPortData::Branch branch = LumpedPortData::Branch::TOTAL) const;
-  std::complex<double> GetPortCurrent(const WavePortOperator &wave_port_op, int idx) const;
+  std::complex<mfem::real_t> GetPortCurrent(const WavePortOperator &wave_port_op,
+                                            int idx) const;
 
   // Postprocess the EPR for the electric field solution and lumped port index.
-  double GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
-                                  double E_m) const;
+  mfem::real_t GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
+                                        mfem::real_t E_m) const;
 
   // Postprocess the coupling rate for radiative loss to the given I-O port index.
-  double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                          double E_m) const;
+  mfem::real_t GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
+                                mfem::real_t E_m) const;
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
   // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(int step, double time) const;
+  void WriteFields(int step, mfem::real_t time) const;
   void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr) const;
 
   // Probe the E- and B-fields for their vector-values at speceified locations in space.
@@ -192,8 +195,8 @@ public:
   // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
   // v2y, v2z, ...].
   const auto &GetProbes() const { return interp_op.GetProbes(); }
-  std::vector<std::complex<double>> ProbeEField() const;
-  std::vector<std::complex<double>> ProbeBField() const;
+  std::vector<std::complex<mfem::real_t>> ProbeEField() const;
+  std::vector<std::complex<mfem::real_t>> ProbeBField() const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const

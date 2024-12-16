@@ -28,10 +28,10 @@ private:
   VecType dinv;
 
   // Damping factor and scaling factor for maximum eigenvalue.
-  double omega, sf_max;
+  mfem::real_t omega, sf_max;
 
 public:
-  JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)
+  JacobiSmoother(MPI_Comm comm, mfem::real_t omega = 1.0, mfem::real_t sf_max = 1.0)
     : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max)
   {
   }

@@ -9,9 +9,9 @@
 #include <petscsys.h>
 #include <mfem.hpp>
 
-#if !defined(PETSC_USE_REAL_DOUBLE)
-#error "PETSc should be compiled with double precision!"
-#endif
+// #if !defined(PETSC_USE_REAL_DOUBLE)
+// #error "PETSc should be compiled with double precision!"
+// #endif
 #if defined(PETSC_HAVE_HYPRE)
 #error \
     "PETSc should be built without Hypre to avoid conflicts with MFEM's Hypre dependency!"

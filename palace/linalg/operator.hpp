@@ -58,13 +58,13 @@ public:
   virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const;
 
   virtual void AddMult(const ComplexVector &x, ComplexVector &y,
-                       const std::complex<double> a = 1.0) const;
+                       const std::complex<mfem::real_t> a = 1.0) const;
 
   virtual void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                const std::complex<double> a = 1.0) const;
+                                const std::complex<mfem::real_t> a = 1.0) const;
 
   virtual void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                         const std::complex<double> a = 1.0) const;
+                                         const std::complex<mfem::real_t> a = 1.0) const;
 };
 
 // A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
@@ -103,36 +103,37 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMult(const ComplexVector &x, ComplexVector &y,
-               const std::complex<double> a = 1.0) const override;
+               const std::complex<mfem::real_t> a = 1.0) const override;
 
   void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                        const std::complex<double> a = 1.0) const override;
+                        const std::complex<mfem::real_t> a = 1.0) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 const std::complex<mfem::real_t> a = 1.0) const override;
 };
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
 class SumOperator : public Operator
 {
 private:
-  std::vector<std::pair<const Operator *, double>> ops;
+  std::vector<std::pair<const Operator *, mfem::real_t>> ops;
   mutable Vector z;
 
 public:
   SumOperator(int s) : Operator(s) { z.UseDevice(true); }
   SumOperator(int h, int w) : Operator(h, w) { z.UseDevice(true); }
-  SumOperator(const Operator &op, double a = 1.0);
+  SumOperator(const Operator &op, mfem::real_t a = 1.0);
 
-  void AddOperator(const Operator &op, double a = 1.0);
+  void AddOperator(const Operator &op, mfem::real_t a = 1.0);
 
   void Mult(const Vector &x, Vector &y) const override;
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMult(const Vector &x, Vector &y, const mfem::real_t a = 1.0) const override;
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddMultTranspose(const Vector &x, Vector &y,
+                        const mfem::real_t a = 1.0) const override;
 };
 
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
@@ -165,7 +166,7 @@ public:
   }
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override
+                                 const std::complex<mfem::real_t> a = 1.0) const override
   {
     const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
     const ComplexOperator &B = static_cast<const ProductOperator *>(this)->B;
@@ -185,7 +186,7 @@ class BaseProductOperator
                                             ComplexVector, Vector>::type;
   using ScalarType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+                                std::complex<mfem::real_t>, mfem::real_t>::type;
 
 private:
   const OperType &A, &B;
@@ -250,7 +251,7 @@ public:
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a = 1.0) const override;
+                                 const std::complex<mfem::real_t> a = 1.0) const override;
 };
 
 template <typename OperType>
@@ -263,7 +264,7 @@ class BaseDiagonalOperator
                                             ComplexVector, Vector>::type;
   using ScalarType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+                                std::complex<mfem::real_t>, mfem::real_t>::type;
 
 private:
   const VecType &d;
@@ -301,7 +302,7 @@ class BaseMultigridOperator : public OperType
                                             ComplexVector, Vector>::type;
   using ScalarType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+                                std::complex<mfem::real_t>, mfem::real_t>::type;
 
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
@@ -371,13 +372,13 @@ namespace linalg
 
 // Calculate the vector norm with respect to an SPD matrix B.
 template <typename VecType>
-double Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
+mfem::real_t Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
 
 // Normalize the vector with respect to an SPD matrix B.
 template <typename VecType>
-inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
+inline mfem::real_t Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
 {
-  double norm = Norml2(comm, x, B, Bx);
+  mfem::real_t norm = Norml2(comm, x, B, Bx);
   MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
   x *= 1.0 / norm;
   return norm;
@@ -385,10 +386,10 @@ inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &B
 
 // Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
 // not symmetric or Hermitian unless specified.
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,
-                    int max_it = 1000);
-double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                    double tol = 1.0e-4, int max_it = 1000);
+mfem::real_t SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
+                          mfem::real_t tol = 1.0e-4, int max_it = 1000);
+mfem::real_t SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
+                          mfem::real_t tol = 1.0e-4, int max_it = 1000);
 
 }  // namespace linalg
 

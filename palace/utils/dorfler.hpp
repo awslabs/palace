@@ -25,16 +25,17 @@ namespace palace::utils
 // in the pair the actual fraction of the total error.
 // Reference: Dörfler, A convergent adaptive algorithm for Poisson’s equation, SIAM J.
 //            Numer. Anal. (1996).
-std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
-                                              double fraction);
+std::array<mfem::real_t, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
+                                                    mfem::real_t fraction);
 
 // Given a nonconforming mesh, target fraction and error estimates, compute a threshold
 // value and actual fraction that will mark the largest number of elements that make up the
 // specified fraction of the total coarsening opportunities. This is analogous to
 // ComputeDorflerThreshold, but operates only the list of available derefinement
 // opportunities within the mesh.
-std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
-                                                        const Vector &e, double fraction);
+std::array<mfem::real_t, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
+                                                              const Vector &e,
+                                                              mfem::real_t fraction);
 
 }  // namespace palace::utils
 

@@ -25,31 +25,34 @@ class WavePortOperator;
 class DrivenSolver : public BaseSolver
 {
 private:
-  int GetNumSteps(double start, double end, double delta) const;
+  int GetNumSteps(mfem::real_t start, mfem::real_t end, mfem::real_t delta) const;
 
   ErrorIndicator SweepUniform(SpaceOperator &space_op, PostOperator &post_op, int n_step,
-                              int step0, double omega0, double delta_omega) const;
+                              int step0, mfem::real_t omega0,
+                              mfem::real_t delta_omega) const;
 
   ErrorIndicator SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op, int n_step,
-                               int step0, double omega0, double delta_omega) const;
+                               int step0, mfem::real_t omega0,
+                               mfem::real_t delta_omega) const;
 
   void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
-                   const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, const ErrorIndicator *indicator) const;
+                   const SurfaceCurrentOperator &surf_j_op, int step, mfem::real_t omega,
+                   mfem::real_t E_elec, mfem::real_t E_mag,
+                   const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &post_op,
                            const SurfaceCurrentOperator &surf_j_op, int step,
-                           double omega) const;
+                           mfem::real_t omega) const;
 
   void PostprocessPorts(const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, int step,
-                        double omega) const;
+                        mfem::real_t omega) const;
 
   void PostprocessSParameters(const PostOperator &post_op,
                               const LumpedPortOperator &lumped_port_op,
                               const WavePortOperator &wave_port_op, int step,
-                              double omega) const;
+                              mfem::real_t omega) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

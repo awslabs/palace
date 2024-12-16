@@ -87,7 +87,7 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   return farfield_bcs;
 }
 
-void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coeff,
+void FarfieldBoundaryOperator::AddDampingBdrCoefficients(mfem::real_t coeff,
                                                          MaterialPropertyCoefficient &fb)
 {
   // First-order absorbing boundary condition.
@@ -102,7 +102,8 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coeff,
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
+    mfem::real_t omega, MaterialPropertyCoefficient &dfbr,
+    MaterialPropertyCoefficient &dfbi)
 {
   // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
   // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature

@@ -73,14 +73,14 @@ public:
   virtual void SetBMat(const Operator &B) = 0;
 
   // Get scaling factors used by the solver.
-  virtual double GetScalingGamma() const = 0;
-  virtual double GetScalingDelta() const = 0;
+  virtual mfem::real_t GetScalingGamma() const = 0;
+  virtual mfem::real_t GetScalingDelta() const = 0;
 
   // Set the number of required eigenmodes.
   virtual void SetNumModes(int num_eig, int num_vec = 0) = 0;
 
   // Set solver tolerance.
-  virtual void SetTol(double tol) = 0;
+  virtual void SetTol(mfem::real_t tol) = 0;
 
   // Set maximum number of Arnoldi update iterations.
   virtual void SetMaxIter(int max_it) = 0;
@@ -90,7 +90,7 @@ public:
   virtual void SetWhichEigenpairs(WhichType type) = 0;
 
   // Set shift-and-invert spectral transformation.
-  virtual void SetShiftInvert(std::complex<double> s, bool precond = false) = 0;
+  virtual void SetShiftInvert(std::complex<mfem::real_t> s, bool precond = false) = 0;
 
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
@@ -99,14 +99,14 @@ public:
   virtual int Solve() = 0;
 
   // Get the corresponding eigenvalue.
-  virtual std::complex<double> GetEigenvalue(int i) const = 0;
+  virtual std::complex<mfem::real_t> GetEigenvalue(int i) const = 0;
 
   // Get the corresponding eigenvector. Eigenvectors are normalized such that ||x||₂ = 1,
   // unless the B-matrix is set for weighted inner products.
   virtual void GetEigenvector(int i, ComplexVector &x) const = 0;
 
   // Get the corresponding eigenpair error.
-  virtual double GetError(int i, ErrorType type) const = 0;
+  virtual mfem::real_t GetError(int i, ErrorType type) const = 0;
 
   // Re-normalize the given number of eigenvectors, for example if the matrix B for weighted
   // inner products has changed. This does not perform re-orthogonalization with respect to

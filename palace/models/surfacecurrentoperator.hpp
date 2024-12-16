@@ -37,7 +37,7 @@ public:
 public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
 
-  double GetExcitationCurrent() const;
+  mfem::real_t GetExcitationCurrent() const;
 };
 
 //

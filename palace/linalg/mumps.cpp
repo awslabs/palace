@@ -9,8 +9,8 @@ namespace palace
 {
 
 MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
-                         config::LinearSolverData::SymFactType reorder, double blr_tol,
-                         int print)
+                         config::LinearSolverData::SymFactType reorder,
+                         mfem::real_t blr_tol, int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).

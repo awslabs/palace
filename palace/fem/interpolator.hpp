@@ -25,14 +25,14 @@ private:
 #endif
   std::vector<int> op_idx;
 
-  std::vector<double> ProbeField(const mfem::ParGridFunction &U);
+  std::vector<mfem::real_t> ProbeField(const mfem::ParGridFunction &U);
 
 public:
   InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh);
 
   const auto &GetProbes() const { return op_idx; }
 
-  std::vector<std::complex<double>> ProbeField(const GridFunction &U);
+  std::vector<std::complex<mfem::real_t>> ProbeField(const GridFunction &U);
 };
 
 namespace fem

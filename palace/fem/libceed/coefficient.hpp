@@ -5,6 +5,7 @@
 #define PALACE_LIBCEED_COEFFICIENT_HPP
 
 #include <vector>
+#include <mfem.hpp>
 
 union CeedIntScalar;
 
@@ -16,13 +17,14 @@ class MaterialPropertyCoefficient;
 namespace ceed
 {
 
-std::vector<CeedIntScalar>
-PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double a = 1.0);
+std::vector<CeedIntScalar> PopulateCoefficientContext(int dim,
+                                                      const MaterialPropertyCoefficient *Q,
+                                                      mfem::real_t a = 1.0);
 
 std::vector<CeedIntScalar>
 PopulateCoefficientContext(int dim_mass, const MaterialPropertyCoefficient *Q_mass, int dim,
-                           const MaterialPropertyCoefficient *Q, double a_mass = 1.0,
-                           double a = 1.0);
+                           const MaterialPropertyCoefficient *Q, mfem::real_t a_mass = 1.0,
+                           mfem::real_t a = 1.0);
 
 }  // namespace ceed
 

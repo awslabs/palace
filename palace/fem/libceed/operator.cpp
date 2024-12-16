@@ -189,7 +189,7 @@ void Operator::Mult(const Vector &x, Vector &y) const
   }
 }
 
-void Operator::AddMult(const Vector &x, Vector &y, const double a) const
+void Operator::AddMult(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   MFEM_VERIFY(a == 1.0, "ceed::Operator::AddMult only supports coefficient = 1.0!");
   if (dof_multiplicity.Size() > 0)
@@ -217,7 +217,7 @@ void Operator::MultTranspose(const Vector &x, Vector &y) const
   AddMultTranspose(x, y);
 }
 
-void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
+void Operator::AddMultTranspose(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   MFEM_VERIFY(a == 1.0,
               "ceed::Operator::AddMultTranspose only supports coefficient = 1.0!");
@@ -396,7 +396,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
     mfem::forall(nnz_new, [=] MFEM_HOST_DEVICE(int k) { d_J[k] = d_J_old[k]; });
   }
   {
-    auto FillValues = [&](const double *vals_array)
+    auto FillValues = [&](const mfem::real_t *vals_array)
     {
       const auto *d_perm = perm.Read();
       const auto *d_Jmap = Jmap.Read();
@@ -411,7 +411,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
         mfem::forall(nnz_new,
                      [=] MFEM_HOST_DEVICE(int k)
                      {
-                       double sum = 0.0;
+                       mfem::real_t sum = 0.0;
                        for (int p = d_Jmap[k]; p < d_Jmap[k + 1]; p++)
                        {
                          sum += vals_array[d_perm[p]];

@@ -12,7 +12,7 @@
 namespace palace
 {
 
-UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
+UniformElementData::UniformElementData(const std::array<mfem::real_t, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        const mfem::ParMesh &mesh)
   : LumpedElementData(attr_list)
@@ -22,12 +22,12 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
 
   // Check the user specified direction aligns with an axis direction.
-  constexpr double angle_warning_deg = 0.1;
-  constexpr double angle_error_deg = 1.0;
+  constexpr mfem::real_t angle_warning_deg = 0.1;
+  constexpr mfem::real_t angle_error_deg = 1.0;
   auto lengths = bounding_box.Lengths();
   auto deviations_deg = bounding_box.Deviations(input_dir);
   if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
-                   [](double x) { return x < angle_warning_deg; }))
+                   [](mfem::real_t x) { return x < angle_warning_deg; }))
   {
     auto normals = bounding_box.Normals();
     Mpi::Warning("User specified direction {} does not align with either bounding box "
@@ -38,7 +38,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                  deviations_deg[1], normals[2], deviations_deg[2]);
   }
   if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
-                   [](double x) { return x < angle_error_deg; }))
+                   [](mfem::real_t x) { return x < angle_error_deg; }))
   {
     Mpi::Barrier(mesh.GetComm());
     MFEM_ABORT("Specified direction does not align sufficiently with bounding box axes ("
@@ -50,7 +50,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   direction /= direction.Norml2();
 
   // Compute the length from the most aligned normal direction.
-  constexpr double rel_tol = 1.0e-6;
+  constexpr mfem::real_t rel_tol = 1.0e-6;
   auto l_component =
       std::distance(deviations_deg.begin(),
                     std::min_element(deviations_deg.begin(), deviations_deg.end()));
@@ -63,13 +63,13 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   // and generalizes nicely to the case for an infinitely thin rectangular lumped element
   // with elements on both sides (for which the width computed from the bounding box would
   // be incorrect by a factor of 2).
-  double area = mesh::GetSurfaceArea(mesh, attr_marker);
+  mfem::real_t area = mesh::GetSurfaceArea(mesh, attr_marker);
   MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
   w = area / l;
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-UniformElementData::GetModeCoefficient(double coeff) const
+UniformElementData::GetModeCoefficient(mfem::real_t coeff) const
 {
   mfem::Vector source = direction;
   source *= coeff;
@@ -77,7 +77,7 @@ UniformElementData::GetModeCoefficient(double coeff) const
       attr_list, source);
 }
 
-CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
+CoaxialElementData::CoaxialElementData(const std::array<mfem::real_t, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        const mfem::ParMesh &mesh)
   : LumpedElementData(attr_list)
@@ -103,7 +103,7 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-CoaxialElementData::GetModeCoefficient(double coeff) const
+CoaxialElementData::GetModeCoefficient(mfem::real_t coeff) const
 {
   coeff *= direction;
   mfem::Vector x0(origin);
@@ -111,7 +111,7 @@ CoaxialElementData::GetModeCoefficient(double coeff) const
   {
     f = x;
     f -= x0;
-    double oor = 1.0 / f.Norml2();
+    mfem::real_t oor = 1.0 / f.Norml2();
     f *= coeff * oor * oor;
   };
   return std::make_unique<RestrictedVectorCoefficient<mfem::VectorFunctionCoefficient>>(

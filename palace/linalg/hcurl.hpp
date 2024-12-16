@@ -46,7 +46,7 @@ public:
                           FiniteElementSpaceHierarchy &h1_fespaces,
                           const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
                           const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
-                          double tol, int max_it, int print);
+                          mfem::real_t tol, int max_it, int print);
 
   const OperType &GetOperator() { return *A; }
 

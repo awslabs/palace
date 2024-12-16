@@ -3,7 +3,6 @@
 
 #include "coefficient.hpp"
 
-#include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "models/materialoperator.hpp"
 
@@ -49,7 +48,7 @@ inline auto *MatCoeff(CeedIntScalar *ctx)
 }  // namespace
 
 std::vector<CeedIntScalar>
-PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double a)
+PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, mfem::real_t a)
 {
   if (!Q)
   {
@@ -119,7 +118,8 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
 
 std::vector<CeedIntScalar>
 PopulateCoefficientContext(int dim_mass, const MaterialPropertyCoefficient *Q_mass, int dim,
-                           const MaterialPropertyCoefficient *Q, double a_mass, double a)
+                           const MaterialPropertyCoefficient *Q, mfem::real_t a_mass,
+                           mfem::real_t a)
 {
   // Mass coefficient comes first, then the other one for the QFunction.
   auto ctx_mass = PopulateCoefficientContext(dim_mass, Q_mass, a_mass);

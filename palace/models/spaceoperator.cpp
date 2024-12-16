@@ -403,7 +403,8 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetExtraSystemMatrix(mfem::real_t omega,
+                                    Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
@@ -445,7 +446,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 namespace
 {
 
-auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
+auto BuildParSumOperator(int h, int w, mfem::real_t a0, mfem::real_t a1, mfem::real_t a2,
                          const ParOperator *K, const ParOperator *C, const ParOperator *M,
                          const ParOperator *A2, const FiniteElementSpace &fespace)
 {
@@ -469,10 +470,11 @@ auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
   return std::make_unique<ParOperator>(std::move(sum), fespace);
 }
 
-auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<double> a1,
-                         std::complex<double> a2, const ComplexParOperator *K,
-                         const ComplexParOperator *C, const ComplexParOperator *M,
-                         const ComplexParOperator *A2, const FiniteElementSpace &fespace)
+auto BuildParSumOperator(int h, int w, std::complex<mfem::real_t> a0,
+                         std::complex<mfem::real_t> a1, std::complex<mfem::real_t> a2,
+                         const ComplexParOperator *K, const ComplexParOperator *C,
+                         const ComplexParOperator *M, const ComplexParOperator *A2,
+                         const FiniteElementSpace &fespace)
 {
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
@@ -618,7 +620,8 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
   return A;
 }
 
-std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
+std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(mfem::real_t a0,
+                                                               mfem::real_t a2,
                                                                const ComplexOperator *K,
                                                                const ComplexOperator *M)
 {
@@ -688,8 +691,9 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
 }  // namespace
 
 template <typename OperType>
-std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
-                                                                 double a2, double a3)
+std::unique_ptr<OperType>
+SpaceOperator::GetPreconditionerMatrix(mfem::real_t a0, mfem::real_t a1, mfem::real_t a2,
+                                       mfem::real_t a3)
 {
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
 
@@ -812,7 +816,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   return B;
 }
 
-void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
+void SpaceOperator::AddStiffnessCoefficients(mfem::real_t coeff,
+                                             MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {
   // Contribution from material permeability.
@@ -825,7 +830,7 @@ void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoeff
   }
 }
 
-void SpaceOperator::AddStiffnessBdrCoefficients(double coeff,
+void SpaceOperator::AddStiffnessBdrCoefficients(mfem::real_t coeff,
                                                 MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (inductance).
@@ -833,7 +838,8 @@ void SpaceOperator::AddStiffnessBdrCoefficients(double coeff,
   lumped_port_op.AddStiffnessBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddDampingCoefficients(mfem::real_t coeff,
+                                           MaterialPropertyCoefficient &f)
 {
   // Contribution for domain conductivity.
   if (mat_op.HasConductivity())
@@ -842,7 +848,8 @@ void SpaceOperator::AddDampingCoefficients(double coeff, MaterialPropertyCoeffic
   }
 }
 
-void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb)
+void SpaceOperator::AddDampingBdrCoefficients(mfem::real_t coeff,
+                                              MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance, lumped ports, and absorbing
   // boundaries (resistance).
@@ -851,12 +858,13 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
   lumped_port_op.AddDampingBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddRealMassCoefficients(mfem::real_t coeff,
+                                            MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
 }
 
-void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
+void SpaceOperator::AddRealMassBdrCoefficients(mfem::real_t coeff,
                                                MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (capacitance).
@@ -864,7 +872,8 @@ void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
   lumped_port_op.AddMassBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddImagMassCoefficients(mfem::real_t coeff,
+                                            MaterialPropertyCoefficient &f)
 {
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
@@ -873,12 +882,13 @@ void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoeffi
   }
 }
 
-void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddAbsMassCoefficients(mfem::real_t coeff,
+                                           MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
+void SpaceOperator::AddExtraSystemBdrCoefficients(mfem::real_t omega,
                                                   MaterialPropertyCoefficient &dfbr,
                                                   MaterialPropertyCoefficient &dfbi,
                                                   MaterialPropertyCoefficient &fbr,
@@ -903,7 +913,7 @@ bool SpaceOperator::GetExcitationVector(Vector &RHS)
   return nnz;
 }
 
-bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
+bool SpaceOperator::GetExcitationVector(mfem::real_t omega, ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
   RHS.SetSize(GetNDSpace().GetTrueVSize());
@@ -928,7 +938,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
   return nnz1;
 }
 
-bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
+bool SpaceOperator::GetExcitationVector2(mfem::real_t omega, ComplexVector &RHS2)
 {
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
   RHS2.UseDevice(true);
@@ -964,7 +974,7 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   return true;
 }
 
-bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RHS2)
+bool SpaceOperator::AddExcitationVector2Internal(mfem::real_t omega, ComplexVector &RHS2)
 {
   // Assemble the contribution of wave ports to the frequency domain excitation term at the
   // specified frequency.
@@ -1030,23 +1040,24 @@ template std::unique_ptr<ComplexOperator>
     SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
+    SpaceOperator::GetExtraSystemMatrix(mfem::real_t, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
+    SpaceOperator::GetExtraSystemMatrix(mfem::real_t, Operator::DiagonalPolicy);
 
-template std::unique_ptr<Operator>
-SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
-                                                 const Operator *, const Operator *,
-                                                 const Operator *);
+template std::unique_ptr<Operator> SpaceOperator::GetSystemMatrix<Operator, mfem::real_t>(
+    mfem::real_t, mfem::real_t, mfem::real_t, const Operator *, const Operator *,
+    const Operator *, const Operator *);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
-    std::complex<double>, std::complex<double>, std::complex<double>,
+SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<mfem::real_t>>(
+    std::complex<mfem::real_t>, std::complex<mfem::real_t>, std::complex<mfem::real_t>,
     const ComplexOperator *, const ComplexOperator *, const ComplexOperator *,
     const ComplexOperator *);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double);
+    SpaceOperator::GetPreconditionerMatrix<Operator>(mfem::real_t, mfem::real_t,
+                                                     mfem::real_t, mfem::real_t);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double);
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(mfem::real_t, mfem::real_t,
+                                                            mfem::real_t, mfem::real_t);
 
 }  // namespace palace

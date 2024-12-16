@@ -88,7 +88,7 @@ void BoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElement &fe,
     T.SetIntPoint(&ip);
     fe.CalcShape(ip, shape);
 
-    double val = ip.weight * T.Weight() * Q.Eval(T, ip);
+    mfem::real_t val = ip.weight * T.Weight() * Q.Eval(T, ip);
     elvect.Add(val, shape);
   }
 }

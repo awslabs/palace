@@ -41,8 +41,8 @@ GetCompressionType(config::LinearSolverData::CompressionType type)
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
-    config::LinearSolverData::CompressionType compression, double lr_tol, int butterfly_l,
-    int lossy_prec, int print)
+    config::LinearSolverData::CompressionType compression, mfem::real_t lr_tol,
+    int butterfly_l, int lossy_prec, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -135,7 +135,7 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
   HYPRE_Int n_loc = hypre_CSRMatrixNumRows(csr);
   HYPRE_Int *I = hypre_CSRMatrixI(csr);
   HYPRE_BigInt *J = hypre_CSRMatrixBigJ(csr);
-  double *data = hypre_CSRMatrixData(csr);
+  mfem::real_t *data = hypre_CSRMatrixData(csr);
 
   // Safe to delete the matrix since STRUMPACK copies it on input. Also clean up the Hypre
   // data structure once we are done with it.

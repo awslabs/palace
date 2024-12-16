@@ -5,7 +5,6 @@
 
 #include <functional>
 #include <limits>
-#include <mfem.hpp>
 #include <mfem/linalg/kernels.hpp>
 
 namespace palace
@@ -18,13 +17,14 @@ namespace
 // matrix U * f(Λ) * U' for input U * Λ * U'.
 // Reference: Deledalle et al., Closed-form expressions of the eigen decomposition of 2x2
 //            and 3x3 Hermitian matrices, HAL hal-01501221 (2017).
-mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
-                                 const std::function<double(const double &)> &functor)
+mfem::DenseMatrix
+MatrixFunction(const mfem::DenseMatrix &M,
+               const std::function<mfem::real_t(const mfem::real_t &)> &functor)
 {
   MFEM_ASSERT(M.Height() == M.Width(),
               "MatrixFunction only available for square matrices!");
   const auto N = M.Height();
-  constexpr auto tol = 10.0 * std::numeric_limits<double>::epsilon();
+  constexpr auto tol = 10.0 * std::numeric_limits<mfem::real_t>::epsilon();
   for (int i = 0; i < N; i++)
   {
     for (int j = i + 1; j < N; j++)
@@ -64,10 +64,10 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       // a d 0
       // d b 0
       // 0 0 c
-      const double disc = std::sqrt(a * a - 2.0 * a * b + b * b + 4.0 * d * d);
-      const double lambda1 = c;
-      const double lambda2 = (a + b - disc) / 2.0;
-      const double lambda3 = (a + b + disc) / 2.0;
+      const mfem::real_t disc = std::sqrt(a * a - 2.0 * a * b + b * b + 4.0 * d * d);
+      const mfem::real_t lambda1 = c;
+      const mfem::real_t lambda2 = (a + b - disc) / 2.0;
+      const mfem::real_t lambda3 = (a + b + disc) / 2.0;
       const mfem::Vector v1{{0.0, 0.0, 1.0}};
       const mfem::Vector v2{{-(-a + b + disc) / (2.0 * d), 1.0, 0.0}};
       const mfem::Vector v3{{-(-a + b - disc) / (2.0 * d), 1.0, 0.0}};
@@ -81,10 +81,10 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       // a 0 0
       // 0 b e
       // 0 e c
-      const double disc = std::sqrt(b * b - 2.0 * b * c + c * c + 4.0 * e * e);
-      const double lambda1 = a;
-      const double lambda2 = 0.5 * (b + c - disc);
-      const double lambda3 = 0.5 * (b + c + disc);
+      const mfem::real_t disc = std::sqrt(b * b - 2.0 * b * c + c * c + 4.0 * e * e);
+      const mfem::real_t lambda1 = a;
+      const mfem::real_t lambda2 = 0.5 * (b + c - disc);
+      const mfem::real_t lambda3 = 0.5 * (b + c + disc);
       const mfem::Vector v1{{1.0, 0.0, 0.0}};
       const mfem::Vector v2{{0.0, -(-b + c + disc) / (2.0 * e), 1.0}};
       const mfem::Vector v3{{0.0, -(-b + c - disc) / (2.0 * e), 1.0}};
@@ -98,10 +98,10 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       // a 0 f
       // 0 b 0
       // f 0 c
-      const double disc = std::sqrt(a * a - 2.0 * a * c + c * c + 4.0 * f * f);
-      const double lambda1 = b;
-      const double lambda2 = 0.5 * (a + c - disc);
-      const double lambda3 = 0.5 * (a + c + disc);
+      const mfem::real_t disc = std::sqrt(a * a - 2.0 * a * c + c * c + 4.0 * f * f);
+      const mfem::real_t lambda1 = b;
+      const mfem::real_t lambda2 = 0.5 * (a + c - disc);
+      const mfem::real_t lambda3 = 0.5 * (a + c + disc);
       const mfem::Vector v1{{0.0, 1.0, 0.0}};
       const mfem::Vector v2{{-(-a + c + disc) / (2.0 * f), 0.0, 1.0}};
       const mfem::Vector v3{{-(-a + c - disc) / (2.0 * f), 0.0, 1.0}};
@@ -120,21 +120,24 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
     // a d f
     // d b e
     // f e c
-    const double a2 = a * a, b2 = b * b, c2 = c * c, d2 = d * d, e2 = e * e, f2 = f * f;
-    const double a2mbmc = 2.0 * a - b - c;
-    const double b2mamc = 2.0 * b - a - c;
-    const double c2mamb = 2.0 * c - a - b;
-    const double x1 = a2 + b2 + c2 - a * b - b * c + 3.0 * (d2 + e2 + f2);
-    const double x2 = -(a2mbmc * b2mamc * c2mamb) +
-                      9.0 * (c2mamb * d2 + b2mamc * f2 + a2mbmc * e2) - 54.0 * d * e * f;
-    const double phi = std::atan2(std::sqrt(4.0 * x1 * x1 * x1 - x2 * x2), x2);
-    const double lambda1 = (a + b + c - 2.0 * std::sqrt(x1) * std::cos(phi / 3.0)) / 3.0;
-    const double lambda2 =
+    const mfem::real_t a2 = a * a, b2 = b * b, c2 = c * c, d2 = d * d, e2 = e * e,
+                       f2 = f * f;
+    const mfem::real_t a2mbmc = 2.0 * a - b - c;
+    const mfem::real_t b2mamc = 2.0 * b - a - c;
+    const mfem::real_t c2mamb = 2.0 * c - a - b;
+    const mfem::real_t x1 = a2 + b2 + c2 - a * b - b * c + 3.0 * (d2 + e2 + f2);
+    const mfem::real_t x2 = -(a2mbmc * b2mamc * c2mamb) +
+                            9.0 * (c2mamb * d2 + b2mamc * f2 + a2mbmc * e2) -
+                            54.0 * d * e * f;
+    const mfem::real_t phi = std::atan2(std::sqrt(4.0 * x1 * x1 * x1 - x2 * x2), x2);
+    const mfem::real_t lambda1 =
+        (a + b + c - 2.0 * std::sqrt(x1) * std::cos(phi / 3.0)) / 3.0;
+    const mfem::real_t lambda2 =
         (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi - M_PI) / 3.0)) / 3.0;
-    const double lambda3 =
+    const mfem::real_t lambda3 =
         (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi + M_PI) / 3.0)) / 3.0;
 
-    auto SafeDivide = [&](double x, double y)
+    auto SafeDivide = [&](mfem::real_t x, mfem::real_t y)
     {
       if (std::abs(x) <= tol)
       {
@@ -147,29 +150,34 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       }
       return x / y;
     };
-    const double m1 = SafeDivide(d * (c - lambda1) - e * f, f * (b - lambda1) - d * e);
-    const double m2 = SafeDivide(d * (c - lambda2) - e * f, f * (b - lambda2) - d * e);
-    const double m3 = SafeDivide(d * (c - lambda3) - e * f, f * (b - lambda3) - d * e);
-    const double l1mcmem1 = lambda1 - c - e * m1;
-    const double l2mcmem2 = lambda2 - c - e * m2;
-    const double l3mcmem3 = lambda3 - c - e * m3;
-    const double n1 = 1.0 + m1 * m1 + SafeDivide(std::pow(l1mcmem1, 2), f2);
-    const double n2 = 1.0 + m2 * m2 + SafeDivide(std::pow(l2mcmem2, 2), f2);
-    const double n3 = 1.0 + m3 * m3 + SafeDivide(std::pow(l3mcmem3, 2), f2);
-    const double tlambda1 = functor(lambda1) / n1;
-    const double tlambda2 = functor(lambda2) / n2;
-    const double tlambda3 = functor(lambda3) / n3;
+    const mfem::real_t m1 =
+        SafeDivide(d * (c - lambda1) - e * f, f * (b - lambda1) - d * e);
+    const mfem::real_t m2 =
+        SafeDivide(d * (c - lambda2) - e * f, f * (b - lambda2) - d * e);
+    const mfem::real_t m3 =
+        SafeDivide(d * (c - lambda3) - e * f, f * (b - lambda3) - d * e);
+    const mfem::real_t l1mcmem1 = lambda1 - c - e * m1;
+    const mfem::real_t l2mcmem2 = lambda2 - c - e * m2;
+    const mfem::real_t l3mcmem3 = lambda3 - c - e * m3;
+    const mfem::real_t n1 = 1.0 + m1 * m1 + SafeDivide(std::pow(l1mcmem1, 2), f2);
+    const mfem::real_t n2 = 1.0 + m2 * m2 + SafeDivide(std::pow(l2mcmem2, 2), f2);
+    const mfem::real_t n3 = 1.0 + m3 * m3 + SafeDivide(std::pow(l3mcmem3, 2), f2);
+    const mfem::real_t tlambda1 = functor(lambda1) / n1;
+    const mfem::real_t tlambda2 = functor(lambda2) / n2;
+    const mfem::real_t tlambda3 = functor(lambda3) / n3;
 
-    const double at = (tlambda1 * l1mcmem1 * l1mcmem1 + tlambda2 * l2mcmem2 * l2mcmem2 +
-                       tlambda3 * l3mcmem3 * l3mcmem3) /
-                      f2;
-    const double bt = tlambda1 * m1 * m1 + tlambda2 * m2 * m2 + tlambda3 * m3 * m3;
-    const double ct = tlambda1 + tlambda2 + tlambda3;
-    const double dt =
+    const mfem::real_t at =
+        (tlambda1 * l1mcmem1 * l1mcmem1 + tlambda2 * l2mcmem2 * l2mcmem2 +
+         tlambda3 * l3mcmem3 * l3mcmem3) /
+        f2;
+    const mfem::real_t bt = tlambda1 * m1 * m1 + tlambda2 * m2 * m2 + tlambda3 * m3 * m3;
+    const mfem::real_t ct = tlambda1 + tlambda2 + tlambda3;
+    const mfem::real_t dt =
         (tlambda1 * m1 * l1mcmem1 + tlambda2 * m2 * l2mcmem2 + tlambda3 * m3 * l3mcmem3) /
         f;
-    const double et = tlambda1 * m1 + tlambda2 * m2 + tlambda3 * m3;
-    const double ft = (tlambda1 * l1mcmem1 + tlambda2 * l2mcmem2 + tlambda3 * l3mcmem3) / f;
+    const mfem::real_t et = tlambda1 * m1 + tlambda2 * m2 + tlambda3 * m3;
+    const mfem::real_t ft =
+        (tlambda1 * l1mcmem1 + tlambda2 * l2mcmem2 + tlambda3 * l3mcmem3) / f;
     Mout(0, 0) = at;
     Mout(0, 1) = dt;
     Mout(0, 2) = ft;
@@ -208,12 +216,12 @@ mfem::DenseTensor MatrixSqrt(const mfem::DenseTensor &T)
   return S;
 }
 
-mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, double p)
+mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, mfem::real_t p)
 {
   return MatrixFunction(M, [p](auto s) { return std::pow(s, p); });
 }
 
-mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
+mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, mfem::real_t p)
 {
   mfem::DenseTensor S(T);
   for (int k = 0; k < T.SizeK(); k++)
@@ -223,7 +231,7 @@ mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
   return S;
 }
 
-double SingularValueMax(const mfem::DenseMatrix &M)
+mfem::real_t SingularValueMax(const mfem::DenseMatrix &M)
 {
   MFEM_ASSERT(
       M.Height() == M.Width() && M.Height() > 0 && M.Height() <= 3,
@@ -243,7 +251,7 @@ double SingularValueMax(const mfem::DenseMatrix &M)
   }
 }
 
-double SingularValueMin(const mfem::DenseMatrix &M)
+mfem::real_t SingularValueMin(const mfem::DenseMatrix &M)
 {
   MFEM_ASSERT(
       M.Height() == M.Width() && M.Height() > 0 && M.Height() <= 3,

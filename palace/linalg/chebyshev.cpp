@@ -11,7 +11,7 @@ namespace palace
 namespace
 {
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+mfem::real_t GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
   // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
   DiagonalOperator Dinv(dinv);
@@ -19,7 +19,8 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   return linalg::SpectralNorm(comm, DinvA, true);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+mfem::real_t GetLambdaMax(MPI_Comm comm, const ComplexOperator &A,
+                          const ComplexVector &dinv)
 {
   // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
   ComplexDiagonalOperator Dinv(dinv);
@@ -47,14 +48,14 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
 }
 
 template <bool Transpose = false>
-inline void ApplyOp(const Operator &A, const Vector &x, Vector &y, const double a)
+inline void ApplyOp(const Operator &A, const Vector &x, Vector &y, const mfem::real_t a)
 {
   A.AddMult(x, y, a);
 }
 
 template <bool Transpose = false>
 inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVector &y,
-                    const double a)
+                    const mfem::real_t a)
 {
   if constexpr (!Transpose)
   {
@@ -67,7 +68,7 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
 }
 
 template <bool Transpose = false>
-inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
+inline void ApplyOrder0(mfem::real_t sr, const Vector &dinv, const Vector &r, Vector &d)
 {
   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = d.Size();
@@ -79,8 +80,8 @@ inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &
 }
 
 template <bool Transpose = false>
-inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
-                        ComplexVector &d)
+inline void ApplyOrder0(const mfem::real_t sr, const ComplexVector &dinv,
+                        const ComplexVector &r, ComplexVector &d)
 {
   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = dinv.Size();
@@ -111,7 +112,7 @@ inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const Comple
 }
 
 template <bool Transpose = false>
-inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
+inline void ApplyOrderK(const mfem::real_t sd, const mfem::real_t sr, const Vector &dinv,
                         const Vector &r, Vector &d)
 {
   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
@@ -124,8 +125,8 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
 }
 
 template <bool Transpose = false>
-inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
-                        const ComplexVector &r, ComplexVector &d)
+inline void ApplyOrderK(const mfem::real_t sd, const mfem::real_t sr,
+                        const ComplexVector &dinv, const ComplexVector &r, ComplexVector &d)
 {
   const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = dinv.Size();
@@ -159,7 +160,7 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 
 template <typename OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
-                                               double sf_max)
+                                               mfem::real_t sf_max)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
     lambda_max(0.0), sf_max(sf_max)
 {
@@ -211,8 +212,8 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
     {
       y += d;
       ApplyOp(*A, d, r, -1.0);
-      const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
-      const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
+      const mfem::real_t sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
+      const mfem::real_t sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
       ApplyOrderK(sd, sr, dinv, r, d);
     }
     y += d;
@@ -221,8 +222,9 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
 
 template <typename OperType>
 ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,
-                                                             int poly_order, double sf_max,
-                                                             double sf_min)
+                                                             int poly_order,
+                                                             mfem::real_t sf_max,
+                                                             mfem::real_t sf_min)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
     theta(0.0), sf_max(sf_max), sf_min(sf_min)
 {
@@ -246,10 +248,10 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  const mfem::real_t lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
   MFEM_VERIFY(lambda_max > 0.0,
               "Encountered zero maximum eigenvalue in Chebyshev smoother!");
-  const double lambda_min = sf_min * lambda_max;
+  const mfem::real_t lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
 
@@ -277,14 +279,14 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
 
     // 1th-kind Chebyshev smoother, from Phillips and Fischer or Adams.
     ApplyOrder0(1.0 / theta, dinv, r, d);
-    double rhop = delta / theta;
+    mfem::real_t rhop = delta / theta;
     for (int k = 1; k < order; k++)
     {
       y += d;
       ApplyOp(*A, d, r, -1.0);
-      const double rho = 1.0 / (2.0 * theta / delta - rhop);
-      const double sd = rho * rhop;
-      const double sr = 2.0 * rho / delta;
+      const mfem::real_t rho = 1.0 / (2.0 * theta / delta - rhop);
+      const mfem::real_t sd = rho * rhop;
+      const mfem::real_t sr = 2.0 * rho / delta;
       ApplyOrderK(sd, sr, dinv, r, d);
       rhop = rho;
     }

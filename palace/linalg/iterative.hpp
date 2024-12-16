@@ -25,7 +25,7 @@ template <typename OperType>
 class IterativeSolver : public Solver<OperType>
 {
 protected:
-  using RealType = double;
+  using RealType = mfem::real_t;
   using ScalarType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                 std::complex<RealType>, RealType>::type;
@@ -38,7 +38,7 @@ protected:
   int int_width, tab_width;
 
   // Relative and absolute tolerances.
-  double rel_tol, abs_tol;
+  mfem::real_t rel_tol, abs_tol;
 
   // Limit for the number of solver iterations.
   int max_it;
@@ -50,7 +50,7 @@ protected:
 
   // Variables set during solve to capture solve statistics.
   mutable bool converged;
-  mutable double initial_res, final_res;
+  mutable mfem::real_t initial_res, final_res;
   mutable int final_it;
 
   // Enable timer contribution for Timer::PRECONDITIONER.
@@ -63,11 +63,11 @@ public:
   void SetTabWidth(int width) { tab_width = width; }
 
   // Set the relative convergence tolerance.
-  void SetTol(double tol) { SetRelTol(tol); }
-  void SetRelTol(double tol) { rel_tol = tol; }
+  void SetTol(mfem::real_t tol) { SetRelTol(tol); }
+  void SetRelTol(mfem::real_t tol) { rel_tol = tol; }
 
   // Set the absolute convergence tolerance.
-  void SetAbsTol(double tol) { abs_tol = tol; }
+  void SetAbsTol(mfem::real_t tol) { abs_tol = tol; }
 
   // Set the maximum number of iterations.
   void SetMaxIter(int its)
@@ -91,11 +91,11 @@ public:
   bool GetConverged() const { return converged && (rel_tol > 0.0 || abs_tol > 0.0); }
 
   // Returns the initial (absolute) residual for the previous solve.
-  double GetInitialRes() const { return initial_res; }
+  mfem::real_t GetInitialRes() const { return initial_res; }
 
   // Returns the final (absolute) residual for the previous solve, which may be an estimate
   // to the true residual.
-  double GetFinalRes() const { return final_res; }
+  mfem::real_t GetFinalRes() const { return final_res; }
 
   // Returns the number of iterations for the previous solve.
   int GetNumIterations() const { return final_it; }

@@ -11,7 +11,7 @@ namespace palace
 namespace
 {
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+mfem::real_t GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
   // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
   DiagonalOperator Dinv(dinv);
@@ -19,7 +19,8 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   return linalg::SpectralNorm(comm, DinvA, true);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+mfem::real_t GetLambdaMax(MPI_Comm comm, const ComplexOperator &A,
+                          const ComplexVector &dinv)
 {
   // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
   ComplexDiagonalOperator Dinv(dinv);

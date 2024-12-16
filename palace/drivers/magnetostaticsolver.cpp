@@ -44,7 +44,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
   std::vector<Vector> A(n_step);
-  std::vector<double> I_inc(n_step);
+  std::vector<mfem::real_t> I_inc(n_step);
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator estimator(
@@ -77,12 +77,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(A[step], B);
     post_op.SetAGridFunction(A[step]);
     post_op.SetBGridFunction(B);
-    const double E_mag = post_op.GetHFieldEnergy();
+    const mfem::real_t E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
                linalg::Norml2(curlcurl_op.GetComm(), RHS));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const mfem::real_t J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       Mpi::Print(" Field energy H = {:.3e} J\n", E_mag * J);
     }
     I_inc[step] = data.GetExcitationCurrent();
@@ -107,7 +107,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 }
 
 void MagnetostaticSolver::Postprocess(const PostOperator &post_op, int step, int idx,
-                                      double I_inc, double E_mag,
+                                      mfem::real_t I_inc, mfem::real_t E_mag,
                                       const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the A solution
@@ -129,7 +129,7 @@ void MagnetostaticSolver::Postprocess(const PostOperator &post_op, int step, int
 void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
                                                const SurfaceCurrentOperator &surf_j_op,
                                                const std::vector<Vector> &A,
-                                               const std::vector<double> &I_inc) const
+                                               const std::vector<mfem::real_t> &I_inc) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -179,7 +179,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
   // Write inductance matrix data.
   auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
                                         const std::string &unit,
-                                        const mfem::DenseMatrix &mat, double scale)
+                                        const mfem::DenseMatrix &mat, mfem::real_t scale)
   {
     std::string path = post_dir + file;
     auto output = OutputFile(path, false);
@@ -197,7 +197,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
     for (const auto &[idx, data] : surf_j_op)
     {
       int j = 0;
-      output.print("{:{}.{}e},", static_cast<double>(idx), table.w1, table.p1);
+      output.print("{:{}.{}e},", static_cast<mfem::real_t>(idx), table.w1, table.p1);
       for (const auto &[idx2, data2] : surf_j_op)
       {
         // clang-format off
@@ -211,7 +211,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
       i++;
     }
   };
-  const double H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
+  const mfem::real_t H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
@@ -230,7 +230,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
     {
       // clang-format off
       output.print("{:{}.{}e},{:+{}.{}e}\n",
-                   static_cast<double>(idx), table.w1, table.p1,
+                   static_cast<mfem::real_t>(idx), table.w1, table.p1,
                    iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc[i]),
                    table.w, table.p);
       // clang-format on

@@ -11,16 +11,16 @@
 namespace palace::utils
 {
 
-std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
-                                              double fraction)
+std::array<mfem::real_t, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
+                                                    mfem::real_t fraction)
 {
   // Precompute the sort and partial sum to make evaluating a candidate partition fast.
   e.HostRead();
-  std::vector<double> estimates(e.begin(), e.end());
+  std::vector<mfem::real_t> estimates(e.begin(), e.end());
   std::sort(estimates.begin(), estimates.end());
 
   // Accumulate the squares of the estimates.
-  std::vector<double> sum(estimates.size());
+  std::vector<mfem::real_t> sum(estimates.size());
   for (auto &x : estimates)
   {
     x *= x;
@@ -32,21 +32,22 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   }
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
-  const double local_total = sum.size() > 0 ? sum.back() : 0.0;
+  const mfem::real_t local_total = sum.size() > 0 ? sum.back() : 0.0;
   auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * local_total);
   auto index = std::distance(sum.begin(), pivot);
-  double error_threshold = estimates.size() > 0 ? estimates[index] : 0.0;
+  mfem::real_t error_threshold = estimates.size() > 0 ? estimates[index] : 0.0;
 
   // Compute the number of elements, and amount of error, marked by threshold value e.
-  auto Marked = [&estimates, &sum, &local_total](double e) -> std::pair<std::size_t, double>
+  auto Marked = [&estimates, &sum,
+                 &local_total](mfem::real_t e) -> std::pair<std::size_t, mfem::real_t>
   {
     if (local_total > 0)
     {
       const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
       const auto elems_marked = std::distance(lb, estimates.end());
-      const double error_unmarked =
+      const mfem::real_t error_unmarked =
           lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
-      const double error_marked = local_total - error_unmarked;
+      const mfem::real_t error_marked = local_total - error_unmarked;
       return {elems_marked, error_marked};
     }
     else
@@ -61,8 +62,8 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   // many elements, and using the value from the high error processor will give too few. The
   // correct threshold value will be an intermediate between the min and max over
   // processors.
-  double min_threshold = error_threshold;
-  double max_threshold = error_threshold;
+  mfem::real_t min_threshold = error_threshold;
+  mfem::real_t max_threshold = error_threshold;
   Mpi::GlobalMin(1, &min_threshold, comm);
   Mpi::GlobalMax(1, &max_threshold, comm);
   struct
@@ -74,18 +75,18 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   elements.total = estimates.size();
   struct
   {
-    double total;
-    double min_marked;
-    double max_marked;
+    mfem::real_t total;
+    mfem::real_t min_marked;
+    mfem::real_t max_marked;
   } error;
   error.total = local_total;
   std::tie(elements.max_marked, error.max_marked) = Marked(min_threshold);
   std::tie(elements.min_marked, error.min_marked) = Marked(max_threshold);
   Mpi::GlobalSum(3, &elements.total, comm);
   Mpi::GlobalSum(3, &error.total, comm);
-  const double max_indicator = [&]()
+  const mfem::real_t max_indicator = [&]()
   {
-    double max_indicator = estimates.size() > 0 ? estimates.back() : 0.0;
+    mfem::real_t max_indicator = estimates.size() > 0 ? estimates.back() : 0.0;
     Mpi::GlobalMax(1, &max_indicator, comm);
     return max_indicator;
   }();
@@ -120,8 +121,9 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
     // Set the tolerance based off of the largest local indicator value. These tolerance
     // values extremely tight because this loop is fast, and getting the marking correct is
     // important.
-    constexpr double frac_tol = 2 * std::numeric_limits<double>::epsilon();
-    const double error_tol = 2 * std::numeric_limits<double>::epsilon() * max_indicator;
+    constexpr mfem::real_t frac_tol = 2 * std::numeric_limits<mfem::real_t>::epsilon();
+    const mfem::real_t error_tol =
+        2 * std::numeric_limits<mfem::real_t>::epsilon() * max_indicator;
     if (std::abs(max_threshold - min_threshold) < error_tol ||
         std::abs(candidate_fraction - fraction) < frac_tol ||
         elements.max_marked <= (elements.min_marked + 1))
@@ -170,12 +172,13 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   return {error_threshold, error_marked / error.total};
 }
 
-std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
-                                                        const Vector &e, double fraction)
+std::array<mfem::real_t, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
+                                                              const Vector &e,
+                                                              mfem::real_t fraction)
 {
   MFEM_VERIFY(mesh.Nonconforming(), "Can only perform coarsening on a Nonconforming mesh!");
   const auto &derefinement_table = mesh.pncmesh->GetDerefinementTable();
-  mfem::Array<double> elem_error(e.Size());
+  mfem::Array<mfem::real_t> elem_error(e.Size());
   for (int i = 0; i < e.Size(); i++)
   {
     elem_error[i] = e[i];
@@ -187,7 +190,7 @@ std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mes
   {
     derefinement_table.GetRow(i, row);
     coarse_error[i] = std::sqrt(
-        std::accumulate(row.begin(), row.end(), 0.0, [&elem_error](double s, int i)
+        std::accumulate(row.begin(), row.end(), 0.0, [&elem_error](mfem::real_t s, int i)
                         { return s += std::pow(elem_error[i], 2.0); }));
   }
 

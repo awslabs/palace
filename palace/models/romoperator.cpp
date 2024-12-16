@@ -15,10 +15,11 @@
 // for this.
 extern "C"
 {
-  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
-              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
-              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
-              int *);
+  void zggev_(char *, char *, int *, std::complex<mfem::real_t> *, int *,
+              std::complex<mfem::real_t> *, int *, std::complex<mfem::real_t> *,
+              std::complex<mfem::real_t> *, std::complex<mfem::real_t> *, int *,
+              std::complex<mfem::real_t> *, int *, std::complex<mfem::real_t> *, int *,
+              mfem::real_t *, int *);
 }
 
 namespace palace
@@ -142,8 +143,8 @@ inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
               "same dimensions!");
   char jobvl = 'N', jobvr = 'V';
   int n = static_cast<int>(A.rows()), lwork = 2 * n;
-  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
-  std::vector<double> rwork(8 * n);
+  std::vector<std::complex<mfem::real_t>> alpha(n), beta(n), work(lwork);
+  std::vector<mfem::real_t> rwork(8 * n);
   MatType VL(0, 0);
   VR.resize(n, n);
   int info = 0;
@@ -157,8 +158,9 @@ inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
   for (int i = 0; i < n; i++)
   {
     D(i) = (beta[i] == 0.0)
-               ? ((alpha[i] == 0.0) ? std::numeric_limits<std::complex<double>>::quiet_NaN()
-                                    : mfem::infinity())
+               ? ((alpha[i] == 0.0)
+                      ? std::numeric_limits<std::complex<mfem::real_t>>::quiet_NaN()
+                      : mfem::infinity())
                : alpha[i] / beta[i];
     VR.col(i) /= VR.col(i).norm();
   }
@@ -239,15 +241,15 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   }
 }
 
-void RomOperator::SolveHDM(double omega, ComplexVector &u)
+void RomOperator::SolveHDM(mfem::real_t omega, ComplexVector &u)
 {
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
+  auto A = space_op.GetSystemMatrix(std::complex<mfem::real_t>(1.0, 0.0), 1i * omega,
+                                    std::complex<mfem::real_t>(-omega * omega, 0.0),
+                                    K.get(), C.get(), M.get(), A2.get());
   auto P =
       space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
   ksp->SetOperators(*A, *P);
@@ -271,20 +273,20 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
+void RomOperator::UpdatePROM(mfem::real_t omega, const ComplexVector &u)
 {
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
-  const double normr = linalg::Norml2(comm, u.Real());
-  const double normi = linalg::Norml2(comm, u.Imag());
+  const mfem::real_t normr = linalg::Norml2(comm, u.Real());
+  const mfem::real_t normi = linalg::Norml2(comm, u.Imag());
   const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
   const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
   MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
   const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + has_real + has_imag);
+  std::vector<mfem::real_t> H(dim_V + has_real + has_imag);
   if (has_real)
   {
     V[dim_V] = u.Real();
@@ -330,7 +332,7 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {1.0, 1i * omega};
+    std::vector<std::complex<mfem::real_t>> s = {1.0, 1i * omega};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
@@ -349,7 +351,7 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
   z.push_back(omega);
 }
 
-void RomOperator::SolvePROM(double omega, ComplexVector &u)
+void RomOperator::SolvePROM(mfem::real_t omega, ComplexVector &u)
 {
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
@@ -403,7 +405,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
   ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
-std::vector<double> RomOperator::FindMaxError(int N) const
+std::vector<mfem::real_t> RomOperator::FindMaxError(int N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -412,10 +414,10 @@ std::vector<double> RomOperator::FindMaxError(int N) const
   const auto S = dim_Q;
   MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
                       "added to the PROM to define the parameter domain!");
-  double start = *std::min_element(z.begin(), z.end());
-  double end = *std::max_element(z.begin(), z.end());
+  mfem::real_t start = *std::min_element(z.begin(), z.end());
+  mfem::real_t end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-  std::vector<std::complex<double>> z_star(N, 0.0);
+  std::vector<std::complex<mfem::real_t>> z_star(N, 0.0);
 
   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
   //          samples at complex-valued points (yet).
@@ -435,14 +437,14 @@ std::vector<double> RomOperator::FindMaxError(int N) const
   // // If there are multiple roots in [start, end], pick the ones furthest from the
   // // existing set of samples.
   // {
-  //   std::vector<double> dist_star(N, 0.0);
+  //   std::vector<mfem::real_t> dist_star(N, 0.0);
   //   for (auto d : D)
   //   {
   //     if (std::real(d) < start || std::real(d) > end)
   //     {
   //       continue;
   //     }
-  //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
+  //     const mfem::real_t dist = (z_map.array() - std::real(d)).abs().maxCoeff();
   //     for (int i = 0; i < N; i++)
   //     {
   //       if (dist > dist_star[i])
@@ -463,10 +465,10 @@ std::vector<double> RomOperator::FindMaxError(int N) const
   if (std::abs(z_star[0]) == 0.0)
   {
     const auto delta = (end - start) / 1.0e6;
-    std::vector<double> Q_star(N, mfem::infinity());
+    std::vector<mfem::real_t> Q_star(N, mfem::infinity());
     while (start <= end)
     {
-      const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
+      const mfem::real_t Q = std::abs((q.array() / (z_map.array() - start)).sum());
       for (int i = 0; i < N; i++)
       {
         if (Q < Q_star[i])
@@ -486,13 +488,13 @@ std::vector<double> RomOperator::FindMaxError(int N) const
                 "Could not locate a maximum error in the range [" << start << ", " << end
                                                                   << "]!");
   }
-  std::vector<double> vals(z_star.size());
+  std::vector<mfem::real_t> vals(z_star.size());
   std::transform(z_star.begin(), z_star.end(), vals.begin(),
-                 [](std::complex<double> z) { return std::real(z); });
+                 [](std::complex<mfem::real_t> z) { return std::real(z); });
   return vals;
 }
 
-std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
+std::vector<std::complex<mfem::real_t>> RomOperator::ComputeEigenvalueEstimates() const
 {
   // XX TODO: Not yet implemented
   MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");

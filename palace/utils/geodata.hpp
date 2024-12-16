@@ -33,10 +33,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata);
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
-void DimensionalizeMesh(mfem::Mesh &mesh, double L);
+void DimensionalizeMesh(mfem::Mesh &mesh, mfem::real_t L);
 
 // Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
-void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
+void NondimensionalizeMesh(mfem::Mesh &mesh, mfem::real_t L);
 
 // Struct containing flags for the (global) mesh element types.
 struct ElementTypeInfo
@@ -105,29 +105,30 @@ inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &m
 struct BoundingBox
 {
   // The central point of the bounding box.
-  std::array<double, 3> center;
+  std::array<mfem::real_t, 3> center;
 
   // Vectors from center to the midpoint of each face.
-  std::array<std::array<double, 3>, 3> axes;
+  std::array<std::array<mfem::real_t, 3>, 3> axes;
 
   // Whether or not this bounding box is two dimensional.
   bool planar;
 
   // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const;
+  mfem::real_t Area() const;
 
   // Compute the volume of the 3D bounding box. Returns zero if planar.
-  double Volume() const;
+  mfem::real_t Volume() const;
 
   // Compute the normalized axes of the bounding box.
-  std::array<std::array<double, 3>, 3> Normals() const;
+  std::array<std::array<mfem::real_t, 3>, 3> Normals() const;
 
   // Compute the lengths along each axis.
-  std::array<double, 3> Lengths() const;
+  std::array<mfem::real_t, 3> Lengths() const;
 
   // Compute the deviations in degrees of a vector from each of the axis directions. Angles
   // are returned in the interval [0, 180].
-  std::array<double, 3> Deviations(const std::array<double, 3> &direction) const;
+  std::array<mfem::real_t, 3>
+  Deviations(const std::array<mfem::real_t, 3> &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
@@ -162,11 +163,11 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
 }
 
 // Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir);
+mfem::real_t GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                                bool bdr, const std::array<mfem::real_t, 3> &dir);
 
-inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                 const std::array<double, 3> &dir)
+inline mfem::real_t GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
+                                       const std::array<mfem::real_t, 3> &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -177,12 +178,13 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
 // Helper function for computing the closest distance of a marked group to a given point,
 // by brute force searching over the entire point set. Optionally compute the furthest
 // distance instead of the closest.
-double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin,
-                            bool max = false);
+mfem::real_t GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                                  bool bdr, const std::array<mfem::real_t, 3> &origin,
+                                  bool max = false);
 
-inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                   const std::array<double, 3> &dir, bool max = false)
+inline mfem::real_t GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
+                                         const std::array<mfem::real_t, 3> &dir,
+                                         bool max = false)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -214,9 +216,9 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
 
 // Helper functions to compute the volume or area for all domain or boundary elements with
 // the given attributes.
-double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+mfem::real_t GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
 
-inline double GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
+inline mfem::real_t GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
 {
   mfem::Array<int> marker(mesh.bdr_attributes.Max());
   marker = 0;
@@ -224,9 +226,9 @@ inline double GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
   return GetSurfaceArea(mesh, marker);
 }
 
-double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+mfem::real_t GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
 
-inline double GetVolume(const mfem::ParMesh &mesh, int attr)
+inline mfem::real_t GetVolume(const mfem::ParMesh &mesh, int attr)
 {
   mfem::Array<int> marker(mesh.attributes.Max());
   marker = 0;
@@ -236,7 +238,7 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata);
+mfem::real_t RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata);
 
 }  // namespace mesh
 

@@ -439,7 +439,7 @@ namespace
 
 template <std::size_t N>
 constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData<N> &data,
-                                                     double s)
+                                                     mfem::real_t s)
 {
   for (auto &x : data.s)
   {
@@ -471,7 +471,8 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   tc = 1.0e9 * Lc / electromagnetics::c0_;  // [ns]
 
   // Mesh refinement parameters.
-  auto DivideLengthScale = [Lc0 = GetMeshLengthScale()](double val) { return val / Lc0; };
+  auto DivideLengthScale = [Lc0 = GetMeshLengthScale()](mfem::real_t val)
+  { return val / Lc0; };
   for (auto &box : model.refinement.GetBoxes())
   {
     std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
@@ -624,6 +625,6 @@ T IoData::DimensionalizeValue(IoData::ValueType type, T v) const
   return v * sf;
 }
 
-template double IoData::DimensionalizeValue(IoData::ValueType, double) const;
+template mfem::real_t IoData::DimensionalizeValue(IoData::ValueType, mfem::real_t) const;
 
 }  // namespace palace

@@ -42,13 +42,13 @@ public:
 
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.
-  double GetElectricFieldEnergy(const GridFunction &E) const;
-  double GetMagneticFieldEnergy(const GridFunction &B) const;
+  mfem::real_t GetElectricFieldEnergy(const GridFunction &E) const;
+  mfem::real_t GetMagneticFieldEnergy(const GridFunction &B) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
-  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
-  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &E) const;
+  mfem::real_t GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
+  mfem::real_t GetDomainMagneticFieldEnergy(int idx, const GridFunction &E) const;
 };
 
 }  // namespace palace

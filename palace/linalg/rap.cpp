@@ -267,7 +267,7 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
   }
 }
 
-void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
+void ParOperator::AddMult(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ParOperator::AddMult!");
@@ -310,7 +310,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
   y.Add(a, ty);
 }
 
-void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
+void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const mfem::real_t a) const
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ParOperator::AddMultTranspose!");
@@ -578,7 +578,7 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
 }
 
 void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
-                                 const std::complex<double> a) const
+                                 const std::complex<mfem::real_t> a) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
@@ -619,7 +619,7 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 }
 
 void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                          const std::complex<double> a) const
+                                          const std::complex<mfem::real_t> a) const
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultTranspose!");
@@ -659,7 +659,7 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
 }
 
 void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                                   const std::complex<double> a) const
+                                                   const std::complex<mfem::real_t> a) const
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultHermitianTranspose!");

@@ -71,14 +71,14 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
 #endif
 }
 
-std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
+std::vector<mfem::real_t> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {
 #if defined(MFEM_USE_GSLIB)
   // Interpolated vector values are returned from GSLIB interpolator with the same ordering
   // as the source grid function, which we transform to byVDIM for output.
   const int npts = op.GetCode().Size();
   const int vdim = U.VectorDim();
-  std::vector<double> vals(npts * vdim);
+  std::vector<mfem::real_t> vals(npts * vdim);
   if (U.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
   {
     mfem::Vector v(vals.data(), npts * vdim);
@@ -103,20 +103,22 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
 #endif
 }
 
-std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFunction &U)
+std::vector<std::complex<mfem::real_t>>
+InterpolationOperator::ProbeField(const GridFunction &U)
 {
-  std::vector<double> vr = ProbeField(U.Real());
+  std::vector<mfem::real_t> vr = ProbeField(U.Real());
   if (U.HasImag())
   {
-    std::vector<double> vi = ProbeField(U.Imag());
-    std::vector<std::complex<double>> vals(vr.size());
+    std::vector<mfem::real_t> vi = ProbeField(U.Imag());
+    std::vector<std::complex<mfem::real_t>> vals(vr.size());
     std::transform(vr.begin(), vr.end(), vi.begin(), vals.begin(),
-                   [](double xr, double xi) { return std::complex<double>(xr, xi); });
+                   [](mfem::real_t xr, mfem::real_t xi)
+                   { return std::complex<mfem::real_t>(xr, xi); });
     return vals;
   }
   else
   {
-    return std::vector<std::complex<double>>(vr.begin(), vr.end());
+    return std::vector<std::complex<mfem::real_t>>(vr.begin(), vr.end());
   }
 }
 

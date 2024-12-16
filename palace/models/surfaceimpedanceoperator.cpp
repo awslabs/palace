@@ -198,7 +198,7 @@ mfem::Array<int> SurfaceImpedanceOperator::GetCsAttrList() const
   return attr_list;
 }
 
-void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coeff,
+void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(mfem::real_t coeff,
                                                            MaterialPropertyCoefficient &fb)
 {
   // Lumped inductor boundaries.
@@ -211,7 +211,7 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coeff,
   }
 }
 
-void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coeff,
+void SurfaceImpedanceOperator::AddDampingBdrCoefficients(mfem::real_t coeff,
                                                          MaterialPropertyCoefficient &fb)
 {
   // Lumped resistor boundaries.
@@ -224,7 +224,7 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coeff,
   }
 }
 
-void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coeff,
+void SurfaceImpedanceOperator::AddMassBdrCoefficients(mfem::real_t coeff,
                                                       MaterialPropertyCoefficient &fb)
 {
   // Lumped capacitor boundaries.

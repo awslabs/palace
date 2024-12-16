@@ -13,7 +13,7 @@ namespace palace
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
-    double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
+    mfem::real_t cheby_sf_max, mfem::real_t cheby_sf_min, bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr),
     dbc_tdof_list_G(nullptr)
 {

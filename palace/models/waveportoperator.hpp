@@ -44,10 +44,10 @@ public:
 
   // Wave port properties.
   int mode_idx;
-  double d_offset;
+  mfem::real_t d_offset;
   bool excitation, active;
-  std::complex<double> kn0;
-  double omega0;
+  std::complex<mfem::real_t> kn0;
+  mfem::real_t omega0;
   mfem::Vector port_normal;
 
 private:
@@ -62,7 +62,7 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  double mu_eps_min;
+  mfem::real_t mu_eps_min;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
@@ -89,7 +89,7 @@ public:
 
   const auto &GetAttrList() const { return attr_list; }
 
-  void Initialize(double omega);
+  void Initialize(mfem::real_t omega);
 
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
@@ -100,22 +100,22 @@ public:
   std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientReal() const;
   std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientImag() const;
 
-  std::complex<double> GetCharacteristicImpedance() const
+  std::complex<mfem::real_t> GetCharacteristicImpedance() const
   {
     MFEM_ABORT("GetImpedance is not yet implemented for wave port boundaries!");
     return 0.0;
   }
 
-  double GetExcitationPower() const;
-  std::complex<double> GetExcitationVoltage() const
+  mfem::real_t GetExcitationPower() const;
+  std::complex<mfem::real_t> GetExcitationVoltage() const
   {
     MFEM_ABORT("GetExcitationVoltage is not yet implemented for wave port boundaries!");
     return 0.0;
   }
 
-  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
-  std::complex<double> GetSParameter(GridFunction &E) const;
-  std::complex<double> GetVoltage(GridFunction &E) const
+  std::complex<mfem::real_t> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<mfem::real_t> GetSParameter(GridFunction &E) const;
+  std::complex<mfem::real_t> GetVoltage(GridFunction &E) const
   {
     MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");
     return 0.0;
@@ -133,7 +133,7 @@ private:
 
   // Flag which forces no printing during WavePortData::Print().
   bool suppress_output;
-  double fc, kc;
+  mfem::real_t fc, kc;
 
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
                                mfem::ParFiniteElementSpace &nd_fespace,
@@ -141,7 +141,7 @@ private:
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
-  void Initialize(double omega);
+  void Initialize(mfem::real_t omega);
 
 public:
   WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
@@ -163,12 +163,12 @@ public:
   mfem::Array<int> GetAttrList() const;
 
   // Add contributions to system matrix from wave ports.
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
+  void AddExtraSystemBdrCoefficients(mfem::real_t omega, MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries.
-  void AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
+  void AddExcitationBdrCoefficients(mfem::real_t omega, SumVectorCoefficient &fbr,
                                     SumVectorCoefficient &fbi);
 };
 

@@ -5,6 +5,8 @@
 #ifndef PALACE_LINALG_DENSE_MATRIX_HPP
 #define PALACE_LINALG_DENSE_MATRIX_HPP
 
+#include <mfem.hpp>
+
 namespace mfem
 {
 
@@ -25,13 +27,13 @@ mfem::DenseMatrix MatrixSqrt(const mfem::DenseMatrix &M);
 
 mfem::DenseTensor MatrixSqrt(const mfem::DenseTensor &T);
 
-mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, double p);
+mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, mfem::real_t p);
 
-mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p);
+mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, mfem::real_t p);
 
-double SingularValueMax(const mfem::DenseMatrix &M);
+mfem::real_t SingularValueMax(const mfem::DenseMatrix &M);
 
-double SingularValueMin(const mfem::DenseMatrix &M);
+mfem::real_t SingularValueMin(const mfem::DenseMatrix &M);
 
 mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B);
 

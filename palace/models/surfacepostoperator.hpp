@@ -55,7 +55,7 @@ private:
   struct InterfaceDielectricData : public SurfaceData
   {
     InterfaceDielectricType type;
-    double t, epsilon, tandelta;
+    mfem::real_t t, epsilon, tandelta;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::ParMesh &mesh,
@@ -72,8 +72,8 @@ private:
   // owned).
   mfem::ParFiniteElementSpace &h1_fespace;
 
-  double GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                 const mfem::Array<int> &attr_marker) const;
+  mfem::real_t GetLocalSurfaceIntegral(mfem::Coefficient &f,
+                                       const mfem::Array<int> &attr_marker) const;
 
 public:
   // Data structures for postprocessing the surface with the given type.
@@ -84,12 +84,12 @@ public:
                       mfem::ParFiniteElementSpace &h1_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
-  std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
-                                      const GridFunction *B) const;
+  std::complex<mfem::real_t> GetSurfaceFlux(int idx, const GridFunction *E,
+                                            const GridFunction *B) const;
 
   // Get surface integrals computing interface dielectric energy.
-  double GetInterfaceLossTangent(int idx) const;
-  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  mfem::real_t GetInterfaceLossTangent(int idx) const;
+  mfem::real_t GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
 };
 
 }  // namespace palace

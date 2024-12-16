@@ -24,18 +24,18 @@ class EigenSolver : public BaseSolver
 {
 private:
   void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-                   int i, std::complex<double> omega, double error_bkwd, double error_abs,
-                   int num_conv, double E_elec, double E_mag,
-                   const ErrorIndicator *indicator) const;
+                   int i, std::complex<mfem::real_t> omega, mfem::real_t error_bkwd,
+                   mfem::real_t error_abs, int num_conv, mfem::real_t E_elec,
+                   mfem::real_t E_mag, const ErrorIndicator *indicator) const;
 
-  void PostprocessEigen(int i, std::complex<double> omega, double error_bkwd,
-                        double error_abs, int num_conv) const;
+  void PostprocessEigen(int i, std::complex<mfem::real_t> omega, mfem::real_t error_bkwd,
+                        mfem::real_t error_abs, int num_conv) const;
 
   void PostprocessPorts(const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, int i) const;
 
   void PostprocessEPR(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-                      int i, std::complex<double> omega, double E_m) const;
+                      int i, std::complex<mfem::real_t> omega, mfem::real_t E_m) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
