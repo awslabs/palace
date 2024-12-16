@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(MUMPS_DEPENDENCIES scalapack parmetis)
+set(MUMPS_DEPENDENCIES scalapack parmetis metis)
 
 set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MUMPS_OPTIONS
@@ -23,7 +23,7 @@ list(APPEND MUMPS_OPTIONS
   "-DBUILD_COMPLEX16=OFF"
   "-DMUMPS_BUILD_TESTING=OFF"
   "-Dmetis=ON"
-  "-Dparmetis=ON"
+  "-Dparmetis=OFF"#test
   "-Dscotch=OFF"
   "-DPARMETIS_LIBRARY=${PARMETIS_LIBRARIES}"
   "-DMETIS_LIBRARY=${METIS_LIBRARIES}"

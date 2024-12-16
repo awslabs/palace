@@ -171,6 +171,15 @@ endif()
 string(REPLACE ";" "; " HYPRE_OPTIONS_PRINT "${HYPRE_OPTIONS}")
 message(STATUS "HYPRE_OPTIONS: ${HYPRE_OPTIONS_PRINT}")
 
+# Some build fixes
+if(PALACE_WITH_SINGLE_PRECISION)
+  set(HYPRE_PATCH_FILES
+    "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_conjgrad_single.diff"
+  )
+else()
+  set(HYPRE_PATCH_FILES)
+endif()
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
@@ -182,6 +191,7 @@ ExternalProject_Add(hypre
   BUILD_IN_SOURCE   TRUE
   SOURCE_SUBDIR     src
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${HYPRE_PATCH_FILES}"
   CONFIGURE_COMMAND ./configure ${HYPRE_OPTIONS}
   TEST_COMMAND      ""
 )
