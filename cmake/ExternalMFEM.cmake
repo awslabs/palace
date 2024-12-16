@@ -153,6 +153,12 @@ if(PALACE_WITH_GSLIB)
   )
 endif()
 
+if(PALACE_WITH_SINGLE_PRECISION)
+  list(APPEND MFEM_OPTIONS
+    "-DMFEM_PRECISION=SINGLE"
+  )
+endif()
+
 # Configure the rest of MFEM's dependencies
 if(PALACE_BUILD_EXTERNAL_DEPS)
   list(APPEND MFEM_OPTIONS

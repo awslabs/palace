@@ -18,7 +18,6 @@ set(PETSC_OPTIONS
   "--with-cxx=${CMAKE_CXX_COMPILER}"
   "--with-fc=0"
   "--with-scalar-type=complex"
-  "--with-precision=double"
   "--with-clanguage=c"
   "--with-x=0"
   # "--with-petsc4py=1"
@@ -41,6 +40,11 @@ if(PALACE_WITH_64BIT_BLAS_INT)
   list(APPEND PETSC_OPTIONS "--with-64-bit-blas-indices")
 else()
   list(APPEND PETSC_OPTIONS "--known-64-bit-blas-indices=0")
+endif()
+if(PALACE_WITH_SINGLE_PRECISION)
+  list(APPEND PETSC_OPTIONS "--with-precision=single"
+else
+  list(APPEND PETSC_OPTIONS "--with-precision=double"
 endif()
 if(PALACE_WITH_OPENMP)
   list(APPEND PETSC_OPTIONS "--with-openmp")

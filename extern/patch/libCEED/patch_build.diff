@@ -1,0 +1,13 @@
+diff --git a/include/ceed/types.h b/include/ceed/types.h
+index 6c6d1265..21cf853e 100644
+--- a/include/ceed/types.h
++++ b/include/ceed/types.h
+@@ -123,7 +123,7 @@ typedef enum {
+   CEED_SCALAR_FP64
+ } CeedScalarType;
+ /// Base scalar type for the library to use: change which header is included to change the precision.
+-#include "ceed-f64.h"  // IWYU pragma: export
++#include "ceed-f32.h"  // IWYU pragma: export
+ 
+ /// Ceed error code.
+ ///
