@@ -351,7 +351,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
                (it_sample == max_size_per_excitation) ? " reached maximum"
                                                       : " converged with",
-               it_sample, prom_op.GetReducedDimension(), max_errors.back(), offline_tol,
+               it_sample - 1, prom_op.GetReducedDimension(), max_errors.back(), offline_tol,
                memory, convergence_memory);
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
