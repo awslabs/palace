@@ -94,6 +94,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
+  bool first_set = true;
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
@@ -148,8 +149,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
       Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                  step + 1, n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
-      // Assemble and solve the linear system.
-      if (step > step0)
+      // Assemble and solve the linear system: skip if already assembled in first excitation / freq
+      if (!first_set)
       {
         // Update frequency-dependent excitation and operators.
         A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -160,6 +161,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
                                                               omega);
         ksp.SetOperators(*A, *P);
       }
+      first_set = false;
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
