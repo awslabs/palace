@@ -875,7 +875,7 @@ public:
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.
-  bool complex_coarse_solve = true;
+  bool complex_coarse_solve = false;
 
   // Choose left or right preconditioning.
   enum class SideType
