@@ -106,14 +106,14 @@ void HypreCSRMatrix::AddMult(const Vector &x, Vector &y, const mfem::real_t a) c
 {
   X.Update(x);
   Y.Update(y);
-  hypre_CSRMatrixMatvec(a, mat, X, 1.0, Y);
+  hypre_CSRMatrixMatvec(a, mat, X, mfem::real_t(1.0), Y);
 }
 
 void HypreCSRMatrix::MultTranspose(const Vector &x, Vector &y) const
 {
   X.Update(x);
   Y.Update(y);
-  hypre_CSRMatrixMatvecT(1.0, mat, X, 0.0, Y);
+  hypre_CSRMatrixMatvecT(mfem::real_t(1.0), mat, X, mfem::real_t(0.0), Y);
 }
 
 void HypreCSRMatrix::AddMultTranspose(const Vector &x, Vector &y,
@@ -121,7 +121,7 @@ void HypreCSRMatrix::AddMultTranspose(const Vector &x, Vector &y,
 {
   X.Update(x);
   Y.Update(y);
-  hypre_CSRMatrixMatvecT(a, mat, X, 1.0, Y);
+  hypre_CSRMatrixMatvecT(a, mat, X, mfem::real_t(1.0), Y);
 }
 
 }  // namespace palace::hypre

@@ -52,7 +52,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    A.reset(mfem::Add(mfem::real_t(1.0), *hAr, mfem::real_t(1.0), *hAi));
     if (PtAPr)
     {
       PtAPr->StealParallelAssemble();

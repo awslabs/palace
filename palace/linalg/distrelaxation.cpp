@@ -73,13 +73,13 @@ namespace
 
 inline void RealAddMult(const Operator &op, const Vector &x, Vector &y)
 {
-  op.AddMult(x, y, 1.0);
+  op.AddMult(x, y, mfem::real_t(1.0));
 }
 
 inline void RealAddMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
-  op.AddMult(x.Real(), y.Real(), 1.0);
-  op.AddMult(x.Imag(), y.Imag(), 1.0);
+  op.AddMult(x.Real(), y.Real(), mfem::real_t(1.0));
+  op.AddMult(x.Imag(), y.Imag(), mfem::real_t(1.0));
 }
 
 inline void RealMultTranspose(const Operator &op, const Vector &x, Vector &y)
@@ -111,7 +111,7 @@ void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecTy
     RealMultTranspose(*G, r, x_G);
     if (dbc_tdof_list_G)
     {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, mfem::real_t(0.0));
     }
     B_G->Mult2(x_G, y_G, r_G);
     RealAddMult(*G, y_G, y);
@@ -140,7 +140,7 @@ void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType 
     }
     if (dbc_tdof_list_G)
     {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, mfem::real_t(0.0));
     }
     B_G->MultTranspose2(x_G, y_G, r_G);
     RealAddMult(*G, y_G, y);

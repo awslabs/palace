@@ -202,7 +202,7 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
     else
     {
       r = x;
-      y = 0.0;
+      y = mfem::real_t(0.0);
     }
 
     // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
@@ -211,7 +211,7 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
     for (int k = 1; k < order; k++)
     {
       y += d;
-      ApplyOp(*A, d, r, -1.0);
+      ApplyOp(*A, d, r, mfem::real_t(-1.0));
       const mfem::real_t sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
       const mfem::real_t sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
       ApplyOrderK(sd, sr, dinv, r, d);
@@ -283,7 +283,7 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
     for (int k = 1; k < order; k++)
     {
       y += d;
-      ApplyOp(*A, d, r, -1.0);
+      ApplyOp(*A, d, r, mfem::real_t(-1.0));
       const mfem::real_t rho = 1.0 / (2.0 * theta / delta - rhop);
       const mfem::real_t sd = rho * rhop;
       const mfem::real_t sr = 2.0 * rho / delta;

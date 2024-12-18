@@ -119,18 +119,18 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   const T safmax = SafeMax<T>();
   if (dy == mfem::real_t(0.0))
   {
-    cs = 1.0;
-    sn = 0.0;
+    cs = mfem::real_t(1.0);
+    sn = mfem::real_t(0.0);
     return;
   }
   if (dx == mfem::real_t(0.0))
   {
-    cs = 0.0;
-    if (dy.real() == 0.0)
+    cs = mfem::real_t(0.0);
+    if (dy.real() == mfem::real_t(0.0))
     {
       sn = std::conj(dy) / std::abs(dy.imag());
     }
-    else if (dy.imag() == 0.0)
+    else if (dy.imag() == mfem::real_t(0.0))
     {
       sn = std::conj(dy) / std::abs(dy.real());
     }
@@ -382,7 +382,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   else
   {
     r = b;
-    x = 0.0;
+    x = mfem::real_t(0.0);
   }
   if (B)
   {
