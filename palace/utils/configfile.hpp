@@ -517,7 +517,7 @@ public:
 
   // Tolerance for linear solver.
 #ifdef MFEM_USE_SINGLE
-  mfem::real_t ksp_tol = 1e-6;
+  mfem::real_t ksp_tol = 1e-4;
 #else
   mfem::real_t ksp_tol = 1e-8;
 #endif
