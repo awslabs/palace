@@ -67,13 +67,6 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       block_coeffs(1, 0) = 1.0;
       block_coeffs(1, 1) = 1.0;
       A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
-      idx1.SetSize(op.Width());
-      idx2.SetSize(op.Width());
-      for (int i = 0; i < op.Width(); i++)
-      {
-        idx1[i] = i;
-        idx2[i] = i + op.Width();
-      }
     }
     else
     {
@@ -140,17 +133,18 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   }
   else
   {
-    Vector X(2 * x.Size()), Y(2 * y.Size()), yr, yi;
+    const int Nx = x.Size(), Ny = y.Size();
+    Vector X(2 * Nx), Y(2 * Ny), yr, yi;
     X.UseDevice(true);
     Y.UseDevice(true);
     yr.UseDevice(true);
     yi.UseDevice(true);
-    X.SetSubVector(idx1, x.Real());
-    X.SetSubVector(idx2, x.Imag());
+    linalg::SetSubVector(X, 0, x.Real());
+    linalg::SetSubVector(X, Nx, x.Imag());
     pc->Mult(X, Y);
     Y.ReadWrite();
-    yr.MakeRef(Y, 0, y.Size());
-    yi.MakeRef(Y, y.Size(), y.Size());
+    yr.MakeRef(Y, 0, Ny);
+    yi.MakeRef(Y, Ny, Ny);
     y.Real() = yr;
     y.Imag() = yi;
   }

@@ -308,7 +308,7 @@ int main(int argc, char *argv[])
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(world_comm, iodata));
+    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
     for (auto &m : mfem_mesh)

@@ -29,7 +29,7 @@ private:
 public:
   SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder, bool use_3d,
                 int print);
-  SuperLUSolver(MPI_Comm comm, const IoData &iodata, int print)
+  SuperLUSolver(const IoData &iodata, MPI_Comm comm, int print)
     : SuperLUSolver(comm, iodata.solver.linear.sym_fact_type,
                     iodata.solver.linear.superlu_3d, print)
   {
