@@ -124,6 +124,7 @@ message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 # Some build fixes
 if(PALACE_WITH_SINGLE_PRECISION)
   set(LIBCEED_PATCH_FILES
+    #"git apply ${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_build.diff"
     "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_build.diff"
   )
 else()
@@ -141,6 +142,7 @@ ExternalProject_Add(libCEED
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${LIBCEED_PATCH_FILES}"
+  #PATCH_COMMAND     "${LIBCEED_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install

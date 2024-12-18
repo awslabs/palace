@@ -174,6 +174,7 @@ message(STATUS "HYPRE_OPTIONS: ${HYPRE_OPTIONS_PRINT}")
 # Some build fixes
 if(PALACE_WITH_SINGLE_PRECISION)
   set(HYPRE_PATCH_FILES
+    #"git apply ${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_conjgrad_single.diff"
     "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_conjgrad_single.diff"
   )
 else()
@@ -192,6 +193,7 @@ ExternalProject_Add(hypre
   SOURCE_SUBDIR     src
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${HYPRE_PATCH_FILES}"
+  #PATCH_COMMAND     "${HYPRE_PATCH_FILES}"
   CONFIGURE_COMMAND ./configure ${HYPRE_OPTIONS}
   TEST_COMMAND      ""
 )
