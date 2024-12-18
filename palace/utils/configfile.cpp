@@ -1779,6 +1779,7 @@ void LinearSolverData::SetUp(json &solver)
   // Preconditioner-specific options.
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
+  complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
   pc_side_type = linear->value("PCSide", pc_side_type);
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
   strumpack_compression_type =
@@ -1821,6 +1822,7 @@ void LinearSolverData::SetUp(json &solver)
 
   linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
+  linear->erase("ComplexCoarseSolve");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -1865,6 +1867,7 @@ void LinearSolverData::SetUp(json &solver)
 
     std::cout << "PCMatReal: " << pc_mat_real << '\n';
     std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
+    std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
     std::cout << "PCSide: " << pc_side_type << '\n';
     std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
     std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';

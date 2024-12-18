@@ -28,7 +28,7 @@ public:
                       config::LinearSolverData::CompressionType compression, double lr_tol,
                       int butterfly_l, int lossy_prec, int print);
 
-  StrumpackSolverBase(MPI_Comm comm, const IoData &iodata, int print)
+  StrumpackSolverBase(const IoData &iodata, MPI_Comm comm, int print)
     : StrumpackSolverBase(comm, iodata.solver.linear.sym_fact_type,
                           iodata.solver.linear.strumpack_compression_type,
                           iodata.solver.linear.strumpack_lr_tol,

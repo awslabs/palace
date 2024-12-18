@@ -322,6 +322,7 @@ under the directory specified by
     "MGSmoothOrder": <int>,
     "PCMatReal": <bool>,
     "PCMatShifted": <bool>,
+    "ComplexCoarseSolve": <bool>,
     "PCSide": <string>,
     "DivFreeTol": <float>,
     "DivFreeMaxIts": <float>,
@@ -419,6 +420,9 @@ performed for the coarsest multigrid level regardless of the setting of `"PCMatR
 domain problems using a positive definite approximation of the system matrix by flipping
 the sign for the mass matrix contribution, which can help performance at high frequencies
 (relative to the lowest nonzero eigenfrequencies of the model).
+
+`"ComplexCoarseSolve" [false]` : When set to `true`, the coarse-level solver uses the true
+complex-valued system matrix. When set to `false`, the real-valued approximation is used.
 
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
 iterative solver choices, and the default choice depends on the iterative solver used.

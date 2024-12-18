@@ -118,6 +118,7 @@
         "MGSmoothChebyshev4th": { "type": "boolean" },
         "PCMatReal": { "type": "boolean" },
         "PCMatShifted": { "type": "boolean" },
+        "ComplexCoarseSolve": {"type": "boolean"},
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },

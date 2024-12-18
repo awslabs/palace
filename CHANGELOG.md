@@ -45,6 +45,9 @@ The format of this changelog is based on
   - Added adaptive time-stepping capability for transient simulations. The new ODE integrators
     rely on the SUNDIALS library and can be specified by setting the
     `config["Solver"]["Transient"]["Type"]` option to `"CVODE"` or `"ARKODE"`.
+  - Added an option to use the complex-valued system matrix for the coarse level solve (sparse
+    direct solve) instead of the real-valued approximation. This can be specified with
+    `config["Solver"]["Linear"]["ComplexCoarseSolve"]`.
 
 ## [0.13.0] - 2024-05-20
 
