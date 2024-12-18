@@ -87,9 +87,6 @@ private:
   // approximation A = Ar + Ai.
   bool complex_matrix = true;
 
-  // Indices of real and imaginary parts of the complex system RHS/solution.
-  mfem::Array<int> idx1, idx2;
-
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
                     bool complex_matrix = true)

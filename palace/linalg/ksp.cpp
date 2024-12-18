@@ -145,7 +145,6 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
   std::unique_ptr<Solver<OperType>> pc;
   const auto type = iodata.solver.linear.type;
   const int print = iodata.problem.verbose - 1;
-  const bool complex_coarse = iodata.solver.linear.complex_coarse_solve;
   switch (type)
   {
     case config::LinearSolverData::Type::AMS:
