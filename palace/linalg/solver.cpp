@@ -52,25 +52,33 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    // A = [Ar, -Ai]
-    //     [Ai,  Ar]
-    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-    mfem::Array2D<double> block_coeffs(2, 2);
-    blocks(0, 0) = hAr;
-    blocks(0, 1) = hAi;
-    blocks(1, 0) = hAi;
-    blocks(1, 1) = hAr;
-    block_coeffs(0, 0) = 1.0;
-    block_coeffs(0, 1) = -1.0;
-    block_coeffs(1, 0) = 1.0;
-    block_coeffs(1, 1) = 1.0;
-    A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
-    idx1.SetSize(op.Width());
-    idx2.SetSize(op.Width());
-    for (int i = 0; i < op.Width(); i++)
+    if (complex_matrix)
     {
-      idx1[i] = i;
-      idx2[i] = i + op.Width();
+      // A = [Ar, -Ai]
+      //     [Ai,  Ar]
+      mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+      mfem::Array2D<double> block_coeffs(2, 2);
+      blocks(0, 0) = hAr;
+      blocks(0, 1) = hAi;
+      blocks(1, 0) = hAi;
+      blocks(1, 1) = hAr;
+      block_coeffs(0, 0) = 1.0;
+      block_coeffs(0, 1) = -1.0;
+      block_coeffs(1, 0) = 1.0;
+      block_coeffs(1, 1) = 1.0;
+      A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+      idx1.SetSize(op.Width());
+      idx2.SetSize(op.Width());
+      for (int i = 0; i < op.Width(); i++)
+      {
+        idx1[i] = i;
+        idx2[i] = i + op.Width();
+      }
+    }
+    else
+    {
+      // A = Ar + Ai.
+      A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
     }
     if (PtAPr)
     {
