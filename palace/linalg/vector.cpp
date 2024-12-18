@@ -520,9 +520,44 @@ void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, const ComplexV
   mfem::forall_switch(use_dev, N,
                       [=] MFEM_HOST_DEVICE(int i)
                       {
-                        const auto id = idx[i];
+                        const int id = idx[i];
                         XR[id] = YR[id];
                         XI[id] = YI[id];
+                      });
+}
+
+template <>
+void SetSubVector(Vector &x, int start, const Vector &y)
+{
+  const bool use_dev = x.UseDevice();
+  const int N = y.Size();
+  MFEM_ASSERT(start >= 0 && start + N <= x.Size(), "Invalid range for SetSubVector!");
+  const auto *Y = y.Read(use_dev);
+  auto *X = x.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const int id = start + i;
+                        X[id] = Y[i];
+                      });
+}
+
+template <>
+void SetSubVector(ComplexVector &x, int start, const ComplexVector &y)
+{
+  const bool use_dev = x.UseDevice();
+  const int N = y.Size();
+  MFEM_ASSERT(start >= 0 && start + N <= x.Size(), "Invalid range for SetSubVector!");
+  const auto *YR = y.Real().Read(use_dev);
+  const auto *YI = y.Imag().Read(use_dev);
+  auto *XR = x.Real().ReadWrite(use_dev);
+  auto *XI = x.Imag().ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const int id = start + i;
+                        XR[id] = YR[i];
+                        XI[id] = YI[i];
                       });
 }
 
