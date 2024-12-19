@@ -7,7 +7,9 @@
 #include <vector>
 #include <mfem.hpp>
 
+#ifndef MFEM_USE_SINGLE
 #define GMSH_BIN  // Use binary Gmsh format
+#endif
 
 namespace palace
 {
