@@ -470,10 +470,10 @@ index e4d41a1b6..5306c94f7 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 3f0837a31..5538cdcd7 100644
+index 1a0e82e87..c852cb52e 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -11758,7 +11758,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11759,7 +11759,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -482,7 +482,7 @@ index 3f0837a31..5538cdcd7 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -11772,7 +11772,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11773,7 +11773,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -492,10 +492,10 @@ index 3f0837a31..5538cdcd7 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 5257a8053..c12cb3b64 100644
+index 7187fe11a..bcde8a6d9 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2380,7 +2380,7 @@ public:
+@@ -2389,7 +2389,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,

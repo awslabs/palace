@@ -13,7 +13,7 @@ index e9dd07217..4129789bb 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 922c356ed..860e18318 100644
+index 5270e8c71..e92303155 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -2165,7 +2165,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
@@ -207,7 +207,7 @@ index 922c356ed..860e18318 100644
     }
     else
     {
-@@ -6350,37 +6376,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6351,37 +6377,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -250,7 +250,7 @@ index 922c356ed..860e18318 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -6400,88 +6410,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6401,88 +6411,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -362,7 +362,7 @@ index 922c356ed..860e18318 100644
           }
        }
     }
-@@ -7445,24 +7408,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7446,24 +7409,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -389,7 +389,7 @@ index 922c356ed..860e18318 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index c12cb3b64..ff6b01484 100644
+index bcde8a6d9..7b48a773c 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
