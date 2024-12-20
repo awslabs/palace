@@ -1,13 +1,7 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c8ca4ca..193e8b5 100644
+index c8ca4ca..b85e966 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,4 +1,4 @@
--cmake_minimum_required(VERSION 3.20...3.31)
-+cmake_minimum_required(VERSION 3.20...3.30)
- 
- if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
-   message(FATAL_ERROR "Please use out of source build:
 @@ -12,7 +12,7 @@ endif()
  
  project(MUMPS
