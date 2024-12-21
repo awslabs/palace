@@ -15,11 +15,16 @@
 // for this.
 extern "C"
 {
-  void zggev_(char *, char *, int *, std::complex<mfem::real_t> *, int *,
-              std::complex<mfem::real_t> *, int *, std::complex<mfem::real_t> *,
-              std::complex<mfem::real_t> *, std::complex<mfem::real_t> *, int *,
-              std::complex<mfem::real_t> *, int *, std::complex<mfem::real_t> *, int *,
-              mfem::real_t *, int *);
+  void zggev_(char *, char *, int *, std::complex<double> *, int *,
+              std::complex<double> *, int *, std::complex<double> *,
+              std::complex<double> *, std::complex<double> *, int *,
+              std::complex<double> *, int *, std::complex<double> *, int *,
+              double *, int *);
+  void cggev_(char *, char *, int *, std::complex<float> *, int *,
+              std::complex<float> *, int *, std::complex<float> *,
+              std::complex<float> *, std::complex<float> *, int *,
+              std::complex<float> *, int *, std::complex<float> *, int *,
+              float *, int *);
 }
 
 namespace palace
@@ -152,9 +157,13 @@ inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
   MatType VL(0, 0);
   VR.resize(n, n);
   int info = 0;
-
+#ifdef MFEM_USE_SINGLE
+  cggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
+         VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
+#else
   zggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
          VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
+#endif
   MFEM_VERIFY(info == 0, "ZGGEV failed with info = " << info << "!");
 
   // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).
