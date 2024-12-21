@@ -57,6 +57,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   }
   ksp->SetInitialGuess(iodata.solver.linear.initial_guess);
   ksp->SetRelTol(iodata.solver.linear.tol);
+  ksp->SetAbsTol(2 * std::numeric_limits<mfem::real_t>::epsilon());
   ksp->SetMaxIter(iodata.solver.linear.max_it);
 
   // Configure preconditioning side (only for GMRES).

@@ -76,16 +76,16 @@ inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
   const T safmax = SafeMax<T>();
   const T root_min = std::sqrt(safmin);
   const T root_max = std::sqrt(safmax / 2);
-  if (dy == 0.0)
+  if (dy == mfem::real_t(0.0))
   {
-    cs = 1.0;
-    sn = 0.0;
+    cs = mfem::real_t(1.0);
+    sn = mfem::real_t(0.0);
     return;
   }
-  if (dx == 0.0)
+  if (dx == mfem::real_t(0.0))
   {
-    cs = 0.0;
-    sn = std::copysign(1.0, dy);
+    cs = mfem::real_t(0.0);
+    sn = std::copysign(mfem::real_t(1.0), dy);
     return;
   }
   T dx1 = std::abs(dx);
@@ -265,7 +265,7 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
     else
     {
       ApplyB(B, b, r, use_timer);
-      x = 0.0;
+      x = mfem::real_t(0.0);
     }
   }
   else  // !B || side == PrecSide::RIGHT
@@ -278,7 +278,7 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
     else
     {
       r = b;
-      x = 0.0;
+      x = mfem::real_t(0.0);
     }
   }
 }
@@ -460,7 +460,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
-    converged = (res < eps);
+    converged = (it > 0 && res < eps);
   }
   if (print_opts.iterations)
   {
@@ -585,15 +585,15 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (it > 0 && beta < eps)
     {
       converged = true;
       break;
     }
 
-    V[0] = 0.0;
-    V[0].Add(1.0 / beta, r);
-    std::fill(s.begin(), s.end(), 0.0);
+    V[0] = mfem::real_t(0.0);
+    V[0].Add(mfem::real_t(1.0) / beta, r);
+    std::fill(s.begin(), s.end(), mfem::real_t(0.0));
     s[0] = beta;
 
     int j = 0;
@@ -626,7 +626,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (it > 0 && beta < eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
@@ -653,7 +653,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else  // B && pc_side == PrecSide::RIGHT
     {
-      r = 0.0;
+      r = mfem::real_t(0.0);
       for (int k = 0; k <= j; k++)
       {
         r.Add(s[k], V[k]);
@@ -764,15 +764,15 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (it > 0 && beta < eps)
     {
       converged = true;
       break;
     }
 
-    V[0] = 0.0;
-    V[0].Add(1.0 / beta, Z[0]);
-    std::fill(s.begin(), s.end(), 0.0);
+    V[0] = mfem::real_t(0.0);
+    V[0].Add(mfem::real_t(1.0) / beta, Z[0]);
+    std::fill(s.begin(), s.end(), mfem::real_t(0.0));
     s[0] = beta;
 
     int j = 0;
@@ -805,7 +805,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "FGMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (it > 0 && beta < eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
