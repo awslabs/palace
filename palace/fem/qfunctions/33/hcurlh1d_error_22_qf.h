@@ -20,14 +20,14 @@ CEED_QFUNCTION(f_apply_hcurlh1d_error_22)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar v1_loc[2], v2_loc[2];
     {
       const CeedScalar u1_loc[2] = {u1[i + Q * 0], u1[i + Q * 1]};
-      CeedScalar coeff[3], adjJt_loc[4];
+      CeedScalar coeff[4], adjJt_loc[4];
       CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
       MatUnpack22(adjJt + i, Q, adjJt_loc);
       MultBAx22(adjJt_loc, coeff, u1_loc, v1_loc);
     }
     {
       const CeedScalar u2_loc[2] = {u2[i + Q * 0], u2[i + Q * 1]};
-      CeedScalar coeff[3];
+      CeedScalar coeff[4];
       CoeffUnpack2(CoeffPairSecond<2>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
       MultBx22(coeff, u2_loc, v2_loc);
     }
@@ -51,13 +51,13 @@ CEED_QFUNCTION(f_apply_h1dhcurl_error_22)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar v1_loc[2], v2_loc[2];
     {
       const CeedScalar u1_loc[2] = {u1[i + Q * 0], u1[i + Q * 1]};
-      CeedScalar coeff[3];
+      CeedScalar coeff[4];
       CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
       MultBx22(coeff, u1_loc, v1_loc);
     }
     {
       const CeedScalar u2_loc[2] = {u2[i + Q * 0], u2[i + Q * 1]};
-      CeedScalar coeff[3], adjJt_loc[4];
+      CeedScalar coeff[4], adjJt_loc[4];
       CoeffUnpack2(CoeffPairSecond<2>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
       MatUnpack22(adjJt + i, Q, adjJt_loc);
       MultBAx22(adjJt_loc, coeff, u2_loc, v2_loc);
