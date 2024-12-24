@@ -620,7 +620,7 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
     std::complex<double> S_ij = post_op.GetSParameter(src_lumped_port, o_idx, source_idx);
 
     auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
-    auto arg_S_ij = std::arg(S_ij) * 180.8 / M_PI;
+    auto arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
     port_S.table[format("abs_{}_{}", o_idx, source_idx)] << abs_S_ij;
     port_S.table[format("arg_{}_{}", o_idx, source_idx)] << arg_S_ij;
