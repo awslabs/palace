@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   build-and-test-spack:
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
