@@ -60,6 +60,10 @@
     [
         ...
     ],
+    "FloquetWaveVector":
+    [
+        ...
+    ],
     "Postprocessing":
     {
         "SurfaceFlux":
@@ -127,7 +131,7 @@ each terminal boundary.
 `"Periodic"` :  Array of objects for configuring periodic boundary conditions for surfaces
 with meshes that are identical after translation and/or rotation.
 
-`"FloquetWaveVector"` :  Object for configuring Floquet periodic boundary conditions for
+`"FloquetWaveVector"` :  Array for specifying Floquet wave vector for
 meshes generated with built-in periodicity.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
