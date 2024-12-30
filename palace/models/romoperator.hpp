@@ -29,7 +29,7 @@ private:
   SpaceOperator &space_op;
 
   // HDM system matrices and excitation RHS.
-  std::unique_ptr<ComplexOperator> K, M, C, A2, PF;
+  std::unique_ptr<ComplexOperator> K, M, C, A2, FP;
   ComplexVector RHS1, RHS2, r;
   bool has_A2, has_RHS1, has_RHS2;
 
@@ -37,7 +37,7 @@ private:
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors.
-  Eigen::MatrixXcd Kr, Mr, Cr, Ar, PFr;
+  Eigen::MatrixXcd Kr, Mr, Cr, Ar, FPr;
   Eigen::VectorXcd RHS1r, RHSr;
 
   // PROM reduced-order basis (real-valued) and active dimension.
