@@ -86,7 +86,7 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
     AttrMat(ctx.data())[i].first = (k < 0) ? zero_mat : k;
   }
 
-  // Copy material properties
+  // Copy material properties.
   ctx[1 + attr_mat.Size()].first = mat_coeff.SizeK() + 1;
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {

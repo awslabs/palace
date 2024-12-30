@@ -2105,19 +2105,19 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   mesh->GetGeometries(3, geoms);
   if (geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON)
   {
-    // Pure tet mesh
+    // Pure tet mesh.
     MFEM_VERIFY(mesh->GetNE() > 3 * num_periodic_bc_elems,
                 "Not enough mesh elements in periodic direction!");
   }
   else if (geoms.Size() > 1 && has_tets)
   {
-    // Mixed mesh
+    // Mixed mesh.
     MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
                 "Not enough mesh elements in periodic direction!");
   }
   else
   {
-    // No tets
+    // No tets.
     MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
                 "Not enough mesh elements in periodic direction!");
   }
