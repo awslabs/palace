@@ -76,17 +76,22 @@ private:
   // The actual mfem::Solver.
   std::unique_ptr<mfem::Solver> pc;
 
-  // Real-valued system matrix A = Ar + Ai in parallel assembled form.
+  // System matrix A in parallel assembled form.
   std::unique_ptr<mfem::HypreParMatrix> A;
 
   // Whether or not to save the parallel assembled matrix after calling
   // mfem::Solver::SetOperator (some solvers copy their input).
   bool save_assembled;
 
+  // Whether to use the exact complex-valued system matrix or the real-valued
+  // approximation A = Ar + Ai.
+  bool complex_matrix = true;
+
 public:
-  MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true)
+  MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
+                    bool complex_matrix = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
-      save_assembled(save_assembled)
+      save_assembled(save_assembled), complex_matrix(complex_matrix)
   {
   }
 

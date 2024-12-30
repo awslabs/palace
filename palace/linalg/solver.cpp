@@ -52,7 +52,27 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   if (hAr && hAi)
   {
-    A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    if (complex_matrix)
+    {
+      // A = [Ar, -Ai]
+      //     [Ai,  Ar]
+      mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+      mfem::Array2D<double> block_coeffs(2, 2);
+      blocks(0, 0) = hAr;
+      blocks(0, 1) = hAi;
+      blocks(1, 0) = hAi;
+      blocks(1, 1) = hAr;
+      block_coeffs(0, 0) = 1.0;
+      block_coeffs(0, 1) = -1.0;
+      block_coeffs(1, 0) = 1.0;
+      block_coeffs(1, 1) = 1.0;
+      A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+    }
+    else
+    {
+      // A = Ar + Ai.
+      A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    }
     if (PtAPr)
     {
       PtAPr->StealParallelAssemble();
@@ -101,13 +121,33 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  mfem::Array<const Vector *> X(2);
-  mfem::Array<Vector *> Y(2);
-  X[0] = &x.Real();
-  X[1] = &x.Imag();
-  Y[0] = &y.Real();
-  Y[1] = &y.Imag();
-  pc->ArrayMult(X, Y);
+  if (pc->Height() == x.Size())
+  {
+    mfem::Array<const Vector *> X(2);
+    mfem::Array<Vector *> Y(2);
+    X[0] = &x.Real();
+    X[1] = &x.Imag();
+    Y[0] = &y.Real();
+    Y[1] = &y.Imag();
+    pc->ArrayMult(X, Y);
+  }
+  else
+  {
+    const int Nx = x.Size(), Ny = y.Size();
+    Vector X(2 * Nx), Y(2 * Ny), yr, yi;
+    X.UseDevice(true);
+    Y.UseDevice(true);
+    yr.UseDevice(true);
+    yi.UseDevice(true);
+    linalg::SetSubVector(X, 0, x.Real());
+    linalg::SetSubVector(X, Nx, x.Imag());
+    pc->Mult(X, Y);
+    Y.ReadWrite();
+    yr.MakeRef(Y, 0, Ny);
+    yi.MakeRef(Y, Ny, Ny);
+    y.Real() = yr;
+    y.Imag() = yi;
+  }
 }
 
 }  // namespace palace
