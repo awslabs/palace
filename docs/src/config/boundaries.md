@@ -546,13 +546,14 @@ attributes for this periodic boundary.
 `"ReceiverAttributes" [None]` :  Integer array of the receiver attributes of the mesh boundary
 attributes for this periodic boundary.
 
-`"Translation" [None]` :  Optional floating point array defining the distance between the donor
-and receiver attributes in mesh units. If neither `"Translation"` or `"AffineTransformation"` are
-specified, the transformation between donor and receiver boundaries is automatically detected.
+`"Translation" [None]` :  Optional floating point array defining the distance from the donor
+attribute to the receiver attribute in mesh units. If neither `"Translation"` or
+`"AffineTransformation"` are specified, the transformation between donor and receiver boundaries
+is automatically detected.
 
 `"AffineTransformation" [None]` :  Optional floating point array of size 16 defining the
-three-dimensional (4 x 4) affine transformation matrix (in row major format) between the donor
-and receiver attributes in mesh units. If neither `"Translation"` or `"AffineTransformation"` are
+three-dimensional (4 x 4) affine transformation matrix (in row major format) from the donor attribute
+to the receiver attribute in mesh units. If neither `"Translation"` or `"AffineTransformation"` are
 specified, the transformation between donor and receiver boundaries is automatically detected.
 
 `"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between
