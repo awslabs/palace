@@ -2100,6 +2100,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
 
   // Check if mesh has enough elements in periodic direction. MFEM's periodicity
   // fails for meshes with <=2 elements in the period direction.
+  // Compare the number of mesh elements to the number of periodic boundary
+  // elements.
   const int num_periodic_bc_elems = bdr_e_donor.size() + bdr_e_receiver.size();
   mfem::Array<mfem::Geometry::Type> geoms;
   mesh->GetGeometries(3, geoms);
@@ -2107,12 +2109,6 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   {
     // Pure tet mesh.
     MFEM_VERIFY(mesh->GetNE() > 3 * num_periodic_bc_elems,
-                "Not enough mesh elements in periodic direction!");
-  }
-  else if (geoms.Size() > 1 && has_tets)
-  {
-    // Mixed mesh.
-    MFEM_VERIFY(mesh->GetNE() > num_periodic_bc_elems,
                 "Not enough mesh elements in periodic direction!");
   }
   else
