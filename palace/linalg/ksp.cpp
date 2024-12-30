@@ -23,8 +23,8 @@ namespace
 {
 
 template <typename OperType>
-std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
-                                                                 const IoData &iodata)
+std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &iodata,
+                                                                 MPI_Comm comm)
 {
   // Create the solver.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
@@ -114,7 +114,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
 }
 
 template <typename OperType, typename T, typename... U>
-auto MakeWrapperSolver(U &&...args)
+auto MakeWrapperSolver(const IoData &iodata, U &&...args)
 {
   // Sparse direct solver types copy the input matrix, so there is no need to save the
   // parallel assembled operator.
@@ -131,12 +131,13 @@ auto MakeWrapperSolver(U &&...args)
 #endif
                                     false);
   return std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<T>(std::forward<U>(args)...), save_assembled);
+      std::make_unique<T>(iodata, std::forward<U>(args)...), save_assembled,
+      iodata.solver.linear.complex_coarse_solve);
 }
 
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
-ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
+ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                               FiniteElementSpaceHierarchy &fespaces,
                               FiniteElementSpaceHierarchy *aux_fespaces)
 {
@@ -161,7 +162,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc = MakeWrapperSolver<OperType, SuperLUSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, SuperLUSolver>(iodata, comm, print);
 #else
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
@@ -169,7 +170,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<OperType, StrumpackSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, StrumpackSolver>(iodata, comm, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -177,7 +178,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(iodata, comm, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -185,7 +186,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = MakeWrapperSolver<OperType, MumpsSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, MumpsSolver>(iodata, comm, print);
 #else
       MFEM_ABORT(
           "Solver was not built with MUMPS support, please choose a different solver!");
@@ -214,12 +215,12 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                                   "primary space and auxiliary spaces for construction!");
         const auto G = fespaces.GetDiscreteInterpolators(*aux_fespaces);
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            comm, iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
+            iodata, comm, std::move(pc), fespaces.GetProlongationOperators(), &G);
       }
       else
       {
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            comm, iodata, std::move(pc), fespaces.GetProlongationOperators());
+            iodata, comm, std::move(pc), fespaces.GetProlongationOperators());
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
@@ -238,9 +239,9 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
-        ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
-        ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
-                                                iodata, fespaces, aux_fespaces))
+        ConfigureKrylovSolver<OperType>(iodata, fespaces.GetFinestFESpace().GetComm()),
+        ConfigurePreconditionerSolver<OperType>(
+            iodata, fespaces.GetFinestFESpace().GetComm(), fespaces, aux_fespaces))
 {
   use_timer = true;
 }

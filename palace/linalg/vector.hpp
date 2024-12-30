@@ -166,6 +166,10 @@ void SetSubVector(VecType &x, const mfem::Array<int> &rows, double s);
 template <typename VecType>
 void SetSubVector(VecType &x, const mfem::Array<int> &rows, const VecType &y);
 
+// Sets contiguous entries from start to the given vector.
+template <typename VecType>
+void SetSubVector(VecType &x, int start, const VecType &y);
+
 // Sets all entries in the range [start, end) to  the given value.
 template <typename VecType>
 void SetSubVector(VecType &x, int start, int end, double s);

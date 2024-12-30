@@ -59,8 +59,8 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &, std::unordered_map<int, int> &,
-                            const IoData &);
+int AddInterfaceBdrElements(const IoData &, std::unique_ptr<mfem::Mesh> &,
+                            std::unordered_map<int, int> &);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -80,7 +80,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
+std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 {
   // If possible on root, read the serial mesh (converting format if necessary), and do all
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
@@ -198,7 +198,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     {
       // Split all internal (non periodic) boundary elements for boundary attributes where
       // BC are applied (not just postprocessing).
-      while (AddInterfaceBdrElements(smesh, face_to_be, iodata) != 1)
+      while (AddInterfaceBdrElements(iodata, smesh, face_to_be) != 1)
       {
         // May require multiple calls due to early exit/retry approach.
       }
@@ -485,7 +485,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
   if (max_region_ref_levels > 0 && mesh.capacity() == 1)
   {
-    RebalanceMesh(mesh[0], iodata);
+    RebalanceMesh(iodata, mesh[0]);
   }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
@@ -1638,7 +1638,7 @@ double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
   return volume;
 }
 
-double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
@@ -2940,8 +2940,8 @@ struct UnorderedPairHasher
   }
 };
 
-int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            std::unordered_map<int, int> &face_to_be, const IoData &iodata)
+int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
+                            std::unordered_map<int, int> &face_to_be)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)

@@ -62,7 +62,7 @@ public:
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
                            double cheby_sf_min, bool cheby_4th_kind);
-  GeometricMultigridSolver(MPI_Comm comm, const IoData &iodata,
+  GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G = nullptr)
