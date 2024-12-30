@@ -93,12 +93,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
+      - name: Configure GNU Compilers
+        run: |
+          sudo update-alternatives --install $(which gcc) gcc $(which gcc-12) 999 \
+            --slave $(which g++) g++ $(which g++-12) \
+            --slave $(which gfortran) gfortran $(which gfortran-12)
       - name: Configure Open MPI
         if: matrix.mpi == 'openmpi'
         run: |
           sudo apt-get install -y openmpi-bin libopenmpi-dev
-
       - name: Configure MPICH
         if: matrix.mpi == 'mpich'
         run: |
@@ -160,12 +163,12 @@ jobs:
           elif [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=clang
             export CXX=clang++
-            export FC=gfortran-12
+            export FC=gfortran
             export LDFLAGS='-fuse-ld=lld'
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-12
-            export CXX=g++-12
-            export FC=gfortran-12
+            export CC=gcc
+            export CXX=g++
+            export FC=gfortran
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
