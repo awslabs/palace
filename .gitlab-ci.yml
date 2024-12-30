@@ -168,10 +168,10 @@ test-build-aocl:
   script:
     # Install AMD Optimizing CPU Libraries (AOCL)
     - apt-get install -y libmpich-dev
-    - wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
-    - apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
+    - wget https://download.amd.com/developer/eula/aocl/aocl-5-0/aocl-linux-gcc-5.0.0_1_amd64.deb
+    - apt-get install -y ./aocl-linux-gcc-5.0.0_1_amd64.deb
     - rm aocl-linux-gcc-*.deb
-    - export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
+    - export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-5.0.0/gcc
     - export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
     - mkdir build && cd build
     - cmake ..

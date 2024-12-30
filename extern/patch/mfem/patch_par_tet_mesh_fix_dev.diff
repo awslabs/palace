@@ -13,10 +13,10 @@ index e9dd07217..4129789bb 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index a32ba38e8..456f9618c 100644
+index 5270e8c71..e92303155 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -2153,7 +2153,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2165,7 +2165,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -25,7 +25,7 @@ index a32ba38e8..456f9618c 100644
     }
  
     if (generate_edges)
-@@ -2608,82 +2608,113 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2620,82 +2620,113 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -177,7 +177,7 @@ index a32ba38e8..456f9618c 100644
        }
     }
  }
-@@ -3034,9 +3065,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -3046,9 +3077,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -188,7 +188,7 @@ index a32ba38e8..456f9618c 100644
     }
  
     GetElementToFaceTable();
-@@ -3303,8 +3332,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3315,8 +3344,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -198,7 +198,7 @@ index a32ba38e8..456f9618c 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -4004,8 +4032,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -4016,8 +4044,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -207,7 +207,7 @@ index a32ba38e8..456f9618c 100644
     }
     else
     {
-@@ -6295,37 +6321,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6351,37 +6377,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -250,7 +250,7 @@ index a32ba38e8..456f9618c 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -6345,88 +6355,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6401,88 +6411,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -362,7 +362,7 @@ index a32ba38e8..456f9618c 100644
           }
        }
     }
-@@ -7384,24 +7347,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7446,24 +7409,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -389,7 +389,7 @@ index a32ba38e8..456f9618c 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 73cf6124f..d737768b0 100644
+index bcde8a6d9..7b48a773c 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
@@ -410,7 +410,7 @@ index 73cf6124f..d737768b0 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index cc673f78e..0e9274ece 100644
+index 9556bcbd2..735d8f09c 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -446,7 +446,7 @@ index cc673f78e..0e9274ece 100644
 +   // vertex 0 - vertex 1 is the longest edge in the element. In the case of
 +   // ties in the edge length, the global edge index is used for a consistent
 +   // ordering between elements.
-+   Array<double> lengths;
++   Array<real_t> lengths;
 +   GetEdgeLengths2(v_to_v, lengths);
 +
 +   // Create a GroupCommunicator over shared edges
@@ -602,7 +602,7 @@ index cc673f78e..0e9274ece 100644
        {
           svert_master_rank[group_svert.GetRow(i)[j]] = rank;
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 05d81c618..6d4378578 100644
+index 05d81c618..328f35b3a 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
 @@ -13,6 +13,8 @@
@@ -691,9 +691,9 @@ index 05d81c618..6d4378578 100644
  
 +// @cond DOXYGEN_SKIP
 +
-+template void Tetrahedron::MarkEdge(const DSTable &, const Array<double> &,
++template void Tetrahedron::MarkEdge(const DSTable &, const Array<real_t> &,
 +                                    const Array<int> &);
-+template void Tetrahedron::MarkEdge(const DSTable &, const Array<double> &,
++template void Tetrahedron::MarkEdge(const DSTable &, const Array<real_t> &,
 +                                    const Array<std::int64_t> &);
 +
 +// @endcond
@@ -719,7 +719,7 @@ index 83665454e..d7ee8b419 100644
     void ResetTransform(int tr) override { transform = tr; }
     unsigned GetTransform() const override { return transform; }
 diff --git a/mesh/triangle.cpp b/mesh/triangle.cpp
-index 795425b46..da9cc741e 100644
+index 795425b46..2e5b30e1f 100644
 --- a/mesh/triangle.cpp
 +++ b/mesh/triangle.cpp
 @@ -11,6 +11,8 @@
@@ -823,9 +823,9 @@ index 795425b46..da9cc741e 100644
  
 +// @cond DOXYGEN_SKIP
 +
-+template void Triangle::MarkEdge(int *, const DSTable &, const Array<double> &,
++template void Triangle::MarkEdge(int *, const DSTable &, const Array<real_t> &,
 +                                 const Array<int> &);
-+template void Triangle::MarkEdge(int *, const DSTable &, const Array<double> &,
++template void Triangle::MarkEdge(int *, const DSTable &, const Array<real_t> &,
 +                                 const Array<std::int64_t> &);
 +
 +// @endcond

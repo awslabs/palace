@@ -1,19 +1,41 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3be37f8..193e8b5 100644
+index c8ca4ca..b85e966 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -48,10 +48,7 @@ find_package(Threads)
+@@ -12,7 +12,7 @@ endif()
+ 
+ project(MUMPS
+ LANGUAGES C Fortran
+-VERSION 5.7.3.2
++VERSION 5.7.3.1
+ DESCRIPTION "Sparse direct parallel solver"
+ HOMEPAGE_URL "http://mumps-solver.org/"
+ )
+@@ -48,13 +48,10 @@ find_package(Threads)
  
  if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
--  if(NOT DEFINED ENV{MKLROOT} AND NOT LAPACK_VENDOR MATCHES "^MKL" OR NOT scalapack)
+-  if(NOT DEFINED ENV{MKLROOT} AND NOT LAPACK_VENDOR MATCHES "^MKL" OR NOT MUMPS_scalapack)
 -    # oneMKL MKLConfig.cmake must be invoked only once
 -    include(cmake/lapack.cmake)
 -  endif()
 +  include(cmake/lapack.cmake)
    set(NUMERIC_LIBS LAPACK::LAPACK)
  
-   if(scalapack)
+-  if(MUMPS_scalapack)
++  if(scalapack)
+     include(cmake/scalapack.cmake) # this will also create the LAPACK::LAPACK target
+     list(PREPEND NUMERIC_LIBS SCALAPACK::SCALAPACK)
+   endif()
+@@ -63,7 +60,7 @@ if(MUMPS_parallel)
+   set(NUMERIC_INC ${MPI_Fortran_INCLUDE_DIRS})
+   list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
+ 
+-  if(MUMPS_openmp)
++  if(openmp)
+     find_package(OpenMP COMPONENTS C Fortran REQUIRED)
+     list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
+   endif()
 @@ -99,15 +96,6 @@ endif()
  
  list(APPEND ORDERING_LIBS pord)
@@ -32,10 +54,10 @@ index 3be37f8..193e8b5 100644
  message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 9b9d1d0..0000000
+index a633d6c..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,501 +0,0 @@
+@@ -1,512 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -76,6 +98,10 @@ index 9b9d1d0..0000000
 -  MKL only: 64-bit integers  (default is 32-bit integers)
 -``TBB``
 -  Intel MPI + TBB for MKL
+-``OpenMP``
+-  MKL only: use OpenMP (default is sequential)
+-
+-
 -``AOCL``
 -  AMD Optimizing CPU Libraries
 -
@@ -344,8 +370,10 @@ index 9b9d1d0..0000000
 -
 -#===============================
 -
--macro(find_mkl_libs)
--# https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2023-2/cmake-config-for-onemkl.html
+-macro(lapack_mkl)
+-# https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2025-0/cmake-config-for-onemkl.html
+-
+-set(MKL_ARCH "intel64")
 -
 -set(MKL_INTERFACE "lp64")
 -if(MKL64 IN_LIST LAPACK_FIND_COMPONENTS)
@@ -358,8 +386,13 @@ index 9b9d1d0..0000000
 -endif()
 -
 -# MKL_THREADING default: "intel_thread" which is Intel OpenMP
--if(TBB IN_LIST LAPACK_FIND_COMPONENTS)
+-# some systems have messed up OpenMP, so sequential unless requested
+-if(TBB IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  set(MKL_THREADING "tbb_thread")
+-elseif(OpenMP IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  set(MKL_THREADING "intel_thread")
+-else()
+-  set(MKL_THREADING "sequential")
 -endif()
 -
 -# default: dynamic
@@ -382,13 +415,13 @@ index 9b9d1d0..0000000
 -
 -set(LAPACK_MKL_FOUND true)
 -
--foreach(c IN ITEMS TBB LAPACK95 MKL64)
+-foreach(c IN ITEMS TBB LAPACK95 MKL64 OpenMP)
 -  if(${c} IN_LIST LAPACK_FIND_COMPONENTS)
 -    set(LAPACK_${c}_FOUND true)
 -  endif()
 -endforeach()
 -
--endmacro(find_mkl_libs)
+-endmacro()
 -
 -# ========== main program
 -
@@ -418,7 +451,7 @@ index 9b9d1d0..0000000
 -endif()
 -
 -if(MKL IN_LIST LAPACK_FIND_COMPONENTS OR MKL64 IN_LIST LAPACK_FIND_COMPONENTS)
--  find_mkl_libs()
+-  lapack_mkl()
 -elseif(Atlas IN_LIST LAPACK_FIND_COMPONENTS)
 -  atlas_libs()
 -elseif(Netlib IN_LIST LAPACK_FIND_COMPONENTS)
@@ -538,10 +571,10 @@ index 9b9d1d0..0000000
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index e66930a..5fa9d78 100644
+index 0e65507..254dd0b 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
-@@ -52,8 +52,6 @@ References
+@@ -58,8 +58,6 @@ References
  
  include(CheckFortranSourceCompiles)
  
@@ -550,7 +583,7 @@ index e66930a..5fa9d78 100644
  #===== functions
  
  function(scalapack_check)
-@@ -64,11 +62,8 @@ find_package(Threads)
+@@ -70,11 +68,8 @@ find_package(Threads)
  
  set(CMAKE_REQUIRED_FLAGS)
  set(CMAKE_REQUIRED_LINK_OPTIONS)
@@ -564,7 +597,7 @@ index e66930a..5fa9d78 100644
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
  
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
-@@ -240,20 +235,13 @@ endif()
+@@ -252,20 +247,13 @@ endif()
  
  if(SCALAPACK_FOUND)
    # need if _FOUND guard as can't overwrite imported target even if bad
@@ -586,7 +619,7 @@ index e66930a..5fa9d78 100644
  
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
-@@ -261,5 +249,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+@@ -273,5 +261,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
      endif()
    endif()
  endif()
@@ -610,10 +643,10 @@ index 3f0997e..14ebbe6 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 21503e7..78c9dda 100644
+index 018fc1d..78c9dda 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -3,27 +3,7 @@ include(GNUInstallDirs)
+@@ -3,33 +3,7 @@ include(GNUInstallDirs)
  
  if(find AND NOT TARGET SCALAPACK::SCALAPACK)
  
@@ -624,6 +657,12 @@ index 21503e7..78c9dda 100644
 -    (DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}"))
 -    set(SCALAPACK_VENDOR MKL)
 -    set(LAPACK_VENDOR MKL)
+-  endif()
+-endif()
+-
+-if(MKL IN_LIST SCALAPACK_VENDOR)
+-  if(MUMPS_openmp)
+-    list(APPEND SCALAPACK_VENDOR OpenMP)
 -  endif()
 -endif()
 -

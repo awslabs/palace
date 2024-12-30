@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "cbde1bb675a5bd74b778eb29f6b9dacc0607542c" CACHE STRING
+  "3ea057d9c00b319c854361e8d38b18f80b35d09c" CACHE STRING
   "Git tag for external ButterflyPACK build"
 )
 
@@ -48,7 +48,7 @@ set(EXTERN_GSLIB_GIT_BRANCH
   "Git branch for external GSLIB build"
 )
 set(EXTERN_GSLIB_GIT_TAG
-  "d5d4ee04ad4d32bebfef730a3608cbe988223dbd" CACHE STRING
+  "95acf5b42301d6cb48fda88d662f1d784b863089" CACHE STRING
   "Git tag for external GSLIB build"
 )
 
@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "aa1f66d633b144eae83edf89937d2316d2d63268" CACHE STRING
+  "e5f4984ea0cceb897d3d29516988f38996d7d07d" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "be8d6f551b0f7f956d1f45b9192fb65aa4e4d3da" CACHE STRING
+  "5a7f61ca9ae98f99006c9d3babed48bcc256dfea" CACHE STRING
   "Git tag for external libCEED build"
 )
 
@@ -90,13 +90,13 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "Git branch for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_TAG
-  "bbc71343595f9b71664d0985b02e87e0654c8cdc" CACHE STRING
+  "b4514e4c52b6c735c30700992b1966e7c9dcdcae" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 
 # MAGMA
 set(EXTERN_MAGMA_URL
-  "https://bitbucket.org/icl/magma.git" CACHE STRING
+  "https://github.com/icl-utk-edu/magma.git" CACHE STRING
   "URL for external MAGMA build"
 )
 set(EXTERN_MAGMA_GIT_BRANCH
@@ -104,7 +104,7 @@ set(EXTERN_MAGMA_GIT_BRANCH
   "Git branch for external MAGMA build"
 )
 set(EXTERN_MAGMA_GIT_TAG
-  "4917e80ca559d0e0d4fdb56abfca381639f9b821" CACHE STRING
+  "95903129f839bb401d9d9c53bd3d8e1b5e14c238" CACHE STRING
   "Git tag for external MAGMA build"
 )
 
@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "7c1a0eb5e3f70ff9d161c9d6e3f228ba2513acca" CACHE STRING
+  "e2a20d381c3e180d77cd2ad32df30580f42c261b" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "1324a3358aae44279b6af4630609956f06131d6f" CACHE STRING
+  "0f50568b2fbd88413774d2ce1c88ab3851b24abe" CACHE STRING
   "Git tag for external MUMPS build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "2ad7182b1093845a8c26c56c2f6611a55c3328ce" CACHE STRING
+  "ba43b2edcffc84c955e282b517bbd116334b0005" CACHE STRING
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "89b995ba7ee626d15a64b368ee92d6d4a4f6d6fb" CACHE STRING
+  "616e8b6ac8dbb41a1dc314e5c099b8af246c688d" CACHE STRING
   "Git tag for external SLEPc build"
 )
 
@@ -216,7 +216,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "9a45f304f21e1d9c44c6fa50ac2f044ab15cf342" CACHE STRING
+  "115b152be9a5d0d77846e3694f699c53c93fe394" CACHE STRING
   "Git tag for external STRUMPACK build"
 )
 
@@ -230,7 +230,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "b3193e8615b5364f4e5650297d9e2aaf2e49c909" CACHE STRING
+  "fe0e4e8968c58309fd75b4d6999580c44fffc26d" CACHE STRING
   "Git tag for external SuperLU_DIST build"
 )
 
@@ -244,7 +244,7 @@ set(EXTERN_ZFP_GIT_BRANCH
   "Git branch for external ZFP build"
 )
 set(EXTERN_ZFP_GIT_TAG
-  "a46fa8b91bf2d69f4ffcf04af4f908383828ba79" CACHE STRING
+  "71490d236e29af2968dc9e11f14cb46af37f1dd3" CACHE STRING
   "Git tag for external ZFP build"
 )
 
@@ -276,6 +276,6 @@ set(EXTERN_SUNDIALS_GIT_BRANCH
   "Git branch for external SUNDIALS build"
 )
 set(EXTERN_SUNDIALS_GIT_TAG
-  "aaeab8d907c6b7dfca86041401fdc1448f35f826" CACHE STRING
+  "0eff39663606f2ff280c4059a947ed62ae38180a" CACHE STRING
   "Git tag for external SUNDIALS build"
 )
