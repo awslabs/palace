@@ -52,7 +52,6 @@ The format of this changelog is based on
     The Floquet wave vector can be specified along with periodic boundaries in the
     `config["Boundaries"]["Periodic"]` configuration.
 
-
 ## [0.13.0] - 2024-05-20
 
   - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
