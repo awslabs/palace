@@ -20,9 +20,8 @@ class MumpsSolver : public mfem::MUMPSSolver
 {
 public:
   MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
-              config::LinearSolverData::SymFactType reorder, mfem::real_t blr_tol,
-              int print);
-  MumpsSolver(MPI_Comm comm, const IoData &iodata, int print)
+              config::LinearSolverData::SymFactType reorder, mfem::real_t blr_tol, int print);
+  MumpsSolver(const IoData &iodata, MPI_Comm comm, int print)
     : MumpsSolver(comm,
                   (iodata.solver.linear.pc_mat_shifted ||
                    iodata.problem.type == config::ProblemData::Type::TRANSIENT ||

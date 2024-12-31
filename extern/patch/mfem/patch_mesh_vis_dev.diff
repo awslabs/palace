@@ -12,12 +12,12 @@ index 1313d2a1e..e84e6d9fb 100644
 +               "Coefficient/VectorCoefficient output is not supported for "
 +               "DataCollection class!");
  }
- 
+
  void DataCollection::SaveMesh()
 @@ -309,9 +314,9 @@ void DataCollection::SaveField(const std::string &field_name)
     }
  }
- 
+
 -void DataCollection::SaveQField(const std::string &q_field_name)
 +void DataCollection::SaveQField(const std::string &field_name)
  {
@@ -35,10 +35,10 @@ index 1313d2a1e..e84e6d9fb 100644
 +     bdr_output(false)
  {
     cycle = 0; // always include a valid cycle index in file names
- 
+
 @@ -910,16 +916,19 @@ void ParaViewDataCollection::Save()
     std::string vtu_prefix = col_path + "/" + GenerateVTUPath() + "/";
- 
+
     // Save the local part of the mesh and grid functions fields to the local
 -   // VTU file
 +   // VTU file. Also save coefficient fields.
@@ -47,7 +47,7 @@ index 1313d2a1e..e84e6d9fb 100644
        os.precision(precision);
        SaveDataVTU(os, levels_of_detail);
     }
- 
+
 -   // Save the local part of the quadrature function fields
 +   // Save the local part of the quadrature function fields.
     for (const auto &qfield : q_field_map)
@@ -61,7 +61,7 @@ index 1313d2a1e..e84e6d9fb 100644
 @@ -935,7 +944,7 @@ void ParaViewDataCollection::Save()
           std::ofstream pvtu_out(vtu_prefix + GeneratePVTUFileName("data"));
           WritePVTUHeader(pvtu_out);
- 
+
 -         // Grid function fields
 +         // Grid function fields and coefficient fields
           pvtu_out << "<PPointData>\n";
@@ -99,7 +99,7 @@ index 1313d2a1e..e84e6d9fb 100644
 -   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,GetCompressionLevel());
 +   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,GetCompressionLevel(),
 +                  bdr_output);
- 
+
     // dump out the grid functions as point data
     os << "<PointData >\n";
 @@ -1052,8 +1079,23 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
@@ -201,7 +201,7 @@ index 1313d2a1e..e84e6d9fb 100644
 +   }
 +   os << "</DataArray>" << std::endl;
 +}
- 
+
 -   if (IsBinaryFormat())
 +void ParaViewDataCollection::SaveVCoeffFieldVTU(std::ostream &os, int ref_,
 +                                                const VCoeffFieldMapIterator &it)
@@ -272,7 +272,7 @@ index 1313d2a1e..e84e6d9fb 100644
 @@ -1143,6 +1304,11 @@ void ParaViewDataCollection::SetCompression(bool compression_)
     compression = compression_;
  }
- 
+
 +void ParaViewDataCollection::SetBoundaryOutput(bool bdr_output_)
 +{
 +   bdr_output = bdr_output_;
@@ -286,7 +286,7 @@ index e4d41a1b6..5306c94f7 100644
 --- a/fem/datacollection.hpp
 +++ b/fem/datacollection.hpp
 @@ -133,6 +133,10 @@ private:
- 
+
     /// A collection of named QuadratureFunctions
     typedef NamedFieldsMap<QuadratureFunction> QFieldMap;
 +
@@ -299,7 +299,7 @@ index e4d41a1b6..5306c94f7 100644
 @@ -142,6 +146,14 @@ public:
     typedef QFieldMap::iterator QFieldMapIterator;
     typedef QFieldMap::const_iterator QFieldMapConstIterator;
- 
+
 +   typedef CoeffFieldMap::MapType CoeffFieldMapType;
 +   typedef CoeffFieldMap::iterator CoeffFieldMapIterator;
 +   typedef CoeffFieldMap::const_iterator CoeffFieldMapConstIterator;
@@ -314,7 +314,7 @@ index e4d41a1b6..5306c94f7 100644
 @@ -169,6 +181,11 @@ protected:
     /** A FieldMap mapping registered names to QuadratureFunction pointers. */
     QFieldMap q_field_map;
- 
+
 +   /** A FieldMap mapping registered names to Coefficient and VectorCoefficient
 +       pointers. */
 +   CoeffFieldMap coeff_field_map;
@@ -322,10 +322,10 @@ index e4d41a1b6..5306c94f7 100644
 +
     /// The (common) mesh for the collected fields
     Mesh *mesh;
- 
+
 @@ -249,15 +266,28 @@ public:
     { field_map.Deregister(field_name, own_data); }
- 
+
     /// Add a QuadratureFunction to the collection.
 -   virtual void RegisterQField(const std::string& q_field_name,
 +   virtual void RegisterQField(const std::string& field_name,
@@ -333,11 +333,11 @@ index e4d41a1b6..5306c94f7 100644
 -   { q_field_map.Register(q_field_name, qf, own_data); }
 -
 +   { q_field_map.Register(field_name, qf, own_data); }
- 
+
     /// Remove a QuadratureFunction from the collection
     virtual void DeregisterQField(const std::string& field_name)
     { q_field_map.Deregister(field_name, own_data); }
- 
+
 +   /// Add a Coefficient or VectorCoefficient to the collection.
 +   virtual void RegisterCoeffField(const std::string& field_name,
 +                                   Coefficient *coeff)
@@ -357,13 +357,13 @@ index e4d41a1b6..5306c94f7 100644
     { return field_map.Has(field_name); }
 @@ -280,13 +310,27 @@ public:
  #endif
- 
+
     /// Check if a QuadratureFunction with the given name is in the collection.
 -   bool HasQField(const std::string& q_field_name) const
 -   { return q_field_map.Has(q_field_name); }
 +   bool HasQField(const std::string& field_name) const
 +   { return q_field_map.Has(field_name); }
- 
+
     /// Get a pointer to a QuadratureFunction in the collection.
     /** Returns NULL if @a field_name is not in the collection. */
 -   QuadratureFunction *GetQField(const std::string& q_field_name)
@@ -384,13 +384,13 @@ index e4d41a1b6..5306c94f7 100644
 +   { return coeff_field_map.Get(field_name); }
 +   VectorCoefficient *GetVCoeffField(const std::string& field_name)
 +   { return vcoeff_field_map.Get(field_name); }
- 
+
     /// Get a const reference to the internal field map.
     /** The keys in the map are the field names and the values are pointers to
 @@ -300,13 +344,23 @@ public:
     const QFieldMapType &GetQFieldMap() const
     { return q_field_map.GetMap(); }
- 
+
 +   /// Get a const reference to the internal coefficient-field map.
 +   /** The keys in the map are the coefficient-field names and the values are
 +       pointers to Coefficient%s or VectorCoefficient%s. */
@@ -429,7 +429,7 @@ index e4d41a1b6..5306c94f7 100644
 +   {
 +      MFEM_ABORT("SaveVCoeffField not implemented for DataCollection class!");
 +   }
- 
+
     /// Load the collection. Not implemented in the base class DataCollection.
     virtual void Load(int cycle_ = 0);
 @@ -512,12 +578,17 @@ private:
@@ -437,7 +437,7 @@ index e4d41a1b6..5306c94f7 100644
     bool high_order_output;
     bool restart_mode;
 +   bool bdr_output;
- 
+
  protected:
     void WritePVTUHeader(std::ostream &out);
     void WritePVTUFooter(std::ostream &out, const std::string &vtu_prefix);
@@ -453,7 +453,7 @@ index e4d41a1b6..5306c94f7 100644
 @@ -531,7 +602,6 @@ protected:
     std::string GeneratePVTUFileName(const std::string &prefix);
     std::string GeneratePVTUPath();
- 
+
 -
  public:
     /// Constructor. The collection name is used when saving the data.
@@ -461,7 +461,7 @@ index e4d41a1b6..5306c94f7 100644
 @@ -582,6 +652,10 @@ public:
     /// by default). Reading high-order data requires ParaView 5.5 or later.
     void SetHighOrderOutput(bool high_order_output_);
- 
+
 +   /// Configures collection to save only fields evaluated on boundaries of
 +   /// the mesh.
 +   void SetBoundaryOutput(bool bdr_output_);
@@ -470,10 +470,10 @@ index e4d41a1b6..5306c94f7 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 3f0837a31..5538cdcd7 100644
+index 1a0e82e87..c852cb52e 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -11758,7 +11758,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11759,7 +11759,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -482,7 +482,7 @@ index 3f0837a31..5538cdcd7 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -11772,7 +11772,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11773,7 +11773,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -492,10 +492,10 @@ index 3f0837a31..5538cdcd7 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 5257a8053..c12cb3b64 100644
+index 7187fe11a..bcde8a6d9 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2380,7 +2380,7 @@ public:
+@@ -2389,7 +2389,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,
@@ -518,14 +518,14 @@ index 5f5d9d38d..9556bcbd2 100644
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
 @@ -6458,7 +6458,8 @@ void ParMesh::PrintVTU(std::string pathname,
- 
+
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);
 -   Mesh::PrintVTU(vtu_fname, format, high_order_output, compression_level, bdr);
 +   Mesh::PrintVTU(vtu_fname, format, high_order_output, compression_level,
 +                  bdr_elements);
  }
- 
+
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
 index 53f7c23a2..0d5643fd5 100644
@@ -537,6 +537,6 @@ index 53f7c23a2..0d5643fd5 100644
                   int compression_level=0,
 -                 bool bdr=false) override;
 +                 bool bdr_elements=false) override;
- 
+
     /// Parallel version of Mesh::Load().
     void Load(std::istream &input, int generate_edges = 0,

@@ -24,7 +24,7 @@ namespace mesh
 
 // Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
 // object, which should be destroyed by the user.
-std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata);
+std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm);
 
 // Refine the provided mesh according to the data in the input file. If levels of refinement
 // are requested, the refined meshes are stored in order of increased refinement. Ownership
@@ -238,7 +238,7 @@ inline mfem::real_t GetVolume(const mfem::ParMesh &mesh, int attr)
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-mfem::real_t RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata);
+mfem::real_t RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
 
 }  // namespace mesh
 
