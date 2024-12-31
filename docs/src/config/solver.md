@@ -437,7 +437,9 @@ eigenmode simulation type. Ignored if non-zero Floquet wave vector is specified 
 or [`config["Boundaries"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22FloquetWaveVector%22%5D).
 
 `"DivFreeMaxIts" [1000]` :  Maximum number of iterations for divergence-free cleaning use in
-the eigenmode simulation type.
+the eigenmode simulation type. Ignored if non-zero Floquet wave vector is specified in
+[`config["Boundaries"]["Periodic"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22Periodic%22%5D%22FloquetWaveVector%22%5D)
+or [`config["Boundaries"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22FloquetWaveVector%22%5D).
 
 `"EstimatorTol" [1.0e-6]` :  Relative tolerance for flux projection used in the
 error estimate calculation.
