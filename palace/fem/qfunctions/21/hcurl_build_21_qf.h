@@ -15,7 +15,7 @@ CEED_QFUNCTION(f_build_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[3], adjJt_loc[2], qd_loc[1];
+    CeedScalar coeff[4], adjJt_loc[2], qd_loc[1];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultAtBA21(adjJt_loc, coeff, qd_loc);

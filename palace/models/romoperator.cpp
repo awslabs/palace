@@ -196,6 +196,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  FP = space_op.GetFloquetMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
@@ -247,7 +248,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   has_A2 = (A2 != nullptr);
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                     std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
+                                    C.get(), M.get(), A2.get(), FP.get());
   auto P =
       space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
   ksp->SetOperators(*A, *P);
@@ -314,6 +315,11 @@ void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
   }
   Mr.conservativeResize(dim_V, dim_V);
   ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
+  if (FP)
+  {
+    FPr.conservativeResize(dim_V, dim_V);
+    ProjectMatInternal(comm, V, *FP, FPr, r, dim_V0);
+  }
   Ar.resize(dim_V, dim_V);
   if (RHS1.Size())
   {
@@ -370,7 +376,10 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
-
+  if (FP)
+  {
+    Ar += FPr;
+  }
   if (has_RHS2)
   {
     space_op.GetExcitationVector2(omega, RHS2);

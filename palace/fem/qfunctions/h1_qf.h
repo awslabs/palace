@@ -9,7 +9,7 @@
 // in[1] is active vector, shape [ncomp=vdim, Q]
 // out[0] is active vector, shape [ncomp=vdim, Q]
 
-// Build functions assemble the quadrature point data, stored as a symmetric matrix.
+// Build functions assemble the quadrature point data.
 
 #include "1/h1_1_qf.h"
 #include "1/h1_build_1_qf.h"

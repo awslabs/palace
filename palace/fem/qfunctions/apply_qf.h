@@ -5,12 +5,12 @@
 #define PALACE_LIBCEED_APPLY_QF_H
 
 // libCEED QFunctions for application of a generic operator with assembled quadrature data.
-// in[0] is (symmetric) quadrature data, shape [ncomp=vdim*(vdim+1)/2, Q]
+// in[0] is quadrature data, shape [ncomp=vdim*vdim, Q]
 // in[1] is active vector, shape [ncomp=vdim, Q]
 // out[0] is active vector, shape [ncomp=vdim, Q]
 
 // For pairwise apply functions, the inputs and outputs come in pairs and the quadrature
-// data is arranged to be applied with the first vdim*(vdim+1)/2 components for the first
+// data is arranged to be applied with the first vdim*vdim components for the first
 // input/output and the remainder for the second.
 
 #include "apply/apply_12_qf.h"

@@ -1,0 +1,69 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/floquet"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_tet.msh",
+    "L0": 1.0e-2,  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0004
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    [
+      {
+        "DonorAttributes": [2],
+        "ReceiverAttributes": [3],
+        "FloquetWaveVector": [0.0, 0.0, 0.2]
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 15,
+      "Tol": 1.0e-8,
+      "Target": 2.0,  // TE f111 ~ 2.9 GHz
+      "Save": 15
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
