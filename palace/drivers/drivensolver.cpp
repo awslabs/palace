@@ -405,14 +405,10 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
 // Measurements / Postprocessing
 
 DrivenSolver::CurrentsPostPrinter::CurrentsPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement             //
-                     && (surf_j_op.Size() > 0)  // Needs surface currents
-                 }
+    const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows)
 {
-  if (!do_measurement_ || !root_)
+  const auto &surf_j_op = space_op.GetSurfaceCurrentOp();
+  if (!Mpi::Root(space_op.GetComm()) || surf_j_op.Size() == 0)
   {
     return;
   }
@@ -430,10 +426,6 @@ DrivenSolver::CurrentsPostPrinter::CurrentsPostPrinter(
 void DrivenSolver::CurrentsPostPrinter::AddMeasurement(
     double freq, const SurfaceCurrentOperator &surf_j_op, const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -446,16 +438,12 @@ void DrivenSolver::CurrentsPostPrinter::AddMeasurement(
   surface_I.AppendRow();
 }
 
-DrivenSolver::PortsPostPrinter::PortsPostPrinter(bool do_measurement, bool root,
-                                                 const fs::path &post_dir,
-                                                 const LumpedPortOperator &lumped_port_op,
+DrivenSolver::PortsPostPrinter::PortsPostPrinter(const fs::path &post_dir,
+                                                 const SpaceOperator &space_op,
                                                  int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement                  //
-                     && (lumped_port_op.Size() > 0)  // Only works for lumped ports
-                 }
 {
-  if (!do_measurement_ || !root_)
+  const auto &lumped_port_op = space_op.GetLumpedPortOp();
+  if (!Mpi::Root(space_op.GetComm()) || lumped_port_op.Size() == 0)
   {
     return;
   }
@@ -490,10 +478,6 @@ void DrivenSolver::PortsPostPrinter::AddMeasurement(
     double freq, const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
     const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
   using VT = IoData::ValueType;
 
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
@@ -528,25 +512,13 @@ void DrivenSolver::PortsPostPrinter::AddMeasurement(
   port_I.AppendRow();
 }
 
-DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const LumpedPortOperator &lumped_port_op, const WavePortOperator &wave_port_op,
-    int n_expected_rows)
-  : root_{root},
-    do_measurement_{
-        do_measurement  //
-        && ((lumped_port_op.Size() > 0) xor
-            (wave_port_op.Size() > 0))  // either lumped or wave but not both
-
-    },
-    src_lumped_port{lumped_port_op.Size() > 0}
+DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,  int n_expected_rows)
 {
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
+  const auto &lumped_port_op = space_op.GetLumpedPortOp();
+  const auto &wave_port_op = space_op.GetWavePortOp();
+
   // Get excitation index as is currently done: if -1 then no excitation
-  // Already ensured that one of lumped or wave ports are empty
+  // Already ensured that one of lumped or wave ports are non-empty
   for (const auto &[idx, data] : lumped_port_op)
   {
     if (data.excitation)
@@ -562,12 +534,12 @@ DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
     }
   }
 
-  do_measurement_ = do_measurement_ && (source_idx > 0);
-
-  if (!do_measurement_ || !root_)
+  const bool do_measurement = ((lumped_port_op.Size() > 0) xor (wave_port_op.Size() > 0)) && (source_idx > 0);
+  if (!Mpi::Root(space_op.GetComm()) || !do_measurement)
   {
     return;
   }
+
   using fmt::format;
   port_S = TableWithCSVFile(post_dir / "port-S.csv");
   port_S.table.reserve(n_expected_rows, lumped_port_op.Size());
@@ -595,10 +567,6 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
     double freq, const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
     const WavePortOperator &wave_port_op, const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -639,18 +607,13 @@ DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
     bool root, const fs::path &post_dir, const PostOperator &post_op,
     const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
   : delta_post{delta_post_}, write_paraview_fields{delta_post_ > 0},
-    domains{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    surfaces{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
-    probes{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    ports{true, root, post_dir, space_op.GetLumpedPortOp(), n_expected_rows},
-    s_parameters{true,
-                 root,
-                 post_dir,
-                 space_op.GetLumpedPortOp(),
-                 space_op.GetWavePortOp(),
-                 n_expected_rows},
-    error_indicator{true, root, post_dir}
+    domains{post_dir, post_op, "f (GHz)", n_expected_rows},
+    surfaces{post_dir, post_op, "f (GHz)", n_expected_rows},
+    currents{post_dir, space_op, n_expected_rows},
+    probes{post_dir, post_op, "f (GHz)", n_expected_rows},
+    ports{post_dir, space_op, n_expected_rows},
+    s_parameters{post_dir, space_op, n_expected_rows},
+    error_indicator{post_dir}
 {
 }
 
@@ -661,14 +624,16 @@ void DrivenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata
 {
   double omega = post_op.GetFrequency().real();
   auto freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-
-  domains.AddMeasurement(freq, post_op, iodata);
-  surfaces.AddMeasurement(freq, post_op, iodata);
-  currents.AddMeasurement(freq, space_op.GetSurfaceCurrentOp(), iodata);
-  probes.AddMeasurement(freq, post_op, iodata);
-  ports.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(), iodata);
-  s_parameters.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(),
-                              space_op.GetWavePortOp(), iodata);
+  if (Mpi::Root(post_op.GetComm()))
+  {
+    domains.AddMeasurement(freq, post_op, iodata);
+    surfaces.AddMeasurement(freq, post_op, iodata);
+    currents.AddMeasurement(freq, space_op.GetSurfaceCurrentOp(), iodata);
+    probes.AddMeasurement(freq, post_op, iodata);
+    ports.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(), iodata);
+    s_parameters.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(),
+                                space_op.GetWavePortOp(), iodata);
+  }
   // The internal GridFunctions in PostOperator have already been set:
   if (write_paraview_fields && (step % delta_post == 0))
   {

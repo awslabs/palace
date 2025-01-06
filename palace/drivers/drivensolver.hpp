@@ -32,29 +32,20 @@ private:
 
   class CurrentsPostPrinter
   {
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile surface_I;
-
   public:
     CurrentsPostPrinter() = default;
-    CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                        const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
-    void AddMeasurement(double freq, const SurfaceCurrentOperator &surf_j_op,
-                        const IoData &iodata);
+    CurrentsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
+    void AddMeasurement(double freq, const SurfaceCurrentOperator &surf_j_op, const IoData &iodata);
   };
 
   class PortsPostPrinter
   {
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile port_V;
     TableWithCSVFile port_I;
-
   public:
     PortsPostPrinter() = default;
-    PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                     const LumpedPortOperator &lumped_port_op, int n_expected_rows);
+    PortsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
     void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
@@ -76,9 +67,7 @@ private:
 
   public:
     SParametersPostPrinter() = default;
-    SParametersPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                           const LumpedPortOperator &lumped_port_op,
-                           const WavePortOperator &wave_port_op, int n_expected_rows);
+    SParametersPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
     void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op,
                         const WavePortOperator &wave_port_op, const IoData &iodata);
