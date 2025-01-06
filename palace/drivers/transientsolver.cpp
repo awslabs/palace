@@ -109,7 +109,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const Vector &B = time_op.GetB();
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
-    post_op.MeasureAll();
+    post_op.MeasureAll(space_op);
 
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();

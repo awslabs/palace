@@ -70,7 +70,7 @@ private:
     bool do_measurement_ = false;
     TableWithCSVFile port_S;
 
-    // Currently can't mix lumped and sufrace ports for s-matrix
+    // Currently can't mix lumped and surface ports for s-matrix
     bool src_lumped_port = true;
     int source_idx = -1;
 

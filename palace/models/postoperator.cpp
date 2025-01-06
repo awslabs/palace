@@ -38,8 +38,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
     surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
     dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
                 space_op.GetRTSpace()),
-    interp_op(iodata, space_op.GetNDSpace()), lumped_port_op(&(space_op.GetLumpedPortOp())),
-    wave_port_op(&(space_op.GetWavePortOp())),
+    interp_op(iodata, space_op.GetNDSpace()),
     E(std::make_unique<GridFunction>(space_op.GetNDSpace(),
                                      iodata.problem.type !=
                                          config::ProblemData::Type::TRANSIENT)),
@@ -347,260 +346,158 @@ void PostOperator::SetAGridFunction(const Vector &a, bool exchange_face_nbr_data
 void PostOperator::ClearAllMeasurementCache()
 {
   // Clear Cache: Save omega since this set by hand like fields E,...
-  bool has_omega = measurment_cache.omega.has_value();
-  std::complex<double> omega;
-  if (has_omega)
-  {
-    omega = *measurment_cache.omega;
-  }
-
-  measurment_cache = {};
-
-  if (has_omega)
-  {
-    measurment_cache.omega = omega;
-  }
+  auto omega = measurement_cache.omega;
+  measurement_cache = {};
+  measurement_cache.omega = omega;
 }
 
 void PostOperator::MeasureAll()
 {
   ClearAllMeasurementCache();
 
-  // Domain Energy: Electric Field Contribution
-  if (V || E)
-  {
-    GetEFieldEnergy();  // if (dom_post_op.M_elec)
-    if (dom_post_op.M_i.size() > 0)
-    {
-      GetEFieldEnergy(dom_post_op.M_i.begin()->first);  // Measures all domains
-    }
-  }
-  // Domain Energy: Magnetic Field Contribution
-  if (A || B)
-  {
-    GetHFieldEnergy();  // if (dom_post_op.M_mag)
-    if (dom_post_op.M_i.size() > 0)
-    {
-      GetHFieldEnergy(dom_post_op.M_i.begin()->first);  // Measures all domains
-    }
-  }
+  MeasureEFieldEnergy();
+  MeasureHFieldEnergy();
 
-  if (E || B)
-  {
-    GetSurfaceFluxAll();
-  }
-  if (E)
-  {
-    GetInterfaceEFieldEnergyAll();
-    ProbeEField();
-  }
-  if (B)
-  {
-    ProbeBField();
-  }
-  if (E && B)
-  {
-    if (lumped_port_op != nullptr)
-    {
-      MeasureLumpedPorts();
-    }
-    if (wave_port_op != nullptr)
-    {
-      MeasureWavePorts();
-    }
-  }
+  MeasureSurfaceFlux();
+  MeasureInterfaceEFieldEnergy();
+  MeasureProbes();
+}
+
+void PostOperator::MeasureAll(const SpaceOperator &space_op)
+{
+  MeasureAll();
+  MeasureLumpedPorts(space_op.GetLumpedPortOp());
+  MeasureWavePorts(space_op.GetWavePortOp());
 }
 
 void PostOperator::SetFrequency(double omega)
 {
-  measurment_cache.omega = std::complex<double>(omega);
+  measurement_cache.omega = std::complex<double>(omega);
 }
 
 void PostOperator::SetFrequency(std::complex<double> omega)
 {
-  measurment_cache.omega = omega;
+  measurement_cache.omega = omega;
 }
 
 std::complex<double> PostOperator::GetFrequency() const
 {
-  MFEM_VERIFY(measurment_cache.omega.has_value(),
-              "Frequency value omega has not been correctly set!");
-  return *measurment_cache.omega;
+  return measurement_cache.omega;
 }
 
 double PostOperator::GetEFieldEnergy() const
 {
-  if (!measurment_cache.domain_E_field_energy_all.has_value())
-  {
-    if (V)
-    {
-      measurment_cache.domain_E_field_energy_all = dom_post_op.GetElectricFieldEnergy(*V);
-    }
-    else if (E)
-    {
-      measurment_cache.domain_E_field_energy_all = dom_post_op.GetElectricFieldEnergy(*E);
-    }
-    else
-    {
-      // No failure: returns zero
-      measurment_cache.domain_E_field_energy_all = 0.0;
-    }
-  }
-  return *measurment_cache.domain_E_field_energy_all;
-}
-
-double PostOperator::GetHFieldEnergy() const
-{
-  if (!measurment_cache.domain_H_field_energy_all.has_value())
-  {
-    if (A)
-    {
-      measurment_cache.domain_H_field_energy_all = dom_post_op.GetMagneticFieldEnergy(*A);
-    }
-    else if (B)
-    {
-      measurment_cache.domain_H_field_energy_all = dom_post_op.GetMagneticFieldEnergy(*B);
-    }
-    else
-    {
-      // No failure: returns zero
-      measurment_cache.domain_H_field_energy_all = 0.0;
-    }
-  }
-  return *measurment_cache.domain_H_field_energy_all;
+  return measurement_cache.domain_E_field_energy_all;
 }
 
 double PostOperator::GetEFieldEnergy(int idx) const
 {
-  if (!measurment_cache.domain_E_field_energy_i.has_value())
-  {
-    // Do all measurements
-    measurment_cache.domain_E_field_energy_i.emplace();
-    for (const auto &[idx, data] : dom_post_op.M_i)
-    {
-      double out = 0.0;  // Defaults to zero: no failure
-      if (V)
-      {
-        out = dom_post_op.GetDomainElectricFieldEnergy(idx, *V);
-      }
-      else if (E)
-      {
-        out = dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
-      }
-      measurment_cache.domain_E_field_energy_i->emplace(idx, out);
-    }
-  }
-  auto it = measurment_cache.domain_E_field_energy_i->find(idx);
-  if (it == measurment_cache.domain_E_field_energy_i->end())
+  auto it = measurement_cache.domain_E_field_energy_i.find(idx);
+  if (it == measurement_cache.domain_E_field_energy_i.end())
   {
     MFEM_ABORT(fmt::format("Could not find domain index {} for E field energy!", idx));
   }
   return it->second;
 }
 
+void PostOperator::MeasureEFieldEnergy()
+{
+  measurement_cache.domain_E_field_energy_i.clear();
+  for (const auto &[idx, data] : dom_post_op.M_i)
+  {
+    measurement_cache.domain_E_field_energy_i.emplace(
+        idx, (!V && !E) ? 0.0 : dom_post_op.GetDomainElectricFieldEnergy(idx, V ? *V : *E));
+  }
+
+  measurement_cache.domain_E_field_energy_all =
+      (!V && !E) ? 0.0 : dom_post_op.GetElectricFieldEnergy(V ? *V : *E);
+}
+
+void PostOperator::MeasureHFieldEnergy()
+{
+  measurement_cache.domain_H_field_energy_i.clear();
+  for (const auto &[idx, data] : dom_post_op.M_i)
+  {
+    measurement_cache.domain_H_field_energy_i[idx] =
+        (!A && !B) ? 0.0 : dom_post_op.GetDomainMagneticFieldEnergy(idx, A ? *A : *B);
+  }
+
+  measurement_cache.domain_H_field_energy_all =
+      (!A && !B) ? 0.0 : dom_post_op.GetMagneticFieldEnergy(A ? *A : *B);
+}
+
+double PostOperator::GetHFieldEnergy() const
+{
+  return measurement_cache.domain_H_field_energy_all;
+}
+
 double PostOperator::GetHFieldEnergy(int idx) const
 {
-  if (!measurment_cache.domain_H_field_energy_i.has_value())
-  {
-    // Do all measurements
-    measurment_cache.domain_H_field_energy_i.emplace();
-    for (const auto &[idx, data] : dom_post_op.M_i)
-    {
-      double out = 0.0;  // Defaults to zero: no failure
-      if (A)
-      {
-        out = dom_post_op.GetDomainMagneticFieldEnergy(idx, *A);
-      }
-      else if (B)
-      {
-        out = dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
-      }
-      measurment_cache.domain_H_field_energy_i->emplace(idx, out);
-    }
-  }
-  auto it = measurment_cache.domain_H_field_energy_i->find(idx);
-  if (it == measurment_cache.domain_H_field_energy_i->end())
+  auto it = measurement_cache.domain_H_field_energy_i.find(idx);
+  if (it == measurement_cache.domain_H_field_energy_i.end())
   {
     MFEM_ABORT(fmt::format("Could not find domain index {} for H field energy!", idx));
   }
   return it->second;
 }
 
-// Code Note: for returning the full vector we chose name GetSurfaceFluxAll() rather than
-// GetSurfaceFlux(), to keep consistancy with GetEFieldEnergy(). GetEFieldEnergy() returns
-// the total energy (calculated differently), not the vector of the individual
-// GetHFieldEnergy(int idx).
-std::vector<PostOperator::FluxData> PostOperator::GetSurfaceFluxAll() const
+void PostOperator::MeasureSurfaceFlux()
 {
   // Compute the flux through a surface as Φ_j = ∫ F ⋅ n_j dS, with F = B, F = ε D, or F =
   // E x H. The special coefficient is used to avoid issues evaluating MFEM GridFunctions
   // which are discontinuous at interior boundary elements.
-  if (!measurment_cache.surface_flux_i.has_value())
+  measurement_cache.surface_flux_i.clear();
+  if (!E && !B)
   {
-    // Do all measurements
-    MFEM_VERIFY(
-        E || B,
-        "PostOperator needs either electric or magnetic field for flux calculation!");
-    measurment_cache.surface_flux_i.emplace();
-    measurment_cache.surface_flux_i->reserve(surf_post_op.flux_surfs.size());
-    for (const auto &[idx, data] : surf_post_op.flux_surfs)
-    {
-      measurment_cache.surface_flux_i->emplace_back(
-          FluxData{idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
-    }
+    return;
   }
-  return *measurment_cache.surface_flux_i;
+  measurement_cache.surface_flux_i.reserve(surf_post_op.flux_surfs.size());
+  for (const auto &[idx, data] : surf_post_op.flux_surfs)
+  {
+    measurement_cache.surface_flux_i.emplace_back(
+        FluxData{idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
+  }
 }
 
 PostOperator::FluxData PostOperator::GetSurfaceFlux(int idx) const
 {
-  if (!measurment_cache.surface_flux_i.has_value())
-  {
-    GetSurfaceFluxAll();
-  }
-  auto it = std::find_if(measurment_cache.surface_flux_i->begin(),
-                         measurment_cache.surface_flux_i->end(),
+  auto it = std::find_if(measurement_cache.surface_flux_i.begin(),
+                         measurement_cache.surface_flux_i.end(),
                          [idx](const auto &d) { return d.idx == idx; });
-  if (it == measurment_cache.surface_flux_i->end())
+  if (it == measurement_cache.surface_flux_i.end())
   {
     MFEM_ABORT(fmt::format("Could not find surface index {} for flux!", idx));
   }
   return *it;
 }
 
-std::vector<PostOperator::InterfaceData> PostOperator::GetInterfaceEFieldEnergyAll() const
+void PostOperator::MeasureInterfaceEFieldEnergy()
 {
   // Compute the surface dielectric participation ratio and associated quality factor for
   // the material interface given by index idx. We have:
   //                            1/Q_mj = p_mj tan(δ)_j
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
-  if (!measurment_cache.interface_eps_i.has_value())
+  measurement_cache.interface_eps_i.clear();
+  if (!E)
   {
-    // Do all measurements
-    MFEM_VERIFY(E, "Electric field solution required for E field interface energy!");
-    measurment_cache.interface_eps_i.emplace();
-    measurment_cache.interface_eps_i->reserve(surf_post_op.eps_surfs.size());
-    for (const auto &[idx, data] : surf_post_op.eps_surfs)
-    {
-      measurment_cache.interface_eps_i->emplace_back(
-          InterfaceData{idx, surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E),
-                        surf_post_op.GetInterfaceLossTangent(idx)});
-    }
+    return;
   }
-  return *measurment_cache.interface_eps_i;
+  measurement_cache.interface_eps_i.reserve(surf_post_op.eps_surfs.size());
+  for (const auto &[idx, data] : surf_post_op.eps_surfs)
+  {
+    measurement_cache.interface_eps_i.emplace_back(
+        InterfaceData{idx, surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E),
+                      surf_post_op.GetInterfaceLossTangent(idx)});
+  }
 }
 
-PostOperator::InterfaceData PostOperator::GetInterfaceEFieldEnergy(int idx) const
+const PostOperator::InterfaceData &PostOperator::GetInterfaceEFieldEnergy(int idx) const
 {
-  if (!measurment_cache.interface_eps_i.has_value())
-  {
-    GetInterfaceEFieldEnergyAll();
-  }
-  auto it = std::find_if(measurment_cache.interface_eps_i->begin(),
-                         measurment_cache.interface_eps_i->end(),
+  auto it = std::find_if(measurement_cache.interface_eps_i.begin(),
+                         measurement_cache.interface_eps_i.end(),
                          [idx](const auto &d) { return d.idx == idx; });
-  if (it == measurment_cache.interface_eps_i->end())
+  if (it == measurement_cache.interface_eps_i.end())
   {
     MFEM_ABORT(fmt::format("Could not find surface index {} for interface energy!", idx));
   }
@@ -619,21 +516,16 @@ double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
   return data.energy / E_m;
 }
 
-void PostOperator::MeasureLumpedPorts() const
+void PostOperator::MeasureLumpedPorts(const LumpedPortOperator &lumped_port_op)
 {
-  MFEM_VERIFY(E && B && lumped_port_op != nullptr,
-              "Incorrect usage of PostOperator::MeasureLumpedPorts!");
-  if (measurment_cache.lumped_port_vi.has_value())
+  measurement_cache.lumped_port_vi.clear();
+  if (!E || !B)
   {
-    measurment_cache.lumped_port_vi->clear();
+    return;
   }
-  else
+  for (const auto &[idx, data] : lumped_port_op)
   {
-    measurment_cache.lumped_port_vi.emplace();
-  }
-  for (const auto &[idx, data] : *lumped_port_op)
-  {
-    auto &vi = (*measurment_cache.lumped_port_vi)[idx];
+    auto &vi = measurement_cache.lumped_port_vi[idx];
     vi.P = data.GetPower(*E, *B);
     vi.V = data.GetVoltage(*E);
     if (HasImag())
@@ -666,37 +558,49 @@ void PostOperator::MeasureLumpedPorts() const
       vi.I[1] = vi.I[2] = vi.S = 0.0;
     }
   }
+
+  // Add contribution due to all inductive lumped boundaries in the model:
+  //                      E_ind = ∑_j 1/2 L_j I_mj².
+  measurement_cache.lumped_port_inductor_energy = 0.0;
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    if (std::abs(data.L) > 0.0)
+    {
+      std::complex<double> I_j = GetPortCurrent(idx, LumpedPortData::Branch::L);
+      measurement_cache.lumped_port_inductor_energy +=
+          0.5 * std::abs(data.L) * std::real(I_j * std::conj(I_j));
+    }
+  }
+
+  // Add contribution due to all capacitive lumped boundaries in the model:
+  //                      E_cap = ∑_j 1/2 C_j V_mj².
+  measurement_cache.lumped_port_capacitor_energy = 0.0;
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    if (std::abs(data.C) > 0.0)
+    {
+      std::complex<double> V_j = GetPortVoltage(idx);
+      measurement_cache.lumped_port_capacitor_energy +=
+          0.5 * std::abs(data.C) * std::real(V_j * std::conj(V_j));
+    }
+  }
 }
 
-void PostOperator::MeasureWavePorts() const
+void PostOperator::MeasureWavePorts(const WavePortOperator &wave_port_op)
 {
-
-  MFEM_VERIFY(E && B && wave_port_op != nullptr,
-              "Incorrect usage of PostOperator::MeasureWavePorts!");
-  if (measurment_cache.wave_port_vi.has_value())
+  measurement_cache.wave_port_vi.clear();
+  // Wave ports need imaginary component. TODO: Fix this.
+  if (!E || !B || !HasImag())
   {
-    measurment_cache.wave_port_vi->clear();
+    return;
   }
-  else
+  for (const auto &[idx, data] : wave_port_op)
   {
-    measurment_cache.wave_port_vi.emplace();
-  }
-  if (!HasImag())
-  {
-    return;  // Wave ports need Imag; leave empty otherwise // TODO: Fix in long run
-  }
-  for (const auto &[idx, data] : *wave_port_op)
-  {
-    MFEM_VERIFY(measurment_cache.omega.has_value(),
-                "Measuring port currents with Imag fields, requires frequency to be set "
-                "with SetFrequency!");
-
     // Get value and make real: Matches current behaviour
-    auto omega = measurment_cache.omega->real();
-
+    auto omega = measurement_cache.omega.real();
     MFEM_VERIFY(omega > 0.0,
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
-    auto &vi = (*measurment_cache.wave_port_vi)[idx];
+    auto &vi = measurement_cache.wave_port_vi[idx];
     vi.P = data.GetPower(*E, *B);
     vi.S = data.GetSParameter(*E);
     vi.V = vi.I[0] = vi.I[1] = vi.I[2] = 0.0;  // Not yet implemented
@@ -704,144 +608,73 @@ void PostOperator::MeasureWavePorts() const
   }
 }
 
-void PostOperator::ValidateDoPortMeasurement() const
-{
-  if (!measurment_cache.lumped_port_vi.has_value())
-  {
-    if (lumped_port_op != nullptr)
-    {
-      MeasureLumpedPorts();
-    }
-    else
-    {
-      MFEM_ABORT("A lumped port measurement called, but the lumped port operator is not "
-                 "defined by the solver.")
-    }
-  }
-  if (!measurment_cache.wave_port_vi.has_value())
-  {
-    if (wave_port_op != nullptr)
-    {
-      MeasureWavePorts();
-    }
-    else
-    {
-      MFEM_ABORT("A wave port measurement called, but the wave port operator is not "
-                 "defined by the solver.")
-    }
-  }
-}
-
 double PostOperator::GetLumpedInductorEnergy() const
 {
-  // Add contribution due to all inductive lumped boundaries in the model:
-  //                      E_ind = ∑_j 1/2 L_j I_mj².
-  if (!measurment_cache.lumped_port_inductor_energy.has_value())
-  {
-    // No failure if space has no lumped ports: Returns zero
-    double U = 0.0;
-    if (lumped_port_op != nullptr)
-    {
-      for (const auto &[idx, data] : *lumped_port_op)
-      {
-        if (std::abs(data.L) > 0.0)
-        {
-          std::complex<double> I_j = GetPortCurrent(idx, LumpedPortData::Branch::L);
-          U += 0.5 * std::abs(data.L) * std::real(I_j * std::conj(I_j));
-        }
-      }
-    }
-    measurment_cache.lumped_port_inductor_energy = U;
-  }
-  return *measurment_cache.lumped_port_inductor_energy;
+  return measurement_cache.lumped_port_inductor_energy;
 }
 
 double PostOperator::GetLumpedCapacitorEnergy() const
 {
-  // Add contribution due to all capacitive lumped boundaries in the model:
-  //                      E_cap = ∑_j 1/2 C_j V_mj².
-  if (!measurment_cache.lumped_port_capacitor_energy.has_value())
-  {
-    // No failure if space has no lumped ports: Returns zero
-    double U = 0.0;
-    if (lumped_port_op != nullptr)
-    {
-      for (const auto &[idx, data] : *lumped_port_op)
-      {
-        if (std::abs(data.C) > 0.0)
-        {
-          std::complex<double> V_j = GetPortVoltage(idx);
-          U += 0.5 * std::abs(data.C) * std::real(V_j * std::conj(V_j));
-        }
-      }
-    }
-    measurment_cache.lumped_port_capacitor_energy = U;
-  }
-  return *measurment_cache.lumped_port_capacitor_energy;
+  return measurement_cache.lumped_port_capacitor_energy;
 }
 
-std::complex<double> PostOperator::GetSParameter(bool is_lumped_port, int idx,
-                                                 int source_idx) const
+std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumped_port_op,
+                                                 int idx, int source_idx) const
 {
-  ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
-  // TODO: Merge lumped and wave port S_ij calcluations to allow both at same time.
-  if (is_lumped_port)
+  const LumpedPortData &data = lumped_port_op.GetPort(idx);
+  const LumpedPortData &src_data = lumped_port_op.GetPort(source_idx);
+  const auto it = measurement_cache.lumped_port_vi.find(idx);
+  MFEM_VERIFY(src_data.excitation,
+              "Lumped port index " << source_idx << " is not marked for excitation!");
+  MFEM_VERIFY(it != measurement_cache.lumped_port_vi.end(),
+              "Could not find lumped port when calculating port S-parameters!");
+  std::complex<double> S_ij = it->second.S;
+  if (idx == source_idx)
   {
-    const LumpedPortData &data = lumped_port_op->GetPort(idx);
-    const LumpedPortData &src_data = lumped_port_op->GetPort(source_idx);
-    const auto it = measurment_cache.lumped_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Lumped port index " << source_idx << " is not marked for excitation!");
-    MFEM_VERIFY(it != measurment_cache.lumped_port_vi->end(),
-                "Could not find lumped port when calculating port S-parameters!");
-    std::complex<double> S_ij = it->second.S;
-    if (idx == source_idx)
-    {
-      S_ij.real(S_ij.real() - 1.0);
-    }
-    // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-    if (std::abs(data.R) > 0.0)
-    {
-      S_ij *= std::sqrt(src_data.R / data.R);
-    }
-    return S_ij;
+    S_ij.real(S_ij.real() - 1.0);
   }
-  else
+  // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
+  if (std::abs(data.R) > 0.0)
   {
-    // Wave port modes are not normalized to a characteristic impedance so no generalized
-    // S-parameters are available.
-    const WavePortData &data = wave_port_op->GetPort(idx);
-    const WavePortData &src_data = wave_port_op->GetPort(source_idx);
-    const auto it = measurment_cache.wave_port_vi->find(idx);
-    MFEM_VERIFY(src_data.excitation,
-                "Wave port index " << source_idx << " is not marked for excitation!");
-    MFEM_VERIFY(it != measurment_cache.wave_port_vi->end(),
-                "Could not find wave port when calculating port S-parameters!");
-    std::complex<double> S_ij = it->second.S;
-    if (idx == source_idx)
-    {
-      S_ij.real(S_ij.real() - 1.0);
-    }
-    // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
-    // unless specified).
-    S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-    S_ij *= std::exp(1i * data.kn0 * data.d_offset);
-    return S_ij;
+    S_ij *= std::sqrt(src_data.R / data.R);
   }
+  return S_ij;
+}
+
+std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_port_op,
+                                                 int idx, int source_idx) const
+{
+  // Wave port modes are not normalized to a characteristic impedance so no generalized
+  // S-parameters are available.
+  const WavePortData &data = wave_port_op.GetPort(idx);
+  const WavePortData &src_data = wave_port_op.GetPort(source_idx);
+  const auto it = measurement_cache.wave_port_vi.find(idx);
+  MFEM_VERIFY(src_data.excitation,
+              "Wave port index " << source_idx << " is not marked for excitation!");
+  MFEM_VERIFY(it != measurement_cache.wave_port_vi.end(),
+              "Could not find wave port when calculating port S-parameters!");
+  std::complex<double> S_ij = it->second.S;
+  if (idx == source_idx)
+  {
+    S_ij.real(S_ij.real() - 1.0);
+  }
+  // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
+  // unless specified).
+  S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+  S_ij *= std::exp(1i * data.kn0 * data.d_offset);
+  return S_ij;
 }
 
 std::complex<double> PostOperator::GetPortPower(int idx) const
 {
-  ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
-  auto it_lumped = measurment_cache.lumped_port_vi->find(idx);
-  if (it_lumped != measurment_cache.lumped_port_vi->end())
+  // TODO: In multi-excitation PR we will guarantee that lumped & wave ports have unique idx
+  auto it_lumped = measurement_cache.lumped_port_vi.find(idx);
+  if (it_lumped != measurement_cache.lumped_port_vi.end())
   {
     return it_lumped->second.P;
   }
-  auto it_wave = measurment_cache.wave_port_vi->find(idx);
-  if (it_wave != measurment_cache.wave_port_vi->end())
+  auto it_wave = measurement_cache.wave_port_vi.find(idx);
+  if (it_wave != measurement_cache.wave_port_vi.end())
   {
     return it_wave->second.P;
   }
@@ -851,15 +684,14 @@ std::complex<double> PostOperator::GetPortPower(int idx) const
 
 std::complex<double> PostOperator::GetPortVoltage(int idx) const
 {
-  ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
-  auto it_lumped = measurment_cache.lumped_port_vi->find(idx);
-  if (it_lumped != measurment_cache.lumped_port_vi->end())
+  // TODO: In multi-excitation PR we will guarantee that lumped & wave ports have unique idx
+  auto it_lumped = measurement_cache.lumped_port_vi.find(idx);
+  if (it_lumped != measurement_cache.lumped_port_vi.end())
   {
     return it_lumped->second.V;
   }
-  auto it_wave = measurment_cache.wave_port_vi->find(idx);
-  if (it_wave != measurment_cache.wave_port_vi->end())
+  auto it_wave = measurement_cache.wave_port_vi.find(idx);
+  if (it_wave != measurement_cache.wave_port_vi.end())
   {
     MFEM_ABORT("GetPortVoltage is not yet implemented for wave port boundaries!");
   }
@@ -870,10 +702,9 @@ std::complex<double> PostOperator::GetPortVoltage(int idx) const
 std::complex<double> PostOperator::GetPortCurrent(int idx,
                                                   LumpedPortData::Branch branch) const
 {
-  ValidateDoPortMeasurement();
-  // TODO: In multi-excittion PR we will gurantee that lumped & wave ports have unique idx
-  auto it_lumped = measurment_cache.lumped_port_vi->find(idx);
-  if (it_lumped != measurment_cache.lumped_port_vi->end())
+  // TODO: In multi-excitation PR we will guarantee that lumped & wave ports have unique idx
+  auto it_lumped = measurement_cache.lumped_port_vi.find(idx);
+  if (it_lumped != measurement_cache.lumped_port_vi.end())
   {
     auto &I_loc = it_lumped->second.I;
     switch (branch)
@@ -888,8 +719,8 @@ std::complex<double> PostOperator::GetPortCurrent(int idx,
         return std::accumulate(I_loc.begin(), I_loc.end(), std::complex<double>{0.0, 0.0});
     }
   }
-  auto it_wave = measurment_cache.wave_port_vi->find(idx);
-  if (it_wave != measurment_cache.wave_port_vi->end())
+  auto it_wave = measurement_cache.wave_port_vi.find(idx);
+  if (it_wave != measurement_cache.wave_port_vi.end())
   {
     MFEM_ABORT("GetPortCurrent is not yet implemented for wave port boundaries!");
   }
@@ -897,7 +728,8 @@ std::complex<double> PostOperator::GetPortCurrent(int idx,
       "Port Current: Could not find a lumped or wave port with index {}!", idx));
 }
 
-double PostOperator::GetInductorParticipation(int idx, double E_m) const
+double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_port_op,
+                                              int idx, double E_m) const
 {
   // Compute energy-participation ratio of junction given by index idx for the field mode.
   // We first get the port line voltage, and use lumped port circuit impedance to get peak
@@ -907,17 +739,14 @@ double PostOperator::GetInductorParticipation(int idx, double E_m) const
   //                            p_mj = 1/2 L_j I_mj² / E_m.
   // An element with no assigned inductance will be treated as having zero admittance and
   // thus zero current.
-  if (lumped_port_op == nullptr)
-  {
-    return 0.0;
-  }
-  const LumpedPortData &data = lumped_port_op->GetPort(idx);
+  const LumpedPortData &data = lumped_port_op.GetPort(idx);
   std::complex<double> I_mj = GetPortCurrent(idx, LumpedPortData::Branch::L);
   return std::copysign(0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj)) / E_m,
                        I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
-double PostOperator::GetExternalKappa(int idx, double E_m) const
+double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
+                                      double E_m) const
 {
   // Compute participation ratio of external ports (given as any port boundary with
   // nonzero resistance). Currently no reactance of the ports is supported. The κ of the
@@ -925,11 +754,7 @@ double PostOperator::GetExternalKappa(int idx, double E_m) const
   //                          κ_mj = 1/2 R_j I_mj² / E_m
   // from which the mode coupling quality factor is computed as:
   //                              Q_mj = ω_m / κ_mj.
-  if (lumped_port_op == nullptr)
-  {
-    return 0.0;
-  }
-  const LumpedPortData &data = lumped_port_op->GetPort(idx);
+  const LumpedPortData &data = lumped_port_op.GetPort(idx);
   std::complex<double> I_mj = GetPortCurrent(idx, LumpedPortData::Branch::R);
   return std::copysign(0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj)) / E_m,
                        I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
@@ -1083,37 +908,25 @@ void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
   Mpi::Barrier(GetComm());
 }
 
+void PostOperator::MeasureProbes()
+{
+  if (E && interp_op.GetProbes().size() > 0)
+  {
+    measurement_cache.probe_E_field = interp_op.ProbeField(*E);
+  }
+  if (B && interp_op.GetProbes().size() > 0)
+  {
+    measurement_cache.probe_B_field = interp_op.ProbeField(*B);
+  }
+}
+
 std::vector<std::complex<double>> PostOperator::ProbeEField() const
 {
-  if (!measurment_cache.probe_E_field.has_value())
-  {
-    MFEM_VERIFY(E, "PostOperator is not configured for electric field probes!");
-    if (interp_op.GetProbes().size() > 0)
-    {
-      measurment_cache.probe_E_field = interp_op.ProbeField(*E);
-    }
-    else
-    {
-      measurment_cache.probe_E_field.emplace();
-    }
-  }
-  return *measurment_cache.probe_E_field;
+  return measurement_cache.probe_E_field;
 }
 std::vector<std::complex<double>> PostOperator::ProbeBField() const
 {
-  if (!measurment_cache.probe_B_field.has_value())
-  {
-    MFEM_VERIFY(B, "PostOperator is not configured for magnetic flux density probes!");
-    if (interp_op.GetProbes().size() > 0)
-    {
-      measurment_cache.probe_B_field = interp_op.ProbeField(*B);
-    }
-    else
-    {
-      measurment_cache.probe_B_field.emplace();
-    }
-  }
-  return *measurment_cache.probe_B_field;
+  return measurement_cache.probe_B_field;
 }
 
 }  // namespace palace

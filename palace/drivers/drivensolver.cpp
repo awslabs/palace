@@ -188,7 +188,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.SetFrequency(omega);
-    post_op.MeasureAll();
+    post_op.MeasureAll(space_op);
 
     Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(space_op.GetComm(), E),
@@ -367,7 +367,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.SetFrequency(omega);
-    post_op.MeasureAll();
+    post_op.MeasureAll(space_op);
 
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
 
@@ -617,7 +617,9 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
 
   for (const auto o_idx : all_port_indices)
   {
-    std::complex<double> S_ij = post_op.GetSParameter(src_lumped_port, o_idx, source_idx);
+    std::complex<double> S_ij =
+        src_lumped_port ? post_op.GetSParameter(lumped_port_op, o_idx, source_idx)
+                        : post_op.GetSParameter(wave_port_op, o_idx, source_idx);
 
     auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
     auto arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;

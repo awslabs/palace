@@ -316,7 +316,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.SetFrequency(omega);
-    post_op.MeasureAll();
+    post_op.MeasureAll(space_op);
 
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
@@ -591,7 +591,8 @@ void EigenSolver::EPRPostPrinter::AddMeasurementEPR(
   port_EPR.table["idx"] << eigen_print_idx;
   for (const auto idx : ports_with_L)
   {
-    port_EPR.table[format("p_{}", idx)] << post_op.GetInductorParticipation(idx, E_m);
+    port_EPR.table[format("p_{}", idx)]
+        << post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
   }
   port_EPR.AppendRow();
 }
@@ -616,7 +617,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
   port_EPR.table["idx"] << eigen_print_idx;
   for (const auto idx : ports_with_R)
   {
-    double Kl = post_op.GetExternalKappa(idx, E_m);
+    double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
     double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
 
     port_Q.table[format("Ql_{}", idx)] << Ql;
