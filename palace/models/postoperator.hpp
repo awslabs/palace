@@ -111,8 +111,6 @@ private:
   };
   MeasurementCache measurement_cache = {};
 
-  void ValidateDoPortMeasurement() const;
-
   void InitializeDataCollection(const IoData &iodata);
 
   // Component measurements to fill the cache.
@@ -185,17 +183,31 @@ public:
   // Treat the frequency, for driven and eigenmode solvers, as a "measurement", that other
   // measurements can depend on. This has to be supplied during the solver loop separate
   // from the fields.
-  void SetFrequency(double omega);
-  void SetFrequency(std::complex<double> omega);
+  void SetFrequency(double omega)
+  {
+    measurement_cache.omega = std::complex<double>(omega);
+  }
+  void SetFrequency(std::complex<double> omega)
+  {
+    measurement_cache.omega = omega;
+  }
 
-  // Return stored frequency that was given in SetFrequency. Always promotes to complex
-  // frequency.
-  std::complex<double> GetFrequency() const;
+  // Return stored frequency that was given in SetFrequency.
+  std::complex<double> GetFrequency() const
+  {
+    return measurement_cache.omega;
+  }
 
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
-  double GetEFieldEnergy() const;
-  double GetHFieldEnergy() const;
+  double GetEFieldEnergy() const
+  {
+    return measurement_cache.domain_E_field_energy_all;
+  }
+  double GetHFieldEnergy() const
+  {
+    return measurement_cache.domain_H_field_energy_all;
+  }
 
   // Postprocess the electric and magnetic field energies in the domain with the given
   // index.
@@ -204,7 +216,7 @@ public:
 
   // Postprocess the electric or magnetic field flux for a surface index using the computed
   // electric field and/or magnetic flux density field solutions.
-  std::vector<FluxData> GetSurfaceFluxAll() const
+  std::vector<FluxData> GetSurfaceFluxes() const
   {
     return measurement_cache.surface_flux_i;
   }
@@ -221,8 +233,14 @@ public:
 
   // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
   // the provided set.
-  double GetLumpedInductorEnergy() const;
-  double GetLumpedCapacitorEnergy() const;
+  double GetLumpedInductorEnergy() const
+  {
+    return measurement_cache.lumped_port_inductor_energy;
+  }
+  double GetLumpedCapacitorEnergy() const
+  {
+    return measurement_cache.lumped_port_capacitor_energy;
+  }
 
   // Postprocess the S-parameter for recieving lumped or wave port index using the electric
   // field solution.
