@@ -77,7 +77,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
 endif()
 
 # Replace mfem abort calls with exceptions for testing, default off
-set(PALACE_MFEM_USE_EXCEPTIONS CACHE NO "MFEM throw exceptsions instead of abort calls")
+set(PALACE_MFEM_USE_EXCEPTIONS NO "MFEM throw exceptions instead of abort calls")
 
 set(MFEM_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MFEM_OPTIONS
