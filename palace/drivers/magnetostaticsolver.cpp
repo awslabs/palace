@@ -40,7 +40,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   int n_step = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
   MFEM_VERIFY(n_step > 0,
               "No surface current boundaries specified for magnetostatic simulation!");
-  PostprocessPrintResults post_results(root, post_dir, post_op,
+  PostprocessPrintResults post_results(post_dir, post_op,
                                        iodata.solver.magnetostatic.n_post);
 
   // Source term and solution vector storage.
@@ -207,12 +207,10 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
 }
 
 MagnetostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const fs::path &post_dir, const PostOperator &post_op, int n_post_)
+    const fs::path &post_dir, const PostOperator &post_op, int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op, "i", n_post},
-    surfaces{true, root, post_dir, post_op, "i", n_post},
-    probes{true, root, post_dir, post_op, "i", n_post},
-    error_indicator{true, root, post_dir}
+    domains{post_dir, post_op, "i", n_post}, surfaces{post_dir, post_op, "i", n_post},
+    probes{post_dir, post_op, "i", n_post}, error_indicator{post_dir}
 {
 }
 
@@ -222,6 +220,7 @@ void MagnetostaticSolver::PostprocessPrintResults::PostprocessStep(
   domains.AddMeasurement(idx, post_op, iodata);
   surfaces.AddMeasurement(idx, post_op, iodata);
   probes.AddMeasurement(idx, post_op, iodata);
+
   // The internal GridFunctions in PostOperator have already been set from A:
   if (write_paraview_fields && step < n_post)
   {

@@ -41,7 +41,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure objects for postprocessing.
   PostOperator post_op(iodata, space_op, "eigenmode");
-  PostprocessPrintResults post_results(root, post_dir, post_op, space_op,
+  PostprocessPrintResults post_results(post_dir, post_op, space_op,
                                        iodata.solver.eigenmode.n_post);
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
@@ -351,7 +351,6 @@ void EigenSolver::EigenPostPrinter::PrintStdoutHeader()
   eig.table.col_options.min_left_padding = 6;
 
   // Separate printing due to printing lead as integer not float
-
   fmt::memory_buffer buf;
   auto to = [&buf](auto f, auto &&...a)
   { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
@@ -367,7 +366,7 @@ void EigenSolver::EigenPostPrinter::PrintStdoutHeader()
   }
   to("{:s}", eig.table.print_row_separator);
 
-  Mpi::Print("{}{}", std::string{buf.data(), buf.size()},
+  Mpi::Print("{}{}\n", std::string{buf.data(), buf.size()},
              std::string(stdout_int_print_width + 4 * eig.table[1].col_width(), '='));
   eig.table.col_options = save_defaults;
 }
@@ -387,7 +386,7 @@ void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
   auto to = [&buf](auto f, auto &&...a)
   { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
 
-  to("{:{}d}", int(eig.table[0].data[j]), stdout_int_print_width);
+  to("{:{}d}", int(eig.table[0].data.at(j)), stdout_int_print_width);
   for (int i = 1; i < eig.table.n_cols(); i++)
   {
     if (i > 0)
@@ -397,18 +396,18 @@ void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
     to("{:s}", eig.table[i].format_row(j));
   }
   to("{:s}", eig.table.print_row_separator);
-  Mpi::Print("{}", buf);
+  Mpi::Print("{}", fmt::to_string(buf));
   eig.table.col_options = save_defaults;
 }
 
-EigenSolver::EigenPostPrinter::EigenPostPrinter(bool do_measurement, bool root,
-                                                const fs::path &post_dir, int n_post)
-  : root_{root}, do_measurement_(do_measurement),
+EigenSolver::EigenPostPrinter::EigenPostPrinter(const fs::path &post_dir,
+                                                const SpaceOperator &space_op, int n_post)
+  : root_(Mpi::Root(space_op.GetComm())),
     stdout_int_print_width(1 + static_cast<int>(std::log10(n_post)))
 {
   // Note: we switch to n_eig rather than n_conv for padding since we don't know n_conv
   // until solve
-  if (!do_measurement_ || !root_)
+  if (!root_)
   {
     return;
   }
@@ -428,7 +427,7 @@ void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
                                                    double error_bkwd, double error_abs,
                                                    const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
+  if (!root_)
   {
     return;
   }
@@ -450,16 +449,12 @@ void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
   PrintStdoutRow(eig.table.n_rows() - 1);
 }
 
-EigenSolver::PortsPostPrinter::PortsPostPrinter(bool do_measurement, bool root,
-                                                const fs::path &post_dir,
-                                                const LumpedPortOperator &lumped_port_op,
+EigenSolver::PortsPostPrinter::PortsPostPrinter(const fs::path &post_dir,
+                                                const SpaceOperator &space_op,
                                                 int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement                  //
-                     && (lumped_port_op.Size() > 0)  //
-                 }
 {
-  if (!do_measurement_ || !root_)
+  const auto &lumped_port_op = space_op.GetLumpedPortOp();
+  if (lumped_port_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
   {
     return;
   }
@@ -489,7 +484,7 @@ void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
                                                    const LumpedPortOperator &lumped_port_op,
                                                    const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
+  if (lumped_port_op.Size() == 0 || !Mpi::Root(post_op.GetComm()))
   {
     return;
   }
@@ -518,38 +513,31 @@ void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
   port_I.AppendRow();
 }
 
-EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
-                                            const fs::path &post_dir,
-                                            const LumpedPortOperator &lumped_port_op,
+EigenSolver::EPRPostPrinter::EPRPostPrinter(const fs::path &post_dir,
+                                            const SpaceOperator &space_op,
                                             int n_expected_rows)
-  : root_{root}, do_measurement_EPR_(do_measurement  //
-                                     && lumped_port_op.Size() > 0),
-    do_measurement_Q_(do_measurement_EPR_)
 {
+  const auto &lumped_port_op = space_op.GetLumpedPortOp();
   // Mode EPR for lumped inductor elements:
-
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (std::abs(data.L) > 0.)
+    if (std::abs(data.L) > 0.0)
     {
       ports_with_L.push_back(idx);
     }
-    if (std::abs(data.R) > 0.)
+    if (std::abs(data.R) > 0.0)
     {
       ports_with_R.push_back(idx);
     }
   }
 
-  do_measurement_EPR_ = do_measurement_EPR_ && !ports_with_L.empty();
-  do_measurement_Q_ = do_measurement_Q_ && !ports_with_R.empty();
-
-  if (!root_ || (!do_measurement_EPR_ && !do_measurement_Q_))
+  if ((ports_with_L.empty() && ports_with_R.empty()) || !Mpi::Root(space_op.GetComm()))
   {
     return;
   }
   using fmt::format;
 
-  if (do_measurement_EPR_)
+  if (!ports_with_L.empty())
   {
     port_EPR = TableWithCSVFile(post_dir / "port-EPR.csv");
     port_EPR.table.reserve(n_expected_rows, 1 + ports_with_L.size());
@@ -560,7 +548,7 @@ EigenSolver::EPRPostPrinter::EPRPostPrinter(bool do_measurement, bool root,
     }
     port_EPR.AppendHeader();
   }
-  if (do_measurement_Q_)
+  if (!ports_with_R.empty())
   {
     port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
     port_Q.table.reserve(n_expected_rows, 1 + ports_with_R.size());
@@ -578,7 +566,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementEPR(
     double eigen_print_idx, const PostOperator &post_op,
     const LumpedPortOperator &lumped_port_op, const IoData &iodata)
 {
-  if (!do_measurement_EPR_ || !root_)
+  if (ports_with_L.empty() || !Mpi::Root(post_op.GetComm()))
   {
     return;
   }
@@ -602,7 +590,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
                                                   const LumpedPortOperator &lumped_port_op,
                                                   const IoData &iodata)
 {
-  if (!do_measurement_Q_ || !root_)
+  if (ports_with_R.empty() || !Mpi::Root(post_op.GetComm()))
   {
     return;
   }
@@ -635,17 +623,14 @@ void EigenSolver::EPRPostPrinter::AddMeasurement(double eigen_print_idx,
   AddMeasurementQ(eigen_print_idx, post_op, lumped_port_op, iodata);
 }
 
-EigenSolver::PostprocessPrintResults::PostprocessPrintResults(bool root,
-                                                              const fs::path &post_dir,
+EigenSolver::PostprocessPrintResults::PostprocessPrintResults(const fs::path &post_dir,
                                                               const PostOperator &post_op,
                                                               const SpaceOperator &space_op,
                                                               int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op, "m", n_post},
-    surfaces{true, root, post_dir, post_op, "m", n_post},
-    probes{true, root, post_dir, post_op, "m", n_post}, eigen{true, root, post_dir, n_post},
-    epr{true, root, post_dir, space_op.GetLumpedPortOp(), n_post},
-    error_indicator{true, root, post_dir}
+    domains{post_dir, post_op, "m", n_post}, surfaces{post_dir, post_op, "m", n_post},
+    probes{post_dir, post_op, "m", n_post}, eigen{post_dir, space_op, n_post},
+    epr{post_dir, space_op, n_post}, error_indicator{post_dir}
 {
 }
 
@@ -656,16 +641,15 @@ void EigenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,
                                                            double error_bkward)
 {
   int eigen_print_idx = step + 1;
-
   domains.AddMeasurement(eigen_print_idx, post_op, iodata);
   surfaces.AddMeasurement(eigen_print_idx, post_op, iodata);
   probes.AddMeasurement(eigen_print_idx, post_op, iodata);
   eigen.AddMeasurement(eigen_print_idx, post_op, error_bkward, error_abs, iodata);
   epr.AddMeasurement(eigen_print_idx, post_op, space_op.GetLumpedPortOp(), iodata);
+
   // The internal GridFunctions in PostOperator have already been set:
   if (write_paraview_fields && step < n_post)
   {
-    Mpi::Print("\n");
     post_op.WriteFields(step, eigen_print_idx);
     Mpi::Print(" Wrote mode {:d} to disk\n", eigen_print_idx);
   }

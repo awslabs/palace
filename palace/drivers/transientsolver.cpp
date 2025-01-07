@@ -38,7 +38,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
   PostOperator post_op(iodata, space_op, "transient");
-  PostprocessPrintResults post_results(root, post_dir, post_op, space_op, n_step,
+  PostprocessPrintResults post_results(post_dir, post_op, space_op, n_step,
                                        iodata.solver.transient.delta_post);
 
   {
@@ -244,18 +244,12 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-// -----------------
-// Measurements / Postprocessing
-
-TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
-  : root_{root},                               //
-    do_measurement_(do_measurement             //
-                    && (surf_j_op.Size() > 0)  // Needs surface currents
-    )
+TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(const fs::path &post_dir,
+                                                          const SpaceOperator &space_op,
+                                                          int n_expected_rows)
 {
-  if (!do_measurement_ || !root_)
+  const auto &surf_j_op = space_op.GetSurfaceCurrentOp();
+  if (surf_j_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
   {
     return;
   }
@@ -271,10 +265,12 @@ TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(
   surface_I.AppendHeader();
 }
 
-void TransientSolver::CurrentsPostPrinter::AddMeasurement(
-    double t, double J_coef, const SurfaceCurrentOperator &surf_j_op, const IoData &iodata)
+void TransientSolver::CurrentsPostPrinter::AddMeasurement(double t, double J_coef,
+                                                          const SpaceOperator &space_op,
+                                                          const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
+  const auto &surf_j_op = space_op.GetSurfaceCurrentOp();
+  if (surf_j_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
   {
     return;
   }
@@ -290,15 +286,12 @@ void TransientSolver::CurrentsPostPrinter::AddMeasurement(
   surface_I.AppendRow();
 }
 
-TransientSolver::PortsPostPrinter::PortsPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const LumpedPortOperator &lumped_port_op, int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement                  //
-                     && (lumped_port_op.Size() > 0)  // Only works for lumped ports
-                 }
+TransientSolver::PortsPostPrinter::PortsPostPrinter(const fs::path &post_dir,
+                                                    const SpaceOperator &space_op,
+                                                    int n_expected_rows)
 {
-  if (!do_measurement_ || !root_)
+  const auto &lumped_port_op = space_op.GetLumpedPortOp();
+  if (lumped_port_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
   {
     return;
   }
@@ -329,7 +322,7 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
     double t, double J_coef, const PostOperator &post_op,
     const LumpedPortOperator &lumped_port_op, const IoData &iodata)
 {
-  if (!do_measurement_ || !root_)
+  if (lumped_port_op.Size() == 0 || !Mpi::Root(post_op.GetComm()))
   {
     return;
   }
@@ -369,15 +362,14 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
 }
 
 TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const fs::path &post_dir, const PostOperator &post_op,
-    const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
+    const fs::path &post_dir, const PostOperator &post_op, const SpaceOperator &space_op,
+    int n_expected_rows, int delta_post_)
   : delta_post{delta_post_}, write_paraview_fields(delta_post_ > 0),
-    domains{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
-    surfaces{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
-    currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
-    probes{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
-    ports{true, root, post_dir, space_op.GetLumpedPortOp(), n_expected_rows},
-    error_indicator{true, root, post_dir}
+    domains{post_dir, post_op, "t (ns)", n_expected_rows},
+    surfaces{post_dir, post_op, "t (ns)", n_expected_rows},
+    currents{post_dir, space_op, n_expected_rows},
+    probes{post_dir, post_op, "t (ns)", n_expected_rows},
+    ports{post_dir, space_op, n_expected_rows}, error_indicator{post_dir}
 {
 }
 
@@ -386,12 +378,12 @@ void TransientSolver::PostprocessPrintResults::PostprocessStep(
     int step, double t, double J_coef)
 {
   auto time = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-
   domains.AddMeasurement(time, post_op, iodata);
   surfaces.AddMeasurement(time, post_op, iodata);
-  currents.AddMeasurement(t, J_coef, space_op.GetSurfaceCurrentOp(), iodata);
+  currents.AddMeasurement(t, J_coef, space_op, iodata);
   probes.AddMeasurement(time, post_op, iodata);
   ports.AddMeasurement(t, J_coef, post_op, space_op.GetLumpedPortOp(), iodata);
+
   // The internal GridFunctions in PostOperator have already been set:
   if (write_paraview_fields && (step % delta_post == 0))
   {
