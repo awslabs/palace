@@ -8,6 +8,7 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "models/portexcitationhelper.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/strongtype.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -21,6 +22,7 @@ class PostOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
+class RomOperator;
 
 //
 // Driver class for driven terminal simulations.
@@ -154,10 +156,23 @@ private:
                         const WavePortOperator &wave_port_op, const IoData &iodata);
   };
 
+  class PROMPostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_ = false;
+    fs::path post_dir_;
+
+  public:
+    PROMPostPrinter(bool do_measurement, bool root, fs::path post_dir)
+      : root_(root), do_measurement_(do_measurement), post_dir_(std::move(post_dir)) {};
+
+    void PostprocessPROM(const IoData &iodata, const RomOperator &prom_op);
+  };
+
   struct PostprocessPrintResults
   {
-    bool write_paraview_fields = false;
     int delta_post = 0;
+    bool write_paraview_fields = false;
 
     DomainsPostPrinter domains;
     SurfacesPostPrinter surfaces;
@@ -167,15 +182,18 @@ private:
     SParametersPostPrinter s_parameters;
 
     ErrorIndicatorPostPrinter error_indicator;
+    PROMPostPrinter prom;
 
     PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             const PortExcitationHelper &excitation_helper,
-                            int n_expected_rows, int delta_post);
+                            int n_expected_rows, const IoData &iodata);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
                          const SpaceOperator &space_op, int step,
                          ExcitationIdx excitation_idx);
-    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
+    void PostprocessFinal(const IoData &iodata, const PostOperator &post_op,
+                          const ErrorIndicator &indicator,
+                          const RomOperator *prom_op = nullptr);
   };
 
   ErrorIndicator SweepUniform(SpaceOperator &space_op,

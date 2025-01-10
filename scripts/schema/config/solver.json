@@ -51,7 +51,8 @@
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
-        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 }
+        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
+        "AdaptiveCircuitSynthesis": { "type": "boolean" }
       }
     },
     "Transient":
