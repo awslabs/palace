@@ -51,7 +51,7 @@ UniformElementData::UniformElementData(const std::array<mfem::real_t, 3> &input_
 
   // Compute the length from the most aligned normal direction.
 #ifdef MFEM_USE_SINGLE
-  constexpr mfem::real_t rel_tol = 1.0e-4;
+  constexpr mfem::real_t rel_tol = 1.0e-3;
 #else
   constexpr mfem::real_t rel_tol = 1.0e-6;
 #endif
