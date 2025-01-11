@@ -1651,7 +1651,7 @@ mfem::real_t GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker
   return volume;
 }
 
-mfem::real_t double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
+mfem::real_t RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
