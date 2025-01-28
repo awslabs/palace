@@ -1466,6 +1466,22 @@ double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   return dist;
 }
 
+// Compute a normal vector from an element transformation, optionally ensure aligned
+// (| normal ⋅ align | > 0)
+void Normal(mfem::ElementTransformation &T, mfem::Vector &normal, const mfem::Vector * const align)
+{
+  const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+  T.SetIntPoint(&ip);
+  mfem::CalcOrtho(T.Jacobian(), normal);
+  normal /= normal.Norml2();
+  if (align && (normal * (*align) < 0))
+  {
+    normal *= -1;
+  }
+}
+
+// Given a mesh and boundary attribute marker array, compute a normal for the surface. If
+// not averaging, use the first entry.
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                               bool average)
 {
@@ -1473,63 +1489,32 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   mfem::IsoparametricTransformation T;
   mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
-  bool init = false;
-  auto UpdateNormal = [&](mfem::ElementTransformation &T)
-  {
-    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
-    T.SetIntPoint(&ip);
-    mfem::CalcOrtho(T.Jacobian(), loc_normal);
-    if (!init)
-    {
-      normal = loc_normal;
-      init = true;
-    }
-    else
-    {
-      // Check orientation and make sure consistent on this process. If a boundary has
-      // conflicting normal definitions, use the first value.
-      if (loc_normal * normal < 0.0)
-      {
-        normal -= loc_normal;
-      }
-      else
-      {
-        normal += loc_normal;
-      }
-    }
-  };
   if (mesh.Dimension() == mesh.SpaceDimension())
   {
-    // Loop over boundary elements.
-    for (int i = 0; i < mesh.GetNBE(); i++)
+    // Loop over boundary elements. Exit early if not averaging and non-zero normal.
+    for (int i = 0; i < mesh.GetNBE() && !(!average && normal.Norml2() > 0.0); i++)
     {
       if (!marker[mesh.GetBdrAttribute(i) - 1])
       {
         continue;
       }
       mesh.GetBdrElementTransformation(i, &T);
-      UpdateNormal(T);
-      if (!average)
-      {
-        break;
-      }
+      Normal(T, loc_normal, &normal);
+      normal += loc_normal;
     }
   }
   else
   {
-    // Loop over domain elements.
-    for (int i = 0; i < mesh.GetNE(); i++)
+    // Loop over domain elements. Exit early if not averaging and non-zero normal.
+    for (int i = 0; i < mesh.GetNE() && !(!average && normal.Norml2() > 0.0); i++)
     {
       if (!marker[mesh.GetAttribute(i) - 1])
       {
         continue;
       }
       mesh.GetElementTransformation(i, &T);
-      UpdateNormal(T);
-      if (!average)
-      {
-        break;
-      }
+      Normal(T, loc_normal, &normal);
+      normal += loc_normal;
     }
   }
 
@@ -1538,7 +1523,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   MPI_Comm comm = mesh.GetComm();
   int rank = Mpi::Size(comm);
   mfem::Vector glob_normal(dim);
-  if (init)
+  if (normal.Norml2() > 0.0)
   {
     rank = Mpi::Rank(comm);
   }
@@ -1556,7 +1541,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   Mpi::Broadcast(dim, glob_normal.HostReadWrite(), rank, comm);
   if (average)
   {
-    if (init && normal * glob_normal < 0.0)
+    if (normal * glob_normal < 0.0)
     {
       normal.Neg();
     }
@@ -1580,7 +1565,6 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
       Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e})", normal(0), normal(1));
     }
   }
-
   return normal;
 }
 
@@ -1721,99 +1705,60 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 namespace
 {
 
-// Compute the centroid of a set of vertices.
-mfem::Vector ComputeCentroid(std::unique_ptr<mfem::Mesh> &mesh,
-                             const std::unordered_set<int> &vertidxs)
+// Compute the centroid of a container of vertices.
+template <typename T>
+mfem::Vector ComputeCentroid(const std::unique_ptr<mfem::Mesh> &mesh, const T &vertidxs)
 {
-  const int sdim = mesh->SpaceDimension();
-  mfem::Vector centroid(sdim);
+  mfem::Vector centroid(mesh->SpaceDimension());
   centroid = 0.0;
+  int c = 0;
   for (const int v : vertidxs)
   {
-    mfem::Vector coord(mesh->GetVertex(v), 3);
-    centroid += coord;
+    centroid += mfem::Vector(mesh->GetVertex(v), 3);
+    c++;
   }
-  centroid /= (double)vertidxs.size();
-  return centroid;
+  return centroid /= c;
 }
 
 // Compute the normal vector for a set of elements. If "inside" is true, normal will
 // point inside the mesh, otherwise it will point outside the mesh.
-mfem::Vector ComputeNormal(std::unique_ptr<mfem::Mesh> &mesh,
-                           const std::unordered_set<int> &elem_set, bool inside,
+template <typename T>
+mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
+                           const T &elem_set, bool inside,
                            bool check_planar = true)
 {
   const int sdim = mesh->SpaceDimension();
-  mfem::IsoparametricTransformation T;
-  mfem::Vector loc_normal(sdim), normal(sdim);
+  mfem::IsoparametricTransformation trans;
+  mfem::Vector normal(sdim), last_normal(sdim), align(sdim);
   normal = 0.0;
-  int count = 0;
+  mfem::Array<int> vert_bdr;
 
-  auto UpdateNormal = [&](int el, mfem::ElementTransformation &T)
-  {
-    // Compute normal.
-    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
-    T.SetIntPoint(&ip);
-    mfem::CalcOrtho(T.Jacobian(), loc_normal);
-
-    // Normalize it.
-    loc_normal /= loc_normal.Norml2();
-
-    // To find if the normal is pointing inside or outside the mesh,
-    // we compare the boundary element position to its adjacent element.
-    mfem::Array<int> vert_bdr;
-    mesh->GetBdrElementVertices(el, vert_bdr);
-    mfem::Vector bdr_elem_center(sdim), adj_elem_center(sdim);
-    mfem::Vector bdr_elem_offset_p(sdim), bdr_elem_offset_n(sdim);
-    bdr_elem_center = 0.0;
-    for (int j = 0; j < vert_bdr.Size(); j++)
-    {
-      mfem::Vector coord(mesh->GetVertex(vert_bdr[j]), sdim);
-      bdr_elem_center += coord;
-    }
-    bdr_elem_center /= vert_bdr.Size();
-
+  // Ensure that the computed normal points "inside" or "outside"
+  auto Alignment = [&](int el, mfem::Vector &align){
     int eladj, info;
     mesh->GetBdrElementAdjacentElement(el, eladj, info);
-    mesh->GetElementCenter(eladj, adj_elem_center);
-
-    bdr_elem_offset_p = bdr_elem_center;
-    bdr_elem_offset_p += loc_normal;
-    bdr_elem_offset_n = bdr_elem_center;
-    bdr_elem_offset_n -= loc_normal;
-    if (inside && (adj_elem_center.DistanceTo(bdr_elem_offset_n) <
-                   adj_elem_center.DistanceTo(bdr_elem_offset_p)))
+    mesh->GetElementCenter(eladj, align);
+    mesh->GetBdrElementVertices(el, vert_bdr);
+    align -= ComputeCentroid(mesh, vert_bdr);
+    if (!inside) // align points inwards
     {
-      loc_normal *= -1.0;
+      align *= -1;
     }
-    if (!inside && (adj_elem_center.DistanceTo(bdr_elem_offset_p) <
-                    adj_elem_center.DistanceTo(bdr_elem_offset_n)))
-    {
-      loc_normal *= -1.0;
-    }
-
-    // Check if the boundary is planar by comparing the current element's
-    // normal to the average normal (accumulated so far).
-    if (count > 0 && check_planar)
-    {
-      mfem::Vector diff(sdim);
-      diff = normal;
-      diff /= count;
-      diff -= loc_normal;
-      MFEM_VERIFY(diff.Norml2() < 1e-8,
-                  "Periodic boundary mapping is only supported for planar boundaries.");
-    }
-    normal += loc_normal;
-
-    count++;
   };
 
-  for (const int elem : elem_set)
+  for (auto elem : elem_set)
   {
-    mesh->GetBdrElementTransformation(elem, &T);
-    UpdateNormal(elem, T);
+    Alignment(elem, align);
+    mesh->GetBdrElementTransformation(elem, &trans);
+    mesh::Normal(trans, normal, &align);
+    if (!check_planar)
+    {
+      break; // If not checking planar, use the first.
+    }
+    MFEM_VERIFY((last_normal * normal - 1) < 1e-8,
+            "Periodic boundary mapping is only supported for planar boundaries.");
+    last_normal = normal;
   }
-  normal /= count;
   return normal;
 }
 
@@ -1842,7 +1787,7 @@ std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
     dist2points[std::round(dist / mesh_dim * 1e8)].insert(v);
   }
 
-  // Loop over the distances, points chosen have a unique distance and are not collinear.
+  // Loop over the distances, points chosen have a unique distance and are not colinear.
   // Centroid is always considered a unique point.
   unique_pts.push_back(centroid);
   mfem::Vector cross_product(sdim);
@@ -2066,31 +2011,11 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     {
       int el, info;
       mesh->GetBdrElementAdjacentElement(be, el, info);
-      if (mesh->GetElementType(el) == mfem::Element::TETRAHEDRON)
-      {
-        has_tets = true;
-      }
-      if (donor)
-      {
-        bdr_e_donor.insert(be);
-      }
-      else if (receiver)
-      {
-        bdr_e_receiver.insert(be);
-      }
       mfem::Array<int> vertidxs;
       mesh->GetBdrElementVertices(be, vertidxs);
-      for (int i = 0; i < vertidxs.Size(); i++)
-      {
-        if (donor)
-        {
-          bdr_v_donor.insert(vertidxs[i]);
-        }
-        else if (receiver)
-        {
-          bdr_v_receiver.insert(vertidxs[i]);
-        }
-      }
+      has_tets = (mesh->GetElementType(el) == mfem::Element::TETRAHEDRON);
+      (donor ? bdr_e_donor : bdr_e_receiver).insert(be);
+      (donor ? bdr_v_donor : bdr_v_receiver).insert(vertidxs.begin(), vertidxs.end());
     }
   }
 
@@ -2153,24 +2078,19 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   {
     // Automatically detect transformation.
     // Compute the centroid for each boundary.
-    mfem::Vector donor_centroid, receiver_centroid;
-    donor_centroid = ComputeCentroid(mesh, bdr_v_donor);
-    receiver_centroid = ComputeCentroid(mesh, bdr_v_receiver);
+    auto donor_centroid = ComputeCentroid(mesh, bdr_v_donor);
+    auto receiver_centroid = ComputeCentroid(mesh, bdr_v_receiver);
 
     // Compute the normal vector for each boundary.
-    mfem::Vector donor_normal, receiver_normal;
-    donor_normal = ComputeNormal(mesh, bdr_e_donor, true);
-    receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
+    auto donor_normal = ComputeNormal(mesh, bdr_e_donor, true);
+    auto receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
 
     // Compute a set of unique points for each boundary.
-    std::vector<mfem::Vector> donor_pts, receiver_pts;
-    donor_pts = FindUniquePoints(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim,
-                                 mesh_tol);
-    receiver_pts = FindUniquePoints(mesh, bdr_v_receiver, receiver_centroid,
-                                    receiver_normal, mesh_dim, mesh_tol);
+    auto donor_pts = FindUniquePoints(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
+    auto receiver_pts = FindUniquePoints(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
     MFEM_VERIFY(
         donor_pts.size() == receiver_pts.size(),
-        "Different number of unique points on donor and receiver periodic boundaries.");
+        "Different number of unique points on donor and receiver periodic boundaries!");
 
     // With 4 pairs of matching points, compute the unique affine transformation.
     // With < 4, cannot determine a unique transformation. We assume there is no
