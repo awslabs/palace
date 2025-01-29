@@ -1927,77 +1927,44 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                              const mfem::DenseMatrix &transform,
                                              double tol = 1e-6)
 {
-  const int sdim = mesh->SpaceDimension();
-
-  mfem::Vector coord(sdim), at(sdim), dx(sdim);
+  MFEM_VERIFY(mesh->SpaceDimension() == 3, "Only support creating periodic vertex maps for 3D Meshes!");
 
   // Similar to MFEM's CreatePeriodicVertexMapping, maps from replica to primary vertex.
   std::unordered_map<int, int> replica2primary;
 
   // KD-tree containing all the receiver points.
-  std::unique_ptr<mfem::KDTreeBase<int, double>> kdtree;
-  if (sdim == 1)
-  {
-    kdtree.reset(new mfem::KDTree1D);
-  }
-  else if (sdim == 2)
-  {
-    kdtree.reset(new mfem::KDTree2D);
-  }
-  else if (sdim == 3)
-  {
-    kdtree.reset(new mfem::KDTree3D);
-  }
-  else
-  {
-    MFEM_ABORT("Invalid space dimension.");
-  }
-
-  // Add all receiver points to KD-tree.
+  mfem::KDTree3D kdtree;
   for (const int v : receiver_v)
   {
-    kdtree->AddPoint(mesh->GetVertex(v), v);
+    kdtree.AddPoint(mesh->GetVertex(v), v);
   }
-  kdtree->Sort();
+  kdtree.Sort();
 
   // Loop over donor points and find the corresponding receiver point.
+  mfem::Vector from(4), to(4);
   for (int vi : donor_v)
   {
-    mfem::Vector donor_coord(4), receiver_coord(4);
-    donor_coord[3] = 1.0;
-    coord.MakeRef(donor_coord, 0);
-    at.MakeRef(receiver_coord, 0);
+    // TODO: mfem patch to allow SetVector direct from pointer
+    std::copy(mesh->GetVertex(vi), mesh->GetVertex(vi) + 3, from.begin());
+    from[3] = 1.0; // reset
+    transform.Mult(from, to); // receiver = transform * donor
 
-    coord = mesh->GetVertex(vi);
-    // Apply transformation, receiver = transform * donor.
-    transform.Mult(donor_coord, receiver_coord);
-
-    const int vj = kdtree->FindClosestPoint(at.GetData());
-    coord = mesh->GetVertex(vj);
-    dx = at;
-    dx -= coord;
-
-    MFEM_VERIFY(dx.Norml2() < tol,
-                "Could not match points on periodic boundaries, "
-                "transformed donor point does not correspond to a receive point.");
-    MFEM_VERIFY(
-        replica2primary.find(vj) == replica2primary.end(),
-        "Could not match points on "
-        "periodic boundaries, multiple donor points map to the same receiver point.")
-
+    const int vj = kdtree.FindClosestPoint(to.GetData());
+    std::copy(mesh->GetVertex(vj), mesh->GetVertex(vj) + 3, from.begin());
+    from -= to; // Check that the loaded vertex is identical to the transformed
+    MFEM_VERIFY(from.Norml2() < tol,
+                "Could not match points on periodic boundaries, transformed donor point does not correspond to a receiver point!");
+    MFEM_VERIFY(replica2primary.find(vj) == replica2primary.end(),
+        "Could not match points on periodic boundaries, multiple donor points map to the same receiver point!")
     replica2primary[vj] = vi;
   }
 
   std::vector<int> v2v(mesh->GetNV());
-  for (int i = 0; i < v2v.size(); i++)
+  std::iota(v2v.begin(), v2v.end(), 0);
+  for (const auto &[r,p] : replica2primary)
   {
-    v2v[i] = i;
+    v2v[r] = p;
   }
-  for (const auto &r2p : replica2primary)
-  {
-    v2v[r2p.first] = r2p.second;
-  }
-
   return v2v;
 }
 
