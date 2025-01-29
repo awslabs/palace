@@ -1734,7 +1734,7 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
   mfem::Array<int> vert_bdr;
 
   // Ensure that the computed normal points "inside" or "outside"
-  auto Alignment = [&](int el, mfem::Vector &align){
+  auto Alignment = [&](int el, auto &align){
     int eladj, info;
     mesh->GetBdrElementAdjacentElement(el, eladj, info);
     mesh->GetElementCenter(eladj, align);
@@ -1761,6 +1761,54 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
   }
   return normal;
 }
+
+struct Frame
+{
+  Frame(const mfem::Vector &o) : origin(o)
+  {
+    for (auto &x : basis)
+    {
+      x.SetSize(3);
+      x = 0.0;
+    }
+  }
+  mfem::Vector origin;
+  std::array<mfem::Vector, 3> basis;
+};
+Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
+            const std::unordered_set<int> &vertidxs,
+            const mfem::Vector &centroid,
+            const mfem::Vector &normal,
+            double mesh_dim, double tol = 1e-6)
+{
+  Frame frame(centroid);
+  frame.basis[0] = normal;
+
+  // For each point, compute its distance to the centroid.
+  std::map<int, std::vector<int>, std::greater<int>> dist2points;
+  for (auto v : vertidxs)
+  {
+    auto dist = centroid.DistanceTo(mesh->GetVertex(v));
+    // Convert dist to integer to avoid floating point differences.
+    dist2points[std::round(dist / mesh_dim * 1e8)].push_back(v);
+  }
+
+  for (const auto &[dist, verts] : dist2points)
+  {
+    if (verts.size() > 1 || dist == 0)
+    {
+      continue;
+    }
+    frame.basis[1] = mfem::Vector(mesh->GetVertex(verts.front()), 3);
+    frame.basis[1] -= centroid;
+    frame.basis[1] /= frame.basis[1].Norml2();
+  }
+
+  // Define final point by computing the cross product.
+  frame.basis[0].cross3D(frame.basis[1], frame.basis[2]);
+  return frame;
+}
+
 
 // Identify up to four unique points within a set.
 // 1. The centroid of the set.
@@ -1831,6 +1879,82 @@ std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
   return unique_pts;
 }
 
+// Calculate the rotation matrix between two vectors.
+void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
+                     mfem::DenseMatrix &transformation)
+{
+  mfem::DenseMatrix R(3), vx(3), vx2(3);
+
+  mfem::Vector v(normal1.Size());
+  normal1.cross3D(normal2, v);
+  double s = v.Norml2();
+  double c = normal1 * normal2;
+
+  vx(0, 1) = -v[2];
+  vx(0, 2) = v[1];
+  vx(1, 0) = v[2];
+  vx(1, 2) = -v[0];
+  vx(2, 0) = -v[1];
+  vx(2, 1) = v[0];
+
+  R(0, 0) = R(1, 1) = R(2, 2) = 1.0;
+  R += vx;
+  Mult(vx, vx, vx2);
+  vx2.Set(1.0 / (1.0 + c), vx2);
+  R += vx2;
+
+  for (int i = 0; i < 3; i++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      transformation(i, j) = R(i, j);
+    }
+  }
+}
+
+mfem::DenseMatrix
+ComputeAffineTransformationMatrix(const Frame &donor, const Frame &receiver)
+{
+
+  mfem::DenseMatrix A(4,4);
+  A = 0.0;
+  if (donor.basis[1].Norml2() > 0.0 && receiver.basis[1].Norml2() > 0.0)
+  {
+    // Stably compute the rotation matrix from unit vectors.
+    Eigen::Matrix3d source, target;
+    for(int i = 0; i < 3; i++) {
+      for(int j = 0; j < 3; j++) {
+          source(i, j) = donor.basis[j](i);
+          target(i, j) = receiver.basis[j](i);
+      }
+    }
+    Eigen::Matrix3d R = source * target.transpose();
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    R = svd.matrixU() * svd.matrixV().transpose();
+    for(int i = 0; i < 3; i++)
+    {
+      for(int j = 0; j < 3; j++)
+      {
+        A(i,j) = R(i,j);
+      }
+    }
+  }
+  else
+  {
+    // If the donor or receiver basis is ambiguous, we assume no rotation around the
+    // normals, and that the rotation comes only from realigning normal vectors.
+    ComputeRotation(donor.basis[0], receiver.basis[0], A);
+  }
+
+  for (int i = 0; i < 3; i++)
+  {
+    A(i,3) = receiver.origin(i) - donor.origin(i);
+  }
+  A(3,3) = 1.0;
+  return A;
+}
+
+
 // Use 4 point pairs (donor, receiver) to compute the affine transformation matrix.
 void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
                                  const std::vector<mfem::Vector> &receiver_pts,
@@ -1865,38 +1989,6 @@ void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
   transformation(3, 3) = 1.0;
 }
 
-// Calculate the rotation matrix between two vectors.
-void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
-                     mfem::DenseMatrix &transformation)
-{
-  mfem::DenseMatrix R(3), vx(3), vx2(3);
-
-  mfem::Vector v(normal1.Size());
-  normal1.cross3D(normal2, v);
-  double s = v.Norml2();
-  double c = normal1 * normal2;
-
-  vx(0, 1) = -v[2];
-  vx(0, 2) = v[1];
-  vx(1, 0) = v[2];
-  vx(1, 2) = -v[0];
-  vx(2, 0) = -v[1];
-  vx(2, 1) = v[0];
-
-  R(0, 0) = R(1, 1) = R(2, 2) = 1.0;
-  R += vx;
-  Mult(vx, vx, vx2);
-  vx2.Set(1.0 / (1.0 + c), vx2);
-  R += vx2;
-
-  for (int i = 0; i < 3; i++)
-  {
-    for (int j = 0; j < 3; j++)
-    {
-      transformation(i, j) = R(i, j);
-    }
-  }
-}
 
 // Create the vertex mapping between sets of donor and receiver pts related
 // by an affine transformation matrix.
@@ -2047,30 +2139,28 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   // Use the translation vector or affine transformation matrix if provided
   // in the config file, otherwise automatically detect the transformation.
   mfem::DenseMatrix transformation(4);
-  mfem::Vector translation(data.translation.size());
-  std::copy(data.translation.begin(), data.translation.end(), translation.GetData());
-  mfem::Vector affine_vec(data.affine_transform.size());
-  std::copy(data.affine_transform.begin(), data.affine_transform.end(),
-            affine_vec.GetData());
-
-  if (translation.Norml2() > mesh_tol)
+  auto nonempty = [](const auto &x)
+  {
+    return std::any_of(x.begin(), x.end(), [](auto y){ return std::abs(y) > 0.0; });
+  };
+  if(nonempty(data.translation))
   {
     // Use user-provided translation.
     for (int i = 0; i < 3; i++)
     {
       transformation(i, i) = 1.0;
-      transformation(i, 3) = translation[i];
+      transformation(i, 3) = data.translation[i];
     }
     transformation(3, 3) = 1.0;
   }
-  else if (affine_vec.Norml2() > mesh_tol)
+  else if (nonempty(data.affine_transform))
   {
     // Use user-provided affine transformation matrix.
     for (int i = 0; i < 4; i++)
     {
       for (int j = 0; j < 4; j++)
       {
-        transformation(i, j) = affine_vec[i * 4 + j];
+        transformation(i, j) = data.affine_transform[i * 4 + j]; // row major conversion
       }
     }
   }
@@ -2086,33 +2176,10 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     auto receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
 
     // Compute a set of unique points for each boundary.
-    auto donor_pts = FindUniquePoints(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
-    auto receiver_pts = FindUniquePoints(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
-    MFEM_VERIFY(
-        donor_pts.size() == receiver_pts.size(),
-        "Different number of unique points on donor and receiver periodic boundaries!");
-
-    // With 4 pairs of matching points, compute the unique affine transformation.
-    // With < 4, cannot determine a unique transformation. We assume there is no
-    // rotation along the boundary normal direction, compute the rotation between
-    // the two normals and the translation between the two centroids.
-    if (donor_pts.size() == 4)
-    {
-      ComputeAffineTransformation(donor_pts, receiver_pts, transformation);
-    }
-    else
-    {
-      // Use normals to compute a rotation matrix
-      ComputeRotation(donor_normal, receiver_normal, transformation);
-
-      // Add centroids translation to transform matrix
-      transformation(0, 3) = receiver_centroid[0] - donor_centroid[0];
-      transformation(1, 3) = receiver_centroid[1] - donor_centroid[1];
-      transformation(2, 3) = receiver_centroid[2] - donor_centroid[2];
-      transformation(3, 3) = 1.0;
-    }
+    auto donor_frame = Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
+    auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
+    transformation = ComputeAffineTransformationMatrix(donor_frame, receiver_frame);
   }
-
   return CreatePeriodicVertexMapping(mesh, bdr_v_donor, bdr_v_receiver, transformation,
                                      mesh_tol);
 }
