@@ -1799,84 +1799,13 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
     {
       continue;
     }
-    frame.basis[1] = mfem::Vector(mesh->GetVertex(verts.front()), 3);
-    frame.basis[1] -= centroid;
+    frame.basis[1] = mfem::Vector(mesh->GetVertex(verts.front()), 3) -= centroid;
     frame.basis[1] /= frame.basis[1].Norml2();
   }
 
   // Define final point by computing the cross product.
   frame.basis[0].cross3D(frame.basis[1], frame.basis[2]);
   return frame;
-}
-
-
-// Identify up to four unique points within a set.
-// 1. The centroid of the set.
-// 2. A point offset from the centroid by 1 mesh unit in the normal direction.
-// 3. The farthest point with a unique distance from the centroid.
-// 4. The 2nd-farthest point with a unique distance from the centroid.
-std::vector<mfem::Vector> FindUniquePoints(std::unique_ptr<mfem::Mesh> &mesh,
-                                           const std::unordered_set<int> &vertidxs,
-                                           const mfem::Vector &centroid,
-                                           const mfem::Vector &normal,
-                                           const double &mesh_dim, const double &tol = 1e-6)
-{
-  const int sdim = mesh->SpaceDimension();
-  std::vector<mfem::Vector> unique_pts;
-
-  // For each point, compute its distance to the centroid.
-  mfem::Vector coord(sdim);
-  std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
-  for (const int v : vertidxs)
-  {
-    coord = mesh->GetVertex(v);
-    double dist = coord.DistanceTo(centroid);
-    // Convert dist to integer to avoid floating point differences.
-    dist2points[std::round(dist / mesh_dim * 1e8)].insert(v);
-  }
-
-  // Loop over the distances, points chosen have a unique distance and are not colinear.
-  // Centroid is always considered a unique point.
-  unique_pts.push_back(centroid);
-  mfem::Vector cross_product(sdim);
-  for (const auto &[dist, pts_set] : dist2points)
-  {
-    // Only consider unique non-zero distances.
-    if (pts_set.size() == 1 && dist > 0)
-    {
-      int v = *pts_set.begin();
-      coord = mesh->GetVertex(v);
-      unique_pts.push_back(coord);  // Add point.
-      // Once we have 3 points, check for collinearity
-      if (unique_pts.size() == 3)
-      {
-        // v1 = P2 - P1, v2 = P3 - P1.
-        mfem::Vector v1(sdim), v2(sdim);
-        v1 = unique_pts[1];
-        v1 -= unique_pts[0];
-        v2 = unique_pts[2];
-        v2 -= unique_pts[0];
-        v1.cross3D(v2, cross_product);
-        // If cross product is ~0, points are collinear. Remove last point and continue
-        // loop.
-        if (cross_product.Norml2() < tol)
-        {
-          unique_pts.pop_back();
-        }
-        else
-        {
-          break;
-        }
-      }
-    }
-  }
-
-  // Add point offset from centroid in normal direction.
-  coord = centroid;
-  coord += normal;
-  unique_pts.push_back(coord);
-
-  return unique_pts;
 }
 
 // Calculate the rotation matrix between two vectors.
