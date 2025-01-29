@@ -1468,7 +1468,8 @@ double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &m
 
 // Compute a normal vector from an element transformation, optionally ensure aligned
 // (| normal ⋅ align | > 0)
-void Normal(mfem::ElementTransformation &T, mfem::Vector &normal, const mfem::Vector * const align)
+void Normal(mfem::ElementTransformation &T, mfem::Vector &normal,
+            const mfem::Vector *const align)
 {
   const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
   T.SetIntPoint(&ip);
@@ -1723,9 +1724,8 @@ mfem::Vector ComputeCentroid(const std::unique_ptr<mfem::Mesh> &mesh, const T &v
 // Compute the normal vector for a set of elements. If "inside" is true, normal will
 // point inside the mesh, otherwise it will point outside the mesh.
 template <typename T>
-mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
-                           const T &elem_set, bool inside,
-                           bool check_planar = true)
+mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh, const T &elem_set,
+                           bool inside, bool check_planar = true)
 {
   const int sdim = mesh->SpaceDimension();
   mfem::IsoparametricTransformation trans;
@@ -1734,13 +1734,14 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
   mfem::Array<int> vert_bdr;
 
   // Ensure that the computed normal points "inside" or "outside"
-  auto Alignment = [&](int el, auto &align){
+  auto Alignment = [&](int el, auto &align)
+  {
     int eladj, info;
     mesh->GetBdrElementAdjacentElement(el, eladj, info);
     mesh->GetElementCenter(eladj, align);
     mesh->GetBdrElementVertices(el, vert_bdr);
     align -= ComputeCentroid(mesh, vert_bdr);
-    if (!inside) // align points inwards
+    if (!inside)  // align points inwards
     {
       align *= -1;
     }
@@ -1753,10 +1754,10 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh,
     mesh::Normal(trans, normal, &align);
     if (!check_planar)
     {
-      break; // If not checking planar, use the first.
+      break;  // If not checking planar, use the first.
     }
     MFEM_VERIFY((last_normal * normal - 1) < 1e-8,
-            "Periodic boundary mapping is only supported for planar boundaries.");
+                "Periodic boundary mapping is only supported for planar boundaries.");
     last_normal = normal;
   }
   return normal;
@@ -1776,10 +1777,8 @@ struct Frame
   std::array<mfem::Vector, 3> basis;
 };
 Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
-            const std::unordered_set<int> &vertidxs,
-            const mfem::Vector &centroid,
-            const mfem::Vector &normal,
-            double mesh_dim, double tol = 1e-6)
+                  const std::unordered_set<int> &vertidxs, const mfem::Vector &centroid,
+                  const mfem::Vector &normal, double mesh_dim, double tol = 1e-6)
 {
   Frame frame(centroid);
   frame.basis[0] = normal;
@@ -1841,30 +1840,32 @@ void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
   }
 }
 
-mfem::DenseMatrix
-ComputeAffineTransformationMatrix(const Frame &donor, const Frame &receiver)
+mfem::DenseMatrix ComputeAffineTransformationMatrix(const Frame &donor,
+                                                    const Frame &receiver)
 {
 
-  mfem::DenseMatrix A(4,4);
+  mfem::DenseMatrix A(4, 4);
   A = 0.0;
   if (donor.basis[1].Norml2() > 0.0 && receiver.basis[1].Norml2() > 0.0)
   {
     // Stably compute the rotation matrix from unit vectors.
     Eigen::Matrix3d source, target;
-    for(int i = 0; i < 3; i++) {
-      for(int j = 0; j < 3; j++) {
-          source(i, j) = donor.basis[j](i);
-          target(i, j) = receiver.basis[j](i);
+    for (int i = 0; i < 3; i++)
+    {
+      for (int j = 0; j < 3; j++)
+      {
+        source(i, j) = donor.basis[j](i);
+        target(i, j) = receiver.basis[j](i);
       }
     }
     Eigen::Matrix3d R = source * target.transpose();
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
     R = svd.matrixU() * svd.matrixV().transpose();
-    for(int i = 0; i < 3; i++)
+    for (int i = 0; i < 3; i++)
     {
-      for(int j = 0; j < 3; j++)
+      for (int j = 0; j < 3; j++)
       {
-        A(i,j) = R(i,j);
+        A(i, j) = R(i, j);
       }
     }
   }
@@ -1877,12 +1878,11 @@ ComputeAffineTransformationMatrix(const Frame &donor, const Frame &receiver)
 
   for (int i = 0; i < 3; i++)
   {
-    A(i,3) = receiver.origin(i) - donor.origin(i);
+    A(i, 3) = receiver.origin(i) - donor.origin(i);
   }
-  A(3,3) = 1.0;
+  A(3, 3) = 1.0;
   return A;
 }
-
 
 // Use 4 point pairs (donor, receiver) to compute the affine transformation matrix.
 void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
@@ -1918,7 +1918,6 @@ void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
   transformation(3, 3) = 1.0;
 }
 
-
 // Create the vertex mapping between sets of donor and receiver pts related
 // by an affine transformation matrix.
 std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
@@ -1927,7 +1926,8 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                              const mfem::DenseMatrix &transform,
                                              double tol = 1e-6)
 {
-  MFEM_VERIFY(mesh->SpaceDimension() == 3, "Only support creating periodic vertex maps for 3D Meshes!");
+  MFEM_VERIFY(mesh->SpaceDimension() == 3,
+              "Only support creating periodic vertex maps for 3D Meshes!");
 
   // Similar to MFEM's CreatePeriodicVertexMapping, maps from replica to primary vertex.
   std::unordered_map<int, int> replica2primary;
@@ -1946,22 +1946,24 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   {
     // TODO: mfem patch to allow SetVector direct from pointer
     std::copy(mesh->GetVertex(vi), mesh->GetVertex(vi) + 3, from.begin());
-    from[3] = 1.0; // reset
-    transform.Mult(from, to); // receiver = transform * donor
+    from[3] = 1.0;             // reset
+    transform.Mult(from, to);  // receiver = transform * donor
 
     const int vj = kdtree.FindClosestPoint(to.GetData());
     std::copy(mesh->GetVertex(vj), mesh->GetVertex(vj) + 3, from.begin());
-    from -= to; // Check that the loaded vertex is identical to the transformed
+    from -= to;  // Check that the loaded vertex is identical to the transformed
     MFEM_VERIFY(from.Norml2() < tol,
-                "Could not match points on periodic boundaries, transformed donor point does not correspond to a receiver point!");
+                "Could not match points on periodic boundaries, transformed donor point "
+                "does not correspond to a receiver point!");
     MFEM_VERIFY(replica2primary.find(vj) == replica2primary.end(),
-        "Could not match points on periodic boundaries, multiple donor points map to the same receiver point!")
+                "Could not match points on periodic boundaries, multiple donor points map "
+                "to the same receiver point!")
     replica2primary[vj] = vi;
   }
 
   std::vector<int> v2v(mesh->GetNV());
   std::iota(v2v.begin(), v2v.end(), 0);
-  for (const auto &[r,p] : replica2primary)
+  for (const auto &[r, p] : replica2primary)
   {
     v2v[r] = p;
   }
@@ -2036,10 +2038,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   // in the config file, otherwise automatically detect the transformation.
   mfem::DenseMatrix transformation(4);
   auto nonempty = [](const auto &x)
-  {
-    return std::any_of(x.begin(), x.end(), [](auto y){ return std::abs(y) > 0.0; });
-  };
-  if(nonempty(data.translation))
+  { return std::any_of(x.begin(), x.end(), [](auto y) { return std::abs(y) > 0.0; }); };
+  if (nonempty(data.translation))
   {
     // Use user-provided translation.
     for (int i = 0; i < 3; i++)
@@ -2056,7 +2056,7 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     {
       for (int j = 0; j < 4; j++)
       {
-        transformation(i, j) = data.affine_transform[i * 4 + j]; // row major conversion
+        transformation(i, j) = data.affine_transform[i * 4 + j];  // row major conversion
       }
     }
   }
@@ -2072,8 +2072,10 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     auto receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
 
     // Compute a set of unique points for each boundary.
-    auto donor_frame = Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
-    auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim, mesh_tol);
+    auto donor_frame =
+        Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
+    auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid,
+                                      receiver_normal, mesh_dim, mesh_tol);
     transformation = ComputeAffineTransformationMatrix(donor_frame, receiver_frame);
   }
   return CreatePeriodicVertexMapping(mesh, bdr_v_donor, bdr_v_receiver, transformation,
