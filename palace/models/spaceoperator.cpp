@@ -830,7 +830,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpwi, &fpi,
                                  skip_zeros, assemble_q_data);
       bi_aux_vec =
-          AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &skip_zeros, assemble_q_data);
+          AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
     }
   }
   else
