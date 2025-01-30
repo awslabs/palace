@@ -432,12 +432,16 @@ iterative solver choices, and the default choice depends on the iterative solver
   - `"Default"`
 
 `"DivFreeTol" [1.0e-12]` :  Relative tolerance for divergence-free cleaning used in the
-eigenmode simulation type. Ignored if non-zero Floquet wave vector is specified in
+eigenmode simulation type.  Ignored if non-zero
+[`config["Domains"]["Materials"]["LondonDepth"]`](domains.md##domains%5B%22Materials%22%5D%5B%22LondonDepth%22%5D)
+is detected and ignored if non-zero Floquet wave vector is specified in
 [`config["Boundaries"]["Periodic"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22Periodic%22%5D%22FloquetWaveVector%22%5D)
 or [`config["Boundaries"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22FloquetWaveVector%22%5D).
 
 `"DivFreeMaxIts" [1000]` :  Maximum number of iterations for divergence-free cleaning use in
-the eigenmode simulation type. Ignored if non-zero Floquet wave vector is specified in
+the eigenmode simulation type. Ignored if non-zero
+[`config["Domains"]["Materials"]["LondonDepth"]`](domains.md##domains%5B%22Materials%22%5D%5B%22LondonDepth%22%5D)
+is detected and ignored if non-zero Floquet wave vector is specified in
 [`config["Boundaries"]["Periodic"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22Periodic%22%5D%22FloquetWaveVector%22%5D)
 or [`config["Boundaries"]["FloquetWaveVector"]`](boundaries.md##boundaries%5B%%22FloquetWaveVector%22%5D).
 
