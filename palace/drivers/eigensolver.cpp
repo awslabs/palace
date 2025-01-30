@@ -173,7 +173,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0 && !space_op.GetMaterialOp().HasLondonDepth() && !FP)
+  if (iodata.solver.linear.divfree_max_it > 0 && !FP &&
+      !space_op.GetMaterialOp().HasLondonDepth())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
