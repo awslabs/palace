@@ -1851,7 +1851,6 @@ mfem::DenseMatrix ComputeAffineTransformationMatrix(const Frame &donor,
   A = 0.0;
   if (donor.basis[1].Norml2() > 0.0 && receiver.basis[1].Norml2() > 0.0)
   {
-    Mpi::Print("Rigid body SVD\n");
     // Stably compute the rotation matrix from unit vectors.
     Eigen::Matrix3d source, target;
     Eigen::Vector3d source_centroid, target_centroid;
@@ -1887,7 +1886,6 @@ mfem::DenseMatrix ComputeAffineTransformationMatrix(const Frame &donor,
   }
   else
   {
-    Mpi::Print("Rotation + translation\n");
     // If the donor or receiver basis is ambiguous, we assume no rotation around the
     // normals, and that the rotation comes only from realigning normal vectors.
     ComputeRotation(donor.basis[0], receiver.basis[0], A);
