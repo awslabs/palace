@@ -470,9 +470,6 @@ public:
 struct PeriodicData
 {
 public:
-  // Vector defining the direction and distance for this periodic boundary condition.
-  std::array<double, 3> translation = {0.0, 0.0, 0.0};
-
   // Vector defining the affine transformation matrix for this periodic boundary condition.
   std::array<double, 16> affine_transform = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};

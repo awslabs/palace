@@ -48,8 +48,8 @@ CEED_QFUNCTION_HELPER void MultAtBCx22(const CeedScalar A[4], const CeedScalar B
                                        const CeedScalar C[4], const CeedScalar x[2],
                                        CeedScalar y[2])
 {
-  // A: 0 2   B: 0 2   C: 0 2
-  //    1 3      1 3      1 3
+  // A, B, C: 0 2
+  //          1 3
   CeedScalar z[2];
 
   y[0] = C[0] * x[0] + C[2] * x[1];
@@ -65,8 +65,8 @@ CEED_QFUNCTION_HELPER void MultAtBCx22(const CeedScalar A[4], const CeedScalar B
 CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[4],
                                      const CeedScalar x[2], CeedScalar y[2])
 {
-  // A: 0 2   B: 0 2
-  //    1 3      1 3
+  // A, B: 0 2
+  //       1 3
   CeedScalar z[2];
 
   z[0] = A[0] * x[0] + A[2] * x[1];
@@ -79,8 +79,8 @@ CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[4
 CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar A[4], const CeedScalar B[4],
                                       CeedScalar C[4])
 {
-  // A: 0 2   B: 0 2   C: 0 2
-  //    1 3      1 3      1 3
+  // A, B, C: 0 2
+  //          1 3
 
   // First compute entries of R = B A.
   const CeedScalar R11 = B[0] * A[0] + B[2] * A[1];
@@ -97,8 +97,8 @@ CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar A[4], const CeedScalar B[
 CEED_QFUNCTION_HELPER void MultAtBC22(const CeedScalar A[4], const CeedScalar B[4],
                                       const CeedScalar C[4], CeedScalar D[4])
 {
-  // A, C: 0 2   B: 0 2   D: 0 2
-  //       1 3      1 3      1 3
+  // A, B, C, D: 0 2
+  //             1 3
 
   // First compute entries of R = B C.
   const CeedScalar R11 = B[0] * C[0] + B[2] * C[1];
@@ -115,8 +115,8 @@ CEED_QFUNCTION_HELPER void MultAtBC22(const CeedScalar A[4], const CeedScalar B[
 CEED_QFUNCTION_HELPER void MultBA22(const CeedScalar A[4], const CeedScalar B[4],
                                     CeedScalar C[4])
 {
-  // A: 0 2   B: 0 2   C: 0 2
-  //    1 3      1 3      1 3
+  // A, B, C: 0 2
+  //          1 3
   C[0] = B[0] * A[0] + B[2] * A[1];
   C[1] = B[1] * A[0] + B[3] * A[1];
   C[2] = B[0] * A[2] + B[2] * A[3];

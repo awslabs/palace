@@ -551,7 +551,7 @@ attributes for this periodic boundary.
 attributes for this periodic boundary.
 
 `"Translation" [None]` :  Optional floating point array defining the distance from the donor
-attribute to the receiver attribute in mesh units. If neither `"Translation"` or
+attribute to the receiver attribute in mesh units. If neither `"Translation"` nor
 `"AffineTransformation"` are specified, the transformation between donor and receiver boundaries
 is automatically detected.
 

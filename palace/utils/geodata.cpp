@@ -1776,6 +1776,7 @@ struct Frame
   mfem::Vector origin;
   std::array<mfem::Vector, 3> basis;
 };
+
 Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
                   const std::unordered_set<int> &vertidxs, const mfem::Vector &centroid,
                   const mfem::Vector &normal, double mesh_dim, double tol = 1e-6)
@@ -1784,12 +1785,12 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
   frame.basis[0] = normal;
 
   // For each point, compute its distance to the centroid.
-  std::map<int, std::vector<int>, std::greater<int>> dist2points;
-  for (auto v : vertidxs)
+  std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
+  for (const int v : vertidxs)
   {
     auto dist = centroid.DistanceTo(mesh->GetVertex(v));
     // Convert dist to integer to avoid floating point differences.
-    dist2points[std::round(dist / mesh_dim * 1e8)].push_back(v);
+    dist2points[std::round(dist / mesh_dim * 1e8)].insert(v);
   }
 
   for (const auto &[dist, verts] : dist2points)
@@ -1798,12 +1799,15 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
     {
       continue;
     }
-    frame.basis[1] = mfem::Vector(mesh->GetVertex(verts.front()), 3) -= centroid;
+    frame.basis[1] = mesh->GetVertex(*verts.begin());
+    frame.basis[1] -= centroid;
     frame.basis[1] /= frame.basis[1].Norml2();
+    break;
   }
 
   // Define final point by computing the cross product.
   frame.basis[0].cross3D(frame.basis[1], frame.basis[2]);
+
   return frame;
 }
 
@@ -1815,7 +1819,6 @@ void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
 
   mfem::Vector v(normal1.Size());
   normal1.cross3D(normal2, v);
-  double s = v.Norml2();
   double c = normal1 * normal2;
 
   vx(0, 1) = -v[2];
@@ -1848,8 +1851,10 @@ mfem::DenseMatrix ComputeAffineTransformationMatrix(const Frame &donor,
   A = 0.0;
   if (donor.basis[1].Norml2() > 0.0 && receiver.basis[1].Norml2() > 0.0)
   {
+    Mpi::Print("Rigid body SVD\n");
     // Stably compute the rotation matrix from unit vectors.
     Eigen::Matrix3d source, target;
+    Eigen::Vector3d source_centroid, target_centroid;
     for (int i = 0; i < 3; i++)
     {
       for (int j = 0; j < 3; j++)
@@ -1857,65 +1862,43 @@ mfem::DenseMatrix ComputeAffineTransformationMatrix(const Frame &donor,
         source(i, j) = donor.basis[j](i);
         target(i, j) = receiver.basis[j](i);
       }
+      source_centroid(i) = donor.origin(i);
+      target_centroid(i) = receiver.origin(i);
     }
     Eigen::Matrix3d R = source * target.transpose();
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    R = svd.matrixU() * svd.matrixV().transpose();
+    R = svd.matrixV() * svd.matrixU().transpose();
+
+    // Account for possible reflection in R (det(R) = -1).
+    Eigen::DiagonalMatrix<double, 3> Diag(1.0, 1.0, R.determinant());
+    R = svd.matrixV() * Diag * svd.matrixU().transpose();
+
+    // Compute translation and form transformation matrix.
+    const Eigen::Vector3d translation = target_centroid - R * source_centroid;
     for (int i = 0; i < 3; i++)
     {
       for (int j = 0; j < 3; j++)
       {
         A(i, j) = R(i, j);
       }
+      A(i, 3) = translation(i);
     }
+    A(3, 3) = 1.0;
   }
   else
   {
+    Mpi::Print("Rotation + translation\n");
     // If the donor or receiver basis is ambiguous, we assume no rotation around the
     // normals, and that the rotation comes only from realigning normal vectors.
     ComputeRotation(donor.basis[0], receiver.basis[0], A);
-  }
-
-  for (int i = 0; i < 3; i++)
-  {
-    A(i, 3) = receiver.origin(i) - donor.origin(i);
-  }
-  A(3, 3) = 1.0;
-  return A;
-}
-
-// Use 4 point pairs (donor, receiver) to compute the affine transformation matrix.
-void ComputeAffineTransformation(const std::vector<mfem::Vector> &donor_pts,
-                                 const std::vector<mfem::Vector> &receiver_pts,
-                                 mfem::DenseMatrix &transformation)
-{
-  mfem::DenseMatrix A(12);
-  A = 0.0;
-  mfem::Vector rhs(12);
-  for (int i = 0; i < 4; i++)
-  {
-    A(3 * i, 0) = A(3 * i + 1, 4) = A(3 * i + 2, 8) = donor_pts[i][0];
-    A(3 * i, 1) = A(3 * i + 1, 5) = A(3 * i + 2, 9) = donor_pts[i][1];
-    A(3 * i, 2) = A(3 * i + 1, 6) = A(3 * i + 2, 10) = donor_pts[i][2];
-    A(3 * i, 3) = A(3 * i + 1, 7) = A(3 * i + 2, 11) = 1.0;
-    rhs[3 * i + 0] = receiver_pts[i][0];
-    rhs[3 * i + 1] = receiver_pts[i][1];
-    rhs[3 * i + 2] = receiver_pts[i][2];
-  }
-
-  // Solve linear system A * rhs = affine coeffs.
-  mfem::LinearSolve(A, rhs.GetData());
-
-  // Build affine transformation matrix.
-  transformation = 0.0;
-  for (int i = 0; i < 3; i++)
-  {
-    for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 3; i++)
     {
-      transformation(i, j) = rhs[i * 4 + j];
+      A(i, 3) = receiver.origin(i) - donor.origin(i);
     }
+    A(3, 3) = 1.0;
   }
-  transformation(3, 3) = 1.0;
+
+  return A;
 }
 
 // Create the vertex mapping between sets of donor and receiver pts related
@@ -1926,9 +1909,6 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                              const mfem::DenseMatrix &transform,
                                              double tol = 1e-6)
 {
-  MFEM_VERIFY(mesh->SpaceDimension() == 3,
-              "Only support creating periodic vertex maps for 3D Meshes!");
-
   // Similar to MFEM's CreatePeriodicVertexMapping, maps from replica to primary vertex.
   std::unordered_map<int, int> replica2primary;
 
@@ -2039,17 +2019,7 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   mfem::DenseMatrix transformation(4);
   auto nonempty = [](const auto &x)
   { return std::any_of(x.begin(), x.end(), [](auto y) { return std::abs(y) > 0.0; }); };
-  if (nonempty(data.translation))
-  {
-    // Use user-provided translation.
-    for (int i = 0; i < 3; i++)
-    {
-      transformation(i, i) = 1.0;
-      transformation(i, 3) = data.translation[i];
-    }
-    transformation(3, 3) = 1.0;
-  }
-  else if (nonempty(data.affine_transform))
+  if (nonempty(data.affine_transform))
   {
     // Use user-provided affine transformation matrix.
     for (int i = 0; i < 4; i++)

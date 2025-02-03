@@ -53,7 +53,7 @@ void DivDivIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.test_ops = EvalMode::Div;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(trial_num_comp, Q);
+  auto ctx = PopulateCoefficientContext(trial_num_comp, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

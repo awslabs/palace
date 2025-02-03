@@ -37,9 +37,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto FP = space_op.GetFloquetMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO);
-  A2 = nullptr;
 
   const auto &Curl = space_op.GetCurlMatrix();
   SaveMetadata(space_op.GetNDSpaces());
@@ -129,25 +126,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (C)
   {
-    if (FP)
-    {
-      eigen->SetOperators(*K, *C, *M, *FP, scale);
-    }
-    else
-    {
-      eigen->SetOperators(*K, *C, *M, scale);
-    }
+    eigen->SetOperators(*K, *C, *M, scale);
   }
   else
   {
-    if (FP)
-    {
-      eigen->SetOperators(*K, *M, *FP, scale);
-    }
-    else
-    {
-      eigen->SetOperators(*K, *M, scale);
-    }
+    eigen->SetOperators(*K, *M, scale);
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
   eigen->SetTol(iodata.solver.eigenmode.tol);
@@ -173,7 +156,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0 && !FP &&
+  if (iodata.solver.linear.divfree_max_it > 0 &&
+      !space_op.GetMaterialOp().HasWaveVector() &&
       !space_op.GetMaterialOp().HasLondonDepth())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
@@ -187,11 +171,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
   std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
-  if (FP)
+  if (space_op.GetMaterialOp().HasWaveVector())
   {
     floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetPeriodicOp(), space_op.GetNDSpace(),
-        space_op.GetRTSpace(), iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
+        iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
@@ -271,7 +255,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get(), FP.get());
+                                    C.get(), M.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
                                                              target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -335,11 +319,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
-    if (FP)
+    if (space_op.GetMaterialOp().HasWaveVector())
     {
       // Calculate B field correction for Floquet BCs.
-      // B = -1/(iω) ∇ x E - 1/ω kp x E.
-      floquet_corr->AddMult(E, B, -1.0 / omega);
+      // B = -1/(iω) ∇ x E + 1/ω kp x E.
+      floquet_corr->AddMult(E, B, 1.0 / omega);
     }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);

@@ -68,7 +68,7 @@ void CurlCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   }
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext((dim < 3) ? 1 : dim, Q);
+  auto ctx = PopulateCoefficientContext((dim < 3) ? 1 : dim, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

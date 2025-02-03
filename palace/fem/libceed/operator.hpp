@@ -43,8 +43,6 @@ public:
 
   CeedOperator operator[](std::size_t i) const { return op[i]; }
 
-  CeedOperator GetTranspose(std::size_t i) const { return op_t[i]; }
-
   auto Size() const { return op.size(); }
 
   void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);

@@ -201,15 +201,6 @@ void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
-void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                          const ComplexOperator &C,
-                                          const ComplexOperator &M,
-                                          const ComplexOperator &P,
-                                          EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
-}
-
 void ArpackEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
 {
   opInv = &ksp;
@@ -499,7 +490,7 @@ void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
 ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)
 {
-  opK = opM = opP = nullptr;
+  opK = opM = nullptr;
   normK = normM = 0.0;
 }
 
@@ -510,37 +501,6 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for EPS scaling!");
-    if (normK > 0 && normM > 0.0)
-    {
-      gamma = normK / normM;  // Store γ² for linear problem
-      delta = 2.0 / normK;
-    }
-  }
-
-  // Set up workspace.
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  z1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
-  z1.UseDevice(true);
-  n = opK->Height();
-}
-
-void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                   const ComplexOperator &P,
-                                   EigenvalueSolver::ScaleType type)
-{
-  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
-  bool first = (opK == nullptr);
-  opK = &K;
-  opM = &M;
-  opP = &P;
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
@@ -624,10 +584,6 @@ void ArpackEPSSolver::ApplyOp(const std::complex<double> *px,
   if (!sinvert)
   {
     opK->Mult(x1, z1);
-    if (opP)
-    {
-      opP->AddMult(x1, z1, 1.0);
-    }
     opInv->Mult(z1, y1);
     y1 *= 1.0 / gamma;
   }
@@ -662,10 +618,6 @@ double ArpackEPSSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
 {
   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
   opK->Mult(x, r);
-  if (opP)
-  {
-    opP->AddMult(x, r, 1.0);
-  }
   opM->AddMult(x, r, -l);
   return linalg::Norml2(comm, r);
 }
@@ -690,7 +642,7 @@ double ArpackEPSSolver::GetBackwardScaling(std::complex<double> l) const
 ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)
 {
-  opK = opC = opM = opP = nullptr;
+  opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -703,44 +655,6 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   opK = &K;
   opC = &C;
   opM = &M;
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
-                "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / (normK + gamma * normC);
-    }
-  }
-
-  // Set up workspace.
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  z1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
-  z1.UseDevice(true);
-  n = opK->Height();
-}
-
-void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                   const ComplexOperator &M, const ComplexOperator &P,
-                                   EigenvalueSolver::ScaleType type)
-{
-  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
-  bool first = (opK == nullptr);
-  opK = &K;
-  opC = &C;
-  opM = &M;
-  opP = &P;
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
@@ -853,10 +767,6 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     }
 
     opK->Mult(x1, z1);
-    if (opP)
-    {
-      opP->AddMult(x1, z1, 1.0);
-    }
     opC->AddMult(x2, z1, std::complex<double>(gamma, 0.0));
     opInv->Mult(z1, y2);
     y2 *= -1.0 / (gamma * gamma);
@@ -915,10 +825,6 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
-  if (opP)
-  {
-    opP->AddMult(x, r, 1.0);
-  }
   opC->AddMult(x, r, l);
   opM->AddMult(x, r, l * l);
   return linalg::Norml2(comm, r);

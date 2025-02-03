@@ -14,7 +14,6 @@
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/periodicboundaryoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
@@ -55,7 +54,6 @@ private:
 
   // Operators for boundary conditions and source excitations.
   FarfieldBoundaryOperator farfield_op;
-  PeriodicBoundaryOperator periodic_op;
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
   LumpedPortOperator lumped_port_op;
@@ -116,11 +114,9 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
-  auto &GetPeriodicOp() { return periodic_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
-  const auto &GetPeriodicOp() const { return periodic_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
@@ -143,7 +139,7 @@ public:
   auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
-  //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) + FP.
+  //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω).
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
   // ω is required only for the constructing the "extra" matrix A2(ω).
   template <typename OperType>
@@ -155,19 +151,16 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
-  std::unique_ptr<OperType> GetFloquetMatrix(Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
-  //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2 + FP.
+  //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   template <typename OperType, typename ScalarType>
-  std::unique_ptr<OperType> GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
-                                            const OperType *K, const OperType *C,
-                                            const OperType *M, const OperType *A2 = nullptr,
-                                            const OperType *P = nullptr);
+  std::unique_ptr<OperType>
+  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
+                  const OperType *C, const OperType *M, const OperType *A2 = nullptr);
 
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
   //                           B = a0 Kr + a2 Mr .
@@ -182,7 +175,7 @@ public:
   // Construct the matrix for frequency or time domain linear system preconditioning. If it
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
-  //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3) + FP.
+  //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
   template <typename OperType>
   std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
                                                     double a3);

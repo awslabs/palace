@@ -48,8 +48,9 @@ inline auto *MatCoeff(CeedIntScalar *ctx)
 
 }  // namespace
 
-std::vector<CeedIntScalar>
-PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double a)
+std::vector<CeedIntScalar> PopulateCoefficientContext(int dim,
+                                                      const MaterialPropertyCoefficient *Q,
+                                                      bool transpose, double a)
 {
   if (!Q)
   {
@@ -102,7 +103,7 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
         for (int di = 0; di < dim; ++di)
         {
           // Column-major ordering.
-          const int idx = (dj * dim) + di;
+          const int idx = transpose ? (di * dim) + dj : (dj * dim) + di;
           MatCoeff(ctx.data())[coeff_dim * k + idx].second = a * mat_coeff(di, dj, k);
         }
       }
@@ -118,11 +119,12 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
 
 std::vector<CeedIntScalar>
 PopulateCoefficientContext(int dim_mass, const MaterialPropertyCoefficient *Q_mass, int dim,
-                           const MaterialPropertyCoefficient *Q, double a_mass, double a)
+                           const MaterialPropertyCoefficient *Q, bool transpose_mass,
+                           bool transpose, double a_mass, double a)
 {
   // Mass coefficient comes first, then the other one for the QFunction.
-  auto ctx_mass = PopulateCoefficientContext(dim_mass, Q_mass, a_mass);
-  auto ctx = PopulateCoefficientContext(dim, Q, a);
+  auto ctx_mass = PopulateCoefficientContext(dim_mass, Q_mass, transpose_mass, a_mass);
+  auto ctx = PopulateCoefficientContext(dim, Q, transpose, a);
   ctx_mass.insert(ctx_mass.end(), ctx.begin(), ctx.end());
   return ctx_mass;
 }

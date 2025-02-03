@@ -12,14 +12,12 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
-#include "models/periodicboundaryoperator.hpp"
 
 namespace palace
 {
 
 template <typename VecType>
 FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
-                                              PeriodicBoundaryOperator &periodic_op,
                                               FiniteElementSpace &nd_fespace,
                                               FiniteElementSpace &rt_fespace, double tol,
                                               int max_it, int print)
@@ -42,7 +40,7 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
 
   {
     MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
-    periodic_op.AddFloquetCrossCoefficients(1.0, f);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCross(), 1.0);
     constexpr bool skip_zeros = false;
     BilinearForm a(nd_fespace, rt_fespace);
     a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
@@ -87,7 +85,6 @@ void FloquetCorrSolver<VecType>::AddMult(const VecType &x, VecType &y, ScalarTyp
   y += rhs;
 }
 
-template class FloquetCorrSolver<Vector>;
 template class FloquetCorrSolver<ComplexVector>;
 
 }  // namespace palace

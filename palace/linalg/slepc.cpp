@@ -351,13 +351,6 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
-void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                         const ComplexOperator &M, const ComplexOperator &P,
-                                         EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
-}
-
 void SlepcEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
 {
   opInv = &ksp;
@@ -746,7 +739,7 @@ RG SlepcEPSSolverBase::GetRG() const
 SlepcEPSSolver::SlepcEPSSolver(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcEPSSolverBase(comm, print, prefix)
 {
-  opK = opM = opP = nullptr;
+  opK = opM = nullptr;
   normK = normM = 0.0;
 }
 
@@ -758,63 +751,6 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   const bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
-
-  if (first)
-  {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
-    PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A0));
-    PalacePetscCall(
-        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A1));
-    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
-    PalacePetscCall(EPSSetOperators(eps, A0, A1));
-  }
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for EPS scaling!");
-    if (normK > 0 && normM > 0.0)
-    {
-      gamma = normK / normM;  // Store γ² for linear problem
-      delta = 2.0 / normK;
-    }
-  }
-
-  // Set up workspace.
-  if (!v0)
-  {
-    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
-  }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
-
-  // Configure linear solver for generalized problem or spectral transformation. This also
-  // allows use of the divergence-free projector as a linear solve side-effect.
-  if (first)
-  {
-    ConfigurePCShell(GetST(), (void *)this, __pc_apply_EPS);
-  }
-}
-
-void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                  const ComplexOperator &P,
-                                  EigenvalueSolver::ScaleType type)
-{
-  // Construct shell matrices for the scaled operators which define the generalized
-  // eigenvalue problem.
-  const bool first = (opK == nullptr);
-  opK = &K;
-  opM = &M;
-  opP = &P;
 
   if (first)
   {
@@ -881,10 +817,6 @@ PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
 {
   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
   opK->Mult(x, r);
-  if (opP)
-  {
-    opP->AddMult(x, r, 1.0);
-  }
   opM->AddMult(x, r, -l);
   return linalg::Norml2(GetComm(), r);
 }
@@ -908,7 +840,7 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
                                            const std::string &prefix)
   : SlepcEPSSolverBase(comm, print, prefix)
 {
-  opK = opC = opM = opP = nullptr;
+  opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -922,69 +854,6 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   opK = &K;
   opC = &C;
   opM = &M;
-
-  if (first)
-  {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                   (void *)this, &A0));
-    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                   (void *)this, &A1));
-    PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
-    PalacePetscCall(
-        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
-    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
-    PalacePetscCall(EPSSetOperators(eps, A0, A1));
-  }
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
-    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
-                "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / (normK + gamma * normC);
-    }
-  }
-
-  // Set up workspace.
-  if (!v0)
-  {
-    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
-  }
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
-
-  // Configure linear solver.
-  if (first)
-  {
-    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEPLinear);
-  }
-}
-
-void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                        const ComplexOperator &M, const ComplexOperator &P,
-                                        EigenvalueSolver::ScaleType type)
-{
-  // Construct shell matrices for the scaled linearized operators which define the block 2x2
-  // eigenvalue problem.
-  const bool first = (opK == nullptr);
-  opK = &K;
-  opC = &C;
-  opM = &M;
-  opP = &P;
 
   if (first)
   {
@@ -1087,10 +956,6 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
-  if (opP)
-  {
-    opP->AddMult(x, r, 1.0);
-  }
   opC->AddMult(x, r, l);
   opM->AddMult(x, r, l * l);
   return linalg::Norml2(GetComm(), r);
@@ -1352,7 +1217,7 @@ RG SlepcPEPSolverBase::GetRG() const
 SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcPEPSolverBase(comm, print, prefix)
 {
-  opK = opC = opM = opP = nullptr;
+  opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -1366,69 +1231,6 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   opK = &K;
   opC = &C;
   opM = &M;
-
-  if (first)
-  {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
-    PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
-    PalacePetscCall(
-        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
-    PalacePetscCall(
-        MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
-    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(A2, PetscVecType()));
-    Mat A[3] = {A0, A1, A2};
-    PalacePetscCall(PEPSetOperators(pep, 3, A));
-  }
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
-    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
-                "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / (normK + gamma * normC);
-    }
-  }
-
-  // Set up workspace.
-  if (!v0)
-  {
-    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
-  }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-
-  // Configure linear solver.
-  if (first)
-  {
-    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEP);
-  }
-}
-
-void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                  const ComplexOperator &M, const ComplexOperator &P,
-                                  EigenvalueSolver::ScaleType type)
-{
-  // Construct shell matrices for the scaled operators which define the quadratic polynomial
-  // eigenvalue problem.
-  const bool first = (opK == nullptr);
-  opK = &K;
-  opC = &C;
-  opM = &M;
-  opP = &P;
 
   if (first)
   {
@@ -1501,10 +1303,6 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
-  if (opP)
-  {
-    opP->AddMult(x, r, 1.0);
-  }
   opC->AddMult(x, r, l);
   opM->AddMult(x, r, l * l);
   return linalg::Norml2(GetComm(), r);
@@ -1541,10 +1339,6 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
-  if (ctx->opP)
-  {
-    ctx->opP->AddMult(ctx->x1, ctx->y1, 1.0);
-  }
   ctx->y1 *= ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -1626,10 +1420,6 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   ctx->opC->Mult(ctx->x2, ctx->y2);
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  if (ctx->opP)
-  {
-    ctx->opP->AddMult(ctx->x1, ctx->y2, 1.0);
-  }
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -1710,10 +1500,6 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    if (ctx->opP)
-    {
-      ctx->opP->AddMult(ctx->x1, ctx->y1, 1.0);
-    }
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -1745,10 +1531,6 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
-  if (ctx->opP)
-  {
-    ctx->opP->AddMult(ctx->x1, ctx->y1, 1.0);
-  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
