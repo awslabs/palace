@@ -1779,7 +1779,7 @@ struct Frame
 
 Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
                   const std::unordered_set<int> &vertidxs, const mfem::Vector &centroid,
-                  const mfem::Vector &normal, double mesh_dim, double tol = 1e-6)
+                  const mfem::Vector &normal, double mesh_dim)
 {
   Frame frame(centroid);
   frame.basis[0] = normal;
@@ -2039,9 +2039,9 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
 
     // Compute a frame (origin, normal, and two in plane points) for each boundary.
     auto donor_frame =
-        Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
+        Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim);
     auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid,
-                                      receiver_normal, mesh_dim, mesh_tol);
+                                      receiver_normal, mesh_dim);
 
     // Compute the affine transformation matrix.
     transformation = ComputeAffineTransformationMatrix(donor_frame, receiver_frame);
