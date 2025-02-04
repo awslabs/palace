@@ -1785,12 +1785,13 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
   frame.basis[0] = normal;
 
   // For each point, compute its distance to the centroid.
-  std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
+  //std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
+  std::map<int, std::vector<int>, std::greater<int>> dist2points;
   for (const int v : vertidxs)
   {
     auto dist = centroid.DistanceTo(mesh->GetVertex(v));
     // Convert dist to integer to avoid floating point differences.
-    dist2points[std::round(dist / mesh_dim * 1e8)].insert(v);
+    dist2points[std::round(dist / mesh_dim * 1e8)].push_back(v);
   }
 
   for (const auto &[dist, verts] : dist2points)
@@ -1799,7 +1800,7 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
     {
       continue;
     }
-    frame.basis[1] = mesh->GetVertex(*verts.begin());
+    frame.basis[1] = mesh->GetVertex(verts.front());
     frame.basis[1] -= centroid;
     frame.basis[1] /= frame.basis[1].Norml2();
     break;
