@@ -1785,7 +1785,6 @@ Frame Find3DFrame(std::unique_ptr<mfem::Mesh> &mesh,
   frame.basis[0] = normal;
 
   // For each point, compute its distance to the centroid.
-  //std::map<int, std::unordered_set<int>, std::greater<int>> dist2points;
   std::map<int, std::vector<int>, std::greater<int>> dist2points;
   for (const int v : vertidxs)
   {
@@ -1970,7 +1969,6 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
   std::unordered_set<int> bdr_v_donor, bdr_v_receiver;
   std::unordered_set<int> bdr_e_donor, bdr_e_receiver;
-  bool has_tets = false;
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
     int attr = mesh->GetBdrAttribute(be);
@@ -1982,7 +1980,6 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
       mesh->GetBdrElementAdjacentElement(be, el, info);
       mfem::Array<int> vertidxs;
       mesh->GetBdrElementVertices(be, vertidxs);
-      has_tets = (mesh->GetElementType(el) == mfem::Element::TETRAHEDRON);
       (donor ? bdr_e_donor : bdr_e_receiver).insert(be);
       (donor ? bdr_v_donor : bdr_v_receiver).insert(vertidxs.begin(), vertidxs.end());
     }
@@ -2040,11 +2037,13 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     auto donor_normal = ComputeNormal(mesh, bdr_e_donor, true);
     auto receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
 
-    // Compute a set of unique points for each boundary.
+    // Compute a frame (origin, normal, and two in plane points) for each boundary.
     auto donor_frame =
         Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim, mesh_tol);
     auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid,
                                       receiver_normal, mesh_dim, mesh_tol);
+
+    // Compute the affine transformation matrix.
     transformation = ComputeAffineTransformationMatrix(donor_frame, receiver_frame);
   }
   return CreatePeriodicVertexMapping(mesh, bdr_v_donor, bdr_v_receiver, transformation,
