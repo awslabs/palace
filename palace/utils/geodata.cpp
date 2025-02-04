@@ -2040,8 +2040,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     // Compute a frame (origin, normal, and two in plane points) for each boundary.
     auto donor_frame =
         Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim);
-    auto receiver_frame = Find3DFrame(mesh, bdr_v_receiver, receiver_centroid,
-                                      receiver_normal, mesh_dim);
+    auto receiver_frame =
+        Find3DFrame(mesh, bdr_v_receiver, receiver_centroid, receiver_normal, mesh_dim);
 
     // Compute the affine transformation matrix.
     transformation = ComputeAffineTransformationMatrix(donor_frame, receiver_frame);
