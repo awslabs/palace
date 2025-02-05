@@ -26,7 +26,7 @@ jobs:
             with-openmp: openmp
             with-solver: strumpack
             with-eigensolver: arpack
-            runner: ubuntu-22.04 # mpich bug on ubuntu 24
+            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
 
           - compiler: clang
             mpi: mpich
@@ -36,7 +36,7 @@ jobs:
             with-openmp: serial
             with-solver: superlu
             with-eigensolver: arpack
-            runner: ubuntu-22.04 # mpich bug on ubuntu 24
+            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
 
           - compiler: gcc
             mpi: openmpi
@@ -96,7 +96,7 @@ jobs:
             with-openmp: serial
             with-solver: superlu
             with-eigensolver: slepc
-            runner: ubuntu-22.04 # mpich bug on ubuntu 24
+            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
 
           - compiler: gcc
             mpi: openmpi
@@ -106,14 +106,17 @@ jobs:
             with-openmp: serial
             with-solver: superlu
             with-eigensolver: arpack
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
 
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Configure GNU Compilers
+      - name: Update package lists
+        run: |
+          sudo apt-get update
+      - name: Configure GNU compilers
         run: |
           # Find latest gnu compiler versions
           LATEST_GFORTRAN=$(apt-cache search '^gfortran-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
@@ -174,18 +177,23 @@ jobs:
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
         run: |
-          wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
+          wget -q https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
           sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
           rm aocl-linux-gcc-*.deb
+          echo "AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc/lib:${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
         if: matrix.math-libs == 'armpl'
         run: |
-          wget https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_rpm_gcc.tar
-          tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
-          sudo ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
+          wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
+          tar -xf arm-performance-libraries_24.10_deb_gcc.tar
+          cd arm-performance-libraries_24.10_deb_gcc
+          sudo dpkg -i *.deb
+          echo "export ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
+          echo "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}/opt/arm/armpl_24.10_gcc/lib" >> $GITHUB_ENV
 
-      - name: Test MPI Installation
+      - name: Test MPI installation
         run: |
           # Create test program
           cat > mpi_test.c << 'EOF'
@@ -228,6 +236,15 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
+      - name: Install Julia (ARM)
+        if: endsWith(matrix.runner, '-arm')
+        run: |
+          # Install juliaup and latest stable Julia
+          curl -fsSL https://install.julialang.org | sh -s -- --yes
+          echo "PATH=$HOME/.julia/bin:$PATH" >> $GITHUB_ENV
+
+          # Verify installation
+          ~/.julia/bin/julia --version
 
       - name: Build Palace
         env:
@@ -253,14 +270,6 @@ jobs:
             export CC=gcc
             export CXX=g++
             export FC=gfortran
-          fi
-          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
-          fi
-          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR=/opt/arm/armpl_24.10_gcc
-            export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}$ARMPL_DIR/lib"
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
