@@ -81,15 +81,13 @@ jobs:
       - name: Install math libraries (ARMPL)
         if: matrix.math-libs == 'armpl'
         run: |
-          wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_macOS.dmg
-          # Mount the DMG file quietly
-          hdiutil attach arm-performance-libraries_24.10_macOS.dmg -nobrowse -quiet
-          # Install from the mounted volume with -allowUntrusted to skip verification
-          sudo installer -pkg "/Volumes/arm-performance-libraries_24.10_macOS/arm-performance-libraries_24.10_macOS.pkg" -target / -allowUntrusted -verboseR
-          # Unmount the DMG quietly
-          hdiutil detach "/Volumes/arm-performance-libraries_24.10_macOS" -quiet
+          wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_macOS.tgz
+          tar -zxvf arm-performance-libraries*.tgz && rm arm-performance-libraries*.tgz
+          hdiutil attach armpl_24.10_flang-new_clang_19.dmg -nobrowse -quiet
+          sudo /Volumes/armpl_24.10_flang-new_clang_19_installer/armpl* -y
           echo "ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_gcc/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
+          hdiutil detach "/Volumes/armpl_24.10_flang-new_clang_19_installer" -quiet
 
       - name: Build Palace
         env:
