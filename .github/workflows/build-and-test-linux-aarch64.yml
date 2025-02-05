@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:  # Only a single simple build test for now
           - compiler: gcc
-            mpi: mpich
+            mpi: openmpi
             math-libs: openblas
             build-shared: shared
             with-64bit-int: int32
@@ -72,15 +72,14 @@ jobs:
             fi
           run: |
             # Configure environment
+            export FC=gfortran-13
             if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
               export CC=clang
               export CXX=clang++
-              export FC=gfortran-13
               export LDFLAGS='-fuse-ld=lld'
             elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
               export CC=gcc-13
               export CXX=g++-13
-              export FC=gfortran-13
             fi
             if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
               export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2

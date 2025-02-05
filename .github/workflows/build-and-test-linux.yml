@@ -88,7 +88,9 @@ jobs:
             with-solver: superlu
             with-eigensolver: slepc
 
-    runs-on: palace_ubuntu-latest_16-core
+    # Bug in MPICH on Ubuntu 24 means we have to pin to older image
+    # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
+    runs-on: ${{ matrix.mpi == 'mpich' && 'ubuntu-22.04' || 'palace_ubuntu-latest_16-core' }}
     steps:
       - uses: actions/checkout@v4
         with:
