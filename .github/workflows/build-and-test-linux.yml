@@ -18,95 +18,88 @@ jobs:
         include:  # Pairwise testing (from allpairspy)
           # Bug in MPICH on Ubuntu 24 means we have to pin to older image
           # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
-          - compiler: gcc
-            mpi: mpich
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int64
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: arpack
-            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
-
-          - compiler: clang
-            mpi: mpich
-            math-libs: aocl
-            build-shared: shared
-            with-64bit-int: int64
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: arpack
-            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: openblas
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: slepc
-            runner: palace_ubuntu-latest_16-core
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: static
-            with-64bit-int: int64
-            with-openmp: openmp
-            with-solver: superlu
-            with-eigensolver: slepc
-            runner: palace_ubuntu-latest_16-core
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: strumpack
-            with-eigensolver: arpack
-            runner: palace_ubuntu-latest_16-core
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: slepc
-            runner: palace_ubuntu-latest_16-core
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: strumpack
-            with-eigensolver: slepc
-            runner: palace_ubuntu-latest_16-core
-
-          - compiler: clang
-            mpi: mpich
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: slepc
-            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: armpl
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: arpack
-            runner: ubuntu-22.04-arm # mpich bug on ubuntu 24
+          # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
+        - runner: palace_ubuntu-latest_16-core
+          compiler: intel
+          mpi: intelmpi
+          math-libs: intelmkl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: mumps
+        - runner: palace_ubuntu-latest_16-core
+          compiler: gcc
+          mpi: openmpi
+          math-libs: aocl
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - runner: palace_ubuntu-latest_16-core
+          compiler: clang
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: mumps
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -236,15 +229,9 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
-      - name: Install Julia (ARM)
-        if: endsWith(matrix.runner, '-arm')
-        run: |
-          # Install juliaup and latest stable Julia
-          curl -fsSL https://install.julialang.org | sh -s -- --yes
-          echo "PATH=$HOME/.julia/bin:$PATH" >> $GITHUB_ENV
-
-          # Verify installation
-          ~/.julia/bin/julia --version
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
 
       - name: Build Palace
         env:
