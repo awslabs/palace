@@ -97,9 +97,22 @@ jobs:
           submodules: 'recursive'
       - name: Configure GNU Compilers
         run: |
-          sudo update-alternatives --install $(which gcc) gcc $(which gcc-12) 999 \
-            --slave $(which g++) g++ $(which g++-12) \
-            --slave $(which gfortran) gfortran $(which gfortran-12)
+          # Find latest gnu compiler versions
+          LATEST_GFORTRAN=$(apt-cache search '^gfortran-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          LATEST_GCC=$(apt-cache search '^gcc-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          LATEST_GPP=$(apt-cache search '^g\+\+-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          GFORT_VERSION=$(echo $LATEST_GFORTRAN | cut -d'-' -f2)
+          GCC_VERSION=$(echo $LATEST_GCC | cut -d'-' -f2)
+          sudo apt-get install -y $LATEST_GFORTRAN $LATEST_GCC $LATEST_GPP
+          sudo update-alternatives --install $(which gfortran) gfortran $(which gfortran-$GFORT_VERSION) ${GFORT_VERSION}0
+          sudo update-alternatives --set gfortran $(which gfortran-$GFORT_VERSION)
+          sudo update-alternatives --install $(which gcc) gcc $(which gcc-$GCC_VERSION) ${GCC_VERSION}0 \
+              --slave $(which g++) g++ $(which g++-$GCC_VERSION)
+          sudo update-alternatives --set gcc $(which gcc-$GCC_VERSION)
+
+          gfortran --version
+          gcc --version
+          g++ --version
       - name: Configure Open MPI
         if: matrix.mpi == 'openmpi'
         run: |
@@ -146,6 +159,50 @@ jobs:
           wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
           sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
           rm aocl-linux-gcc-*.deb
+
+      - name: Test MPI Installation
+        run: |
+          # Create test program
+          cat > mpi_test.c << 'EOF'
+          #include <stdio.h>
+          #include <mpi.h>
+
+          int main(int argc, char *argv[]) {
+              int rank, size;
+
+              MPI_Init(&argc, &argv);
+              MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+              MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+              printf("Process %d of %d\n", rank, size);
+
+              if (rank == 0) {
+                  if (size == 1) {
+                      printf("ERROR: MPI_Comm_size reports only 1 process\n");
+                      return 1;
+                  } else {
+                      printf("SUCCESS: MPI running with %d processes\n", size);
+                  }
+              }
+
+              MPI_Finalize();
+              return 0;
+          }
+          EOF
+
+          # Select correct compiler wrapper
+          if [[ "${{ matrix.mpi }}" == "mpich" ]]; then
+              MPICC="mpicc"
+          elif [[ "${{ matrix.mpi }}" == "openmpi" ]]; then
+              MPICC="mpicc"
+          elif [[ "${{ matrix.mpi }}" == "intelmpi" ]]; then
+              source /opt/intel/oneapi/setvars.sh
+              MPICC="mpiicx"
+          fi
+
+          $MPICC mpi_test.c -o mpi_test
+          mpirun -np 2 ./mpi_test
+
 
       - name: Build Palace
         env:
