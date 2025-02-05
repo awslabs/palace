@@ -78,6 +78,13 @@ jobs:
         run: |
           brew install openblas
 
+      - name: Install OpenMP
+        if: matrix.with-openmp == 'openmp' and
+        run: |
+          brew install -y libomp
+          echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/opt/homebrew/opt/libomp/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+
       - name: Install math libraries (ARMPL)
         if: matrix.math-libs == 'armpl'
         run: |

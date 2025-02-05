@@ -146,6 +146,9 @@ jobs:
         if: matrix.compiler == 'clang'
         run: |
           sudo apt-get install -y clang lld
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+            sudo apt-get install -y libomp-dev
+          fi
 
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
@@ -161,6 +164,10 @@ jobs:
           else
             sudo apt-get install -y libopenblas-serial-dev
           fi
+      - name: Install GCC OpenMP runtime
+        if: matrix.with-openmp == 'openmp'
+        run: |
+          sudo apt-get install -y libgomp1
 
       - name: Install math libraries (Intel oneAPI MKL)
         if: matrix.math-libs == 'intelmkl'
