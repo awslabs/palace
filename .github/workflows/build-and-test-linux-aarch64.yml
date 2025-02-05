@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:  # Only a single simple build test for now
           - compiler: gcc
-            mpi: openmpi
+            mpi: armpl
             math-libs: openblas
             build-shared: shared
             with-64bit-int: int32
@@ -75,7 +75,7 @@ jobs:
 
             # Install math libraries (Arm Performance Libraries)
             if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-              wget https://developer.arm.com/-/media/Files/downloads/hpc/arm-performance-libraries/22-0-2/Ubuntu20.04/arm-performance-libraries_22.0.2_Ubuntu-20.04_gcc-11.2.tar
+              wget https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_rpm_gcc.tar
               tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
               ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
             fi
@@ -91,7 +91,7 @@ jobs:
               export CXX=g++-13
             fi
             if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-              export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2
+              export ARMPL_DIR=/opt/arm/armpl_24.10_gcc
               export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}$ARMPL_DIR/lib"
             fi
             export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
