@@ -38,15 +38,24 @@ jobs:
           arch: aarch64
           distro: ubuntu_latest
           githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --platform linux/arm64
+            --security-opt seccomp=unconfined
           env: |
             CMAKE_BUILD_TYPE: Debug  # Speed up builds for run-on-arch
             NUM_PROC_BUILD_MAX: '32'
             NUM_PROC_TEST_MAX: '8'
+            PYTHONUNBUFFERED: 1
           install: |
             # Install dependencies
             apt-get update -q
-            apt-get install -y build-essential clang cmake curl gfortran git lld \
-                               pkg-config python3 wget
+
+            # Install Python first
+            apt-get install -y --no-install-recommends python3-minimal
+
+            # Install build dependencies
+            apt-get install -y build-essential cmake curl gfortran-13 gcc-13 g++-13 \
+                             git lld pkg-config python3 wget
 
             # Install MPI
             if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
