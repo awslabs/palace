@@ -188,7 +188,7 @@ jobs:
           wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
           tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
           sudo ./arm-performance-libraries*/arm-performance-libraries*.sh -a -f -i /opt/arm
-          echo "export ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
+          echo "ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
 
       - name: Test MPI installation
         run: |
@@ -267,11 +267,11 @@ jobs:
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=${{ env.AOCLROOT }}
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
+            export AOCLROOT="$AOCLROOT"
+            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR=${{ env.ARMPL_DIR }}
+            export ARMPL_DIR="$ARMPL_DIR"
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 

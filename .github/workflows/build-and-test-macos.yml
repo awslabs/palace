@@ -81,7 +81,7 @@ jobs:
       - name: Install OpenMP
         if: matrix.with-openmp == 'openmp'
         run: |
-          brew install -y libomp
+          brew install libomp
           echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/opt/libomp/lib:$LIBRARY_PATH" >> $GITHUB_ENV
 
@@ -116,7 +116,7 @@ jobs:
             export OPENBLAS_DIR=$(brew --prefix openblas)
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR=${{ env.ARMPL_DIR }}
+            export ARMPL_DIR=${ARMPL_DIR}
             export DYLD_LIBRARY_PATH=$ARMPL_DIR/lib:${DYLD_LIBRARY_PATH:-}
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
@@ -158,7 +158,7 @@ jobs:
           else
             export OMP_NUM_THREADS=1
           fi
-          export DYLD_LIBRARY_PATH=$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH
+          export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
           cd $(pwd)/palace-build/palace-build/test/unit
 
           # Run tests
