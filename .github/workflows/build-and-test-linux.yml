@@ -29,76 +29,85 @@ jobs:
           with-eigensolver: slepc
           with-solver: superlu
         - runner: ubuntu-22.04-arm
-          compiler: clang
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - runner: ubuntu-22.04-arm
           compiler: gcc
-          mpi: openmpi
+          mpi: mpich
           math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: arpack
-          with-solver: mumps
-        - runner: palace_ubuntu-latest_16-core
-          compiler: gcc
-          mpi: openmpi
-          math-libs: aocl
           build-shared: static
           with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - runner: palace_ubuntu-latest_16-core
-          compiler: clang
-          mpi: openmpi
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int64
           with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: mumps
-        - runner: ubuntu-22.04-arm
-          compiler: gcc
-          mpi: mpich
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - runner: ubuntu-22.04-arm
-          compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: openmp
           with-eigensolver: arpack
-          with-solver: strumpack
-        - runner: ubuntu-22.04-arm
-          compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
           with-solver: superlu
         - runner: ubuntu-22.04-arm
           compiler: clang
-          mpi: mpich
-          math-libs: openblas
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - runner: palace_ubuntu-latest_16-core
+          compiler: clang
+          mpi: openmpi
+          math-libs: aocl
           build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: palace_ubuntu-latest_16-core
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
           with-64bit-int: int64
           with-openmp: openmp
           with-eigensolver: slepc
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: armpl
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: arpack
           with-solver: mumps
 
     runs-on: ${{ matrix.runner }}
