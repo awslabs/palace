@@ -115,6 +115,10 @@ jobs:
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
             export OPENBLAS_DIR=$(brew --prefix openblas)
           fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR=${{ env.ARMPL_DIR }}
+            export DYLD_LIBRARY_PATH=$ARMPL_DIR/lib:${DYLD_LIBRARY_PATH:-}
+          fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX

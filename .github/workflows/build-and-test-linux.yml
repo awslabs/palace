@@ -181,7 +181,6 @@ jobs:
           sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
           rm aocl-linux-gcc-*.deb
           echo "AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc/lib:${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
         if: matrix.math-libs == 'armpl'
@@ -189,9 +188,7 @@ jobs:
           wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
           tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
           sudo ./arm-performance-libraries*/arm-performance-libraries*.sh -a -f -i /opt/arm
-          ls /opt/arm/
           echo "export ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
-          echo "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}/opt/arm/armpl_24.10_gcc/lib" >> $GITHUB_ENV
 
       - name: Test MPI installation
         run: |
@@ -268,6 +265,14 @@ jobs:
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
+            export AOCLROOT=${{ env.AOCLROOT }}
+            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR=${{ env.ARMPL_DIR }}
+            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
           [[ "${{ matrix.build-shared }}" == 'shared' ]] && BUILD_SHARED='ON' || BUILD_SHARED='OFF'
