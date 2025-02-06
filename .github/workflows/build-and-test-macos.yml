@@ -79,7 +79,7 @@ jobs:
           brew install openblas
 
       - name: Install OpenMP
-        if: matrix.with-openmp == 'openmp' and
+        if: matrix.with-openmp == 'openmp'
         run: |
           brew install -y libomp
           echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
@@ -92,8 +92,9 @@ jobs:
           tar -zxvf arm-performance-libraries*.tgz && rm arm-performance-libraries*.tgz
           hdiutil attach armpl_24.10_flang-new_clang_19.dmg -nobrowse -quiet
           sudo /Volumes/armpl_24.10_flang-new_clang_19_installer/armpl* -y
-          echo "ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_gcc/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
+          ls /opt/arm/
+          echo "ARMPL_DIR=/opt/arm/armpl_24.10_flang-new_clang_19" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_flang-new_clang_19/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
           hdiutil detach "/Volumes/armpl_24.10_flang-new_clang_19_installer" -quiet
 
       - name: Build Palace

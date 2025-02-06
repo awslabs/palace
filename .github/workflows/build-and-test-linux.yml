@@ -188,7 +188,8 @@ jobs:
         run: |
           wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
           tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
-          ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
+          sudo ./arm-performance-libraries*/arm-performance-libraries*.sh -a -f -i /opt/arm
+          ls /opt/arm/
           echo "export ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
           echo "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}/opt/arm/armpl_24.10_gcc/lib" >> $GITHUB_ENV
 
