@@ -1,52 +1,10 @@
-diff --git a/SRC/complex16/pzgssvx.c b/SRC/complex16/pzgssvx.c
-index e2b145b1..6c4c5e99 100755
---- a/SRC/complex16/pzgssvx.c
-+++ b/SRC/complex16/pzgssvx.c
-@@ -1127,8 +1127,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
- 	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
- 
- 	/* Distribute entries of A into L & U data structures. */
--	//if (parSymbFact == NO || ???? Fact == SamePattern_SameRowPerm) {
--	if ( parSymbFact == NO ) {
-+	if ( parSymbFact == NO || Fact == SamePattern_SameRowPerm ) {
- 	    /* CASE OF SERIAL SYMBOLIC */
-   	    /* Apply column permutation to the original distributed A */
- 	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
-diff --git a/SRC/double/pdgssvx.c b/SRC/double/pdgssvx.c
-index d06f6078..7b505340 100755
---- a/SRC/double/pdgssvx.c
-+++ b/SRC/double/pdgssvx.c
-@@ -1126,8 +1126,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
- 	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
- 
- 	/* Distribute entries of A into L & U data structures. */
--	//if (parSymbFact == NO || ???? Fact == SamePattern_SameRowPerm) {
--	if ( parSymbFact == NO ) {
-+	if ( parSymbFact == NO || Fact == SamePattern_SameRowPerm ) {
- 	    /* CASE OF SERIAL SYMBOLIC */
-   	    /* Apply column permutation to the original distributed A */
- 	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
-diff --git a/SRC/single/psgssvx.c b/SRC/single/psgssvx.c
-index aa2b5025..79d48927 100755
---- a/SRC/single/psgssvx.c
-+++ b/SRC/single/psgssvx.c
-@@ -1126,8 +1126,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
- 	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
- 
- 	/* Distribute entries of A into L & U data structures. */
--	//if (parSymbFact == NO || ???? Fact == SamePattern_SameRowPerm) {
--	if ( parSymbFact == NO ) {
-+	if ( parSymbFact == NO || Fact == SamePattern_SameRowPerm ) {
- 	    /* CASE OF SERIAL SYMBOLIC */
-   	    /* Apply column permutation to the original distributed A */
- 	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
 diff --git a/SRC/single/psgssvx_d2.c b/SRC/single/psgssvx_d2.c
 index 8a6b10c2..a8334501 100755
 --- a/SRC/single/psgssvx_d2.c
 +++ b/SRC/single/psgssvx_d2.c
 @@ -1181,8 +1181,7 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
  	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
- 
+
  	/* Distribute entries of A into L & U data structures. */
 -	//if (parSymbFact == NO || ???? Fact == SamePattern_SameRowPerm) {
 -	if ( parSymbFact == NO ) {

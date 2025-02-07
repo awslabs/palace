@@ -1,5 +1,5 @@
 diff --git a/mesh/mesh_readers.cpp b/mesh/mesh_readers.cpp
-index d21bc481e..62bd0b8d8 100644
+index c553db2c6..20726d81a 100644
 --- a/mesh/mesh_readers.cpp
 +++ b/mesh/mesh_readers.cpp
 @@ -1549,7 +1549,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
