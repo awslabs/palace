@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(MUMPS_DEPENDENCIES scalapack parmetis)
+set(MUMPS_DEPENDENCIES scalapack parmetis metis)
 
 set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MUMPS_OPTIONS
@@ -25,6 +25,7 @@ list(APPEND MUMPS_OPTIONS
   "-Dmetis=ON"
   "-Dparmetis=ON"
   "-Dscotch=OFF"
+  "-Dscalapack=ON"
   "-DPARMETIS_LIBRARY=${PARMETIS_LIBRARIES}"
   "-DMETIS_LIBRARY=${METIS_LIBRARIES}"
   "-DMETIS_INCLUDE_DIR=${CMAKE_INSTALL_PREFIX}/include"
