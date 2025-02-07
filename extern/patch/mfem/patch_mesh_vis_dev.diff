@@ -470,10 +470,10 @@ index e4d41a1b6..5306c94f7 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 1a0e82e87..c852cb52e 100644
+index c06994ced..61b7c75d3 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -11759,7 +11759,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11973,7 +11973,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -482,7 +482,7 @@ index 1a0e82e87..c852cb52e 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -11773,7 +11773,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11987,7 +11987,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -492,10 +492,10 @@ index 1a0e82e87..c852cb52e 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 7187fe11a..bcde8a6d9 100644
+index 3062a5a67..f302724b5 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2389,7 +2389,7 @@ public:
+@@ -2466,7 +2466,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,
@@ -505,7 +505,7 @@ index 7187fe11a..bcde8a6d9 100644
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 5f5d9d38d..9556bcbd2 100644
+index 600ba485a..8770ed7c7 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -6398,7 +6398,7 @@ void ParMesh::PrintVTU(std::string pathname,
@@ -528,10 +528,10 @@ index 5f5d9d38d..9556bcbd2 100644
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 53f7c23a2..0d5643fd5 100644
+index 3f052fa84..bdca0d816 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
-@@ -756,7 +756,7 @@ public:
+@@ -786,7 +786,7 @@ public:
                   VTKFormat format=VTKFormat::ASCII,
                   bool high_order_output=false,
                   int compression_level=0,

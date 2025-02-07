@@ -54,7 +54,7 @@
     "Eigenmode":
     {
       "N": 15,
-      "Tol": 1.0e-8,
+      "Tol": 1.0e-9,
       "Target": 2.0,  // TE f111 ~ 2.9 GHz
       "Save": 15
     },
@@ -62,7 +62,7 @@
     {
       "Type": "Default",
       "KSPType": "GMRES",
-      "Tol": 1.0e-8,
+      "Tol": 1.0e-9,
       "MaxIts": 100
     }
   }

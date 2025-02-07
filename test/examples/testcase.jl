@@ -64,16 +64,35 @@ function testcase(
         (~, dirs, files) = first(walkdir(postprodir))
         (~, ~, filesref) = first(walkdir(refpostprodir))
         metafiles = filter(x -> last(splitext(x)) != ".csv", files)
-        @test length(dirs) == 1 && first(dirs) == "paraview"
-        @test length(metafiles) == 1 && first(metafiles) == "palace.json"
-        @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref)
+        @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
+        @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
+              (@show metafiles; false)
+        @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||
+              (@show filesref; false)
+
+        # Helper to extract the stdout and stderr files and dump their contents.
+        # Useful when debugging a failure
+        function logdump(data...)
+            @show data
+            logfile = "log.out"
+            errfile = "err.out"
+            if isfile(joinpath(exampledir, logdir, logfile))
+                @warn "Contents of stdout:"
+                println(String(read(joinpath(exampledir, logdir, logfile))))
+            end
+            if isfile(joinpath(exampledir, logdir, errfile))
+                @warn "Contents of stderr:"
+                println(String(read(joinpath(exampledir, logdir, errfile))))
+            end
+            return false
+        end
 
         # Test the simulation outputs
         for file in filesref
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             if !skip_rowcount
-                @test nrow(data) == nrow(dataref)
+                @test nrow(data) == nrow(dataref) || logdump(data, dataref)
             end
             data = data[1:min(nrow(data), nrow(dataref)), :]
 
@@ -86,7 +105,7 @@ function testcase(
             rename!(data, strip.(names(data)))
             rename!(dataref, strip.(names(dataref)))
 
-            @test names(data) == names(dataref)
+            @test names(data) == names(dataref) || logdump(names(data), names(dataref))
             test = isapprox.(data, dataref; rtol=rtol, atol=atol)
             for (row, rowdataref, rowdata) in
                 zip(eachrow(test), eachrow(dataref), eachrow(data))

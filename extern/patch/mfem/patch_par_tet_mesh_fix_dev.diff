@@ -1,8 +1,8 @@
 diff --git a/mesh/element.hpp b/mesh/element.hpp
-index e9dd07217..4129789bb 100644
+index 55c1d6e01..82b87c277 100644
 --- a/mesh/element.hpp
 +++ b/mesh/element.hpp
-@@ -87,9 +87,6 @@ public:
+@@ -90,9 +90,6 @@ public:
  
     virtual const int *GetFaceVertices(int fi) const = 0;
  
@@ -13,10 +13,10 @@ index e9dd07217..4129789bb 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 5270e8c71..e92303155 100644
+index f35b51504..847efeaff 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -2165,7 +2165,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2379,7 +2379,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -25,7 +25,7 @@ index 5270e8c71..e92303155 100644
     }
  
     if (generate_edges)
-@@ -2620,82 +2620,113 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2834,82 +2834,113 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -177,7 +177,7 @@ index 5270e8c71..e92303155 100644
        }
     }
  }
-@@ -3046,9 +3077,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -3260,9 +3291,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -188,7 +188,7 @@ index 5270e8c71..e92303155 100644
     }
  
     GetElementToFaceTable();
-@@ -3315,8 +3344,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3529,8 +3558,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -198,7 +198,7 @@ index 5270e8c71..e92303155 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -4016,8 +4044,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -4230,8 +4258,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -207,7 +207,7 @@ index 5270e8c71..e92303155 100644
     }
     else
     {
-@@ -6351,37 +6377,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6565,37 +6591,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -250,7 +250,7 @@ index 5270e8c71..e92303155 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -6401,88 +6411,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6615,88 +6625,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -362,7 +362,7 @@ index 5270e8c71..e92303155 100644
           }
        }
     }
-@@ -7446,24 +7409,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7660,24 +7623,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -389,7 +389,7 @@ index 5270e8c71..e92303155 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index bcde8a6d9..7b48a773c 100644
+index f302724b5..463776298 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
@@ -410,7 +410,7 @@ index bcde8a6d9..7b48a773c 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 9556bcbd2..735d8f09c 100644
+index 8770ed7c7..ac4454ba6 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@

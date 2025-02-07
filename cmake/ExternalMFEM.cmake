@@ -161,7 +161,7 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
     "-DHYPRE_DIR=${CMAKE_INSTALL_PREFIX}"
     "-DHYPRE_REQUIRED_PACKAGES=LAPACK$<SEMICOLON>BLAS"
   )
-  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK)
+  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
     list(APPEND MFEM_OPTIONS
       "-DParMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
       "-DParMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
@@ -290,7 +290,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure MUMPS
   if(PALACE_WITH_MUMPS)
-    set(MUMPS_REQUIRED_PACKAGES "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
+    set(MUMPS_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
     if(PALACE_WITH_OPENMP)
       list(APPEND MUMPS_REQUIRED_PACKAGES "OpenMP")
     endif()
@@ -388,7 +388,6 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_prism_vtu_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_reader_periodic_bugfix.diff"
 )
 
 include(ExternalProject)

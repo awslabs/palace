@@ -16,88 +16,126 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing (from allpairspy)
-          - compiler: gcc
-            mpi: mpich
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int64
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: arpack
+          # Bug in MPICH on Ubuntu 24 means we have to pin to older image
+          # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
+          # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
+        - runner: palace_ubuntu-latest_16-core
+          compiler: intel
+          mpi: intelmpi
+          math-libs: intelmkl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - runner: palace_ubuntu-latest_16-core
+          compiler: clang
+          mpi: openmpi
+          math-libs: aocl
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: palace_ubuntu-latest_16-core
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: mumps
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: armpl
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - runner: ubuntu-22.04-arm
+          compiler: clang
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: superlu
+        - runner: ubuntu-22.04-arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: mumps
 
-          - compiler: clang
-            mpi: mpich
-            math-libs: aocl
-            build-shared: shared
-            with-64bit-int: int64
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: arpack
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: openblas
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: slepc
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: static
-            with-64bit-int: int64
-            with-openmp: openmp
-            with-solver: superlu
-            with-eigensolver: slepc
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: strumpack
-            with-eigensolver: arpack
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: openmp
-            with-solver: strumpack
-            with-eigensolver: slepc
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: strumpack
-            with-eigensolver: slepc
-
-          - compiler: clang
-            mpi: mpich
-            math-libs: aocl
-            build-shared: static
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: slepc
-
-    runs-on: palace_ubuntu-latest_16-core
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-      - name: Configure GNU Compilers
+      - name: Update package lists
         run: |
-          sudo update-alternatives --install $(which gcc) gcc $(which gcc-12) 999 \
-            --slave $(which g++) g++ $(which g++-12) \
-            --slave $(which gfortran) gfortran $(which gfortran-12)
+          sudo apt-get update
+      - name: Configure GNU compilers
+        run: |
+          # Find latest gnu compiler versions
+          LATEST_GFORTRAN=$(apt-cache search '^gfortran-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          LATEST_GCC=$(apt-cache search '^gcc-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          LATEST_GPP=$(apt-cache search '^g\+\+-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
+          GFORT_VERSION=$(echo $LATEST_GFORTRAN | cut -d'-' -f2)
+          GCC_VERSION=$(echo $LATEST_GCC | cut -d'-' -f2)
+          sudo apt-get install -y $LATEST_GFORTRAN $LATEST_GCC $LATEST_GPP
+          sudo update-alternatives --install $(which gfortran) gfortran $(which gfortran-$GFORT_VERSION) ${GFORT_VERSION}0
+          sudo update-alternatives --set gfortran $(which gfortran-$GFORT_VERSION)
+          sudo update-alternatives --install $(which gcc) gcc $(which gcc-$GCC_VERSION) ${GCC_VERSION}0 \
+              --slave $(which g++) g++ $(which g++-$GCC_VERSION)
+          sudo update-alternatives --set gcc $(which gcc-$GCC_VERSION)
+
+          gfortran --version
+          gcc --version
+          g++ --version
       - name: Configure Open MPI
         if: matrix.mpi == 'openmpi'
         run: |
@@ -117,6 +155,9 @@ jobs:
         if: matrix.compiler == 'clang'
         run: |
           sudo apt-get install -y clang lld
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+            sudo apt-get install -y libomp-dev
+          fi
 
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
@@ -132,6 +173,10 @@ jobs:
           else
             sudo apt-get install -y libopenblas-serial-dev
           fi
+      - name: Install GCC OpenMP runtime
+        if: matrix.with-openmp == 'openmp'
+        run: |
+          sudo apt-get install -y libgomp1
 
       - name: Install math libraries (Intel oneAPI MKL)
         if: matrix.math-libs == 'intelmkl'
@@ -141,9 +186,65 @@ jobs:
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
         run: |
-          wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
+          wget -q https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
           sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
           rm aocl-linux-gcc-*.deb
+          echo "AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc" >> $GITHUB_ENV
+
+      - name: Install math libraries (ARMPL)
+        if: matrix.math-libs == 'armpl'
+        run: |
+          wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
+          tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
+          sudo ./arm-performance-libraries*/arm-performance-libraries*.sh -a -f -i /opt/arm
+          echo "ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
+
+      - name: Test MPI installation
+        run: |
+          # Create test program
+          cat > mpi_test.c << 'EOF'
+          #include <stdio.h>
+          #include <mpi.h>
+
+          int main(int argc, char *argv[]) {
+              int rank, size;
+
+              MPI_Init(&argc, &argv);
+              MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+              MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+              printf("Process %d of %d\n", rank, size);
+
+              if (rank == 0) {
+                  if (size == 1) {
+                      printf("ERROR: MPI_Comm_size reports only 1 process\n");
+                      return 1;
+                  } else {
+                      printf("SUCCESS: MPI running with %d processes\n", size);
+                  }
+              }
+
+              MPI_Finalize();
+              return 0;
+          }
+          EOF
+
+          # Select correct compiler wrapper
+          if [[ "${{ matrix.mpi }}" == "mpich" ]]; then
+              MPICC="mpicc"
+          elif [[ "${{ matrix.mpi }}" == "openmpi" ]]; then
+              MPICC="mpicc"
+          elif [[ "${{ matrix.mpi }}" == "intelmpi" ]]; then
+              source /opt/intel/oneapi/setvars.sh
+              MPICC="mpiicx"
+          fi
+
+          $MPICC mpi_test.c -o mpi_test
+          mpirun -np 2 ./mpi_test
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
 
       - name: Build Palace
         env:
@@ -170,13 +271,17 @@ jobs:
             export CXX=g++
             export FC=gfortran
           fi
-          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
-          fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
+            export AOCLROOT="$AOCLROOT"
+            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR="$ARMPL_DIR"
+            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
           [[ "${{ matrix.build-shared }}" == 'shared' ]] && BUILD_SHARED='ON' || BUILD_SHARED='OFF'
@@ -204,6 +309,7 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
+        timeout-minutes: 5
         env:
           NUM_PROC_TEST_MAX: '2'
         run: |
@@ -226,6 +332,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
+        timeout-minutes: 40
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
