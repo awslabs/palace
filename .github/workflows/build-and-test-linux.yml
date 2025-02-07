@@ -309,8 +309,7 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
-        timeout-minutes: 20
-        continue-on-error: true
+        timeout-minutes: 5
         env:
           NUM_PROC_TEST_MAX: '2'
         run: |
@@ -333,6 +332,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
+        timeout-minutes: 40
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
