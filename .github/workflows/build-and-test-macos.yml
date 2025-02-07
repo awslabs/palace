@@ -104,10 +104,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Install dependencies
-        run: |
-          brew install pkg-config
-
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
