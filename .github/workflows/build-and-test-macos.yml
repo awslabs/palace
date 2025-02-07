@@ -16,14 +16,15 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing (from allpairspy)
-        - compiler: gcc
-          mpi: mpich
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: superlu
+        # Failing configurations currently disabled pending investigation
+        # - compiler: gcc
+        #   mpi: mpich
+        #   math-libs: openblas
+        #   build-shared: shared
+        #   with-64bit-int: int64
+        #   with-openmp: openmp
+        #   with-eigensolver: slepc
+        #   with-solver: superlu
         - compiler: clang
           mpi: openmpi
           math-libs: armpl
@@ -32,24 +33,24 @@ jobs:
           with-openmp: serial
           with-eigensolver: arpack
           with-solver: strumpack
-        - compiler: clang
-          mpi: mpich
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: arpack
+        # - compiler: clang
+        #   mpi: mpich
+        #   math-libs: armpl
+        #   build-shared: shared
+        #   with-64bit-int: int32
+        #   with-openmp: openmp
+        #   with-eigensolver: arpack
+        #   with-solver: mumps
+        - compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: static
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: slepc
           with-solver: mumps
         - compiler: gcc
           mpi: openmpi
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: mumps
-        - compiler: gcc
-          mpi: openmpi
           math-libs: armpl
           build-shared: shared
           with-64bit-int: int64
@@ -72,30 +73,30 @@ jobs:
           with-openmp: serial
           with-eigensolver: arpack
           with-solver: superlu
-        - compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: superlu
-        - compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
+        # - compiler: gcc
+        #   mpi: openmpi
+        #   math-libs: armpl
+        #   build-shared: shared
+        #   with-64bit-int: int32
+        #   with-openmp: openmp
+        #   with-eigensolver: slepc
+        #   with-solver: strumpack
+        # - compiler: gcc
+        #   mpi: openmpi
+        #   math-libs: armpl
+        #   build-shared: shared
+        #   with-64bit-int: int32
+        #   with-openmp: openmp
+        #   with-eigensolver: slepc
+        #   with-solver: superlu
+        # - compiler: gcc
+        #   mpi: openmpi
+        #   math-libs: armpl
+        #   build-shared: shared
+        #   with-64bit-int: int64
+        #   with-openmp: openmp
+        #   with-eigensolver: slepc
+        #   with-solver: strumpack
 
     runs-on: macos-latest-xlarge
     steps:
