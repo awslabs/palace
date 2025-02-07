@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c8ca4ca..b85e966 100644
+index 06e689f..19db918 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -12,7 +12,7 @@ endif()
@@ -54,10 +54,10 @@ index c8ca4ca..b85e966 100644
  message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index a633d6c..0000000
+index 56dde6f..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,512 +0,0 @@
+@@ -1,570 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -103,10 +103,15 @@ index a633d6c..0000000
 -
 -
 -``AOCL``
--  AMD Optimizing CPU Libraries
+-  AMD ScaLAPACK fork of Netlib ScaLAPACK.
+-  Requires LAPACK AOCL
+-  https://www.amd.com/en/developer/aocl/scalapack.html
+-``AOCL64``
+-  AOCL 64-bit integers  (default is 32-bit integers)
 -
 -``LAPACKE``
--  Netlib LapackE for C / C++
+-  LapackE C / C++ interface
+-
 -``Netlib``
 -  Netlib Lapack for Fortran
 -``OpenBLAS``
@@ -143,7 +148,7 @@ index a633d6c..0000000
 -* MKL LAPACKE (C, C++): https://software.intel.com/en-us/mkl-linux-developer-guide-calling-lapack-blas-and-cblas-routines-from-c-c-language-environments
 -#]=======================================================================]
 -
--include(CheckFortranSourceCompiles)
+-include(CheckSourceCompiles)
 -
 -# clear to avoid endless appending on subsequent calls
 -set(LAPACK_LIBRARY)
@@ -151,7 +156,7 @@ index a633d6c..0000000
 -
 -# ===== functions ==========
 -
--function(atlas_libs)
+-function(lapack_atlas)
 -
 -find_library(ATLAS_LIB
 -NAMES atlas
@@ -195,11 +200,11 @@ index a633d6c..0000000
 -
 -set(LAPACK_LIBRARY ${LAPACK_LIBRARY} PARENT_SCOPE)
 -
--endfunction(atlas_libs)
+-endfunction()
 -
 -#=======================
 -
--function(netlib_libs)
+-function(lapack_netlib)
 -
 -if(LAPACK95 IN_LIST LAPACK_FIND_COMPONENTS)
 -  find_path(LAPACK95_INCLUDE_DIR
@@ -276,10 +281,10 @@ index a633d6c..0000000
 -
 -set(LAPACK_LIBRARY ${LAPACK_LIBRARY} PARENT_SCOPE)
 -
--endfunction(netlib_libs)
+-endfunction()
 -
 -#===============================
--function(openblas_libs)
+-function(lapack_openblas)
 -
 -find_library(LAPACK_LIBRARY
 -NAMES openblas
@@ -304,10 +309,15 @@ index a633d6c..0000000
 -
 -set(LAPACK_LIBRARY ${LAPACK_LIBRARY} PARENT_SCOPE)
 -
--endfunction(openblas_libs)
+-endfunction()
 -
 -
--function(aocl_libs)
+-function(lapack_aocl)
+-
+-set(_nodef_lapack)
+-if(DEFINED LAPACK_ROOT)
+-  set(_nodef_lapack NO_DEFAULT_PATH)
+-endif()
 -
 -set(_names flame)
 -if(WIN32)
@@ -318,12 +328,37 @@ index a633d6c..0000000
 -  endif()
 -endif()
 -
+-set(_s "LP64")
+-if(AOCL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  string(PREPEND _s "I")
+-endif()
+-
 -find_library(LAPACK_LIBRARY
 -NAMES ${_names}
 -NAMES_PER_DIR
--PATH_SUFFIXES LP64
--DOC "LAPACK Flame library"
+-PATH_SUFFIXES lib/${_s}
+-HINTS ${LAPACK_ROOT} $ENV{LAPACK_ROOT}
+-${_nodef_lapack}
+-DOC "AOCL Flame library"
 -)
+-
+-find_path(LAPACK_INCLUDE_DIR
+-NAMES FLAME.h
+-PATH_SUFFIXES include/${_s}
+-HINTS ${LAPACK_ROOT} $ENV{LAPACK_ROOT}
+-${_nodef_lapack}
+-DOC "Flame header"
+-)
+-
+-if(NOT LAPACK_LIBRARY AND LAPACK_INCLUDE_DIR)
+-  return()
+-endif()
+-
+-# --- BLIS
+-set(_nodef_blas)
+-if(DEFINED BLAS_ROOT)
+-  set(_nodef_blas NO_DEFAULT_PATH)
+-endif()
 -
 -set(_names blis-mt blis)
 -if(WIN32)
@@ -337,28 +372,53 @@ index a633d6c..0000000
 -find_library(BLAS_LIBRARY
 -NAMES ${_names}
 -NAMES_PER_DIR
--PATH_SUFFIXES LP64
--DOC "BLAS Blis library"
--)
--
--if(NOT (LAPACK_LIBRARY AND BLAS_LIBRARY))
--  return()
--endif()
--
--find_path(LAPACK_INCLUDE_DIR
--NAMES FLAME.h
--PATH_SUFFIXES LP64
--DOC "Flame header"
+-HINTS ${BLAS_ROOT}
+-PATH_SUFFIXES lib/${_s}
+-HINTS ${BLAS_ROOT} $ENV{BLAS_ROOT}
+-${_nodef_blas}
+-DOC "AOCL Blis library"
 -)
 -
 -find_path(BLAS_INCLUDE_DIR
 -NAMES blis.h
--PATH_SUFFIXES LP64
+-HINTS ${BLAS_ROOT}
+-PATH_SUFFIXES include/${_s}
+-HINTS ${BLAS_ROOT} $ENV{BLAS_ROOT}
+-${_nodef_blas}
 -DOC "Blis header"
 -)
 -
--if(NOT (LAPACK_INCLUDE_DIR AND BLAS_INCLUDE_DIR))
+-if(NOT BLAS_LIBRARY AND BLAS_INCLUDE_DIR)
 -  return()
+-endif()
+-
+-
+-if(LAPACKE IN_LIST LAPACK_FIND_COMPONENTS)
+-
+-  find_library(LAPACKE_LIBRARY
+-  NAMES lapacke
+-  PATH_SUFFIXES lib/${_s}
+-  HINTS ${LAPACK_ROOT} $ENV{LAPACK_ROOT}
+-  ${_nodef_lapack}
+-  DOC "AOCL LAPACKE library"
+-  )
+-
+-  # lapack/include for Homebrew
+-  find_path(LAPACKE_INCLUDE_DIR
+-  NAMES lapacke.h
+-  PATH_SUFFIXES include/${_s}
+-  HINTS ${LAPACK_ROOT} $ENV{LAPACK_ROOT}
+-  ${_nodef_lapack}
+-  DOC "AOCL LAPACKE include directory"
+-  )
+-  if(NOT (LAPACKE_LIBRARY AND LAPACKE_INCLUDE_DIR))
+-    return()
+-  endif()
+-
+-  set(LAPACK_LAPACKE_FOUND true PARENT_SCOPE)
+-  list(APPEND LAPACK_INCLUDE_DIR ${LAPACKE_INCLUDE_DIR})
+-  list(APPEND LAPACK_LIBRARY ${LAPACKE_LIBRARY})
+-  mark_as_advanced(LAPACKE_LIBRARY LAPACKE_INCLUDE_DIR)
 -endif()
 -
 -
@@ -366,7 +426,7 @@ index a633d6c..0000000
 -set(LAPACK_LIBRARY ${LAPACK_LIBRARY} ${BLAS_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} PARENT_SCOPE)
 -set(LAPACK_INCLUDE_DIR ${LAPACK_INCLUDE_DIR} ${BLAS_INCLUDE_DIR} PARENT_SCOPE)
 -
--endfunction(aocl_libs)
+-endfunction()
 -
 -#===============================
 -
@@ -453,13 +513,13 @@ index a633d6c..0000000
 -if(MKL IN_LIST LAPACK_FIND_COMPONENTS OR MKL64 IN_LIST LAPACK_FIND_COMPONENTS)
 -  lapack_mkl()
 -elseif(Atlas IN_LIST LAPACK_FIND_COMPONENTS)
--  atlas_libs()
+-  lapack_atlas()
 -elseif(Netlib IN_LIST LAPACK_FIND_COMPONENTS)
--  netlib_libs()
+-  lapack_netlib()
 -elseif(OpenBLAS IN_LIST LAPACK_FIND_COMPONENTS)
--  openblas_libs()
+-  lapack_openblas()
 -elseif(AOCL IN_LIST LAPACK_FIND_COMPONENTS)
--  aocl_libs()
+-  lapack_aocl()
 -elseif(LAPACK_CRAY)
 -  # LAPACK is implicitly part of Cray PE LibSci, use Cray compiler wrapper.
 -endif()
@@ -486,7 +546,7 @@ index a633d6c..0000000
 -set(CMAKE_REQUIRED_INCLUDES ${LAPACK_INCLUDE_DIR})
 -set(CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARY})
 -
--check_fortran_source_compiles(
+-check_source_compiles(Fortran
 -"program check_lapack
 -use, intrinsic :: iso_fortran_env, only : real32
 -implicit none
@@ -494,10 +554,9 @@ index a633d6c..0000000
 -print *, snrm2(1, [0._real32], 1)
 -end program"
 -LAPACK_s_FOUND
--SRC_EXT f90
 -)
 -
--check_fortran_source_compiles(
+-check_source_compiles(Fortran
 -"program check_lapack
 -use, intrinsic :: iso_fortran_env, only : real64
 -implicit none
@@ -505,14 +564,13 @@ index a633d6c..0000000
 -print *, dnrm2(1, [0._real64], 1)
 -end program"
 -LAPACK_d_FOUND
--SRC_EXT f90
 -)
 -
 -if(LAPACK_s_FOUND OR LAPACK_d_FOUND)
 -  set(LAPACK_links true PARENT_SCOPE)
 -endif()
 -
--endfunction(lapack_check)
+-endfunction()
 -
 -# --- Check library links
 -if(LAPACK_CRAY OR LAPACK_LIBRARY)
@@ -571,19 +629,19 @@ index a633d6c..0000000
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index 0e65507..254dd0b 100644
+index d1880b7..d2ea331 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
-@@ -58,8 +58,6 @@ References
+@@ -62,8 +62,6 @@ References
  
- include(CheckFortranSourceCompiles)
+ include(CheckSourceCompiles)
  
 -set(SCALAPACK_LIBRARY)  # avoids appending to prior FindScalapack
 -
  #===== functions
  
  function(scalapack_check)
-@@ -70,11 +68,8 @@ find_package(Threads)
+@@ -74,11 +72,8 @@ find_package(Threads)
  
  set(CMAKE_REQUIRED_FLAGS)
  set(CMAKE_REQUIRED_LINK_OPTIONS)
@@ -597,7 +655,7 @@ index 0e65507..254dd0b 100644
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
  
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
-@@ -252,20 +247,13 @@ endif()
+@@ -285,20 +280,13 @@ endif()
  
  if(SCALAPACK_FOUND)
    # need if _FOUND guard as can't overwrite imported target even if bad
@@ -619,7 +677,7 @@ index 0e65507..254dd0b 100644
  
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
-@@ -273,5 +261,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+@@ -306,5 +294,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
      endif()
    endif()
  endif()
@@ -643,13 +701,15 @@ index 3f0997e..14ebbe6 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 018fc1d..78c9dda 100644
+index 8727508..2132c73 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -3,33 +3,7 @@ include(GNUInstallDirs)
+@@ -3,39 +3,7 @@ include(GNUInstallDirs)
  
  if(find AND NOT TARGET SCALAPACK::SCALAPACK)
  
+-# Make SCALAPACK_VENDOR match LAPACK_VENDOR
+-
 -if(NOT DEFINED SCALAPACK_VENDOR)
 -  if(LAPACK_VENDOR MATCHES "^MKL")
 -    set(SCALAPACK_VENDOR MKL)
@@ -657,6 +717,10 @@ index 018fc1d..78c9dda 100644
 -    (DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}"))
 -    set(SCALAPACK_VENDOR MKL)
 -    set(LAPACK_VENDOR MKL)
+-  endif()
+-
+-  if(LAPACK_VENDOR STREQUAL "AOCL")
+-    set(SCALAPACK_VENDOR AOCL)
 -  endif()
 -endif()
 -
