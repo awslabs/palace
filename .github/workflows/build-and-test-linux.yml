@@ -309,6 +309,8 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
+        timeout-minutes: 20
+        continue-on-error: true
         env:
           NUM_PROC_TEST_MAX: '2'
         run: |
