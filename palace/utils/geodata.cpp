@@ -2013,9 +2013,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   // Use the translation vector or affine transformation matrix if provided
   // in the config file, otherwise automatically detect the transformation.
   mfem::DenseMatrix transformation(4);
-  auto nonempty = [](const auto &x)
-  { return std::any_of(x.begin(), x.end(), [](auto y) { return std::abs(y) > 0.0; }); };
-  if (nonempty(data.affine_transform))
+  if (std::any_of(data.affine_transform.begin(), data.affine_transform.end(),
+                  [](auto y) { return std::abs(y) > 0.0; }))
   {
     // Use user-provided affine transformation matrix.
     for (int i = 0; i < 4; i++)

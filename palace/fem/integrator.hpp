@@ -141,7 +141,7 @@ public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
   DiffusionMassIntegrator(const MaterialPropertyCoefficient &Q,
                           const MaterialPropertyCoefficient &Q_mass,
-                          const bool transpose = false, const bool tranpose_mass = false)
+                          const bool transpose = false, const bool transpose_mass = false)
     : BilinearFormIntegrator(Q, transpose), Q_mass(&Q_mass), transpose_mass(transpose_mass)
   {
   }
@@ -246,7 +246,7 @@ public:
   }
 };
 
-// Integrator for a(u, v) = (Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
+// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:

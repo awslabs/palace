@@ -325,28 +325,14 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
               local_wave_vector.GetData());
     wave_vector += local_wave_vector;
   }
-  has_wave_attr = (wave_vector.Norml2() > tol);
 
   // Get Floquet wave vector specified outside of periodic boundary definitions.
   const auto &data = iodata.boundaries.floquet;
   MFEM_VERIFY(data.wave_vector.size() == sdim,
               "Floquet wave vector size must equal the spatial dimension.");
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
-  if (has_wave_attr && local_wave_vector.Norml2() > tol)
-  {
-    mfem::Vector diff(sdim);
-    diff = wave_vector;
-    diff -= local_wave_vector;
-    MFEM_VERIFY(diff.Norml2() < tol,
-                "Conflicting definitions of the Floquet wave vector in the "
-                "configuration file.");
-    wave_vector = local_wave_vector;
-  }
-  else if (!has_wave_attr)
-  {
-    wave_vector = local_wave_vector;
-    has_wave_attr = (wave_vector.Norml2() > tol);
-  }
+  wave_vector += local_wave_vector;
+  has_wave_attr = (wave_vector.Norml2() > tol);
 
   MFEM_VERIFY(!has_wave_attr || iodata.problem.type == config::ProblemData::Type::DRIVEN ||
                   iodata.problem.type == config::ProblemData::Type::EIGENMODE,

@@ -108,7 +108,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   info.test_ops = EvalMode::Curl;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
+  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, -1.0);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

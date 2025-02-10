@@ -191,8 +191,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     if (space_op.GetMaterialOp().HasWaveVector())
     {
       // Calculate B field correction for Floquet BCs.
-      // B = -1/(iω) ∇ x E - 1/ω kp x E
-      floquet_corr->AddMult(E, B, -1.0 / omega);
+      // B = -1/(iω) ∇ x E + 1/ω kp x E
+      floquet_corr->AddMult(E, B, 1.0 / omega);
     }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
