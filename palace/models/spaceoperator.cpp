@@ -206,7 +206,6 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
                     const MaterialPropertyCoefficient *fb,
-                    // const MaterialPropertyCoefficient *fpw,
                     const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
 {
   if (df && !df->empty() && f && !f->empty())
@@ -272,12 +271,11 @@ auto AssembleOperator(const FiniteElementSpace &fespace,
                       const MaterialPropertyCoefficient *f,
                       const MaterialPropertyCoefficient *dfb,
                       const MaterialPropertyCoefficient *fb,
-                      // const MaterialPropertyCoefficient *fpw,
                       const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
                       bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
-  AddIntegrators(a, df, f, dfb, fb, /*fpw,*/ fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
 
@@ -286,12 +284,11 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
                        const MaterialPropertyCoefficient *f,
                        const MaterialPropertyCoefficient *dfb,
                        const MaterialPropertyCoefficient *fb,
-                       // const MaterialPropertyCoefficient *fpw,
                        const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
                        bool assemble_q_data = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddIntegrators(a, df, f, dfb, fb, /*fpw,*/ fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
