@@ -231,14 +231,24 @@
       {
         "type": "object",
         "additionalProperties": false,
-        "required": ["DonorAttributes", "ReceiverAttributes", "Translation"],
+        "required": ["DonorAttributes", "ReceiverAttributes"],
         "properties":
         {
           "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
           "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
-          "Translation": { "$ref": "#/$defs/Translation" }
+          "Translation": { "$ref": "#/$defs/Translation" },
+          "AffineTransformation": { "$ref": "#/$defs/AffineTransformation" },
+          "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" }
         }
       }
+    },
+    "FloquetWaveVector":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
     },
     "Postprocessing":
     {
@@ -320,6 +330,22 @@
       "minItems": 1
     },
     "Translation":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "AffineTransformation":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 16,
+      "maxItems": 16
+    },
+    "FloquetWaveVector":
     {
       "type": "array",
       "additionalItems": false,

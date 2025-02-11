@@ -41,14 +41,16 @@ class BilinearFormIntegrator
 protected:
   const MaterialPropertyCoefficient *Q;
   bool assemble_q_data;
+  bool transpose;
 
 public:
-  BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr)
-    : Q(Q), assemble_q_data(false)
+  BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr,
+                         const bool transpose = false)
+    : Q(Q), assemble_q_data(false), transpose(transpose)
   {
   }
-  BilinearFormIntegrator(const MaterialPropertyCoefficient &Q)
-    : Q(&Q), assemble_q_data(false)
+  BilinearFormIntegrator(const MaterialPropertyCoefficient &Q, const bool transpose = false)
+    : Q(&Q), assemble_q_data(false), transpose(transpose)
   {
   }
   virtual ~BilinearFormIntegrator() = default;
@@ -133,12 +135,14 @@ class DiffusionMassIntegrator : public BilinearFormIntegrator
 {
 protected:
   const MaterialPropertyCoefficient *Q_mass;
+  bool transpose_mass;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
   DiffusionMassIntegrator(const MaterialPropertyCoefficient &Q,
-                          const MaterialPropertyCoefficient &Q_mass)
-    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
+                          const MaterialPropertyCoefficient &Q_mass,
+                          const bool transpose = false, const bool transpose_mass = false)
+    : BilinearFormIntegrator(Q, transpose), Q_mass(&Q_mass), transpose_mass(transpose_mass)
   {
   }
 
@@ -152,12 +156,14 @@ class CurlCurlMassIntegrator : public BilinearFormIntegrator
 {
 protected:
   const MaterialPropertyCoefficient *Q_mass;
+  bool transpose_mass;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
   CurlCurlMassIntegrator(const MaterialPropertyCoefficient &Q,
-                         const MaterialPropertyCoefficient &Q_mass)
-    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
+                         const MaterialPropertyCoefficient &Q_mass,
+                         const bool transpose = false, const bool transpose_mass = false)
+    : BilinearFormIntegrator(Q, transpose), Q_mass(&Q_mass), transpose_mass(transpose_mass)
   {
   }
 
@@ -171,12 +177,14 @@ class DivDivMassIntegrator : public BilinearFormIntegrator
 {
 protected:
   const MaterialPropertyCoefficient *Q_mass;
+  bool transpose_mass;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
   DivDivMassIntegrator(const MaterialPropertyCoefficient &Q,
-                       const MaterialPropertyCoefficient &Q_mass)
-    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
+                       const MaterialPropertyCoefficient &Q_mass,
+                       const bool transpose = false, const bool transpose_mass = false)
+    : BilinearFormIntegrator(Q, transpose), Q_mass(&Q_mass), transpose_mass(transpose_mass)
   {
   }
 
@@ -238,7 +246,7 @@ public:
   }
 };
 
-// Integrator for a(u, v) = (Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
+// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:

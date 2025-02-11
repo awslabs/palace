@@ -14,8 +14,8 @@ CEED_QFUNCTION(f_apply_2)(void *, CeedInt Q, const CeedScalar *const *in,
   {
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = qd[i + Q * 0] * u0 + qd[i + Q * 1] * u1;
-    v[i + Q * 1] = qd[i + Q * 1] * u0 + qd[i + Q * 2] * u1;
+    v[i + Q * 0] = qd[i + Q * 0] * u0 + qd[i + Q * 2] * u1;
+    v[i + Q * 1] = qd[i + Q * 1] * u0 + qd[i + Q * 3] * u1;
   }
   return 0;
 }

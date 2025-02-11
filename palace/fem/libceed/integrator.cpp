@@ -204,7 +204,7 @@ std::vector<CeedInt> QuadratureDataSetup(unsigned int ops, Ceed ceed,
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(basis, &num_qpts));
   for (auto size : active_input_sizes)
   {
-    q_data_size += size * (size + 1) / 2;
+    q_data_size += size * size;
   }
 
   PalaceCeedCall(

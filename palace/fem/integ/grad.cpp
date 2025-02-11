@@ -61,7 +61,7 @@ void GradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.test_ops = EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(space_dim, Q);
+  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

@@ -60,7 +60,8 @@ void CurlCurlMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr
   }
 
   // Set up the coefficient and assemble. Mass goes first.
-  auto ctx = PopulateCoefficientContext(space_dim, Q_mass, (dim < 3) ? 1 : dim, Q);
+  auto ctx = PopulateCoefficientContext(space_dim, Q_mass, (dim < 3) ? 1 : dim, Q,
+                                        transpose_mass, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

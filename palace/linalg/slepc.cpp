@@ -1415,7 +1415,6 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);

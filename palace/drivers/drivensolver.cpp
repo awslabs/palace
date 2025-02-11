@@ -8,6 +8,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -127,7 +128,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
                                     C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
                                                              omega0);
-
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
   ksp.SetOperators(*A, *P);
 
@@ -146,6 +146,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
+
+  // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
+  std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+  if (space_op.GetMaterialOp().HasWaveVector())
+  {
+    floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
+        iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
 
   // Main frequency sweep loop.
   int step = step0;
@@ -179,6 +188,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E + 1/ω kp x E
+      floquet_corr->AddMult(E, B, 1.0 / omega);
+    }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
@@ -245,6 +260,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
+  // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
+  std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+  if (space_op.GetMaterialOp().HasWaveVector())
+  {
+    floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
+        iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
+
   // Configure the PROM operator which performs the parameter space sampling and basis
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
@@ -273,6 +297,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E + 1/ω kp x E
+      floquet_corr->AddMult(E, B, 1.0 / omega);
+    }
     post_op.SetEGridFunction(E, false);
     post_op.SetBGridFunction(B, false);
     const double E_elec = post_op.GetEFieldEnergy();
@@ -361,6 +391,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E + 1/ω kp x E
+      floquet_corr->AddMult(E, B, 1.0 / omega);
+    }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);

@@ -61,7 +61,7 @@ void DivDivMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.test_ops = EvalMode::Div | EvalMode::Interp;
 
   // Set up the coefficient and assemble. Mass goes first.
-  auto ctx = PopulateCoefficientContext(space_dim, Q_mass, 1, Q);
+  auto ctx = PopulateCoefficientContext(space_dim, Q_mass, 1, Q, transpose_mass, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

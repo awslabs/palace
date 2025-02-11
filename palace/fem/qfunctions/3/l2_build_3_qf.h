@@ -14,7 +14,7 @@ CEED_QFUNCTION(f_build_l2_3)(void *__restrict__ ctx, CeedInt Q, const CeedScalar
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[6];
+    CeedScalar coeff[9];
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     const CeedScalar w = qw[i] * qw[i] / wdetJ[i];
 
@@ -24,6 +24,9 @@ CEED_QFUNCTION(f_build_l2_3)(void *__restrict__ ctx, CeedInt Q, const CeedScalar
     qd[i + Q * 3] = w * coeff[3];
     qd[i + Q * 4] = w * coeff[4];
     qd[i + Q * 5] = w * coeff[5];
+    qd[i + Q * 6] = w * coeff[6];
+    qd[i + Q * 7] = w * coeff[7];
+    qd[i + Q * 8] = w * coeff[8];
   }
   return 0;
 }

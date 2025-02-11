@@ -9,6 +9,7 @@
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
@@ -36,6 +37,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+
   const auto &Curl = space_op.GetCurlMatrix();
   SaveMetadata(space_op.GetNDSpaces());
 
@@ -154,7 +156,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0 && !space_op.GetMaterialOp().HasLondonDepth())
+  if (iodata.solver.linear.divfree_max_it > 0 &&
+      !space_op.GetMaterialOp().HasWaveVector() &&
+      !space_op.GetMaterialOp().HasLondonDepth())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -163,6 +167,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
+  }
+
+  // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
+  std::unique_ptr<FloquetCorrSolver<ComplexVector>> floquet_corr;
+  if (space_op.GetMaterialOp().HasWaveVector())
+  {
+    floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
+        iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
@@ -306,6 +319,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs.
+      // B = -1/(iω) ∇ x E + 1/ω kp x E.
+      floquet_corr->AddMult(E, B, 1.0 / omega);
+    }
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
     post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());

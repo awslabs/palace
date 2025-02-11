@@ -254,15 +254,18 @@ such modes to higher frequencies. The relevant modes are tabulated as
 
 For this problem, we use curved tetrahedral elements from the mesh file
 [`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh),
-and the configuration file
-[`waveguide.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/waveguide.json).
+and the configuration files
+[`waveguide.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/waveguide.json) and
+[`floquet.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/floquet.json).
 
-The main difference between this configuration file and those used in the cavity example is
+The main difference between these configuration files and those used in the cavity example is
 in the `"Boundaries"` object: `waveguide.json` specifies a perfect electric conductor
 (`"PEC"`) boundary condition for the exterior surface and a periodic boundary condition
 (`"Periodic"`) on the cross-sections of the cylinder (in the $z-$ direction). The periodic
 attribute pairs are defined by `"DonorAttributes"` and `"ReceiverAttributes"`, and the
-distance between them is given by the `"Translation"` vector in mesh units.
+distance between them is given by the `"Translation"` vector in mesh units. In `floquet.json`,
+an additional `"FloquetWaveVector"` specifies the phase delay between the donor and receiver
+boundaries in the X/Y/Z directions.
 
 The file `postpro/waveguide/eig.csv` contains information about the computed eigenfrequencies and
 associated quality factors:

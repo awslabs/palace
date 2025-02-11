@@ -50,6 +50,9 @@ The format of this changelog is based on
     `config["Solver"]["Linear"]["ComplexCoarseSolve"]`.
   - Fix bug in London equation implementation where a curl-curl term was added to the
     stiffness operator instead of a mass term.
+  - Added support for Floquet periodic boundary conditions with phase-delay constraints.
+    The Floquet wave vector can be specified along with periodic boundaries in the
+    `config["Boundaries"]["Periodic"]` configuration.
 
 ## [0.13.0] - 2024-05-20
 

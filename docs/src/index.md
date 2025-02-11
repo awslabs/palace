@@ -62,5 +62,4 @@ the frequency or time domain, using the
   - Improved adaptive mesh refinement (AMR) support for transient simulations and numeric
     wave ports on nonconformal meshes
   - Perfectly matched layer (PML) boundaries
-  - Periodic boundaries with phase delay constraints
   - Automatic mesh generation and optimization

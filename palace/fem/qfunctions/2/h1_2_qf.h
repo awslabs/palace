@@ -14,13 +14,13 @@ CEED_QFUNCTION(f_apply_h1_2)(void *__restrict__ ctx, CeedInt Q, const CeedScalar
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[3];
+    CeedScalar coeff[4];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
 
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = wdetJ[i] * (coeff[0] * u0 + coeff[1] * u1);
-    v[i + Q * 1] = wdetJ[i] * (coeff[1] * u0 + coeff[2] * u1);
+    v[i + Q * 0] = wdetJ[i] * (coeff[0] * u0 + coeff[2] * u1);
+    v[i + Q * 1] = wdetJ[i] * (coeff[1] * u0 + coeff[3] * u1);
   }
   return 0;
 }

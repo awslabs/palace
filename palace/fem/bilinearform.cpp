@@ -212,7 +212,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
 
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
-  // This should work fine if some threads create an empty operator (no elements or bounday
+  // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel if (nt > 1))

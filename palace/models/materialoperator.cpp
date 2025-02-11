@@ -169,7 +169,13 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   mat_invLondon.SetSize(sdim, sdim, nmats);
   mat_c0_min.SetSize(nmats);
   mat_c0_max.SetSize(nmats);
-  has_losstan_attr = has_conductivity_attr = has_london_attr = false;
+  mat_muinvkx.SetSize(sdim, sdim, nmats);
+  mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
+  mat_kx.SetSize(sdim, sdim, nmats);
+  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
+
+  // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
+  SetUpFloquetWaveVector(iodata, mesh);
 
   int count = 0;
   for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
@@ -281,13 +287,93 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       has_london_attr = true;
     }
 
+    // μ⁻¹ [k x]
+    Mult(mat_muinv(count), wave_vector_cross, mat_muinvkx(count));
+
+    // [k x]^T μ⁻¹ [k x]
+    T.Transpose(wave_vector_cross);
+    Mult(T, mat_muinvkx(count), mat_kxTmuinvkx(count));
+
+    // [k x]
+    mat_kx(count) = wave_vector_cross;
+
     count++;
   }
-  bool has_attr[3] = {has_losstan_attr, has_conductivity_attr, has_london_attr};
-  Mpi::GlobalOr(3, has_attr, mesh.GetComm());
+  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr};
+  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
+  has_wave_attr = has_attr[3];
+}
+
+void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
+                                              const mfem::ParMesh &mesh)
+{
+  const int sdim = mesh.SpaceDimension();
+  const double tol = std::numeric_limits<double>::epsilon();
+
+  // Sum Floquet wave vector over periodic boundary pairs.
+  mfem::Vector wave_vector(sdim), local_wave_vector(sdim);
+  wave_vector = 0.0;
+  for (const auto &data : iodata.boundaries.periodic)
+  {
+    MFEM_VERIFY(data.wave_vector.size() == sdim,
+                "Floquet wave vector size must equal the spatial dimension.");
+    std::copy(data.wave_vector.begin(), data.wave_vector.end(),
+              local_wave_vector.GetData());
+    wave_vector += local_wave_vector;
+  }
+
+  // Get Floquet wave vector specified outside of periodic boundary definitions.
+  const auto &data = iodata.boundaries.floquet;
+  MFEM_VERIFY(data.wave_vector.size() == sdim,
+              "Floquet wave vector size must equal the spatial dimension.");
+  std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
+  wave_vector += local_wave_vector;
+  has_wave_attr = (wave_vector.Norml2() > tol);
+
+  MFEM_VERIFY(!has_wave_attr || iodata.problem.type == config::ProblemData::Type::DRIVEN ||
+                  iodata.problem.type == config::ProblemData::Type::EIGENMODE,
+              "Quasi-periodic Floquet boundary conditions are only available for "
+              " frequency domain driven or eigenmode simulations!");
+  MFEM_VERIFY(!has_wave_attr || sdim == 3,
+              "Quasi-periodic Floquet periodic boundary conditions are only available "
+              " in 3D!");
+
+  // Get mesh dimensions in x/y/z coordinates
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  bbmax -= bbmin;
+
+  // Ensure Floquet wave vector components are in range [-π/L, π/L].
+  for (int i = 0; i < sdim; i++)
+  {
+    if (wave_vector[i] > M_PI / bbmax[i])
+    {
+      wave_vector[i] =
+          -M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+    }
+    else if (wave_vector[i] < M_PI / bbmax[i])
+    {
+      wave_vector[i] =
+          M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+    }
+  }
+
+  // Matrix representation of cross product with wave vector
+  // [k x] = | 0  -k3  k2|
+  //         | k3  0  -k1|
+  //         |-k2  k1  0 |
+  wave_vector_cross.SetSize(3);
+  wave_vector_cross = 0.0;
+  wave_vector_cross(0, 1) = -wave_vector[2];
+  wave_vector_cross(0, 2) = wave_vector[1];
+  wave_vector_cross(1, 0) = wave_vector[2];
+  wave_vector_cross(1, 2) = -wave_vector[0];
+  wave_vector_cross(2, 0) = -wave_vector[1];
+  wave_vector_cross(2, 1) = wave_vector[0];
 }
 
 mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const

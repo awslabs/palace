@@ -370,7 +370,6 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
-
   if (has_RHS2)
   {
     space_op.GetExcitationVector2(omega, RHS2);

@@ -524,6 +524,19 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.Cs /= electromagnetics::epsilon0_ * Lc;
   }
 
+  // Floquet periodic boundaries.
+  for (int i = 0; i < boundaries.floquet.wave_vector.size(); i++)
+  {
+    boundaries.floquet.wave_vector[i] *= GetMeshLengthScale();
+  }
+  for (auto &data : boundaries.periodic)
+  {
+    for (int i = 0; i < data.wave_vector.size(); i++)
+    {
+      data.wave_vector[i] *= GetMeshLengthScale();
+    }
+  }
+
   // Wave port offset distance.
   for (auto &[idx, data] : boundaries.waveport)
   {

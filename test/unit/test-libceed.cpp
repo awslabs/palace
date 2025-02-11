@@ -218,7 +218,7 @@ void AddIntegrators(bool bdr_integ, BilinearForm &a_test, U &a_ref,
 }
 
 void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
-                          bool test_transpose)
+                          bool test_transpose, double scaling = 1.0)
 {
   Vector x(op_ref.Width()), y_ref(op_ref.Height()), y_test(op_ref.Height());
   x.UseDevice(true);
@@ -230,6 +230,7 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
     op_ref.Mult(x, y_ref);
     op_test.Mult(x, y_test);
 
+    y_test *= scaling;
     y_test -= y_ref;
 
     // REQUIRE(y_ref * y_ref > 0.0);
@@ -247,6 +248,7 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
     op_ref.MultTranspose(x_t, y_t_ref);
     op_test.MultTranspose(x_t, y_t_test);
 
+    y_t_test *= scaling;
     y_t_test -= y_t_ref;
 
     // REQUIRE(y_t_ref * y_t_ref > 0.0);
@@ -254,7 +256,8 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
   }
 }
 
-void TestCeedOperatorFullAssemble(mfem::SparseMatrix &mat_test, mfem::SparseMatrix &mat_ref)
+void TestCeedOperatorFullAssemble(mfem::SparseMatrix &mat_test, mfem::SparseMatrix &mat_ref,
+                                  double scaling = 1.0)
 {
   // Ensure host memory is up to date (mfem::Add is missing the device to host copy).
   mat_test.HostReadI();
@@ -264,14 +267,14 @@ void TestCeedOperatorFullAssemble(mfem::SparseMatrix &mat_test, mfem::SparseMatr
   mat_ref.HostReadJ();
   mat_ref.HostReadData();
 
-  std::unique_ptr<mfem::SparseMatrix> mat_diff(mfem::Add(1.0, mat_test, -1.0, mat_ref));
+  std::unique_ptr<mfem::SparseMatrix> mat_diff(mfem::Add(scaling, mat_test, -1.0, mat_ref));
 
   // REQUIRE(mat_ref.MaxNorm() > 0.0);
   REQUIRE(mat_diff->MaxNorm() < 1.0e-12 * std::max(mat_ref.MaxNorm(), 1.0));
 }
 
 void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
-                                  mfem::SparseMatrix &mat_ref)
+                                  mfem::SparseMatrix &mat_ref, double scaling = 1.0)
 {
   // Copy test matrix into MFEM's sparse matrix data type.
   hypre_CSRMatrixMigrate(mat_test, HYPRE_MEMORY_HOST);
@@ -279,11 +282,11 @@ void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
                                  mat_test.Height(), mat_test.Width(), false, false, false);
 
   // Perform the test.
-  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref);
+  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref, scaling);
 }
 
 void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
-                                  hypre::HypreCSRMatrix &mat_ref)
+                                  hypre::HypreCSRMatrix &mat_ref, double scaling = 1.0)
 {
   // Copy test and reference matrix into MFEM's sparse matrix data type.
   hypre_CSRMatrixMigrate(mat_test, HYPRE_MEMORY_HOST);
@@ -294,11 +297,12 @@ void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
                                 mat_ref.Height(), mat_ref.Width(), false, false, false);
 
   // Perform the test.
-  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref_sp);
+  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref_sp, scaling);
 }
 
 template <typename T1, typename T2>
-void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zeros)
+void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zeros,
+                      double scaling = 1.0)
 {
   a_ref.Assemble(skip_zeros);
   a_ref.Finalize(skip_zeros);
@@ -307,11 +311,11 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
 
   // Test operator application.
   auto op_test = a_test.PartialAssemble();
-  TestCeedOperatorMult(*op_test, *op_ref, test_transpose);
+  TestCeedOperatorMult(*op_test, *op_ref, test_transpose, scaling);
 
   // Test full assembly.
   auto mat_test = a_test.FullAssemble(*op_test, skip_zeros);
-  TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
+  TestCeedOperatorFullAssemble(*mat_test, *mat_ref, scaling);
 
   // Test diagonal assembly if possible.
   if (&a_test.GetTrialSpace() == &a_test.GetTestSpace())
@@ -323,6 +327,7 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
     mat_ref->GetDiag(d_ref);
     op_test->AssembleDiagonal(d_test);
 
+    d_test *= scaling;
     d_test -= d_ref;
 
     // Diagonal assembly for high-order Nedelec spaces is only approximate due to face
@@ -346,19 +351,22 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
   }
 }
 
-void TestCeedOperator(BilinearForm &op_test, mfem::BilinearForm &op_ref)
+void TestCeedOperator(BilinearForm &op_test, mfem::BilinearForm &op_ref,
+                      double scaling = 1.0)
 {
-  TestCeedOperator(op_test, op_ref, false, false);
+  TestCeedOperator(op_test, op_ref, false, false, scaling);
 }
 
-void TestCeedOperator(BilinearForm &op_test, mfem::MixedBilinearForm &op_ref)
+void TestCeedOperator(BilinearForm &op_test, mfem::MixedBilinearForm &op_ref,
+                      double scaling = 1.0)
 {
-  TestCeedOperator(op_test, op_ref, false, false);
+  TestCeedOperator(op_test, op_ref, false, false, scaling);
 }
 
-void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOperator &op_ref)
+void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOperator &op_ref,
+                      double scaling = 1.0)
 {
-  TestCeedOperator(op_test, op_ref, true, true);
+  TestCeedOperator(op_test, op_ref, true, true, scaling);
 }
 
 template <typename T1, typename T2, typename T3>
@@ -1021,7 +1029,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             break;
         }
       }
-      TestCeedOperator(a_test, a_ref);
+      TestCeedOperator(a_test, a_ref, -1.0);
     }
     SECTION("Mixed Vector Curl Integrator (H(curl) range)")
     {
@@ -1071,7 +1079,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             break;
         }
       }
-      TestCeedOperator(a_test, a_ref);
+      TestCeedOperator(a_test, a_ref, -1.0);
     }
   }
 

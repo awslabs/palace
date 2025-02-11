@@ -35,75 +35,76 @@ CEED_QFUNCTION_HELPER void MatUnpack22(const CeedScalar *A, const CeedInt A_stri
   A_loc[3] = A[A_stride * 3];
 }
 
-CEED_QFUNCTION_HELPER void MultBx22(const CeedScalar B[3], const CeedScalar x[2],
+CEED_QFUNCTION_HELPER void MultBx22(const CeedScalar B[4], const CeedScalar x[2],
                                     CeedScalar y[2])
 {
-  // B: 0 1
-  //    1 2
-  y[0] = B[0] * x[0] + B[1] * x[1];
-  y[1] = B[1] * x[0] + B[2] * x[1];
+  // B: 0 2
+  //    1 3
+  y[0] = B[0] * x[0] + B[2] * x[1];
+  y[1] = B[1] * x[0] + B[3] * x[1];
 }
 
-CEED_QFUNCTION_HELPER void MultAtBCx22(const CeedScalar A[4], const CeedScalar B[3],
+CEED_QFUNCTION_HELPER void MultAtBCx22(const CeedScalar A[4], const CeedScalar B[4],
                                        const CeedScalar C[4], const CeedScalar x[2],
                                        CeedScalar y[2])
 {
-  // A: 0 2   B: 0 1   C: 0 2
-  //    1 3      1 2      1 3
+  // A, B, C: 0 2
+  //          1 3
   CeedScalar z[2];
 
   y[0] = C[0] * x[0] + C[2] * x[1];
   y[1] = C[1] * x[0] + C[3] * x[1];
 
-  z[0] = B[0] * y[0] + B[1] * y[1];
-  z[1] = B[1] * y[0] + B[2] * y[1];
+  z[0] = B[0] * y[0] + B[2] * y[1];
+  z[1] = B[1] * y[0] + B[3] * y[1];
 
   y[0] = A[0] * z[0] + A[1] * z[1];
   y[1] = A[2] * z[0] + A[3] * z[1];
 }
 
-CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[3],
+CEED_QFUNCTION_HELPER void MultBAx22(const CeedScalar A[4], const CeedScalar B[4],
                                      const CeedScalar x[2], CeedScalar y[2])
 {
-  // A: 0 2   B: 0 1
-  //    1 3      1 2
+  // A, B: 0 2
+  //       1 3
   CeedScalar z[2];
 
   z[0] = A[0] * x[0] + A[2] * x[1];
   z[1] = A[1] * x[0] + A[3] * x[1];
 
-  y[0] = B[0] * z[0] + B[1] * z[1];
-  y[1] = B[1] * z[0] + B[2] * z[1];
+  y[0] = B[0] * z[0] + B[2] * z[1];
+  y[1] = B[1] * z[0] + B[3] * z[1];
 }
 
-CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar A[4], const CeedScalar B[3],
-                                      CeedScalar C[3])
+CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar A[4], const CeedScalar B[4],
+                                      CeedScalar C[4])
 {
-  // A: 0 2   B: 0 1   C: 0 1
-  //    1 3      1 2      1 2
+  // A, B, C: 0 2
+  //          1 3
 
   // First compute entries of R = B A.
-  const CeedScalar R11 = B[0] * A[0] + B[1] * A[1];
-  const CeedScalar R21 = B[1] * A[0] + B[2] * A[1];
-  const CeedScalar R12 = B[0] * A[2] + B[1] * A[3];
-  const CeedScalar R22 = B[1] * A[2] + B[2] * A[3];
+  const CeedScalar R11 = B[0] * A[0] + B[2] * A[1];
+  const CeedScalar R21 = B[1] * A[0] + B[3] * A[1];
+  const CeedScalar R12 = B[0] * A[2] + B[2] * A[3];
+  const CeedScalar R22 = B[1] * A[2] + B[3] * A[3];
 
   C[0] = A[0] * R11 + A[1] * R21;
-  C[1] = A[0] * R12 + A[1] * R22;
-  C[2] = A[2] * R12 + A[3] * R22;
+  C[1] = A[2] * R11 + A[3] * R21;
+  C[2] = A[0] * R12 + A[1] * R22;
+  C[3] = A[2] * R12 + A[3] * R22;
 }
 
-CEED_QFUNCTION_HELPER void MultAtBC22(const CeedScalar A[4], const CeedScalar B[3],
+CEED_QFUNCTION_HELPER void MultAtBC22(const CeedScalar A[4], const CeedScalar B[4],
                                       const CeedScalar C[4], CeedScalar D[4])
 {
-  // A, C: 0 2   B: 0 1   D: 0 2
-  //       1 3      1 2      1 3
+  // A, B, C, D: 0 2
+  //             1 3
 
   // First compute entries of R = B C.
-  const CeedScalar R11 = B[0] * C[0] + B[1] * C[1];
-  const CeedScalar R21 = B[1] * C[0] + B[2] * C[1];
-  const CeedScalar R12 = B[0] * C[2] + B[1] * C[3];
-  const CeedScalar R22 = B[1] * C[2] + B[2] * C[3];
+  const CeedScalar R11 = B[0] * C[0] + B[2] * C[1];
+  const CeedScalar R21 = B[1] * C[0] + B[3] * C[1];
+  const CeedScalar R12 = B[0] * C[2] + B[2] * C[3];
+  const CeedScalar R22 = B[1] * C[2] + B[3] * C[3];
 
   D[0] = A[0] * R11 + A[1] * R21;
   D[1] = A[2] * R11 + A[3] * R21;
@@ -111,15 +112,15 @@ CEED_QFUNCTION_HELPER void MultAtBC22(const CeedScalar A[4], const CeedScalar B[
   D[3] = A[2] * R12 + A[3] * R22;
 }
 
-CEED_QFUNCTION_HELPER void MultBA22(const CeedScalar A[4], const CeedScalar B[3],
+CEED_QFUNCTION_HELPER void MultBA22(const CeedScalar A[4], const CeedScalar B[4],
                                     CeedScalar C[4])
 {
-  // A: 0 2   B: 0 1   C: 0 2
-  //    1 3      1 2      1 3
-  C[0] = B[0] * A[0] + B[1] * A[1];
-  C[1] = B[1] * A[0] + B[2] * A[1];
-  C[2] = B[0] * A[2] + B[1] * A[3];
-  C[3] = B[1] * A[2] + B[2] * A[3];
+  // A, B, C: 0 2
+  //          1 3
+  C[0] = B[0] * A[0] + B[2] * A[1];
+  C[1] = B[1] * A[0] + B[3] * A[1];
+  C[2] = B[0] * A[2] + B[2] * A[3];
+  C[3] = B[1] * A[2] + B[3] * A[3];
 }
 
 #endif  // PALACE_LIBCEED_UTILS_22_QF_H

@@ -60,6 +60,10 @@
     [
         ...
     ],
+    "FloquetWaveVector":
+    [
+        ...
+    ],
     "Postprocessing":
     {
         "SurfaceFlux":
@@ -125,7 +129,10 @@ electrostatic simulations. Entries of the capacitance matrix are extracted corre
 each terminal boundary.
 
 `"Periodic"` :  Array of objects for configuring periodic boundary conditions for surfaces
-with meshes that are identical after a specified translation.
+with meshes that are identical after translation and/or rotation.
+
+`"FloquetWaveVector"` :  Array for specifying Floquet wave vector for
+meshes generated with built-in periodicity.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
 
@@ -527,7 +534,9 @@ boundary.
     {
         "DonorAttributes": [<int array>],
         "ReceiverAttributes": [<int array>],
-        "Translation": [<float array>]
+        "Translation": [<float array>],
+        "AffineTransformation": [<float array>],
+        "FloquetWaveVector": [<float array>]
     },
     ...
 ]
@@ -541,8 +550,27 @@ attributes for this periodic boundary.
 `"ReceiverAttributes" [None]` :  Integer array of the receiver attributes of the mesh boundary
 attributes for this periodic boundary.
 
-`"Translation" [None]` :  Defines the distance between the donor and receiver attributes in
-mesh units.
+`"Translation" [None]` :  Optional floating point array defining the distance from the donor
+attribute to the receiver attribute in mesh units. If neither `"Translation"` nor
+`"AffineTransformation"` are specified, the transformation between donor and receiver boundaries
+is automatically detected.
+
+`"AffineTransformation" [None]` :  Optional floating point array of size 16 defining the
+three-dimensional (4 x 4) affine transformation matrix (in row major format) from the donor attribute
+to the receiver attribute in mesh units. If neither `"Translation"` or `"AffineTransformation"` are
+specified, the transformation between donor and receiver boundaries is automatically detected.
+
+`"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between
+this pair of donor and receiver periodic boundaries in the X/Y/Z directions in radians per mesh
+unit. If multiple periodic boundary pairs are used, the Floquet wave vector will be summed over
+the periodic boundary pairs.
+
+## `boundaries["FloquetWaveVector"]`
+
+Optional floating point array defining the phase delay between the periodic boundaries in the X/Y/Z
+directions in radians per mesh unit, for meshes generated with built-in periodicity. This should not
+be used for non-periodic meshes, or for meshes generated without built-in periodicity. In the latter
+case, the Floquet wave vector should be specified via `"boundaries["Periodic"]["FloquetWaveVector"]"`.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 
