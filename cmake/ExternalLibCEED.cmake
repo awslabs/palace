@@ -47,6 +47,8 @@ else()
 endif()
 
 # Build libCEED (always as a shared library)
+# STATIC=1 builds static lib
+# I think specifying anything for STATIC triggers static builds
 set(LIBCEED_OPTIONS
   "prefix=${CMAKE_INSTALL_PREFIX}"
   "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
