@@ -2627,9 +2627,9 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
   {
     int f, o, e1 = -1, e2 = -1;
     mesh.GetBdrElementFace(be, &f, &o);
+    int attr = mesh.GetBdrAttribute(be);
     if (!boundaries.periodic.empty())
     {
-      int attr = mesh.GetBdrAttribute(be);
       for (const auto &data : boundaries.periodic)
       {
         const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
@@ -2644,7 +2644,9 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
       }
     }
     MFEM_VERIFY((e1 >= 0 && e2 >= 0) || face_to_be.find(f) == face_to_be.end(),
-                "A non-periodic face (" << f << ") cannot have multiple boundary elements");
+                "A non-periodic face ("
+                    << f << ") cannot have multiple boundary elements! Attributes: " << attr
+                    << ' ' << mesh.GetBdrAttribute(face_to_be[f]));
     face_to_be[f] = be;
   }
   return face_to_be;
