@@ -103,17 +103,8 @@ void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
     {
       for (auto attr : elem->GetAttrList())
       {
-        mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
-        Mpi::Print(" {:d}: Index = {:d}", attr, idx);
-        if (mesh.SpaceDimension() == 3)
-        {
-          Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
-        }
-        else
-        {
-          Mpi::Print(", n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
-        }
-        Mpi::Print("\n");
+        Mpi::Print(" {:d}: Index = {:d}, n = ({:+.1f})\n", attr, idx,
+                   fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
       }
     }
   }

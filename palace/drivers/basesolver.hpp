@@ -8,14 +8,17 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include "fem/errorindicator.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/tablecsv.hpp"
 
 namespace palace
 {
 
-class ErrorIndicator;
+class DomainPostOperator;
 class FiniteElementSpaceHierarchy;
-class Mesh;
 class IoData;
+class Mesh;
 class PostOperator;
 class Timer;
 
@@ -29,48 +32,70 @@ protected:
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
-  const std::string post_dir;
-  const bool root;
-
-  // Table formatting for output files.
-  struct Table
-  {
-    int w;   // Total column width = precision + spaces + 7 extra (signs/exponent)
-    int sp;  // Table column spaces
-    int p;   // Floating point precision for data
-    int w1;  // First column width = precision + 7 extra
-    int p1;  // Floating point precision for first column
-    Table(int sp, int p, int p1) : w(sp + p + 7), sp(sp), p(p), w1(p1 + 7), p1(p1) {}
-  };
-  const Table table;
-
-  // Helper method for creating/appending to output files.
-  fmt::ostream OutputFile(const std::string &path, bool append) const
-  {
-    return append ? fmt::output_file(path, fmt::file::WRONLY | fmt::file::APPEND)
-                  : fmt::output_file(path, fmt::file::WRONLY | fmt::file::CREATE |
-                                               fmt::file::TRUNC);
-  }
+  fs::path post_dir;
+  bool root;
 
   // Common domain postprocessing for all simulation types.
-  void PostprocessDomains(const PostOperator &post_op, const std::string &name, int step,
-                          double time, double E_elec, double E_mag, double E_cap,
-                          double E_ind) const;
+  class DomainsPostPrinter
+  {
+    TableWithCSVFile domain_E;
+
+  public:
+    DomainsPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                       const std::string &idx_col_name, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
+  };
 
   // Common surface postprocessing for all simulation types.
-  void PostprocessSurfaces(const PostOperator &post_op, const std::string &name, int step,
-                           double time, double E_elec, double E_mag) const;
+  class SurfacesPostPrinter
+  {
+    TableWithCSVFile surface_F;
+    TableWithCSVFile surface_Q;
+    void AddMeasurementFlux(double idx_value_dimensionful, const PostOperator &post_op,
+                            const IoData &iodata);
+    void AddMeasurementEps(double idx_value_dimensionful, const PostOperator &post_op,
+                           const IoData &iodata);
+
+  public:
+    SurfacesPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                        const std::string &idx_col_name, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
+  };
 
   // Common probe postprocessing for all simulation types.
-  void PostprocessProbes(const PostOperator &post_op, const std::string &name, int step,
-                         double time) const;
+  class ProbePostPrinter
+  {
+    TableWithCSVFile probe_E;
+    TableWithCSVFile probe_B;
 
-  // Common field visualization postprocessing for all simulation types.
-  void PostprocessFields(const PostOperator &post_op, int step, double time) const;
+    void AddMeasurementE(double idx_value_dimensionful, const PostOperator &post_op,
+                         const IoData &iodata);
+    void AddMeasurementB(double idx_value_dimensionful, const PostOperator &post_op,
+                         const IoData &iodata);
 
-  // Common error indicator postprocessing for all simulation types.
-  void PostprocessErrorIndicator(const PostOperator &post_op,
-                                 const ErrorIndicator &indicator, bool fields) const;
+  public:
+    ProbePostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                     const std::string &idx_col_name, int n_expected_rows);
+
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
+  };
+
+  // Common error indicator postprocessing for all simulation types. //
+  // This is trivial since data is only added at the end of the solve, rather after each
+  // step (time / frequency / eigenvector).
+  class ErrorIndicatorPostPrinter
+  {
+    TableWithCSVFile error_indicator;
+
+  public:
+    ErrorIndicatorPostPrinter(const fs::path &post_dir);
+
+    void PrintIndicatorStatistics(const PostOperator &post_op,
+                                  const ErrorIndicator::SummaryStatistics &indicator_stats);
+  };
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.

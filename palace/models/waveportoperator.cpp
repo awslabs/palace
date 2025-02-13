@@ -1159,57 +1159,52 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
 
 void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
 {
-  // Print out BC info for all port attributes.
   if (ports.empty())
   {
     return;
   }
-  bool first = true;
+  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
+  auto to = [&buf](auto fmt, auto &&...args)
+  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  using VT = IoData::ValueType;
+
+  // Print out BC info for all active port attributes.
   for (const auto &[idx, data] : ports)
   {
     if (!data.active)
     {
       continue;
     }
-    if (first)
-    {
-      Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
-      first = false;
-    }
     for (auto attr : data.GetAttrList())
     {
-      const mfem::Vector &normal = data.port_normal;
-      Mpi::Print(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m", attr, idx, data.mode_idx,
-                 iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.d_offset));
-      if (mesh.SpaceDimension() == 3)
-      {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
-      }
-      else
-      {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
-      }
-      Mpi::Print("\n");
+      to(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr, idx,
+         data.mode_idx, iodata.DimensionalizeValue(VT::LENGTH, data.d_offset),
+         fmt::join(data.port_normal, ","));
     }
+  }
+  if (buf.size() > 0)
+  {
+    Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
+    Mpi::Print("{}", fmt::to_string(buf));
+    buf.clear();
   }
 
   // Print some information for excited wave ports.
-  first = true;
   for (const auto &[idx, data] : ports)
   {
     if (!data.excitation)
     {
       continue;
     }
-    if (first)
-    {
-      Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
-      first = false;
-    }
     for (auto attr : data.GetAttrList())
     {
-      Mpi::Print(" {:d}: Index = {:d}\n", attr, idx);
+      to(" {:d}: Index = {:d}\n", attr, idx);
     }
+  }
+  if (buf.size() > 0)
+  {
+    Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
+    Mpi::Print("{}", fmt::to_string(buf));
   }
 }
 

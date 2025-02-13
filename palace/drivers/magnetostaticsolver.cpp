@@ -40,6 +40,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   int n_step = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
   MFEM_VERIFY(n_step > 0,
               "No surface current boundaries specified for magnetostatic simulation!");
+  PostprocessPrintResults post_results(post_dir, post_op,
+                                       iodata.solver.magnetostatic.n_post);
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
@@ -77,6 +79,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(A[step], B);
     post_op.SetAGridFunction(A[step]);
     post_op.SetBGridFunction(B);
+    post_op.MeasureAll();
     const double E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
@@ -92,8 +95,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(B, E_mag, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    Postprocess(post_op, step, idx, I_inc[step], E_mag,
-                (step == n_step - 1) ? &indicator : nullptr);
+    post_results.PostprocessStep(iodata, post_op, step, idx);
 
     // Next source.
     step++;
@@ -103,27 +105,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), A, I_inc);
+  post_results.PostprocessFinal(post_op, indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
-}
-
-void MagnetostaticSolver::Postprocess(const PostOperator &post_op, int step, int idx,
-                                      double I_inc, double E_mag,
-                                      const ErrorIndicator *indicator) const
-{
-  // The internal GridFunctions for PostOperator have already been set from the A solution
-  // in the main loop.
-  PostprocessDomains(post_op, "i", step, idx, 0.0, E_mag, 0.0, 0.0);
-  PostprocessSurfaces(post_op, "i", step, idx, 0.0, E_mag);
-  PostprocessProbes(post_op, "i", step, idx);
-  if (step < iodata.solver.magnetostatic.n_post)
-  {
-    PostprocessFields(post_op, step, idx);
-    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
-  }
-  if (indicator)
-  {
-    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.magnetostatic.n_post > 0);
-  }
 }
 
 void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
@@ -171,71 +154,91 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
 
   // Only root writes to disk (every process has full matrices).
-  if (!root || post_dir.length() == 0)
+  if (!root)
   {
     return;
   }
+  using VT = IoData::ValueType;
+  using fmt::format;
 
   // Write inductance matrix data.
   auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
                                         const std::string &unit,
                                         const mfem::DenseMatrix &mat, double scale)
   {
-    std::string path = post_dir + file;
-    auto output = OutputFile(path, false);
-    output.print("{:>{}s},", "i", table.w1);
+    TableWithCSVFile output(post_dir / file);
+    output.table.insert_column(Column("i", "i", 0, {}, {}, ""));
+    int j = 0;
     for (const auto &[idx2, data2] : surf_j_op)
     {
-      // clang-format off
-      output.print("{:>{}s}{}",
-                   name + "[i][" + std::to_string(idx2) + "] " + unit, table.w,
-                   (idx2 == surf_j_op.rbegin()->first) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-    int i = 0;
-    for (const auto &[idx, data] : surf_j_op)
-    {
-      int j = 0;
-      output.print("{:{}.{}e},", static_cast<double>(idx), table.w1, table.p1);
-      for (const auto &[idx2, data2] : surf_j_op)
+      output.table.insert_column(format("i2{}", idx2),
+                                 format("{}[i][{}] {}", name, idx2, unit));
+      // Use the fact that iterator over i and j is the same span
+      output.table["i"] << idx2;
+
+      auto &col = output.table[format("i2{}", idx2)];
+      for (int i = 0; i < surf_j_op.Size(); i++)
       {
-        // clang-format off
-        output.print("{:+{}.{}e}{}",
-                     mat(i, j) * scale, table.w, table.p,
-                     (idx2 == surf_j_op.rbegin()->first) ? "" : ",");
-        // clang-format on
-        j++;
+        col << mat(i, j) * scale;
       }
-      output.print("\n");
-      i++;
+      j++;
     }
+    output.WriteFullTableTrunc();
   };
-  const double H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
+  const double H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
 
   // Also write out a file with source current excitations.
   {
-    std::string path = post_dir + "terminal-I.csv";
-    auto output = OutputFile(path, false);
-    // clang-format off
-    output.print("{:>{}s},{:>{}s}\n",
-                 "i", table.w1,
-                 "I_inc[i] (A)", table.w);
-    // clang-format on
+    TableWithCSVFile terminal_I(post_dir / "terminal-I.csv");
+    terminal_I.table.insert_column(Column("i", "i", 0, {}, {}, ""));
+    terminal_I.table.insert_column("Iinc", "I_inc[i] (A)");
     int i = 0;
     for (const auto &[idx, data] : surf_j_op)
     {
-      // clang-format off
-      output.print("{:{}.{}e},{:+{}.{}e}\n",
-                   static_cast<double>(idx), table.w1, table.p1,
-                   iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc[i]),
-                   table.w, table.p);
-      // clang-format on
+      terminal_I.table["i"] << double(idx);
+      terminal_I.table["Iinc"] << iodata.DimensionalizeValue(VT::CURRENT, I_inc[i]);
       i++;
     }
+    terminal_I.WriteFullTableTrunc();
+  }
+}
+
+MagnetostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
+    const fs::path &post_dir, const PostOperator &post_op, int n_post_)
+  : n_post(n_post_), write_paraview_fields(n_post_ > 0),
+    domains{post_dir, post_op, "i", n_post}, surfaces{post_dir, post_op, "i", n_post},
+    probes{post_dir, post_op, "i", n_post}, error_indicator{post_dir}
+{
+}
+
+void MagnetostaticSolver::PostprocessPrintResults::PostprocessStep(
+    const IoData &iodata, const PostOperator &post_op, int step, int idx)
+{
+  domains.AddMeasurement(idx, post_op, iodata);
+  surfaces.AddMeasurement(idx, post_op, iodata);
+  probes.AddMeasurement(idx, post_op, iodata);
+
+  // The internal GridFunctions in PostOperator have already been set from A:
+  if (write_paraview_fields && step < n_post)
+  {
+    Mpi::Print("\n");
+    post_op.WriteFields(step, idx);
+    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
+  }
+}
+
+void MagnetostaticSolver::PostprocessPrintResults::PostprocessFinal(
+    const PostOperator &post_op, const ErrorIndicator &indicator)
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
+  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
+  if (write_paraview_fields)
+  {
+    post_op.WriteFieldsFinal(&indicator);
   }
 }
 
