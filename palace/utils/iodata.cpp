@@ -525,15 +525,15 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   }
 
   // Floquet periodic boundaries.
-  for (int i = 0; i < boundaries.floquet.wave_vector.size(); i++)
+  for (auto &x : boundaries.floquet.wave_vector)
   {
-    boundaries.floquet.wave_vector[i] *= GetMeshLengthScale();
+    x *= GetMeshLengthScale();
   }
   for (auto &data : boundaries.periodic)
   {
-    for (int i = 0; i < data.wave_vector.size(); i++)
+    for (auto &x : data.wave_vector)
     {
-      data.wave_vector[i] *= GetMeshLengthScale();
+      x *= GetMeshLengthScale();
     }
   }
 
