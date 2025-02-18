@@ -1,5 +1,5 @@
 diff --git a/mesh/element.hpp b/mesh/element.hpp
-index 55c1d6e01..82b87c277 100644
+index 5d451eff0..3f74e0a0c 100644
 --- a/mesh/element.hpp
 +++ b/mesh/element.hpp
 @@ -90,9 +90,6 @@ public:
@@ -13,7 +13,7 @@ index 55c1d6e01..82b87c277 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index f35b51504..847efeaff 100644
+index 938c4db28..364c051d4 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -2379,7 +2379,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
@@ -389,7 +389,7 @@ index f35b51504..847efeaff 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index f302724b5..463776298 100644
+index 74b2ad8ac..b47ca1162 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
@@ -410,7 +410,7 @@ index f302724b5..463776298 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 8770ed7c7..ac4454ba6 100644
+index b3a9eafff..7d851b3eb 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -602,7 +602,7 @@ index 8770ed7c7..ac4454ba6 100644
        {
           svert_master_rank[group_svert.GetRow(i)[j]] = rank;
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 05d81c618..328f35b3a 100644
+index e5cc675cf..aa880d92f 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
 @@ -13,6 +13,8 @@
@@ -700,7 +700,7 @@ index 05d81c618..328f35b3a 100644
 +
  }
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index 83665454e..d7ee8b419 100644
+index a05a7f3f9..bcb04859f 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
 @@ -73,8 +73,12 @@ public:
@@ -719,7 +719,7 @@ index 83665454e..d7ee8b419 100644
     void ResetTransform(int tr) override { transform = tr; }
     unsigned GetTransform() const override { return transform; }
 diff --git a/mesh/triangle.cpp b/mesh/triangle.cpp
-index 795425b46..2e5b30e1f 100644
+index 5b870a072..6b3b8b191 100644
 --- a/mesh/triangle.cpp
 +++ b/mesh/triangle.cpp
 @@ -11,6 +11,8 @@
@@ -832,7 +832,7 @@ index 795425b46..2e5b30e1f 100644
 +
  } // namespace mfem
 diff --git a/mesh/triangle.hpp b/mesh/triangle.hpp
-index 7bfdb23ef..88df11102 100644
+index ec19f7406..0204272a5 100644
 --- a/mesh/triangle.hpp
 +++ b/mesh/triangle.hpp
 @@ -46,14 +46,17 @@ public:
