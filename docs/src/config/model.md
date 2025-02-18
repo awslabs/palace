@@ -120,7 +120,7 @@ mesh length units.
   - `"CleanUnusedElements" [true]`
   - `"CrackInternalBoundaryElements" [true]`
   - `"RefineCrackElements" [true]`
-  - `"CrackDisplacementFactor" [1.0e-3]`
+  - `"CrackDisplacementFactor" [1.0e-12]`
   - `"AddInterfaceBoundaryElements" [true]`
   - `"ReorientTetMesh" [false]`
   - `"Partitioning" [""]`
