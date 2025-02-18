@@ -53,6 +53,8 @@ The format of this changelog is based on
   - Added support for Floquet periodic boundary conditions with phase-delay constraints.
     The Floquet wave vector can be specified along with periodic boundaries in the
     `config["Boundaries"]["Periodic"]` configuration.
+  - Fixed bug where the default `config["Model"]["CrackDisplacementFactor"]` would cause
+    lumped port discovery to fail by reducing default from `1e-3` to `1e-12`.
 
 ## [0.13.0] - 2024-05-20
 

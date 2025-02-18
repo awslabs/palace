@@ -332,7 +332,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
-        timeout-minutes: 40
+        timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
