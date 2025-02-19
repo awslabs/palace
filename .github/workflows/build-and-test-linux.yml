@@ -16,10 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing (from allpairspy)
-          # Bug in MPICH on Ubuntu 24 means we have to pin to older image
-          # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
-          # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
-        - runner: palace_ubuntu-latest_16-core
+        # Bug in MPICH on Ubuntu 24 means we disable Ubuntu24 builds.
+        # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
+        - arch: x86
           compiler: intel
           mpi: intelmpi
           math-libs: intelmkl
@@ -28,25 +27,16 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: superlu
-        - runner: ubuntu-22.04-arm
-          compiler: gcc
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        - runner: ubuntu-22.04-arm
-          compiler: clang
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: arpack
-          with-solver: strumpack
-        - runner: palace_ubuntu-latest_16-core
+        # - arch: x86
+        #   compiler: gcc
+        #   mpi: mpich
+        #   math-libs: openblas
+        #   build-shared: static
+        #   with-64bit-int: int32
+        #   with-openmp: serial
+        #   with-eigensolver: arpack
+        #   with-solver: strumpack
+        - arch: x86
           compiler: clang
           mpi: openmpi
           math-libs: aocl
@@ -55,7 +45,16 @@ jobs:
           with-openmp: serial
           with-eigensolver: slepc
           with-solver: mumps
-        - runner: palace_ubuntu-latest_16-core
+        # - arch: x86
+        #   compiler: clang
+        #   mpi: mpich
+        #   math-libs: aocl
+        #   build-shared: shared
+        #   with-64bit-int: int32
+        #   with-openmp: openmp
+        #   with-eigensolver: arpack
+        #   with-solver: mumps
+        - arch: x86
           compiler: gcc
           mpi: openmpi
           math-libs: openblas
@@ -64,16 +63,97 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
-        - runner: ubuntu-22.04-arm
+        - arch: x86
+          compiler: intel
+          mpi: intelmpi
+          math-libs: intelmkl
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: superlu
+        - arch: x86
+          compiler: intel
+          mpi: intelmpi
+          math-libs: intelmkl
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - arch: x86
+          compiler: intel
+          mpi: intelmpi
+          math-libs: intelmkl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: mumps
+        - arch: x86
           compiler: gcc
+          mpi: openmpi
+          math-libs: aocl
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: superlu
+        # - arch: x86
+        #   compiler: clang
+        #   mpi: mpich
+        #   math-libs: openblas
+        #   build-shared: shared
+        #   with-64bit-int: int64
+        #   with-openmp: serial
+        #   with-eigensolver: slepc
+        #   with-solver: superlu
+        - arch: arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: superlu
+        - arch: arm
+          compiler: clang
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: static
+          with-64bit-int: int32
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: strumpack
+        - arch: arm
+          compiler: clang
           mpi: mpich
           math-libs: armpl
           build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: arpack
+          with-solver: mumps
+        - arch: arm
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: static
           with-64bit-int: int64
           with-openmp: serial
           with-eigensolver: slepc
           with-solver: mumps
-        - runner: ubuntu-22.04-arm
+        - arch: arm
+          compiler: gcc
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: serial
+          with-eigensolver: arpack
+          with-solver: superlu
+        - arch: arm
           compiler: clang
           mpi: mpich
           math-libs: openblas
@@ -81,36 +161,46 @@ jobs:
           with-64bit-int: int32
           with-openmp: openmp
           with-eigensolver: slepc
-          with-solver: mumps
-        - runner: ubuntu-22.04-arm
+          with-solver: strumpack
+        - arch: arm
           compiler: clang
           mpi: mpich
-          math-libs: armpl
+          math-libs: openblas
           build-shared: static
           with-64bit-int: int64
           with-openmp: serial
           with-eigensolver: arpack
-          with-solver: strumpack
-        - runner: ubuntu-22.04-arm
-          compiler: clang
-          mpi: mpich
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: arpack
           with-solver: superlu
-        - runner: ubuntu-22.04-arm
+        - arch: arm
           compiler: gcc
-          mpi: mpich
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+        - arch: arm
+          compiler: gcc
+          mpi: openmpi
+          math-libs: armpl
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: superlu
+        - arch: arm
+          compiler: gcc
+          mpi: openmpi
           math-libs: armpl
           build-shared: shared
           with-64bit-int: int64
           with-openmp: openmp
-          with-eigensolver: arpack
-          with-solver: mumps
+          with-eigensolver: slepc
+          with-solver: strumpack
 
-    runs-on: ${{ matrix.runner }}
+    # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
+    runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
       - uses: actions/checkout@v4
         with:
