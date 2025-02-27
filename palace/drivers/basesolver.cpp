@@ -32,40 +32,35 @@ using json = nlohmann::json;
 namespace
 {
 
-std::string GetIterationPostDir(const std::string &output, int step, int width)
-{
-  return fs::path(output) / fmt::format("iteration{:0{}d}/", step, width);
-}
-
-void SaveIteration(MPI_Comm comm, const std::string &output, int step, int width)
+void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   if (Mpi::Root(comm))
   {
     // Create a subfolder for the results of this adaptation.
-    const std::string step_output = GetIterationPostDir(output, step, width);
+    auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
     if (!fs::exists(step_output))
     {
       fs::create_directories(step_output);
     }
     constexpr auto options =
         fs::copy_options::recursive | fs::copy_options::overwrite_existing;
-    for (const auto &f : fs::directory_iterator(output))
+    for (const auto &f : fs::directory_iterator(output_dir))
     {
       if (f.path().filename().string().rfind("iteration") == 0)
       {
         continue;
       }
-      fs::copy(f, step_output + f.path().filename().string(), options);
+      fs::copy(f, step_output / f.path().filename(), options);
     }
   }
   Mpi::Barrier(comm);
 }
 
-json LoadMetadata(const std::string &post_dir)
+json LoadMetadata(const fs::path &post_dir)
 {
-  std::string path = post_dir + "palace.json";
+  std::string path = post_dir / "palace.json";
   std::ifstream fi(path);
   if (!fi.is_open())
   {
@@ -74,9 +69,9 @@ json LoadMetadata(const std::string &post_dir)
   return json::parse(fi);
 }
 
-void WriteMetadata(const std::string &post_dir, const json &meta)
+void WriteMetadata(const fs::path &post_dir, const json &meta)
 {
-  std::string path = post_dir + "palace.json";
+  std::string path = post_dir / "palace.json";
   std::ofstream fo(path);
   if (!fo.is_open())
   {
@@ -107,7 +102,7 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   : iodata(iodata), post_dir(iodata.problem.output), root(root)
 {
   // Initialize simulation metadata for this simulation.
-  if (root && post_dir.length() > 0)
+  if (root)
   {
     json meta;
     if (git_tag)
@@ -246,10 +241,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
   const auto &fespace = fespaces.GetFinestFESpace();
   HYPRE_BigInt ne = fespace.GetParMesh().GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
@@ -271,10 +262,6 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 template <typename SolverType>
 void BaseSolver::SaveMetadata(const SolverType &ksp) const
 {
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
   if (root)
   {
     json meta = LoadMetadata(post_dir);
@@ -286,10 +273,6 @@ void BaseSolver::SaveMetadata(const SolverType &ksp) const
 
 void BaseSolver::SaveMetadata(const Timer &timer) const
 {
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
   if (root)
   {
     json meta = LoadMetadata(post_dir);
@@ -337,22 +320,19 @@ struct ProbeData
 }  // namespace
 
 BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool root,
-                                                   const std::string &post_dir,
+                                                   const fs::path &post_dir,
                                                    const DomainPostOperator &dom_post_op,
                                                    const std::string &idx_col_name,
                                                    int n_expected_rows)
   : do_measurement_{do_measurement}, root_{root}
 {
-  do_measurement_ = do_measurement_            //
-                    && post_dir.length() > 0;  // Valid output dir
-
   if (!do_measurement_ || !root_)
   {
     return;
   }
   using fmt::format;
 
-  domain_E = TableWithCSVFile(post_dir + "domain-E.csv");
+  domain_E = TableWithCSVFile(post_dir / "domain-E.csv");
   domain_E.table.reserve(n_expected_rows, 4 + dom_post_op.M_i.size());
   domain_E.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
 
@@ -421,17 +401,15 @@ void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionfu
 }
 
 BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(bool do_measurement, bool root,
-                                                     const std::string &post_dir,
+                                                     const fs::path &post_dir,
                                                      const PostOperator &post_op,
                                                      const std::string &idx_col_name,
                                                      int n_expected_rows)
   : root_{root},
-    do_measurement_flux_(do_measurement            //
-                         && post_dir.length() > 0  // Valid output dir
+    do_measurement_flux_(do_measurement                                       //
                          && post_op.GetSurfacePostOp().flux_surfs.size() > 0  // Has flux
                          ),
-    do_measurement_eps_(do_measurement            //
-                        && post_dir.length() > 0  // Valid output dir
+    do_measurement_eps_(do_measurement                                      //
                         && post_op.GetSurfacePostOp().eps_surfs.size() > 0  // Has eps
     )
 {
@@ -443,7 +421,7 @@ BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(bool do_measurement, bool r
 
   if (do_measurement_flux_)
   {
-    surface_F = TableWithCSVFile(post_dir + "surface-F.csv");
+    surface_F = TableWithCSVFile(post_dir / "surface-F.csv");
     surface_F.table.reserve(n_expected_rows,
                             2 * post_op.GetSurfacePostOp().flux_surfs.size() + 1);
     surface_F.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
@@ -492,7 +470,7 @@ BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(bool do_measurement, bool r
 
   if (do_measurement_eps_)
   {
-    surface_Q = TableWithCSVFile(post_dir + "surface-Q.csv");
+    surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv");
     surface_Q.table.reserve(n_expected_rows,
                             2 * post_op.GetSurfacePostOp().eps_surfs.size() + 1);
     surface_Q.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
@@ -610,7 +588,7 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurement(double idx_value_dimensionf
 }
 
 BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
-                                               const std::string &post_dir,
+                                               const fs::path &post_dir,
                                                const PostOperator &post_op,
                                                const std::string &idx_col_name,
                                                int n_expected_rows)
@@ -619,12 +597,10 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
 {
 #if defined(MFEM_USE_GSLIB)
   do_measurement_E_ = do_measurement_E_                    //
-                      && (post_dir.length() > 0)           // Valid output dir
                       && (post_op.GetProbes().size() > 0)  // Has probes defined
                       && post_op.HasE();                   // Has E fields
 
   do_measurement_B_ = do_measurement_B_                    //
-                      && (post_dir.length() > 0)           // Valid output dir
                       && (post_op.GetProbes().size() > 0)  // Has probes defined
                       && post_op.HasB();                   // Has B fields
 
@@ -652,7 +628,7 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
 
   if (do_measurement_E_)
   {
-    probe_E = TableWithCSVFile(post_dir + "probe-E.csv");
+    probe_E = TableWithCSVFile(post_dir / "probe-E.csv");
     probe_E.table.reserve(n_expected_rows, scale_col * post_op.GetProbes().size());
     probe_E.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
 
@@ -681,7 +657,7 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
 
   if (do_measurement_B_)
   {
-    probe_B = TableWithCSVFile(post_dir + "probe-B.csv");
+    probe_B = TableWithCSVFile(post_dir / "probe-B.csv");
     probe_B.table.reserve(n_expected_rows, scale_col * post_op.GetProbes().size());
     probe_B.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
 
@@ -800,19 +776,17 @@ void BaseSolver::ProbePostPrinter::AddMeasurement(double idx_value_dimensionful,
 #endif
 }
 
-BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(
-    bool do_measurement, bool root, const std::string &post_dir)
-  : root_{root}, do_measurement_{
-                     do_measurement            //
-                     && post_dir.length() > 0  // Valid output dir
-                 }
+BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(bool do_measurement,
+                                                                 bool root,
+                                                                 const fs::path &post_dir)
+  : root_{root}, do_measurement_{do_measurement}
 {
   if (!do_measurement_ || !root_)
   {
     return;
   }
 
-  error_indicator = TableWithCSVFile(post_dir + "error-indicators.csv");
+  error_indicator = TableWithCSVFile(post_dir / "error-indicators.csv");
   error_indicator.table.reserve(1, 4);
 
   error_indicator.table.insert_column("norm", "Norm");

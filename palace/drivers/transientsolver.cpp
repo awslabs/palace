@@ -248,11 +248,10 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
 // Measurements / Postprocessing
 
 TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(
-    bool do_measurement, bool root, const std::string &post_dir,
+    bool do_measurement, bool root, const fs::path &post_dir,
     const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
   : root_{root},                               //
     do_measurement_(do_measurement             //
-                    && post_dir.length() > 0   // Valid output dir
                     && (surf_j_op.Size() > 0)  // Needs surface currents
     )
 {
@@ -262,7 +261,7 @@ TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(
   }
   using fmt::format;
 
-  surface_I = TableWithCSVFile(post_dir + "surface-I.csv");
+  surface_I = TableWithCSVFile(post_dir / "surface-I.csv");
   surface_I.table.reserve(n_expected_rows, surf_j_op.Size());
   surface_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
   for (const auto &[idx, data] : surf_j_op)
@@ -292,24 +291,23 @@ void TransientSolver::CurrentsPostPrinter::AddMeasurement(
 }
 
 TransientSolver::PortsPostPrinter::PortsPostPrinter(
-    bool do_measurement, bool root, const std::string &post_dir,
+    bool do_measurement, bool root, const fs::path &post_dir,
     const LumpedPortOperator &lumped_port_op, int n_expected_rows)
-  : do_measurement_{do_measurement}, root_{root}
+  : root_{root}, do_measurement_{
+                     do_measurement                  //
+                     && (lumped_port_op.Size() > 0)  // Only works for lumped ports
+                 }
 {
-  do_measurement_ = do_measurement_                  //
-                    && post_dir.length() > 0         // Valid output dir
-                    && (lumped_port_op.Size() > 0);  // Only works for lumped ports
-
   if (!do_measurement_ || !root_)
   {
     return;
   }
   using fmt::format;
-  port_V = TableWithCSVFile(post_dir + "port-V.csv");
+  port_V = TableWithCSVFile(post_dir / "port-V.csv");
   port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_V.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
 
-  port_I = TableWithCSVFile(post_dir + "port-I.csv");
+  port_I = TableWithCSVFile(post_dir / "port-I.csv");
   port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
   port_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
 
@@ -371,9 +369,9 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
 }
 
 TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const std::string &post_dir, const PostOperator &post_op,
+    bool root, const fs::path &post_dir, const PostOperator &post_op,
     const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
-  : delta_post{delta_post_},
+  : delta_post{delta_post_}, write_paraview_fields(delta_post_ > 0),
     domains{true, root, post_dir, post_op.GetDomainPostOp(), "t (ns)", n_expected_rows},
     surfaces{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
     currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
@@ -381,20 +379,6 @@ TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
     ports{true, root, post_dir, space_op.GetLumpedPortOp(), n_expected_rows},
     error_indicator{true, root, post_dir}
 {
-  // If to print paraview fields
-  if (delta_post > 0)
-  {
-    if (post_dir.length() == 0)
-    {
-      Mpi::Warning(post_op.GetComm(),
-                   "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
-                   "fields to disk in solve!\n");
-    }
-    else
-    {
-      write_paraview_fields = true;
-    }
-  }
 }
 
 void TransientSolver::PostprocessPrintResults::PostprocessStep(
