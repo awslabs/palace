@@ -287,41 +287,9 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   }
 }
 
-namespace
-{
-
-struct EnergyData
-{
-  const int idx;        // Domain index
-  const double E_elec;  // Electric field energy
-  const double E_mag;   // Magnetic field energy
-};
-
-struct FluxData
-{
-  const int idx;                   // Surface index
-  const std::complex<double> Phi;  // Integrated flux
-  const SurfaceFluxType type;      // Flux type
-};
-
-struct EpsData
-{
-  const int idx;   // Interface index
-  const double p;  // Participation ratio
-  const double Q;  // Quality factor
-};
-
-struct ProbeData
-{
-  const int idx;                          // Probe index
-  const std::complex<double> Fx, Fy, Fz;  // Field values at probe location
-};
-
-}  // namespace
-
 BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool root,
                                                    const fs::path &post_dir,
-                                                   const DomainPostOperator &dom_post_op,
+                                                   const PostOperator &post_op,
                                                    const std::string &idx_col_name,
                                                    int n_expected_rows)
   : do_measurement_{do_measurement}, root_{root}
@@ -333,7 +301,7 @@ BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool roo
   using fmt::format;
 
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv");
-  domain_E.table.reserve(n_expected_rows, 4 + dom_post_op.M_i.size());
+  domain_E.table.reserve(n_expected_rows, 4 + post_op.GetDomainPostOp().M_i.size());
   domain_E.table.insert_column(Column("idx", idx_col_name, 0, {}, {}, ""));
 
   domain_E.table.insert_column("Ee", "E_elec (J)");
@@ -341,7 +309,7 @@ BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool roo
   domain_E.table.insert_column("Ec", "E_cap (J)");
   domain_E.table.insert_column("Ei", "E_ind (J)");
 
-  for (const auto &[idx, data] : dom_post_op.M_i)
+  for (const auto &[idx, data] : post_op.GetDomainPostOp().M_i)
   {
     domain_E.table.insert_column(format("Ee{}", idx), format("E_elec[{}] (J)", idx));
     domain_E.table.insert_column(format("pe{}", idx), format("p_elec[{}]", idx));
@@ -353,47 +321,36 @@ BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool roo
 
 void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionful,
                                                     const PostOperator &post_op,
-                                                    double E_elec, double E_mag,
-                                                    double E_cap, double E_ind,
                                                     const IoData &iodata)
 {
-  if (!do_measurement_)
+  if (!do_measurement_ || !root_)
   {
     return;
   }
-
-  // MPI Gather
-  std::vector<EnergyData> energy_data;
-  energy_data.reserve(post_op.GetDomainPostOp().M_i.size());
-  for (const auto &[idx, data] : post_op.GetDomainPostOp().M_i)
-  {
-    double E_elec_i = (E_elec > 0.0) ? post_op.GetEFieldEnergy(idx) : 0.0;
-    double E_mag_i = (E_mag > 0.0) ? post_op.GetHFieldEnergy(idx) : 0.0;
-    energy_data.emplace_back(EnergyData{idx, E_elec_i, E_mag_i});
-  }
-
-  if (!root_)
-  {
-    return;
-  }
-
   using VT = IoData::ValueType;
   using fmt::format;
 
+  double oneJ = iodata.DimensionalizeValue(VT::ENERGY, 1.0);
+
   domain_E.table["idx"] << idx_value_dimensionful;
 
-  domain_E.table["Ee"] << iodata.DimensionalizeValue(VT::ENERGY, E_elec);
-  domain_E.table["Em"] << iodata.DimensionalizeValue(VT::ENERGY, E_mag);
-  domain_E.table["Ec"] << iodata.DimensionalizeValue(VT::ENERGY, E_cap);
-  domain_E.table["Ei"] << iodata.DimensionalizeValue(VT::ENERGY, E_ind);
+  double E_elec = post_op.GetEFieldEnergy();
+  double E_mag = post_op.GetHFieldEnergy();
+
+  domain_E.table["Ee"] << E_elec * oneJ;
+  domain_E.table["Em"] << E_mag * oneJ;
+  domain_E.table["Ec"] << post_op.GetLumpedCapacitorEnergy() * oneJ;
+  domain_E.table["Ei"] << post_op.GetLumpedInductorEnergy() * oneJ;
 
   // Write the field and lumped element energies.
-  for (const auto &[idx, E_e, E_m] : energy_data)
+  for (const auto &[idx, data] : post_op.GetDomainPostOp().M_i)
   {
-    domain_E.table[format("Ee{}", idx)] << iodata.DimensionalizeValue(VT::ENERGY, E_e);
+    double E_e = post_op.GetEFieldEnergy(idx);
+    double E_m = post_op.GetHFieldEnergy(idx);
+    domain_E.table[format("Ee{}", idx)] << E_e * oneJ;
     domain_E.table[format("pe{}", idx)]
         << ((std::abs(E_elec) > 0.0) ? (E_e / E_elec) : 0.0);
-    domain_E.table[format("Em{}", idx)] << iodata.DimensionalizeValue(VT::ENERGY, E_m);
+    domain_E.table[format("Em{}", idx)] << E_m * oneJ;
     domain_E.table[format("pm{}", idx)] << ((std::abs(E_mag) > 0.0) ? E_m / E_mag : 0.0);
   }
 
@@ -485,24 +442,20 @@ BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(bool do_measurement, bool r
 
 void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimensionful,
                                                          const PostOperator &post_op,
-                                                         double E_elec, double E_mag,
                                                          const IoData &iodata)
 {
-  if (!do_measurement_flux_)
+  if (!do_measurement_flux_ || !root_)
   {
     return;
   }
   using VT = IoData::ValueType;
   using fmt::format;
 
-  // Gather
   const bool has_imaginary = post_op.HasImag();
-  std::vector<FluxData> flux_data;
-  flux_data.reserve(post_op.GetSurfacePostOp().flux_surfs.size());
-  for (const auto &[idx, data] : post_op.GetSurfacePostOp().flux_surfs)
+  auto flux_data_vec = post_op.GetSurfaceFluxAll();
+  auto dimensionlize_flux = [&iodata](auto Phi, SurfaceFluxType flux_type)
   {
-    auto Phi = post_op.GetSurfaceFlux(idx);
-    switch (data.type)
+    switch (flux_type)
     {
       case SurfaceFluxType::ELECTRIC:
         Phi *= iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
@@ -516,23 +469,17 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
         Phi *= iodata.DimensionalizeValue(VT::POWER, 1.0);
         break;
     }
-    flux_data.emplace_back(FluxData{idx, Phi, data.type});
-  }
-
-  if (!root_)
-  {
-    return;
-  }
-
+    return Phi;
+  };
   surface_F.table["idx"] << idx_value_dimensionful;
-
-  for (const auto &[idx, Phi, data_type] : flux_data)
+  for (const auto &flux_data : flux_data_vec)
   {
-    surface_F.table[format("F_{}_re", idx)] << Phi.real();
-    if (has_imaginary &&
-        (data_type == SurfaceFluxType::ELECTRIC || data_type == SurfaceFluxType::MAGNETIC))
+    auto Phi_unitful = dimensionlize_flux(flux_data.Phi, flux_data.type);
+    surface_F.table[format("F_{}_re", flux_data.idx)] << Phi_unitful.real();
+    if (has_imaginary && (flux_data.type == SurfaceFluxType::ELECTRIC ||
+                          flux_data.type == SurfaceFluxType::MAGNETIC))
     {
-      surface_F.table[format("F_{}_im", idx)] << Phi.imag();
+      surface_F.table[format("F_{}_im", flux_data.idx)] << Phi_unitful.imag();
     }
   }
   surface_F.WriteFullTableTrunc();
@@ -540,51 +487,41 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
 
 void BaseSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimensionful,
                                                         const PostOperator &post_op,
-                                                        double E_elec, double E_mag,
                                                         const IoData &iodata)
 {
-  if (!do_measurement_eps_)
+  if (!do_measurement_eps_ || !root_)
   {
     return;
   }
   using VT = IoData::ValueType;
   using fmt::format;
 
-  // Gather
-  std::vector<EpsData> eps_data;
-  eps_data.reserve(post_op.GetSurfacePostOp().eps_surfs.size());
-  for (const auto &[idx, data] : post_op.GetSurfacePostOp().eps_surfs)
-  {
-    double p = post_op.GetInterfaceParticipation(idx, E_elec);
-    double tandelta = post_op.GetSurfacePostOp().GetInterfaceLossTangent(idx);
-    double Q = (p == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * p);
-    eps_data.emplace_back(EpsData{idx, p, Q});
-  }
-
-  if (!root_)
-  {
-    return;
-  }
+  // Interface Participation adds energy contriutions E_elec + E_cap
+  // E_cap returns zero if the solver does not supprot lumped ports.
+  double E_elec = post_op.GetEFieldEnergy() + post_op.GetLumpedCapacitorEnergy();
+  auto eps_data_vec = post_op.GetInterfaceEFieldEnergyAll();
 
   surface_Q.table["idx"] << idx_value_dimensionful;
-  for (const auto &[idx, p, Q] : eps_data)
+  for (const auto &eps_data : eps_data_vec)
   {
-    surface_Q.table[format("p_{}", idx)] << p;
-    surface_Q.table[format("Q_{}", idx)] << Q;
+    double p = post_op.GetInterfaceParticipation(eps_data.idx, E_elec);
+    double tandelta = eps_data.tandelta;
+    double Q = (p == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * p);
+    surface_Q.table[format("p_{}", eps_data.idx)] << p;
+    surface_Q.table[format("Q_{}", eps_data.idx)] << Q;
   }
   surface_Q.WriteFullTableTrunc();
 }
 
 void BaseSolver::SurfacesPostPrinter::AddMeasurement(double idx_value_dimensionful,
                                                      const PostOperator &post_op,
-                                                     double E_elec, double E_mag,
                                                      const IoData &iodata)
 {
   // If surfaces have been specified for postprocessing, compute the corresponding values
   // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
   // capacitor energies, and E_mag is the same for the B-field and lumped inductors.
-  AddMeasurementFlux(idx_value_dimensionful, post_op, E_elec, E_mag, iodata);
-  AddMeasurementEps(idx_value_dimensionful, post_op, E_elec, E_mag, iodata);
+  AddMeasurementFlux(idx_value_dimensionful, post_op, iodata);
+  AddMeasurementEps(idx_value_dimensionful, post_op, iodata);
 }
 
 BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
@@ -690,7 +627,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
-  if (!do_measurement_E_)
+  if (!do_measurement_E_ || !root_)
   {
     return;
   }
@@ -702,11 +639,6 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
               format("Size mismatch: expect vector field to ahve size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
                      probe_field.size()))
-
-  if (!root_)
-  {
-    return;
-  }
 
   probe_E.table["idx"] << idx_value_dimensionful;
   size_t i = 0;
@@ -730,7 +662,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
-  if (!do_measurement_B_)
+  if (!do_measurement_B_ || !root_)
   {
     return;
   }
@@ -742,11 +674,6 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
               format("Size mismatch: expect vector field to ahve size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
                      probe_field.size()))
-
-  if (!root_)
-  {
-    return;
-  }
 
   probe_B.table["idx"] << idx_value_dimensionful;
   size_t i = 0;
@@ -785,7 +712,6 @@ BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(bool do_measure
   {
     return;
   }
-
   error_indicator = TableWithCSVFile(post_dir / "error-indicators.csv");
   error_indicator.table.reserve(1, 4);
 
@@ -796,27 +722,16 @@ BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(bool do_measure
 }
 
 void BaseSolver::ErrorIndicatorPostPrinter::PrintIndicatorStatistics(
-    const PostOperator &post_op, const ErrorIndicator &indicator)
+    const PostOperator &post_op, const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
-  if (!do_measurement_)
+  if (!do_measurement_ || !root_)
   {
     return;
   }
-
-  // MPI Gather
-  MPI_Comm comm = post_op.GetComm();
-  std::array<double, 4> data = {indicator.Norml2(comm), indicator.Min(comm),
-                                indicator.Max(comm), indicator.Mean(comm)};
-
-  if (!root_)
-  {
-    return;
-  }
-
-  error_indicator.table["norm"] << data[0];
-  error_indicator.table["min"] << data[1];
-  error_indicator.table["max"] << data[2];
-  error_indicator.table["mean"] << data[3];
+  error_indicator.table["norm"] << indicator_stats.norm;
+  error_indicator.table["min"] << indicator_stats.min;
+  error_indicator.table["max"] << indicator_stats.max;
+  error_indicator.table["mean"] << indicator_stats.mean;
 
   error_indicator.WriteFullTableTrunc();
 }

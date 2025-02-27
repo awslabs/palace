@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -15,7 +16,6 @@ namespace palace
 {
 
 class DomainPostOperator;
-class ErrorIndicator;
 class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
@@ -45,10 +45,9 @@ protected:
   public:
     DomainsPostPrinter() = default;
     DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                       const DomainPostOperator &dom_post_op,
-                       const std::string &idx_col_name, int n_expected_rows);
+                       const PostOperator &post_op, const std::string &idx_col_name,
+                       int n_expected_rows);
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        double E_elec, double E_mag, double E_cap, double E_ind,
                         const IoData &iodata);
   };
 
@@ -67,11 +66,11 @@ protected:
                         const PostOperator &post_op, const std::string &idx_col_name,
                         int n_expected_rows);
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        double E_elec, double E_mag, const IoData &iodata);
+                        const IoData &iodata);
     void AddMeasurementFlux(double idx_value_dimensionful, const PostOperator &post_op,
-                            double E_elec, double E_mag, const IoData &iodata);
+                            const IoData &iodata);
     void AddMeasurementEps(double idx_value_dimensionful, const PostOperator &post_op,
-                           double E_elec, double E_mag, const IoData &iodata);
+                           const IoData &iodata);
   };
 
   // Common probe postprocessing for all simulation types.
@@ -114,7 +113,7 @@ protected:
     ErrorIndicatorPostPrinter(bool do_measurement, bool root, const fs::path &post_dir);
 
     void PrintIndicatorStatistics(const PostOperator &post_op,
-                                  const ErrorIndicator &indicator);
+                                  const ErrorIndicator::SummaryStatistics &indicator_stats);
   };
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number

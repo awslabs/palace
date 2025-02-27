@@ -79,6 +79,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(A[step], B);
     post_op.SetAGridFunction(A[step]);
     post_op.SetBGridFunction(B);
+    post_op.MeasureAll();
     const double E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
@@ -94,7 +95,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(B, E_mag, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    post_results.PostprocessStep(iodata, post_op, step, idx, E_mag);
+    post_results.PostprocessStep(iodata, post_op, step, idx);
 
     // Next source.
     step++;
@@ -208,7 +209,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
 MagnetostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
     bool root, const fs::path &post_dir, const PostOperator &post_op, int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op.GetDomainPostOp(), "i", n_post},
+    domains{true, root, post_dir, post_op, "i", n_post},
     surfaces{true, root, post_dir, post_op, "i", n_post},
     probes{true, root, post_dir, post_op, "i", n_post},
     error_indicator{true, root, post_dir}
@@ -216,10 +217,10 @@ MagnetostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
 }
 
 void MagnetostaticSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator &post_op, int step, int idx, double E_mag)
+    const IoData &iodata, const PostOperator &post_op, int step, int idx)
 {
-  domains.AddMeasurement(idx, post_op, 0.0, E_mag, 0.0, 0.0, iodata);
-  surfaces.AddMeasurement(idx, post_op, 0.0, E_mag, iodata);
+  domains.AddMeasurement(idx, post_op, iodata);
+  surfaces.AddMeasurement(idx, post_op, iodata);
   probes.AddMeasurement(idx, post_op, iodata);
   // The internal GridFunctions in PostOperator have already been set from A:
   if (write_paraview_fields && step < n_post)
@@ -234,7 +235,8 @@ void MagnetostaticSolver::PostprocessPrintResults::PostprocessFinal(
     const PostOperator &post_op, const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
+  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
   if (write_paraview_fields)
   {
     post_op.WriteFieldsFinal(&indicator);
