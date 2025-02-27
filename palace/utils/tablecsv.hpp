@@ -37,7 +37,7 @@ class Column
   // ----
 
   // Map-like index, to interface via Table class
-  std::string name = "";
+  std::string name;
 
 public:
   [[nodiscard]] size_t col_width() const
@@ -85,13 +85,13 @@ public:
   {
   }
 
-  std::vector<double> data = {};
-  std::string header_text = "";
+  std::vector<double> data;
+  std::string header_text;
 
-  std::optional<size_t> min_left_padding = {};
-  std::optional<size_t> float_precision = {};
-  std::optional<std::string> empty_cell_val = {};
-  std::optional<std::string> fmt_sign = {};
+  std::optional<size_t> min_left_padding;
+  std::optional<size_t> float_precision;
+  std::optional<std::string> empty_cell_val;
+  std::optional<std::string> fmt_sign;
 
   [[nodiscard]] size_t n_rows() const { return data.size(); }
 
@@ -103,7 +103,7 @@ class Table
 {
   // Column-wise mini-table for storing data and and printing to csv file for doubles.
   // Future: allow int and other output, allow non-owning memeory via span
-  std::vector<Column> cols = {};
+  std::vector<Column> cols;
 
   // Cache value to reserve vector space by default
   size_t reserve_n_rows = 0;
@@ -201,7 +201,6 @@ public:
   // Formatting and Printing Options
   // TODO: Improve all the functions below with ranges in C++20
 
-public:
   template <typename T>
   void append_header(T &buf) const
   {
@@ -266,7 +265,7 @@ public:
 
 class TableWithCSVFile
 {
-  std::string csv_file_fullpath_ = "";
+  std::string csv_file_fullpath_;
   unsigned long file_append_curser = -1;
 
 public:

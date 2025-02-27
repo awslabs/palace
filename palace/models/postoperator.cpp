@@ -478,7 +478,7 @@ double PostOperator::GetEFieldEnergy(int idx) const
     measurment_cache.domain_E_field_energy_i.emplace();
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      double out;
+      double out = 0.0;  // Defaults to zero: no failure
       if (V)
       {
         out = dom_post_op.GetDomainElectricFieldEnergy(idx, *V);
@@ -486,11 +486,6 @@ double PostOperator::GetEFieldEnergy(int idx) const
       else if (E)
       {
         out = dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
-      }
-      else
-      {
-        // No failure: returns zero
-        out = 0.0;
       }
       measurment_cache.domain_E_field_energy_i->emplace(idx, out);
     }
@@ -511,7 +506,7 @@ double PostOperator::GetHFieldEnergy(int idx) const
     measurment_cache.domain_H_field_energy_i.emplace();
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      double out;
+      double out = 0.0;  // Defaults to zero: no failure
       if (A)
       {
         out = dom_post_op.GetDomainMagneticFieldEnergy(idx, *A);
@@ -519,11 +514,6 @@ double PostOperator::GetHFieldEnergy(int idx) const
       else if (B)
       {
         out = dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
-      }
-      else
-      {
-        // No failure: returns zero
-        out = 0.0;
       }
       measurment_cache.domain_H_field_energy_i->emplace(idx, out);
     }
