@@ -320,6 +320,10 @@ void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionfu
                                                     const PostOperator &post_op,
                                                     const IoData &iodata)
 {
+  if (!Mpi::Root(post_op.GetComm()))
+  {
+    return;
+  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -355,7 +359,10 @@ BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(const fs::path &post_dir,
                                                      const std::string &idx_col_name,
                                                      int n_expected_rows)
 {
-  if (!Mpi::Root(post_op.GetComm())) { return; }
+  if (!Mpi::Root(post_op.GetComm()))
+  {
+    return;
+  }
   using fmt::format;
   if (post_op.GetSurfacePostOp().flux_surfs.size() > 0)
   {
@@ -490,6 +497,10 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurement(double idx_value_dimensionf
                                                      const PostOperator &post_op,
                                                      const IoData &iodata)
 {
+  if (!Mpi::Root(post_op.GetComm()))
+  {
+    return;
+  }
   // If surfaces have been specified for postprocessing, compute the corresponding values
   // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
   // capacitor energies, and E_mag is the same for the B-field and lumped inductors.
@@ -509,7 +520,7 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(const fs::path &post_dir,
                                                int n_expected_rows)
 {
 #if defined(MFEM_USE_GSLIB)
-  if (!Mpi::Root(post_op.GetComm()) || post_op.GetProbes().size() == 0)
+  if (post_op.GetProbes().size() == 0 || !Mpi::Root(post_op.GetComm()))
   {
     return;
   }
@@ -597,6 +608,10 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
+  if (!post_op.HasE())
+  {
+    return;
+  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -604,7 +619,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
   const int v_dim = post_op.GetInterpolationOpVDim();
   const bool has_imag = post_op.HasImag();
   MFEM_VERIFY(probe_field.size() == v_dim * post_op.GetProbes().size(),
-              format("Size mismatch: expect vector field to ahve size {} * {} = {}; got {}",
+              format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
                      probe_field.size()))
 
@@ -630,6 +645,10 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
+  if (!post_op.HasB())
+  {
+    return;
+  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -637,7 +656,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
   const int v_dim = post_op.GetInterpolationOpVDim();
   const bool has_imag = post_op.HasImag();
   MFEM_VERIFY(probe_field.size() == v_dim * post_op.GetProbes().size(),
-              format("Size mismatch: expect vector field to ahve size {} * {} = {}; got {}",
+              format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
                      probe_field.size()))
 
@@ -664,6 +683,10 @@ void BaseSolver::ProbePostPrinter::AddMeasurement(double idx_value_dimensionful,
                                                   const IoData &iodata)
 {
 #if defined(MFEM_USE_GSLIB)
+  if (!Mpi::Root(post_op.GetComm()) || post_op.GetProbes().size() == 0)
+  {
+    return;
+  }
   AddMeasurementE(idx_value_dimensionful, post_op, iodata);
   AddMeasurementB(idx_value_dimensionful, post_op, iodata);
 #endif
