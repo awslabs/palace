@@ -23,8 +23,23 @@ class SurfaceCurrentOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &post_op, int step, int idx, double I_inc,
-                   double E_mag, const ErrorIndicator *indicator) const;
+  struct PostprocessPrintResults
+  {
+    bool write_paraview_fields = false;
+    int n_post = 0;
+
+    DomainsPostPrinter domains;
+    SurfacesPostPrinter surfaces;
+    ProbePostPrinter probes;
+
+    ErrorIndicatorPostPrinter error_indicator;
+
+    PostprocessPrintResults(bool is_mpi_root, const std::string &post_dir,
+                            const PostOperator &post_op, int n_post_);
+    void PostprocessStep(const IoData &iodata, const PostOperator &post_op, int step,
+                         int idx, double E_mag);
+    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
+  };
 
   void PostprocessTerminals(PostOperator &post_op, const SurfaceCurrentOperator &surf_j_op,
                             const std::vector<Vector> &A,

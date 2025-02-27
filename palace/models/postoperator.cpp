@@ -14,6 +14,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -714,6 +715,8 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 
 void PostOperator::WriteFields(int step, double time) const
 {
+  BlockTimer bt(Timer::IO);
+
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh =
@@ -728,10 +731,14 @@ void PostOperator::WriteFields(int step, double time) const
   paraview_bdr.Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
+
+  Mpi::Barrier(GetComm());
 }
 
 void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
 {
+  BlockTimer bt(Timer::IO);
+
   // Write the mesh partitioning and (optionally) error indicators at the final step. No
   // need for these to be parallel objects, since the data is local to each process and
   // there isn't a need to ever access the element neighbors. We set the time to some
@@ -803,6 +810,8 @@ void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
     paraview.RegisterVCoeffField(name, gf);
   }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+
+  Mpi::Barrier(GetComm());
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeEField() const
