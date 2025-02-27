@@ -370,36 +370,6 @@ void PostOperator::MeasureAll(const SpaceOperator &space_op)
   MeasureWavePorts(space_op.GetWavePortOp());
 }
 
-void PostOperator::SetFrequency(double omega)
-{
-  measurement_cache.omega = std::complex<double>(omega);
-}
-
-void PostOperator::SetFrequency(std::complex<double> omega)
-{
-  measurement_cache.omega = omega;
-}
-
-std::complex<double> PostOperator::GetFrequency() const
-{
-  return measurement_cache.omega;
-}
-
-double PostOperator::GetEFieldEnergy() const
-{
-  return measurement_cache.domain_E_field_energy_all;
-}
-
-double PostOperator::GetEFieldEnergy(int idx) const
-{
-  auto it = measurement_cache.domain_E_field_energy_i.find(idx);
-  if (it == measurement_cache.domain_E_field_energy_i.end())
-  {
-    MFEM_ABORT(fmt::format("Could not find domain index {} for E field energy!", idx));
-  }
-  return it->second;
-}
-
 void PostOperator::MeasureEFieldEnergy()
 {
   measurement_cache.domain_E_field_energy_i.clear();
@@ -426,21 +396,6 @@ void PostOperator::MeasureHFieldEnergy()
       (!A && !B) ? 0.0 : dom_post_op.GetMagneticFieldEnergy(A ? *A : *B);
 }
 
-double PostOperator::GetHFieldEnergy() const
-{
-  return measurement_cache.domain_H_field_energy_all;
-}
-
-double PostOperator::GetHFieldEnergy(int idx) const
-{
-  auto it = measurement_cache.domain_H_field_energy_i.find(idx);
-  if (it == measurement_cache.domain_H_field_energy_i.end())
-  {
-    MFEM_ABORT(fmt::format("Could not find domain index {} for H field energy!", idx));
-  }
-  return it->second;
-}
-
 void PostOperator::MeasureSurfaceFlux()
 {
   // Compute the flux through a surface as Φ_j = ∫ F ⋅ n_j dS, with F = B, F = ε D, or F =
@@ -457,18 +412,6 @@ void PostOperator::MeasureSurfaceFlux()
     measurement_cache.surface_flux_i.emplace_back(
         FluxData{idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
   }
-}
-
-PostOperator::FluxData PostOperator::GetSurfaceFlux(int idx) const
-{
-  auto it = std::find_if(measurement_cache.surface_flux_i.begin(),
-                         measurement_cache.surface_flux_i.end(),
-                         [idx](const auto &d) { return d.idx == idx; });
-  if (it == measurement_cache.surface_flux_i.end())
-  {
-    MFEM_ABORT(fmt::format("Could not find surface index {} for flux!", idx));
-  }
-  return *it;
 }
 
 void PostOperator::MeasureInterfaceEFieldEnergy()
@@ -490,30 +433,6 @@ void PostOperator::MeasureInterfaceEFieldEnergy()
         InterfaceData{idx, surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E),
                       surf_post_op.GetInterfaceLossTangent(idx)});
   }
-}
-
-const PostOperator::InterfaceData &PostOperator::GetInterfaceEFieldEnergy(int idx) const
-{
-  auto it = std::find_if(measurement_cache.interface_eps_i.begin(),
-                         measurement_cache.interface_eps_i.end(),
-                         [idx](const auto &d) { return d.idx == idx; });
-  if (it == measurement_cache.interface_eps_i.end())
-  {
-    MFEM_ABORT(fmt::format("Could not find surface index {} for interface energy!", idx));
-  }
-  return *it;
-}
-
-double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
-{
-  // Compute the surface dielectric participation ratio and associated quality factor for
-  // the material interface given by index idx. We have:
-  //                            1/Q_mj = p_mj tan(δ)_j
-  // with:
-  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
-  MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  auto data = GetInterfaceEFieldEnergy(idx);
-  return data.energy / E_m;
 }
 
 void PostOperator::MeasureLumpedPorts(const LumpedPortOperator &lumped_port_op)
@@ -607,15 +526,60 @@ void PostOperator::MeasureWavePorts(const WavePortOperator &wave_port_op)
                                                // (Z = V² / P, I = V / Z)
   }
 }
-
-double PostOperator::GetLumpedInductorEnergy() const
+double PostOperator::GetEFieldEnergy(int idx) const
 {
-  return measurement_cache.lumped_port_inductor_energy;
+  auto it = measurement_cache.domain_E_field_energy_i.find(idx);
+  if (it == measurement_cache.domain_E_field_energy_i.end())
+  {
+    MFEM_ABORT(fmt::format("Could not find domain index {} for E field energy!", idx));
+  }
+  return it->second;
 }
 
-double PostOperator::GetLumpedCapacitorEnergy() const
+double PostOperator::GetHFieldEnergy(int idx) const
 {
-  return measurement_cache.lumped_port_capacitor_energy;
+  auto it = measurement_cache.domain_H_field_energy_i.find(idx);
+  if (it == measurement_cache.domain_H_field_energy_i.end())
+  {
+    MFEM_ABORT(fmt::format("Could not find domain index {} for H field energy!", idx));
+  }
+  return it->second;
+}
+
+PostOperator::FluxData PostOperator::GetSurfaceFlux(int idx) const
+{
+  auto it = std::find_if(measurement_cache.surface_flux_i.begin(),
+                         measurement_cache.surface_flux_i.end(),
+                         [idx](const auto &d) { return d.idx == idx; });
+  if (it == measurement_cache.surface_flux_i.end())
+  {
+    MFEM_ABORT(fmt::format("Could not find surface index {} for flux!", idx));
+  }
+  return *it;
+}
+
+const PostOperator::InterfaceData &PostOperator::GetInterfaceEFieldEnergy(int idx) const
+{
+  auto it = std::find_if(measurement_cache.interface_eps_i.begin(),
+                         measurement_cache.interface_eps_i.end(),
+                         [idx](const auto &d) { return d.idx == idx; });
+  if (it == measurement_cache.interface_eps_i.end())
+  {
+    MFEM_ABORT(fmt::format("Could not find surface index {} for interface energy!", idx));
+  }
+  return *it;
+}
+
+double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
+{
+  // Compute the surface dielectric participation ratio and associated quality factor for
+  // the material interface given by index idx. We have:
+  //                            1/Q_mj = p_mj tan(δ)_j
+  // with:
+  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
+  MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
+  auto data = GetInterfaceEFieldEnergy(idx);
+  return data.energy / E_m;
 }
 
 std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumped_port_op,
