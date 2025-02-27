@@ -74,9 +74,9 @@ TEST_CASE("TableCSV", "[tablecsv]")
 
   // clang-format off
   auto table_str1 = std::string(
-    "             Header Col 1,             Header Col 2,             Header Col 3\n"
-    "                     NULL,         +2.000000000e+00,         +3.000000000e+00\n"
-    "                     NULL,                     NULL,         +6.000000000e+00\n"
+    "            Header Col 1,            Header Col 2,            Header Col 3\n"
+    "                    NULL,        +2.000000000e+00,        +3.000000000e+00\n"
+    "                    NULL,                    NULL,        +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str1);
@@ -87,9 +87,9 @@ TEST_CASE("TableCSV", "[tablecsv]")
 
   // clang-format off
   auto table_str2 = std::string(
-    "             Header Col 1,       Header Col 2,             Header Col 3\n"
-    "                     NULL,      +2.000000e+00,         +3.000000000e+00\n"
-    "                     NULL,               NULL,         +6.000000000e+00\n"
+    "            Header Col 1,      Header Col 2,            Header Col 3\n"
+    "                    NULL,     +2.000000e+00,        +3.000000000e+00\n"
+    "                    NULL,              NULL,        +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str2);
@@ -101,9 +101,9 @@ TEST_CASE("TableCSV", "[tablecsv]")
 
   // clang-format off
   auto table_str3 = std::string(
-    "             Header Col 1,Header Col 2,             Header Col 3\n"
-    "                     NULL,    2.00e+00,         +3.000000000e+00\n"
-    "                     NULL,        NULL,         +6.000000000e+00\n"
+    "            Header Col 1,Header Col 2,            Header Col 3\n"
+    "                    NULL,    2.00e+00,        +3.000000000e+00\n"
+    "                    NULL,        NULL,        +6.000000000e+00\n"
   );
   // clang-format on
   CHECK(table.format_table() == table_str3);

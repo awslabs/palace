@@ -208,7 +208,7 @@ public:
     auto to = [&buf](auto f, auto &&...a)
     { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
 
-    for (int i = 0; i < n_cols(); i++)
+    for (size_t i = 0; i < n_cols(); i++)
     {
       if (i > 0)
       {
@@ -225,7 +225,7 @@ public:
     auto to = [&buf](auto f, auto &&...a)
     { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
 
-    for (int i = 0; i < n_cols(); i++)
+    for (size_t i = 0; i < n_cols(); i++)
     {
       if (i > 0)
       {
@@ -254,7 +254,7 @@ public:
   {
     fmt::memory_buffer buf{};
     append_header(buf);
-    for (int j = 0; j < n_rows(); j++)
+    for (size_t j = 0; j < n_rows(); j++)
     {
       append_row(buf, j);
     }
