@@ -17,6 +17,7 @@ class LumpedPortOperator;
 class Mesh;
 class PostOperator;
 class SurfaceCurrentOperator;
+class SpaceOperator;
 
 //
 // Driver class for time-dependent driven terminal simulations.
@@ -28,18 +29,56 @@ private:
 
   int GetNumSteps(double start, double end, double delta) const;
 
-  void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-                   const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag,
-                   const ErrorIndicator *indicator) const;
+  class CurrentsPostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_ = false;
+    TableWithCSVFile surface_I = {};
 
-  void PostprocessCurrents(const PostOperator &post_op,
-                           const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                           double J_coef) const;
+  public:
+    CurrentsPostPrinter() = default;
+    CurrentsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+                        const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
+    void AddMeasurement(double t, double J_coef, const SurfaceCurrentOperator &surf_j_op,
+                        const IoData &iodata);
+  };
 
-  void PostprocessPorts(const PostOperator &post_op,
-                        const LumpedPortOperator &lumped_port_op, int step, double t,
-                        double J_coef) const;
+  class PortsPostPrinter
+  {
+    bool root_ = false;
+    bool do_measurement_ = false;
+    TableWithCSVFile port_V = {};
+    TableWithCSVFile port_I = {};
+
+  public:
+    PortsPostPrinter() = default;
+    PortsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+                     const LumpedPortOperator &lumped_port_op, int n_expected_rows);
+    void AddMeasurement(double t, double J_coef, const PostOperator &post_op,
+                        const LumpedPortOperator &lumped_port_op, const IoData &iodata);
+  };
+
+  struct PostprocessPrintResults
+  {
+    bool write_paraview_fields = false;
+    int delta_post = 0;
+
+    DomainsPostPrinter domains;
+    SurfacesPostPrinter surfaces;
+    CurrentsPostPrinter currents;
+    ProbePostPrinter probes;
+    PortsPostPrinter ports;
+
+    ErrorIndicatorPostPrinter error_indicator;
+
+    PostprocessPrintResults(bool is_mpi_root, const std::string &post_dir,
+                            const PostOperator &post_op, const SpaceOperator &space_op,
+                            int n_expected_rows, int delta_post);
+    void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
+                         const SpaceOperator &space_op, int step, double t, double J_coef,
+                         double E_elec, double E_mag);
+    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
+  };
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
