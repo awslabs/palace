@@ -15,7 +15,6 @@
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
-#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
@@ -497,7 +496,7 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimensi
   using fmt::format;
 
   // Interface Participation adds energy contriutions E_elec + E_cap
-  // E_cap returns zero if the solver does not supprot lumped ports.
+  // E_cap returns zero if the solver does not support lumped ports.
   double E_elec = post_op.GetEFieldEnergy() + post_op.GetLumpedCapacitorEnergy();
   auto eps_data_vec = post_op.GetInterfaceEFieldEnergyAll();
 
