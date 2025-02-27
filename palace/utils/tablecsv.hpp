@@ -47,7 +47,7 @@ public:
 
     // Normal float in our exponent format needs float_precision + 7 ("+" , leading digit,
     // ".", "e", "+", +2 exponent. Sometimes exponent maybe +3 if very small or large; see
-    // std::numeric_limits<double>::max_exponent. We pick +7 for consistnacy, but
+    // std::numeric_limits<double>::max_exponent. We pick +7 for consistency, but
     // min_left_padding should be at least 1, which is not currently enforced.
     return std::max(pad + prec + 7, header_text.size());
   }
@@ -142,23 +142,6 @@ public:
   }
 
   // Insert columns: map like interface
-
-  bool insert_column(std::string column_name, std::string column_header = "")
-  {
-    auto it = std::find_if(cols.begin(), cols.end(),
-                           [&column_name](auto &c) { return c.name == column_name; });
-    if (it != cols.end())
-    {
-      return false;
-    }
-    auto &col = cols.emplace_back(std::move(column_name), std::move(column_header));
-    col.defaults = &col_options;
-    if (reserve_n_rows > 0)
-    {
-      col.data.reserve(reserve_n_rows);
-    }
-    return true;
-  }
   bool insert_column(Column &&column)
   {
     auto it = std::find_if(cols.begin(), cols.end(),
@@ -174,6 +157,11 @@ public:
       col.data.reserve(reserve_n_rows);
     }
     return true;
+  }
+  template <typename... Args>
+  bool insert_column(Args &&...args)
+  {
+    return insert_column(Column(std::forward<Args>(args)...));
   }
 
   // Access columns via vector position or column name
