@@ -32,19 +32,13 @@ using json = nlohmann::json;
 namespace
 {
 
-std::string GetPostDir(const std::string &output)
-{
-  return (output.length() > 0 && output.back() != '/') ? output + '/' : output;
-}
-
 std::string GetIterationPostDir(const std::string &output, int step, int width)
 {
-  return fmt::format("{}iteration{:0{}d}/", output, step, width);
+  return fs::path(output) / fmt::format("iteration{:0{}d}/", step, width);
 }
 
 void SaveIteration(MPI_Comm comm, const std::string &output, int step, int width)
 {
-  namespace fs = std::filesystem;
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   if (Mpi::Root(comm))
@@ -110,14 +104,8 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
                        const char *git_tag)
-  : iodata(iodata), post_dir(GetPostDir(iodata.problem.output)), root(root)
+  : iodata(iodata), post_dir(iodata.problem.output), root(root)
 {
-  // Create directory for output.
-  if (root && !std::filesystem::exists(post_dir))
-  {
-    std::filesystem::create_directories(post_dir);
-  }
-
   // Initialize simulation metadata for this simulation.
   if (root && post_dir.length() > 0)
   {

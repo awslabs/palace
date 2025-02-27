@@ -268,15 +268,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
   if constexpr (false)
   {
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
+    auto tmp = fs::path(iodata.problem.output) / "tmp";
+    if (Mpi::Root(comm) && !fs::exists(tmp))
     {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    if (Mpi::Root(comm) && !std::filesystem::exists(tmp))
-    {
-      std::filesystem::create_directories(tmp);
+      fs::create_directories(tmp);
     }
     int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
     std::unique_ptr<mfem::Mesh> gsmesh =
@@ -285,7 +280,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
     {
       std::string pfile =
-          mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
+          mfem::MakeParFilename(tmp.string() + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
@@ -293,7 +288,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     }
     {
       std::string pfile =
-          mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
+          mfem::MakeParFilename(tmp.string() + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
@@ -1622,12 +1617,8 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
   if (iodata.model.refinement.save_adapt_mesh)
   {
     // Create a separate serial mesh to write to disk.
-    std::string sfile = iodata.problem.output;
-    if (sfile.back() != '/')
-    {
-      sfile += '/';
-    }
-    sfile += std::filesystem::path(iodata.model.mesh).stem().string() + ".mesh";
+    auto sfile = fs::path(iodata.problem.output) / fs::path(iodata.model.mesh).stem();
+    sfile += ".mesh";
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
@@ -2050,7 +2041,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   // or error out if not supported.
   constexpr bool generate_edges = false, refine = false, fix_orientation = true;
   std::unique_ptr<mfem::Mesh> mesh;
-  std::filesystem::path mesh_path(mesh_file);
+  fs::path mesh_path(mesh_file);
   if (mesh_path.extension() == ".mphtxt" || mesh_path.extension() == ".mphbin" ||
       mesh_path.extension() == ".nas" || mesh_path.extension() == ".bdf")
   {
