@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace
@@ -31,7 +32,7 @@ protected:
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
-  std::string post_dir;
+  fs::path post_dir;
   bool root;
 
   // Common domain postprocessing for all simulation types.
@@ -43,7 +44,7 @@ protected:
 
   public:
     DomainsPostPrinter() = default;
-    DomainsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                        const DomainPostOperator &dom_post_op,
                        const std::string &idx_col_name, int n_expected_rows);
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
@@ -62,7 +63,7 @@ protected:
 
   public:
     SurfacesPostPrinter() = default;
-    SurfacesPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const PostOperator &post_op, const std::string &idx_col_name,
                         int n_expected_rows);
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
@@ -87,7 +88,7 @@ protected:
 
   public:
     ProbePostPrinter() = default;
-    ProbePostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const PostOperator &post_op, const std::string &idx_col_name,
                      int n_expected_rows);
 
@@ -110,7 +111,7 @@ protected:
 
   public:
     ErrorIndicatorPostPrinter() = default;
-    ErrorIndicatorPostPrinter(bool do_measurement, bool root, const std::string &post_dir);
+    ErrorIndicatorPostPrinter(bool do_measurement, bool root, const fs::path &post_dir);
 
     void PrintIndicatorStatistics(const PostOperator &post_op,
                                   const ErrorIndicator &indicator);

@@ -38,7 +38,7 @@ private:
 
   public:
     CurrentsPostPrinter() = default;
-    CurrentsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
     void AddMeasurement(double omega, const SurfaceCurrentOperator &surf_j_op,
                         const IoData &iodata);
@@ -53,7 +53,7 @@ private:
 
   public:
     PortsPostPrinter() = default;
-    PortsPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op, int n_expected_rows);
     void AddMeasurement(double omega, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
@@ -76,7 +76,7 @@ private:
 
   public:
     SParametersPostPrinter() = default;
-    SParametersPostPrinter(bool do_measurement, bool root, const std::string &post_dir,
+    SParametersPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                            const LumpedPortOperator &lumped_port_op,
                            const WavePortOperator &wave_port_op, int n_expected_rows);
     void AddMeasurement(double omega, const PostOperator &post_op,
@@ -98,7 +98,7 @@ private:
 
     ErrorIndicatorPostPrinter error_indicator;
 
-    PostprocessPrintResults(bool is_mpi_root, const std::string &post_dir,
+    PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
