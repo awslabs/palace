@@ -82,10 +82,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ErrorIndicator indicator;
 
   // Main time integration loop.
-  int step = 0;
   double t = -delta_t;
   auto t0 = Timer::Now();
-  while (step < n_step)
+  for (int step = 0; step < n_step; step++)
   {
     const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, n_step - 1,
@@ -127,9 +126,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     post_results.PostprocessStep(iodata, post_op, space_op, step, t, J_coef(t), E_elec,
                                  E_mag);
-                                 
-    // Increment time step.
-    step++;
   }
   // Final postprocessing & printing
   BlockTimer bt1(Timer::POSTPRO);
