@@ -52,7 +52,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
     paraview(CreateParaviewPath(iodata, name), &space_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &space_op.GetNDSpace().GetParMesh()),
-    interp_op(iodata, space_op.GetNDSpace().GetParMesh())
+    interp_op(iodata, space_op.GetNDSpace())
 {
   U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
   U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
@@ -95,7 +95,7 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
     paraview(CreateParaviewPath(iodata, name), &laplace_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &laplace_op.GetNDSpace().GetParMesh()),
-    interp_op(iodata, laplace_op.GetNDSpace().GetParMesh())
+    interp_op(iodata, laplace_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
@@ -122,7 +122,7 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
     paraview(CreateParaviewPath(iodata, name), &curlcurl_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &curlcurl_op.GetNDSpace().GetParMesh()),
-    interp_op(iodata, curlcurl_op.GetNDSpace().GetParMesh())
+    interp_op(iodata, curlcurl_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,

@@ -191,6 +191,7 @@ public:
   // the internal grid functions are real-valued, the returned fields have only nonzero real
   // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
   // v2y, v2z, ...].
+  int GetInterpolationOpVDim() const { return interp_op.GetVDim(); }
   const auto &GetProbes() const { return interp_op.GetProbes(); }
   std::vector<std::complex<double>> ProbeEField() const;
   std::vector<std::complex<double>> ProbeBField() const;
