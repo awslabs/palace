@@ -91,24 +91,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
   // mesh partitioner.
   std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = (refinement.max_it > 0) || [&refinement]()
-  {
-    for (const auto &box : refinement.GetBoxes())
-    {
-      if (box.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    for (const auto &sphere : refinement.GetSpheres())
-    {
-      if (sphere.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    return false;
-  }();
+  const bool use_amr = (refinement.max_it > 0) ||
+                       std::ranges::any_of(refinement.GetBoxes(), [](const auto &box)
+                                           { return box.ref_levels > 0; }) ||
+                       std::ranges::any_of(refinement.GetSpheres(), [](const auto &sphere)
+                                           { return sphere.ref_levels > 0; });
   const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   MPI_Comm node_comm;
   if (!use_mesh_partitioner)
@@ -310,21 +297,13 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   MFEM_VERIFY(mesh.size() == 1,
               "Input mesh vector before refinement has more than a single mesh!");
   int uniform_ref_levels = iodata.model.refinement.uniform_ref_levels;
-  int max_region_ref_levels = 0;
-  for (const auto &box : iodata.model.refinement.GetBoxes())
-  {
-    if (max_region_ref_levels < box.ref_levels)
-    {
-      max_region_ref_levels = box.ref_levels;
-    }
-  }
-  for (const auto &sphere : iodata.model.refinement.GetSpheres())
-  {
-    if (max_region_ref_levels < sphere.ref_levels)
-    {
-      max_region_ref_levels = sphere.ref_levels;
-    }
-  }
+
+  int max_box_ref_levels = std::ranges::max(iodata.model.refinement.GetBoxes(), {},
+                                            &config::BoxRefinementData::ref_levels);
+  int max_sphere_ref_levels = std::ranges::max(iodata.model.refinement.GetSpheres(), {},
+                                               &config::SphereRefinementData::ref_levels);
+  int max_region_ref_levels = std::max(max_box_ref_levels, max_sphere_ref_levels);
+
   if (iodata.solver.linear.mg_use_mesh && iodata.solver.linear.mg_max_levels > 1)
   {
     mesh.reserve(1 + uniform_ref_levels + max_region_ref_levels);
@@ -679,14 +658,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
         const double *coord = mesh.GetVertex(v[j]);
         for (int d = 0; d < dim; d++)
         {
-          if (coord[d] < min(d))
-          {
-            min(d) = coord[d];
-          }
-          if (coord[d] > max(d))
-          {
-            max(d) = coord[d];
-          }
+          min(d) = std::min(coord[d], min(d));
+          max(d) = std::max(coord[d], max(d));
         }
       }
     };
@@ -748,14 +721,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
       {
         for (int d = 0; d < pointmat.Height(); d++)
         {
-          if (pointmat(d, j) < min(d))
-          {
-            min(d) = pointmat(d, j);
-          }
-          if (pointmat(d, j) > max(d))
-          {
-            max(d) = pointmat(d, j);
-          }
+          min(d) = std::min(pointmat(d, j), min(d));
+          max(d) = std::max(pointmat(d, j), max(d));
         }
       }
     };
