@@ -102,7 +102,7 @@ public:
 class Table
 {
   // Column-wise mini-table for storing data and and printing to csv file for doubles.
-  // Future: allow int and other output, allow non-owning memeory via span
+  // Future: allow int and other output, allow non-owning memory via span
   std::vector<Column> cols;
 
   // Cache value to reserve vector space by default

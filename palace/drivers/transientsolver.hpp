@@ -31,29 +31,23 @@ private:
 
   class CurrentsPostPrinter
   {
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile surface_I;
 
   public:
-    CurrentsPostPrinter() = default;
-    CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                        const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
-    void AddMeasurement(double t, double J_coef, const SurfaceCurrentOperator &surf_j_op,
+    CurrentsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,
+                        int n_expected_rows);
+    void AddMeasurement(double t, double J_coef, const SpaceOperator &space_op,
                         const IoData &iodata);
   };
 
   class PortsPostPrinter
   {
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile port_V;
     TableWithCSVFile port_I;
 
   public:
-    PortsPostPrinter() = default;
-    PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                     const LumpedPortOperator &lumped_port_op, int n_expected_rows);
+    PortsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,
+                     int n_expected_rows);
     void AddMeasurement(double t, double J_coef, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
@@ -71,9 +65,9 @@ private:
 
     ErrorIndicatorPostPrinter error_indicator;
 
-    PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
-                            const PostOperator &post_op, const SpaceOperator &space_op,
-                            int n_expected_rows, int delta_post);
+    PostprocessPrintResults(const fs::path &post_dir, const PostOperator &post_op,
+                            const SpaceOperator &space_op, int n_expected_rows,
+                            int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
                          const SpaceOperator &space_op, int step, double t, double J_coef);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);

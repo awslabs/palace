@@ -572,11 +572,6 @@ const PostOperator::InterfaceData &PostOperator::GetInterfaceEFieldEnergy(int id
 
 double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
 {
-  // Compute the surface dielectric participation ratio and associated quality factor for
-  // the material interface given by index idx. We have:
-  //                            1/Q_mj = p_mj tan(δ)_j
-  // with:
-  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
   MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
   auto data = GetInterfaceEFieldEnergy(idx);
   return data.energy / E_m;
@@ -789,8 +784,6 @@ void PostOperator::WriteFields(int step, double time) const
   paraview_bdr.Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
-
-  Mpi::Barrier(GetComm());
 }
 
 void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
@@ -868,8 +861,6 @@ void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
     paraview.RegisterVCoeffField(name, gf);
   }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-
-  Mpi::Barrier(GetComm());
 }
 
 void PostOperator::MeasureProbes()

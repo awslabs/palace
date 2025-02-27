@@ -40,7 +40,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   PostOperator post_op(iodata, laplace_op, "electrostatic");
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
-  PostprocessPrintResults post_results(root, post_dir, post_op,
+  PostprocessPrintResults post_results(post_dir, post_op,
                                        iodata.solver.electrostatic.n_post);
 
   // Right-hand side term and solution vector storage.
@@ -202,12 +202,10 @@ void ElectrostaticSolver::PostprocessTerminals(
 }
 
 ElectrostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const fs::path &post_dir, const PostOperator &post_op, int n_post_)
+    const fs::path &post_dir, const PostOperator &post_op, int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op, "i", n_post},
-    surfaces{true, root, post_dir, post_op, "i", n_post},
-    probes{true, root, post_dir, post_op, "i", n_post},
-    error_indicator{true, root, post_dir}
+    domains{post_dir, post_op, "i", n_post}, surfaces{post_dir, post_op, "i", n_post},
+    probes{post_dir, post_op, "i", n_post}, error_indicator{post_dir}
 {
 }
 
@@ -217,6 +215,7 @@ void ElectrostaticSolver::PostprocessPrintResults::PostprocessStep(
   domains.AddMeasurement(idx, post_op, iodata);
   surfaces.AddMeasurement(idx, post_op, iodata);
   probes.AddMeasurement(idx, post_op, iodata);
+
   // The internal GridFunctions in PostOperator have already been set from V:
   if (write_paraview_fields && step < n_post)
   {

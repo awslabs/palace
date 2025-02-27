@@ -34,8 +34,8 @@ private:
 
     ErrorIndicatorPostPrinter error_indicator;
 
-    PostprocessPrintResults(bool is_mpi_root, const fs::path &post_dir,
-                            const PostOperator &post_op, int n_post_);
+    PostprocessPrintResults(const fs::path &post_dir, const PostOperator &post_op,
+                            int n_post_);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op, int step,
                          int idx);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);

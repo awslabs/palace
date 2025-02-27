@@ -33,19 +33,21 @@ private:
   class CurrentsPostPrinter
   {
     TableWithCSVFile surface_I;
+
   public:
-    CurrentsPostPrinter() = default;
-    CurrentsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
-    void AddMeasurement(double freq, const SurfaceCurrentOperator &surf_j_op, const IoData &iodata);
+    CurrentsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,
+                        int n_expected_rows);
+    void AddMeasurement(double freq, const SpaceOperator &space_op, const IoData &iodata);
   };
 
   class PortsPostPrinter
   {
     TableWithCSVFile port_V;
     TableWithCSVFile port_I;
+
   public:
-    PortsPostPrinter() = default;
-    PortsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
+    PortsPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,
+                     int n_expected_rows);
     void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
@@ -56,9 +58,6 @@ private:
     // excited port index specified in the configuration file, storing |S_ij| and arg
     // (S_ij) in dB and degrees, respectively. S-parameter output is only available for a
     // single lumped or wave port excitation.
-
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile port_S;
 
     // Currently can't mix lumped and surface ports for s-matrix
@@ -66,8 +65,8 @@ private:
     int source_idx = -1;
 
   public:
-    SParametersPostPrinter() = default;
-    SParametersPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op, int n_expected_rows);
+    SParametersPostPrinter(const fs::path &post_dir, const SpaceOperator &space_op,
+                           int n_expected_rows);
     void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op,
                         const WavePortOperator &wave_port_op, const IoData &iodata);

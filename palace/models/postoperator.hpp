@@ -173,7 +173,7 @@ public:
   }
 
   // Function that triggers all available post-processing measurements and populate cache.
-  // If SpaceOperator is provided, will perform port measurements.
+  // If SpaceOperator is provided, will perform any port measurements.
   void MeasureAll();
   void MeasureAll(const SpaceOperator &space_op);
 
@@ -183,31 +183,16 @@ public:
   // Treat the frequency, for driven and eigenmode solvers, as a "measurement", that other
   // measurements can depend on. This has to be supplied during the solver loop separate
   // from the fields.
-  void SetFrequency(double omega)
-  {
-    measurement_cache.omega = std::complex<double>(omega);
-  }
-  void SetFrequency(std::complex<double> omega)
-  {
-    measurement_cache.omega = omega;
-  }
+  void SetFrequency(double omega) { measurement_cache.omega = std::complex<double>(omega); }
+  void SetFrequency(std::complex<double> omega) { measurement_cache.omega = omega; }
 
   // Return stored frequency that was given in SetFrequency.
-  std::complex<double> GetFrequency() const
-  {
-    return measurement_cache.omega;
-  }
+  std::complex<double> GetFrequency() const { return measurement_cache.omega; }
 
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
-  double GetEFieldEnergy() const
-  {
-    return measurement_cache.domain_E_field_energy_all;
-  }
-  double GetHFieldEnergy() const
-  {
-    return measurement_cache.domain_H_field_energy_all;
-  }
+  double GetEFieldEnergy() const { return measurement_cache.domain_E_field_energy_all; }
+  double GetHFieldEnergy() const { return measurement_cache.domain_H_field_energy_all; }
 
   // Postprocess the electric and magnetic field energies in the domain with the given
   // index.
@@ -242,7 +227,7 @@ public:
     return measurement_cache.lumped_port_capacitor_energy;
   }
 
-  // Postprocess the S-parameter for recieving lumped or wave port index using the electric
+  // Postprocess the S-parameter for receiving lumped or wave port index using the electric
   // field solution.
   // TODO: In multi-excitation PR we will guarantee that lumped & wave ports have unique idx
   // TODO: Merge lumped and wave port S_ij calculations to allow both at same time.
@@ -279,10 +264,10 @@ public:
   // the internal grid functions are real-valued, the returned fields have only nonzero real
   // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
   // v2y, v2z, ...].
-  int GetInterpolationOpVDim() const { return interp_op.GetVDim(); }
   const auto &GetProbes() const { return interp_op.GetProbes(); }
   std::vector<std::complex<double>> ProbeEField() const;
   std::vector<std::complex<double>> ProbeBField() const;
+  int GetInterpolationOpVDim() const { return interp_op.GetVDim(); }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const

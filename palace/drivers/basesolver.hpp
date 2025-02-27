@@ -33,15 +33,18 @@ protected:
 
   // Parameters for writing postprocessing outputs.
   fs::path post_dir;
+  bool root;
 
   // Common domain postprocessing for all simulation types.
   class DomainsPostPrinter
   {
     TableWithCSVFile domain_E;
+
   public:
-    DomainsPostPrinter() = default;
-    DomainsPostPrinter(const fs::path &post_dir, const PostOperator &post_op, const std::string &idx_col_name, int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op, const IoData &iodata);
+    DomainsPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                       const std::string &idx_col_name, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
   };
 
   // Common surface postprocessing for all simulation types.
@@ -53,10 +56,12 @@ protected:
                             const IoData &iodata);
     void AddMeasurementEps(double idx_value_dimensionful, const PostOperator &post_op,
                            const IoData &iodata);
+
   public:
-    SurfacesPostPrinter() = default;
-    SurfacesPostPrinter(const fs::path &post_dir, const PostOperator &post_op, const std::string &idx_col_name, int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op, const IoData &iodata);
+    SurfacesPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                        const std::string &idx_col_name, int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
   };
 
   // Common probe postprocessing for all simulation types.
@@ -69,11 +74,13 @@ protected:
                          const IoData &iodata);
     void AddMeasurementB(double idx_value_dimensionful, const PostOperator &post_op,
                          const IoData &iodata);
-  public:
-    ProbePostPrinter() = default;
-    ProbePostPrinter(const fs::path &post_dir, const PostOperator &post_op, const std::string &idx_col_name, int n_expected_rows);
 
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op, const IoData &iodata);
+  public:
+    ProbePostPrinter(const fs::path &post_dir, const PostOperator &post_op,
+                     const std::string &idx_col_name, int n_expected_rows);
+
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
   };
 
   // Common error indicator postprocessing for all simulation types. //
@@ -81,15 +88,13 @@ protected:
   // step (time / frequency / eigenvector).
   class ErrorIndicatorPostPrinter
   {
-    bool root_ = false;
-    bool do_measurement_ = false;
     TableWithCSVFile error_indicator;
 
   public:
-    ErrorIndicatorPostPrinter() = default;
     ErrorIndicatorPostPrinter(const fs::path &post_dir);
 
-    void PrintIndicatorStatistics(const PostOperator &post_op, const ErrorIndicator::SummaryStatistics &indicator_stats);
+    void PrintIndicatorStatistics(const PostOperator &post_op,
+                                  const ErrorIndicator::SummaryStatistics &indicator_stats);
   };
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
