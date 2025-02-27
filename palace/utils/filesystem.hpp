@@ -6,12 +6,17 @@
 
 #if defined(__cpp_lib_filesystem) || defined(__has_include) && __has_include(<filesystem>)
 #include <filesystem>
+namespace palace
+{
+namespace fs = std::filesystem;
+}  // namespace palace
 #elif defined(__cpp_lib_experimental_filesystem) || \
     defined(__has_include) && __has_include(<experimental/filesystem>)
-// clang-format off
 #include <experimental/filesystem>
-namespace std { namespace filesystem = experimental::filesystem; }
-// clang-format on
+namespace palace
+{
+namespace fs = std::experimental::filesystem;
+}  // namespace palace
 #else
 #error "Could not find system header <filesystem> or <experimental/filesystem>!"
 #endif

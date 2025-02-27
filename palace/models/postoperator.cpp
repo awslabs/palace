@@ -12,6 +12,7 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -24,15 +25,9 @@ using namespace std::complex_literals;
 namespace
 {
 
-auto CreateParaviewPath(const IoData &iodata, const std::string &name)
+std::string CreateParaviewPath(const IoData &iodata, const std::string &name)
 {
-  std::string path = iodata.problem.output;
-  if (path[path.length() - 1] != '/')
-  {
-    path += '/';
-  }
-  path += "paraview/" + name;
-  return path;
+  return fs::path(iodata.problem.output) / "paraview" / name;
 }
 
 }  // namespace
