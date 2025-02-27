@@ -28,7 +28,7 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile eig = {};
+    TableWithCSVFile eig;
 
     // Print data to stdout with custom table formatting
     void PrintStdoutHeader();
@@ -47,8 +47,8 @@ private:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile port_V = {};
-    TableWithCSVFile port_I = {};
+    TableWithCSVFile port_V;
+    TableWithCSVFile port_I;
 
   public:
     PortsPostPrinter() = default;
@@ -64,8 +64,8 @@ private:
     bool root_ = false;
     bool do_measurement_EPR_ = false;
     bool do_measurement_Q_ = false;
-    TableWithCSVFile port_EPR = {};
-    TableWithCSVFile port_Q = {};
+    TableWithCSVFile port_EPR;
+    TableWithCSVFile port_Q;
 
     std::vector<int> ports_with_L;
     std::vector<int> ports_with_R;

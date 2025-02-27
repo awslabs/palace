@@ -40,7 +40,7 @@ protected:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile domain_E = {};
+    TableWithCSVFile domain_E;
 
   public:
     DomainsPostPrinter() = default;
@@ -57,8 +57,8 @@ protected:
     bool root_ = false;
     bool do_measurement_flux_ = false;
     bool do_measurement_eps_ = false;
-    TableWithCSVFile surface_F = {};
-    TableWithCSVFile surface_Q = {};
+    TableWithCSVFile surface_F;
+    TableWithCSVFile surface_Q;
 
   public:
     SurfacesPostPrinter() = default;
@@ -79,8 +79,8 @@ protected:
     bool root_ = false;
     bool do_measurement_E_ = false;
     bool do_measurement_B_ = false;
-    TableWithCSVFile probe_E = {};
-    TableWithCSVFile probe_B = {};
+    TableWithCSVFile probe_E;
+    TableWithCSVFile probe_B;
 
     int v_dim = 0;
     bool has_imag = false;
@@ -106,7 +106,7 @@ protected:
   {
     bool root_ = false;
     bool do_measurement_ = false;
-    TableWithCSVFile error_indicator = {};
+    TableWithCSVFile error_indicator;
 
   public:
     ErrorIndicatorPostPrinter() = default;
