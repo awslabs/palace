@@ -51,7 +51,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Frequencies will be sampled uniformly in the frequency domain. Index sets are for
   // computing things like S-parameters in postprocessing.
-  PostOperator post_op(iodata, space_op, "driven");
+  PostOperator post_op(iodata, space_op);
   PostprocessPrintResults post_results(root, post_dir, post_op, space_op, n_step,
                                        iodata.solver.driven.delta_post);
 

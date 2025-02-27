@@ -125,10 +125,9 @@ private:
   void MeasureWavePorts(const WavePortOperator &wave_port_op);
 
 public:
-  PostOperator(const IoData &iodata, SpaceOperator &space_op, const std::string &name);
-  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op, const std::string &name);
-  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
-               const std::string &name);
+  PostOperator(const IoData &iodata, SpaceOperator &space_op);
+  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op);
+  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op);
 
   // Access to surface and domain postprocessing objects.
   const auto &GetSurfacePostOp() const { return surf_post_op; }

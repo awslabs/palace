@@ -37,7 +37,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
-  PostOperator post_op(iodata, space_op, "transient");
+  PostOperator post_op(iodata, space_op);
   PostprocessPrintResults post_results(post_dir, post_op, space_op, n_step,
                                        iodata.solver.transient.delta_post);
 
