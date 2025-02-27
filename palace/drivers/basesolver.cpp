@@ -451,7 +451,7 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
   using fmt::format;
 
   const bool has_imaginary = post_op.HasImag();
-  auto flux_data_vec = post_op.GetSurfaceFluxAll();
+  auto flux_data_vec = post_op.GetSurfaceFluxes();
   auto dimensionlize_flux = [&iodata](auto Phi, SurfaceFluxType flux_type)
   {
     switch (flux_type)
