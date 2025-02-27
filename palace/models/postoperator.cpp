@@ -25,16 +25,38 @@ using namespace std::complex_literals;
 namespace
 {
 
-std::string CreateParaviewPath(const IoData &iodata, const std::string &name)
+constexpr std::string_view SolverTypeFoldername(const config::ProblemData::Type solver_type)
 {
+  switch (solver_type)
+  {
+    case config::ProblemData::Type::DRIVEN:
+      return "driven";
+    case config::ProblemData::Type::EIGENMODE:
+      return "eigenmode";
+    case config::ProblemData::Type::ELECTROSTATIC:
+      return "electrostatic";
+    case config::ProblemData::Type::MAGNETOSTATIC:
+      return "magnetostatic";
+    case config::ProblemData::Type::TRANSIENT:
+      return "transient";
+    default:
+      return "unkown";
+  }
+}
+
+std::string CreateParaviewPath(const IoData &iodata, bool is_boundary = false)
+{
+  std::string name(SolverTypeFoldername(iodata.problem.type));
+  if (is_boundary)
+  {
+    name += "_boundary";
+  }
   return fs::path(iodata.problem.output) / "paraview" / name;
 }
 
 }  // namespace
 
-PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
-                           const std::string &name)
-  : mat_op(space_op.GetMaterialOp()),
+PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op)
     surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
     dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
                 space_op.GetRTSpace()),
@@ -45,9 +67,8 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
     B(std::make_unique<GridFunction>(space_op.GetRTSpace(),
                                      iodata.problem.type !=
                                          config::ProblemData::Type::TRANSIENT)),
-    paraview(CreateParaviewPath(iodata, name), &space_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &space_op.GetNDSpace().GetParMesh())
+    paraview(CreateParaviewPath(iodata), &space_op.GetNDSpace().GetParMesh()),
+    paraview_bdr(CreateParaviewPath(iodata, true), &space_op.GetNDSpace().GetParMesh())
 {
   U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
   U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
@@ -79,16 +100,13 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
   InitializeDataCollection(iodata);
 }
 
-PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
-                           const std::string &name)
-  : mat_op(laplace_op.GetMaterialOp()),
+PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op)
     surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
     dom_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
     E(std::make_unique<GridFunction>(laplace_op.GetNDSpace())),
     V(std::make_unique<GridFunction>(laplace_op.GetH1Space())),
-    paraview(CreateParaviewPath(iodata, name), &laplace_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &laplace_op.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata), &laplace_op.GetNDSpace().GetParMesh()),
+    paraview_bdr(CreateParaviewPath(iodata, true), &laplace_op.GetNDSpace().GetParMesh()),
     interp_op(iodata, laplace_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
@@ -105,16 +123,13 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
   InitializeDataCollection(iodata);
 }
 
-PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
-                           const std::string &name)
-  : mat_op(curlcurl_op.GetMaterialOp()),
+PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op)
     surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetH1Space()),
     dom_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetNDSpace()),
     B(std::make_unique<GridFunction>(curlcurl_op.GetRTSpace())),
     A(std::make_unique<GridFunction>(curlcurl_op.GetNDSpace())),
-    paraview(CreateParaviewPath(iodata, name), &curlcurl_op.GetNDSpace().GetParMesh()),
-    paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &curlcurl_op.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata), &curlcurl_op.GetNDSpace().GetParMesh()),
+    paraview_bdr(CreateParaviewPath(iodata, true), &curlcurl_op.GetNDSpace().GetParMesh()),
     interp_op(iodata, curlcurl_op.GetNDSpace())
 {
   // Note: When using this constructor, you should not use any of the electric field related

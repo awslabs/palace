@@ -42,7 +42,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator post_op(iodata, space_op, "eigenmode");
+  PostOperator post_op(iodata, space_op);
   PostprocessPrintResults post_results(post_dir, post_op, space_op,
                                        iodata.solver.eigenmode.n_post);
   ComplexVector E(Curl.Width()), B(Curl.Height());

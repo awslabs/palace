@@ -37,7 +37,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
-  PostOperator post_op(iodata, laplace_op, "electrostatic");
+  PostOperator post_op(iodata, laplace_op);
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
   PostprocessPrintResults post_results(post_dir, post_op,
