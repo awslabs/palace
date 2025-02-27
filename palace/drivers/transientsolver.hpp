@@ -75,8 +75,7 @@ private:
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
-                         const SpaceOperator &space_op, int step, double t, double J_coef,
-                         double E_elec, double E_mag);
+                         const SpaceOperator &space_op, int step, double t, double J_coef);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
   };
 

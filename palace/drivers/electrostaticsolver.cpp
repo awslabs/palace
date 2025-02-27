@@ -77,6 +77,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
     post_op.SetVGridFunction(V[step]);
     post_op.SetEGridFunction(E);
+    post_op.MeasureAll();
     const double E_elec = post_op.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplace_op.GetComm(), V[step]),
@@ -91,7 +92,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(E, E_elec, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    post_results.PostprocessStep(iodata, post_op, step, idx, E_elec);
+    post_results.PostprocessStep(iodata, post_op, step, idx);
 
     // Next terminal.
     step++;
@@ -203,7 +204,7 @@ void ElectrostaticSolver::PostprocessTerminals(
 ElectrostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
     bool root, const fs::path &post_dir, const PostOperator &post_op, int n_post_)
   : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{true, root, post_dir, post_op.GetDomainPostOp(), "i", n_post},
+    domains{true, root, post_dir, post_op, "i", n_post},
     surfaces{true, root, post_dir, post_op, "i", n_post},
     probes{true, root, post_dir, post_op, "i", n_post},
     error_indicator{true, root, post_dir}
@@ -211,10 +212,10 @@ ElectrostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
 }
 
 void ElectrostaticSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator &post_op, int step, int idx, double E_elec)
+    const IoData &iodata, const PostOperator &post_op, int step, int idx)
 {
-  domains.AddMeasurement(idx, post_op, E_elec, 0.0, 0.0, 0.0, iodata);
-  surfaces.AddMeasurement(idx, post_op, E_elec, 0.0, iodata);
+  domains.AddMeasurement(idx, post_op, iodata);
+  surfaces.AddMeasurement(idx, post_op, iodata);
   probes.AddMeasurement(idx, post_op, iodata);
   // The internal GridFunctions in PostOperator have already been set from V:
   if (write_paraview_fields && step < n_post)
@@ -229,7 +230,8 @@ void ElectrostaticSolver::PostprocessPrintResults::PostprocessFinal(
     const PostOperator &post_op, const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
+  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
   if (write_paraview_fields)
   {
     post_op.WriteFieldsFinal(&indicator);

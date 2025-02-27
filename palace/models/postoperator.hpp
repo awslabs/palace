@@ -39,14 +39,25 @@ private:
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 
-  // Surface boundary and domain postprocessors.
-  const SurfacePostOperator surf_post_op;
-  const DomainPostOperator dom_post_op;
-
   // Objects for grid function postprocessing from the FE solution.
-  mutable std::unique_ptr<GridFunction> E, B, V, A;
+  std::unique_ptr<GridFunction> E, B, V, A;
   std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
+
+  // Data collection for writing fields to disk for visualization
+  // Paraview fields are mutable as the writing is triggered by const solver printer
+  mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
+  double mesh_Lc0;
+
+  // ----- Measurements from Fields -----
+
+  DomainPostOperator dom_post_op;           // Energy in bulk
+  SurfacePostOperator surf_post_op;         //  Dielectric Interface Energy and Flux
+  mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
+
+  // Port Contributions: not owned, view onto space_op only, it must not go out of scope
+  LumpedPortOperator *lumped_port_op = nullptr;
+  WavePortOperator *wave_port_op = nullptr;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
@@ -55,19 +66,56 @@ private:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-  // Lumped and wave port voltage and current (R, L, and C branches) caches updated when
-  // the grid functions are set.
+public:
+  // Mini storage clases for cache: Definitions are public
+  struct FluxData
+  {
+    int idx;                   // Surface index
+    std::complex<double> Phi;  // Integrated flux
+    SurfaceFluxType type;      // Flux type
+  };
+
+  struct InterfaceData
+  {
+    int idx;          // Interface index
+    double energy;    // Surface ELectric Field Energy
+    double tandelta;  // Dissipation tangent tan(δ)
+  };
+
+  // For both lumped and wave port
   struct PortPostData
   {
-    std::complex<double> P, V, I[3], S;
+    std::complex<double> P, V, S;
+    std::array<std::complex<double>, 3> I;  // Separate R, L, and C branches
   };
-  std::map<int, PortPostData> lumped_port_vi, wave_port_vi;
-  bool lumped_port_init, wave_port_init;
 
-  // Data collection for writing fields to disk for visualization and sampling points.
-  mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
-  mutable InterpolationOperator interp_op;
-  double mesh_Lc0;
+private:
+  struct MeasurementCache
+  {
+    std::optional<std::complex<double>> omega = std::nullopt;
+
+    std::optional<double> domain_E_field_energy_all = std::nullopt;
+    std::optional<double> domain_H_field_energy_all = std::nullopt;
+
+    std::optional<std::map<int, double>> domain_E_field_energy_i = std::nullopt;
+    std::optional<std::map<int, double>> domain_H_field_energy_i = std::nullopt;
+
+    std::optional<std::vector<FluxData>> surface_flux_i = std::nullopt;
+    std::optional<std::vector<InterfaceData>> interface_eps_i = std::nullopt;
+
+    std::optional<std::map<int, PortPostData>> lumped_port_vi = std::nullopt;
+    std::optional<std::map<int, PortPostData>> wave_port_vi = std::nullopt;
+
+    std::optional<double> lumped_port_inductor_energy = std::nullopt;
+    std::optional<double> lumped_port_capacitor_energy = std::nullopt;
+
+    std::optional<std::vector<std::complex<double>>> probe_E_field = std::nullopt;
+    std::optional<std::vector<std::complex<double>>> probe_B_field = std::nullopt;
+  };
+  mutable MeasurementCache measurment_cache = {};
+
+  void ValidateDoPortMeasurement() const;
+
   void InitializeDataCollection(const IoData &iodata);
 
 public:
@@ -118,6 +166,22 @@ public:
     return *A;
   }
 
+  // Function that triggers all available post-processing measurements and populate cache.
+  void MeasureAll();
+
+  // Clear internal measurement caches
+  void ClearAllMeasurementCache();
+
+  // Treat the frequency, for driven and eigemode solvers, as a "measurement", that other
+  // measurements can depend on. This has to be supplied during the solver loop separate
+  // from the fields.
+  void SetFrequency(double omega);
+  void SetFrequency(std::complex<double> omega);
+
+  // Return stored frequency that was given in SetFrequency. Always promotes to complex
+  // frequency.
+  std::complex<double> GetFrequency() const;
+
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
   double GetEFieldEnergy() const;
@@ -130,55 +194,42 @@ public:
 
   // Postprocess the electric or magnetic field flux for a surface index using the computed
   // electcric field and/or magnetic flux density field solutions.
-  std::complex<double> GetSurfaceFlux(int idx) const;
+  std::vector<FluxData> GetSurfaceFluxAll() const;
+  FluxData GetSurfaceFlux(int idx) const;
 
   // Postprocess the partitipation ratio for interface lossy dielectric losses in the
   // electric field mode.
   double GetInterfaceParticipation(int idx, double E_m) const;
+  std::vector<InterfaceData> GetInterfaceEFieldEnergyAll() const;
+  InterfaceData GetInterfaceEFieldEnergy(int idx) const;
 
-  // Update cached port voltages and currents for lumped and wave port operators.
-  void UpdatePorts(const LumpedPortOperator &lumped_port_op,
-                   const WavePortOperator &wave_port_op, double omega = 0.0)
-  {
-    UpdatePorts(lumped_port_op, omega);
-    UpdatePorts(wave_port_op, omega);
-  }
-  void UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega = 0.0);
-  void UpdatePorts(const WavePortOperator &wave_port_op, double omega = 0.0);
+  // Measure and cache port voltages and currents for lumped and wave port operators.
+  void MeasureLumpedPorts() const;
+  void MeasureWavePorts() const;
 
   // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
   // the provided set.
-  double GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const;
-  double GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op) const;
+  double GetLumpedInductorEnergy() const;
+  double GetLumpedCapacitorEnergy() const;
 
   // Postprocess the S-parameter for recieving lumped or wave port index using the electric
   // field solution.
-  std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
-                                     int source_idx) const;
-  std::complex<double> GetSParameter(const WavePortOperator &wave_port_op, int idx,
-                                     int source_idx) const;
+  std::complex<double> GetSParameter(bool is_lumped_port, int idx, int source_idx) const;
 
   // Postprocess the circuit voltage and current across lumped port index using the electric
   // field solution. When the internal grid functions are real-valued, the returned voltage
   // has only a nonzero real part.
-  std::complex<double> GetPortPower(const LumpedPortOperator &lumped_port_op,
-                                    int idx) const;
-  std::complex<double> GetPortPower(const WavePortOperator &wave_port_op, int idx) const;
-  std::complex<double> GetPortVoltage(const LumpedPortOperator &lumped_port_op,
-                                      int idx) const;
-  std::complex<double> GetPortVoltage(const WavePortOperator &wave_port_op, int idx) const;
+  std::complex<double> GetPortPower(int idx) const;
+  std::complex<double> GetPortVoltage(int idx) const;
   std::complex<double>
-  GetPortCurrent(const LumpedPortOperator &lumped_port_op, int idx,
+  GetPortCurrent(int idx,
                  LumpedPortData::Branch branch = LumpedPortData::Branch::TOTAL) const;
-  std::complex<double> GetPortCurrent(const WavePortOperator &wave_port_op, int idx) const;
 
   // Postprocess the EPR for the electric field solution and lumped port index.
-  double GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
-                                  double E_m) const;
+  double GetInductorParticipation(int idx, double E_m) const;
 
   // Postprocess the coupling rate for radiative loss to the given I-O port index.
-  double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                          double E_m) const;
+  double GetExternalKappa(int idx, double E_m) const;
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *

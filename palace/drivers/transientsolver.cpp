@@ -109,7 +109,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const Vector &B = time_op.GetB();
     post_op.SetEGridFunction(E);
     post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp());
+    post_op.MeasureAll();
+
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
@@ -124,8 +125,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
 
-    post_results.PostprocessStep(iodata, post_op, space_op, step, t, J_coef(t), E_elec,
-                                 E_mag);
+    post_results.PostprocessStep(iodata, post_op, space_op, step, t, J_coef(t));
   }
   // Final postprocessing & printing
   BlockTimer bt1(Timer::POSTPRO);
@@ -358,8 +358,8 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
       port_I.table[format("inc{}", idx)] << I_inc * unit_A;
     }
 
-    std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
-    std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
+    std::complex<double> V_i = post_op.GetPortVoltage(idx);
+    std::complex<double> I_i = post_op.GetPortCurrent(idx);
 
     port_V.table[format("re{}", idx)] << V_i.real() * unit_V;
     port_I.table[format("re{}", idx)] << I_i.real() * unit_A;
@@ -372,7 +372,7 @@ TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
     bool root, const fs::path &post_dir, const PostOperator &post_op,
     const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
   : delta_post{delta_post_}, write_paraview_fields(delta_post_ > 0),
-    domains{true, root, post_dir, post_op.GetDomainPostOp(), "t (ns)", n_expected_rows},
+    domains{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
     surfaces{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
     currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
     probes{true, root, post_dir, post_op, "t (ns)", n_expected_rows},
@@ -383,14 +383,12 @@ TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
 
 void TransientSolver::PostprocessPrintResults::PostprocessStep(
     const IoData &iodata, const PostOperator &post_op, const SpaceOperator &space_op,
-    int step, double t, double J_coef, double E_elec, double E_mag)
+    int step, double t, double J_coef)
 {
   auto time = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-  auto E_cap = post_op.GetLumpedCapacitorEnergy(space_op.GetLumpedPortOp());
-  auto E_ind = post_op.GetLumpedInductorEnergy(space_op.GetLumpedPortOp());
 
-  domains.AddMeasurement(time, post_op, E_elec, E_mag, E_cap, E_ind, iodata);
-  surfaces.AddMeasurement(time, post_op, E_elec + E_cap, E_mag + E_ind, iodata);
+  domains.AddMeasurement(time, post_op, iodata);
+  surfaces.AddMeasurement(time, post_op, iodata);
   currents.AddMeasurement(t, J_coef, space_op.GetSurfaceCurrentOp(), iodata);
   probes.AddMeasurement(time, post_op, iodata);
   ports.AddMeasurement(t, J_coef, post_op, space_op.GetLumpedPortOp(), iodata);
@@ -407,7 +405,8 @@ void TransientSolver::PostprocessPrintResults::PostprocessFinal(
     const PostOperator &post_op, const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  error_indicator.PrintIndicatorStatistics(post_op, indicator);
+  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
+  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
   if (write_paraview_fields)
   {
     post_op.WriteFieldsFinal(&indicator);

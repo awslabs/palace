@@ -40,7 +40,7 @@ private:
     CurrentsPostPrinter() = default;
     CurrentsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                         const SurfaceCurrentOperator &surf_j_op, int n_expected_rows);
-    void AddMeasurement(double omega, const SurfaceCurrentOperator &surf_j_op,
+    void AddMeasurement(double freq, const SurfaceCurrentOperator &surf_j_op,
                         const IoData &iodata);
   };
 
@@ -55,7 +55,7 @@ private:
     PortsPostPrinter() = default;
     PortsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                      const LumpedPortOperator &lumped_port_op, int n_expected_rows);
-    void AddMeasurement(double omega, const PostOperator &post_op,
+    void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
 
@@ -79,7 +79,7 @@ private:
     SParametersPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
                            const LumpedPortOperator &lumped_port_op,
                            const WavePortOperator &wave_port_op, int n_expected_rows);
-    void AddMeasurement(double omega, const PostOperator &post_op,
+    void AddMeasurement(double freq, const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op,
                         const WavePortOperator &wave_port_op, const IoData &iodata);
   };
@@ -102,8 +102,7 @@ private:
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             int n_expected_rows, int delta_post);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
-                         const SpaceOperator &space_op, int step, double omega,
-                         double E_elec, double E_mag);
+                         const SpaceOperator &space_op, int step);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
   };
 

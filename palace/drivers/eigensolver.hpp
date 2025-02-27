@@ -39,7 +39,7 @@ private:
 
     EigenPostPrinter() = default;
     EigenPostPrinter(bool do_measurement, bool root, const fs::path &post_dir, int n_post);
-    void AddMeasurement(int eigen_print_idx, std::complex<double> omega, double error_bkwd,
+    void AddMeasurement(int eigen_print_idx, const PostOperator &post_op, double error_bkwd,
                         double error_abs, const IoData &iodata);
   };
 
@@ -76,15 +76,12 @@ private:
                    const LumpedPortOperator &lumped_port_op, int n_expected_rows);
 
     void AddMeasurementEPR(double eigen_print_idx, const PostOperator &post_op,
-                           const LumpedPortOperator &lumped_port_op, double E_m,
-                           const IoData &iodata);
+                           const LumpedPortOperator &lumped_port_op, const IoData &iodata);
     void AddMeasurementQ(double eigen_print_idx, const PostOperator &post_op,
-                         const LumpedPortOperator &lumped_port_op,
-                         std::complex<double> omega, double E_m, const IoData &iodata);
+                         const LumpedPortOperator &lumped_port_op, const IoData &iodata);
 
     void AddMeasurement(double eigen_print_idx, const PostOperator &post_op,
-                        const LumpedPortOperator &lumped_port_op,
-                        std::complex<double> omega, double E_m, const IoData &iodata);
+                        const LumpedPortOperator &lumped_port_op, const IoData &iodata);
   };
 
   struct PostprocessPrintResults
@@ -104,9 +101,8 @@ private:
                             const PostOperator &post_op, const SpaceOperator &space_op,
                             int n_post_);
     void PostprocessStep(const IoData &iodata, const PostOperator &post_op,
-                         const SpaceOperator &space_op, int step,
-                         std::complex<double> omega, double E_elec, double E_mag,
-                         double error_abs, double error_bkward);
+                         const SpaceOperator &space_op, int step, double error_abs,
+                         double error_bkward);
     void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
   };
 
