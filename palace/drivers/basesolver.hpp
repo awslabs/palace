@@ -38,11 +38,15 @@ protected:
   // Common domain postprocessing for all simulation types.
   class DomainsPostPrinter
   {
+    bool root_ = false;
+    bool do_measurement_ = false;
     TableWithCSVFile domain_E;
 
   public:
-    DomainsPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
-                       const std::string &idx_col_name, int n_expected_rows);
+    DomainsPostPrinter() = default;
+    DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                       const PostOperator &post_op, const std::string &idx_col_name,
+                       int n_expected_rows);
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
                         const IoData &iodata);
   };
@@ -50,35 +54,47 @@ protected:
   // Common surface postprocessing for all simulation types.
   class SurfacesPostPrinter
   {
+    bool root_ = false;
+    bool do_measurement_flux_ = false;
+    bool do_measurement_eps_ = false;
     TableWithCSVFile surface_F;
     TableWithCSVFile surface_Q;
+
+  public:
+    SurfacesPostPrinter() = default;
+    SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                        const PostOperator &post_op, const std::string &idx_col_name,
+                        int n_expected_rows);
+    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
+                        const IoData &iodata);
     void AddMeasurementFlux(double idx_value_dimensionful, const PostOperator &post_op,
                             const IoData &iodata);
     void AddMeasurementEps(double idx_value_dimensionful, const PostOperator &post_op,
                            const IoData &iodata);
-
-  public:
-    SurfacesPostPrinter(const fs::path &post_dir, const PostOperator &post_op,
-                        const std::string &idx_col_name, int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        const IoData &iodata);
   };
 
   // Common probe postprocessing for all simulation types.
   class ProbePostPrinter
   {
+    bool root_ = false;
+    bool do_measurement_E_ = false;
+    bool do_measurement_B_ = false;
     TableWithCSVFile probe_E;
     TableWithCSVFile probe_B;
+
+    int v_dim = 0;
+    bool has_imag = false;
+
+  public:
+    ProbePostPrinter() = default;
+    ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
+                     const PostOperator &post_op, const std::string &idx_col_name,
+                     int n_expected_rows);
 
     void AddMeasurementE(double idx_value_dimensionful, const PostOperator &post_op,
                          const IoData &iodata);
     void AddMeasurementB(double idx_value_dimensionful, const PostOperator &post_op,
                          const IoData &iodata);
-
-  public:
-    ProbePostPrinter(const fs::path &post_dir, const PostOperator &post_op,
-                     const std::string &idx_col_name, int n_expected_rows);
-
     void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
                         const IoData &iodata);
   };
@@ -91,7 +107,8 @@ protected:
     TableWithCSVFile error_indicator;
 
   public:
-    ErrorIndicatorPostPrinter(const fs::path &post_dir);
+    ErrorIndicatorPostPrinter() = default;
+    ErrorIndicatorPostPrinter(bool do_measurement, bool root, const fs::path &post_dir);
 
     void PrintIndicatorStatistics(const PostOperator &post_op,
                                   const ErrorIndicator::SummaryStatistics &indicator_stats);

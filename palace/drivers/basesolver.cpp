@@ -286,12 +286,14 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   }
 }
 
-BaseSolver::DomainsPostPrinter::DomainsPostPrinter(const fs::path &post_dir,
+BaseSolver::DomainsPostPrinter::DomainsPostPrinter(bool do_measurement, bool root,
+                                                   const fs::path &post_dir,
                                                    const PostOperator &post_op,
                                                    const std::string &idx_col_name,
                                                    int n_expected_rows)
+  : do_measurement_{do_measurement}, root_{root}
 {
-  if (!Mpi::Root(post_op.GetComm()))
+  if (!do_measurement_ || !root_)
   {
     return;
   }
@@ -320,7 +322,7 @@ void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionfu
                                                     const PostOperator &post_op,
                                                     const IoData &iodata)
 {
-  if (!Mpi::Root(post_op.GetComm()))
+  if (!do_measurement_ || !root_)
   {
     return;
   }
@@ -354,17 +356,26 @@ void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionfu
   domain_E.WriteFullTableTrunc();
 }
 
-BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(const fs::path &post_dir,
+BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(bool do_measurement, bool root,
+                                                     const fs::path &post_dir,
                                                      const PostOperator &post_op,
                                                      const std::string &idx_col_name,
                                                      int n_expected_rows)
+  : root_{root},
+    do_measurement_flux_(do_measurement                                       //
+                         && post_op.GetSurfacePostOp().flux_surfs.size() > 0  // Has flux
+                         ),
+    do_measurement_eps_(do_measurement                                      //
+                        && post_op.GetSurfacePostOp().eps_surfs.size() > 0  // Has eps
+    )
 {
-  if (!Mpi::Root(post_op.GetComm()))
+  if (!root_)
   {
     return;
   }
   using fmt::format;
-  if (post_op.GetSurfacePostOp().flux_surfs.size() > 0)
+
+  if (do_measurement_flux_)
   {
     surface_F = TableWithCSVFile(post_dir / "surface-F.csv");
     surface_F.table.reserve(n_expected_rows,
@@ -413,7 +424,7 @@ BaseSolver::SurfacesPostPrinter::SurfacesPostPrinter(const fs::path &post_dir,
     surface_F.AppendHeader();
   }
 
-  if (post_op.GetSurfacePostOp().eps_surfs.size() > 0)
+  if (do_measurement_eps_)
   {
     surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv");
     surface_Q.table.reserve(n_expected_rows,
@@ -432,6 +443,10 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
                                                          const PostOperator &post_op,
                                                          const IoData &iodata)
 {
+  if (!do_measurement_flux_ || !root_)
+  {
+    return;
+  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -473,6 +488,10 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimensi
                                                         const PostOperator &post_op,
                                                         const IoData &iodata)
 {
+  if (!do_measurement_eps_ || !root_)
+  {
+    return;
+  }
   using VT = IoData::ValueType;
   using fmt::format;
 
@@ -504,29 +523,32 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurement(double idx_value_dimensionf
   // If surfaces have been specified for postprocessing, compute the corresponding values
   // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
   // capacitor energies, and E_mag is the same for the B-field and lumped inductors.
-  if (post_op.GetSurfacePostOp().flux_surfs.size() > 0)
-  {
-    AddMeasurementFlux(idx_value_dimensionful, post_op, iodata);
-  }
-  if (post_op.GetSurfacePostOp().eps_surfs.size() > 0)
-  {
-    AddMeasurementEps(idx_value_dimensionful, post_op, iodata);
-  }
+  AddMeasurementFlux(idx_value_dimensionful, post_op, iodata);
+  AddMeasurementEps(idx_value_dimensionful, post_op, iodata);
 }
 
-BaseSolver::ProbePostPrinter::ProbePostPrinter(const fs::path &post_dir,
+BaseSolver::ProbePostPrinter::ProbePostPrinter(bool do_measurement, bool root,
+                                               const fs::path &post_dir,
                                                const PostOperator &post_op,
                                                const std::string &idx_col_name,
                                                int n_expected_rows)
+  : root_{root}, do_measurement_E_{do_measurement}, do_measurement_B_{do_measurement},
+    has_imag{post_op.HasImag()}, v_dim{post_op.GetInterpolationOpVDim()}
 {
 #if defined(MFEM_USE_GSLIB)
-  if (post_op.GetProbes().size() == 0 || !Mpi::Root(post_op.GetComm()))
+  do_measurement_E_ = do_measurement_E_                    //
+                      && (post_op.GetProbes().size() > 0)  // Has probes defined
+                      && post_op.HasE();                   // Has E fields
+
+  do_measurement_B_ = do_measurement_B_                    //
+                      && (post_op.GetProbes().size() > 0)  // Has probes defined
+                      && post_op.HasB();                   // Has B fields
+
+  if (!root_ || (!do_measurement_E_ && !do_measurement_B_))
   {
     return;
   }
   using fmt::format;
-  const int v_dim = post_op.GetInterpolationOpVDim();
-  const bool has_imag = post_op.HasImag();
   int scale_col = (has_imag ? 2 : 1) * v_dim;
   auto dim_labeler = [](int i) -> std::string
   {
@@ -544,7 +566,7 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(const fs::path &post_dir,
     }
   };
 
-  if (post_op.HasE())
+  if (do_measurement_E_)
   {
     probe_E = TableWithCSVFile(post_dir / "probe-E.csv");
     probe_E.table.reserve(n_expected_rows, scale_col * post_op.GetProbes().size());
@@ -573,7 +595,7 @@ BaseSolver::ProbePostPrinter::ProbePostPrinter(const fs::path &post_dir,
     probe_E.AppendHeader();
   }
 
-  if (post_op.HasB())
+  if (do_measurement_B_)
   {
     probe_B = TableWithCSVFile(post_dir / "probe-B.csv");
     probe_B.table.reserve(n_expected_rows, scale_col * post_op.GetProbes().size());
@@ -608,7 +630,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
-  if (!post_op.HasE())
+  if (!do_measurement_E_ || !root_)
   {
     return;
   }
@@ -616,8 +638,6 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
   using fmt::format;
 
   auto probe_field = post_op.ProbeEField();
-  const int v_dim = post_op.GetInterpolationOpVDim();
-  const bool has_imag = post_op.HasImag();
   MFEM_VERIFY(probe_field.size() == v_dim * post_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
@@ -645,7 +665,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
                                                    const PostOperator &post_op,
                                                    const IoData &iodata)
 {
-  if (!post_op.HasB())
+  if (!do_measurement_B_ || !root_)
   {
     return;
   }
@@ -653,8 +673,6 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
   using fmt::format;
 
   auto probe_field = post_op.ProbeBField();
-  const int v_dim = post_op.GetInterpolationOpVDim();
-  const bool has_imag = post_op.HasImag();
   MFEM_VERIFY(probe_field.size() == v_dim * post_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op.GetProbes().size(), v_dim * post_op.GetProbes().size(),
@@ -692,8 +710,15 @@ void BaseSolver::ProbePostPrinter::AddMeasurement(double idx_value_dimensionful,
 #endif
 }
 
-BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(const fs::path &post_dir)
+BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(bool do_measurement,
+                                                                 bool root,
+                                                                 const fs::path &post_dir)
+  : root_{root}, do_measurement_{do_measurement}
 {
+  if (!do_measurement_ || !root_)
+  {
+    return;
+  }
   error_indicator = TableWithCSVFile(post_dir / "error-indicators.csv");
   error_indicator.table.reserve(1, 4);
 
@@ -706,7 +731,7 @@ BaseSolver::ErrorIndicatorPostPrinter::ErrorIndicatorPostPrinter(const fs::path 
 void BaseSolver::ErrorIndicatorPostPrinter::PrintIndicatorStatistics(
     const PostOperator &post_op, const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
-  if (!Mpi::Root(post_op.GetComm()))
+  if (!do_measurement_ || !root_)
   {
     return;
   }
