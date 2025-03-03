@@ -18,7 +18,7 @@
     "RefineCrackElements": { "type": "boolean" },
     "CrackDisplacementFactor": { "type": "number", "inclusiveMinimum": 0.0 },
     "AddInterfaceBoundaryElements": { "type": "boolean" },
-    "ExportMeshBeforeCrack": { "type": "boolean" },
+    "ExportPrerefinedMesh": { "type": "boolean" },
     "ReorientTetMesh": { "type": "boolean" },
     "Partitioning": { "type": "string" },
     "Refinement":

@@ -3119,7 +3119,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   }
 
   // Export mesh after pre-processing, before cracking boundary elements.
-  if (iodata.model.export_mesh_before_crack && Mpi::Root(comm))
+  if (iodata.model.export_prerefined_mesh && Mpi::Root(comm))
   {
     auto pos = iodata.model.mesh.find_last_of(".");
     std::string meshfile = iodata.model.mesh.substr(0, pos) + "_preprocessed.mesh";
