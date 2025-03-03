@@ -474,7 +474,8 @@ void ModelData::SetUp(json &config)
   refine_crack_elements = model->value("RefineCrackElements", refine_crack_elements);
   crack_displ_factor = model->value("CrackDisplacementFactor", crack_displ_factor);
   add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
-  export_mesh_before_crack = model->value("ExportMeshBeforeCracking", export_mesh_before_crack);
+  export_mesh_before_crack =
+      model->value("ExportMeshBeforeCracking", export_mesh_before_crack);
   reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
   partitioning = model->value("Partitioning", partitioning);
   refinement.SetUp(*model);
