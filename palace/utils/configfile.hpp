@@ -235,6 +235,9 @@ public:
   // have attached elements on either side with different domain attributes.
   bool add_bdr_elements = true;
 
+  // Export mesh after pre-processing but before cracking.
+  bool export_mesh_before_crack = false;
+
   // Call MFEM's ReorientTetMesh as a check of mesh orientation after partitioning.
   bool reorient_tet_mesh = false;
 

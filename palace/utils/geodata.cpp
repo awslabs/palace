@@ -60,7 +60,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
 int AddInterfaceBdrElements(const IoData &, std::unique_ptr<mfem::Mesh> &,
-                            std::unordered_map<int, int> &);
+                            std::unordered_map<int, int> &, MPI_Comm comm);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -198,7 +198,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     {
       // Split all internal (non periodic) boundary elements for boundary attributes where
       // BC are applied (not just postprocessing).
-      while (AddInterfaceBdrElements(iodata, smesh, face_to_be) != 1)
+      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
       {
         // May require multiple calls due to early exit/retry approach.
       }
@@ -2791,7 +2791,7 @@ struct UnorderedPairHasher
 };
 
 int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            std::unordered_map<int, int> &face_to_be)
+                            std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)
@@ -3116,6 +3116,16 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
       Mpi::Print("Added {:d} boundary elements for material interfaces to the mesh\n",
                  new_nbe_int);
     }
+  }
+
+  // Export mesh after pre-processing, before cracking boundary elements.
+  if (iodata.model.export_mesh_before_crack && Mpi::Root(comm))
+  {
+    auto pos = iodata.model.mesh.find_last_of(".");
+    std::string meshfile = iodata.model.mesh.substr(0, pos) + "_preprocessed.mesh";
+    std::ofstream fo(meshfile);
+    fo.precision(MSH_FLT_PRECISION);
+    orig_mesh->Print(fo);
   }
 
   // Create the new mesh. We can't just add the new vertices and boundary elements to the
