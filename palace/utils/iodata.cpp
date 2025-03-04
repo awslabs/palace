@@ -240,11 +240,13 @@ void IoData::CheckConfiguration()
       Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
                    "conditions!\n");
     }
+    /*
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {
       Mpi::Warning(
           "Eigenmode problem type does not support wave port boundary conditions!\n");
     }
+    */
   }
   else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
   {
