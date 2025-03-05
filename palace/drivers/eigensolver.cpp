@@ -214,8 +214,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // closest to the specified target, σ.
   const double target = iodata.solver.eigenmode.target;
   {
-    const double f_target =
-        iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
+    const double f_target = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
   if (C)
@@ -450,11 +449,11 @@ void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   std::complex<double> f =
-      iodata.DimensionalizeValue(VT::FREQUENCY, post_op.GetFrequency());
+      iodata.units.Dimensionalize<VT::FREQUENCY>(post_op.GetFrequency());
   double Q = (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
 
   eig.table["idx"] << eigen_print_idx;
@@ -507,15 +506,15 @@ void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
   port_V.table["idx"] << eigen_print_idx;
   port_I.table["idx"] << eigen_print_idx;
 
-  auto unit_V = iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
-  auto unit_A = iodata.DimensionalizeValue(VT::CURRENT, 1.0);
+  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
+  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
 
   for (const auto &[idx, data] : lumped_port_op)
   {
@@ -614,7 +613,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
     return;
   }
   using fmt::format;
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   auto omega = post_op.GetFrequency();
   double E_elec = post_op.GetEFieldEnergy();
@@ -628,7 +627,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
     double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
 
     port_Q.table[format("Ql_{}", idx)] << Ql;
-    port_Q.table[format("Kl_{}", idx)] << iodata.DimensionalizeValue(VT::FREQUENCY, Kl);
+    port_Q.table[format("Kl_{}", idx)] << iodata.units.Dimensionalize<VT::FREQUENCY>(Kl);
   }
   port_Q.AppendRow();
 }

@@ -103,7 +103,7 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
   auto to = [&buf](auto fmt, auto &&...args)
   { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
 
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   to("\nConfiguring Robin impedance BC at attributes:\n");
   for (const auto &bdr : boundaries)
@@ -113,15 +113,15 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
       to(" {:d}:", attr);
       if (std::abs(bdr.Rs) > 0.0)
       {
-        to(" Rs = {:.3e} Ω/sq,", iodata.DimensionalizeValue(VT::IMPEDANCE, bdr.Rs));
+        to(" Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
-        to(" Ls = {:.3e} H/sq,", iodata.DimensionalizeValue(VT::INDUCTANCE, bdr.Ls));
+        to(" Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
-        to(" Cs = {:.3e} F/sq,", iodata.DimensionalizeValue(VT::CAPACITANCE, bdr.Cs));
+        to(" Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs));
       }
       to(" n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }

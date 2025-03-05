@@ -168,7 +168,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   auto t0 = Timer::Now();
   for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    const double freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
@@ -212,7 +212,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
 
-    const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+    const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                E_mag * J, (E_elec + E_mag) * J);
 
@@ -277,7 +277,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
   auto t0 = Timer::Now();
-  const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
+  const double f0 = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              n_step - step0, omega0 * f0,
@@ -380,7 +380,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   double omega = omega0;
   for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    const double freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
@@ -409,7 +409,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
 
     const double E_elec = post_op.GetEFieldEnergy();
     const double E_mag = post_op.GetHFieldEnergy();
-    const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+    const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                E_mag * J, (E_elec + E_mag) * J);
 
@@ -471,14 +471,14 @@ void DrivenSolver::CurrentsPostPrinter::AddMeasurement(double freq,
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   surface_I.table["idx"] << freq;
   for (const auto &[idx, data] : surf_j_op)
   {
     auto I_inc = data.GetExcitationCurrent();
-    surface_I.table[format("I_{}", idx)] << iodata.DimensionalizeValue(VT::CURRENT, I_inc);
+    surface_I.table[format("I_{}", idx)] << iodata.units.Dimensionalize<VT::CURRENT>(I_inc);
   }
   surface_I.AppendRow();
 }
@@ -531,15 +531,15 @@ void DrivenSolver::PortsPostPrinter::AddMeasurement(
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
   port_V.table["idx"] << freq;
   port_I.table["idx"] << freq;
 
-  auto unit_V = iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
-  auto unit_A = iodata.DimensionalizeValue(VT::CURRENT, 1.0);
+  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
+  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
 
   for (const auto &[idx, data] : lumped_port_op)
   {
@@ -636,7 +636,7 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   // Add frequencies
@@ -692,13 +692,11 @@ DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
 {
 }
 
-void DrivenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,
-                                                            const PostOperator &post_op,
-                                                            const SpaceOperator &space_op,
-                                                            int step)
+void DrivenSolver::PostprocessPrintResults::PostprocessStep(
+    const IoData &iodata, const PostOperator::Measurement &measurement, int step)
 {
   double omega = post_op.GetFrequency().real();
-  auto freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+  auto freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
 
   domains.AddMeasurement(freq, post_op, iodata);
   surfaces.AddMeasurement(freq, post_op, iodata);

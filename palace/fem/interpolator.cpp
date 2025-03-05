@@ -85,12 +85,10 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
   {
     if (op.GetCode()[i++] == 2)
     {
-      Mpi::Warning("Probe {:d} at ({:.3e}, {:.3e}, {:.3e}) m could not be found!\n"
-                   "Using default value 0.0!\n",
-                   idx,
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[0]),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[1]),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[2]));
+      Mpi::Warning(
+          "Probe {:d} at ({:.3e}) m could not be found!\n Using default value 0.0!\n", idx,
+          fmt::join(iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.center),
+                    ", "));
     }
   }
 #else
