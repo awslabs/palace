@@ -499,7 +499,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // Print some mesh information.
   mfem::Vector bbmin, bbmax;
   GetAxisAlignedBoundingBox(*mesh[0], bbmin, bbmax);
-  const double Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
+  const double Lc = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
   Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
              mesh[0]->GetNodes()
                  ? std::to_string(mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder())
@@ -1630,7 +1630,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
         // fo << std::fixed;
         fo << std::scientific;
         fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(smesh, iodata.GetMeshLengthScale());
+        mesh::DimensionalizeMesh(smesh, iodata.units.GetMeshLengthRelativeScale());
         smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
       }
       Mpi::Barrier(comm);

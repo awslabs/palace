@@ -83,7 +83,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(laplace_op.GetComm(), V[step]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
       Mpi::Print(" Field energy E = {:.3e} J\n", E_elec * J);
     }
 
@@ -152,7 +152,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   // Write capactance matrix data.
@@ -180,7 +180,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     }
     output.WriteFullTableTrunc();
   };
-  const double F = iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
+  const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
@@ -194,7 +194,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     for (const auto &[idx, data] : terminal_sources)
     {
       terminal_V.table["i"] << double(idx);
-      terminal_V.table["Vinc"] << iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
+      terminal_V.table["Vinc"] << iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
       i++;
     }
     terminal_V.WriteFullTableTrunc();

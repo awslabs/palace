@@ -365,7 +365,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
   auto to = [](auto &buf, auto fmt, auto &&...args)
   { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   // Print out BC info for all port attributes, for both active and inactive ports.
   to(buf, "\nConfiguring Robin impedance BC for lumped ports at attributes:\n");
@@ -379,17 +379,17 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
         if (std::abs(data.R) > 0.0)
         {
           double Rs = data.R * data.GetToSquare(*elem);
-          to(buf, " Rs = {:.3e} Ω/sq,", iodata.DimensionalizeValue(VT::IMPEDANCE, Rs));
+          to(buf, " Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(Rs));
         }
         if (std::abs(data.L) > 0.0)
         {
           double Ls = data.L * data.GetToSquare(*elem);
-          to(buf, " Ls = {:.3e} H/sq,", iodata.DimensionalizeValue(VT::INDUCTANCE, Ls));
+          to(buf, " Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(Ls));
         }
         if (std::abs(data.C) > 0.0)
         {
           double Cs = data.C / data.GetToSquare(*elem);
-          to(buf, " Cs = {:.3e} F/sq,", iodata.DimensionalizeValue(VT::CAPACITANCE, Cs));
+          to(buf, " Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(Cs));
         }
         to(buf, " n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
       }
@@ -407,15 +407,15 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
     to(buf_a, " Index = {:d}: ", idx);
     if (std::abs(data.R) > 0.0)
     {
-      to(buf_a, "R = {:.3e} Ω,", iodata.DimensionalizeValue(VT::IMPEDANCE, data.R));
+      to(buf_a, "R = {:.3e} Ω,", iodata.units.Dimensionalize<VT::IMPEDANCE>(data.R));
     }
     if (std::abs(data.L) > 0.0)
     {
-      to(buf_a, "L = {:.3e} H,", iodata.DimensionalizeValue(VT::INDUCTANCE, data.L));
+      to(buf_a, "L = {:.3e} H,", iodata.units.Dimensionalize<VT::INDUCTANCE>(data.L));
     }
     if (std::abs(data.C) > 0.0)
     {
-      to(buf_a, "C = {:.3e} F,", iodata.DimensionalizeValue(VT::CAPACITANCE, data.C));
+      to(buf_a, "C = {:.3e} F,", iodata.units.Dimensionalize<VT::CAPACITANCE>(data.C));
     }
     buf_a.resize(buf_a.size() - 1);  // Remove last ","
     to(buf_a, "\n");

@@ -85,7 +85,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
                linalg::Norml2(curlcurl_op.GetComm(), RHS));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
       Mpi::Print(" Field energy H = {:.3e} J\n", E_mag * J);
     }
     I_inc[step] = data.GetExcitationCurrent();
@@ -158,7 +158,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   // Write inductance matrix data.
@@ -185,7 +185,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
     }
     output.WriteFullTableTrunc();
   };
-  const double H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
+  const double H = iodata.units.Dimensionalize<VT::INDUCTANCE>(1.0);
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
@@ -199,7 +199,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
     for (const auto &[idx, data] : surf_j_op)
     {
       terminal_I.table["i"] << double(idx);
-      terminal_I.table["Iinc"] << iodata.DimensionalizeValue(VT::CURRENT, I_inc[i]);
+      terminal_I.table["Iinc"] << iodata.units.Dimensionalize<VT::CURRENT>(I_inc[i]);
       i++;
     }
     terminal_I.WriteFullTableTrunc();

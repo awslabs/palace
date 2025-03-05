@@ -1043,8 +1043,8 @@ WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator 
                                    mfem::ParFiniteElementSpace &nd_fespace,
                                    mfem::ParFiniteElementSpace &h1_fespace)
   : suppress_output(false),
-    fc(iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0)),
-    kc(1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0))
+    fc(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
+    kc(1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
 {
   // Set up wave port boundary conditions.
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
@@ -1166,7 +1166,6 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
   auto to = [&buf](auto fmt, auto &&...args)
   { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
-  using VT = IoData::ValueType;
 
   // Print out BC info for all active port attributes.
   for (const auto &[idx, data] : ports)
@@ -1178,7 +1177,8 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     for (auto attr : data.GetAttrList())
     {
       to(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr, idx,
-         data.mode_idx, iodata.DimensionalizeValue(VT::LENGTH, data.d_offset),
+         data.mode_idx,
+         iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
          fmt::join(data.port_normal, ","));
     }
   }

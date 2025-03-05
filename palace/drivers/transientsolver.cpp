@@ -86,7 +86,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto t0 = Timer::Now();
   for (int step = 0; step < n_step; step++)
   {
-    const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
+    const double ts = iodata.units.Dimensionalize<Units::ValueType::TIME>(t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, n_step - 1,
                ts, Timer::Duration(Timer::Now() - t0).count());
 
@@ -117,7 +117,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
     {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -274,14 +274,14 @@ void TransientSolver::CurrentsPostPrinter::AddMeasurement(double t, double J_coe
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
-  surface_I.table["idx"] << iodata.DimensionalizeValue(VT::TIME, t);
+  surface_I.table["idx"] << iodata.units.Dimensionalize<VT::TIME>(t);
   for (const auto &[idx, data] : surf_j_op)
   {
     auto I_inc = data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
-    surface_I.table[format("I_{}", idx)] << iodata.DimensionalizeValue(VT::CURRENT, I_inc);
+    surface_I.table[format("I_{}", idx)] << iodata.units.Dimensionalize<VT::CURRENT>(I_inc);
   }
   surface_I.AppendRow();
 }
@@ -327,16 +327,16 @@ void TransientSolver::PortsPostPrinter::AddMeasurement(
     return;
   }
   using fmt::format;
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
 
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
-  auto time = iodata.DimensionalizeValue(VT::TIME, t);
+  auto time = iodata.units.Dimensionalize<VT::TIME>(t);
   port_V.table["idx"] << time;
   port_I.table["idx"] << time;
 
-  auto unit_V = iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
-  auto unit_A = iodata.DimensionalizeValue(VT::CURRENT, 1.0);
+  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
+  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
 
   for (const auto &[idx, data] : lumped_port_op)
   {
@@ -377,7 +377,7 @@ void TransientSolver::PostprocessPrintResults::PostprocessStep(
     const IoData &iodata, const PostOperator &post_op, const SpaceOperator &space_op,
     int step, double t, double J_coef)
 {
-  auto time = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
+  auto time = iodata.units.Dimensionalize<Units::ValueType::TIME>(t);
   domains.AddMeasurement(time, post_op, iodata);
   surfaces.AddMeasurement(time, post_op, iodata);
   currents.AddMeasurement(t, J_coef, space_op, iodata);

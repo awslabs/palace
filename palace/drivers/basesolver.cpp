@@ -326,10 +326,10 @@ void BaseSolver::DomainsPostPrinter::AddMeasurement(double idx_value_dimensionfu
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
-  double oneJ = iodata.DimensionalizeValue(VT::ENERGY, 1.0);
+  double oneJ = iodata.units.Dimensionalize<VT::ENERGY>(1.0);
 
   domain_E.table["idx"] << idx_value_dimensionful;
 
@@ -447,7 +447,7 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   const bool has_imaginary = post_op.HasImag();
@@ -457,15 +457,15 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementFlux(double idx_value_dimens
     switch (flux_type)
     {
       case SurfaceFluxType::ELECTRIC:
-        Phi *= iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
-        Phi *= iodata.DimensionalizeValue(VT::VOLTAGE, 1.0);
+        Phi *= iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
+        Phi *= iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
         break;
       case SurfaceFluxType::MAGNETIC:
-        Phi *= iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
-        Phi *= iodata.DimensionalizeValue(VT::CURRENT, 1.0);
+        Phi *= iodata.units.Dimensionalize<VT::INDUCTANCE>(1.0);
+        Phi *= iodata.units.Dimensionalize<VT::CURRENT>(1.0);
         break;
       case SurfaceFluxType::POWER:
-        Phi *= iodata.DimensionalizeValue(VT::POWER, 1.0);
+        Phi *= iodata.units.Dimensionalize<VT::POWER>(1.0);
         break;
     }
     return Phi;
@@ -492,7 +492,7 @@ void BaseSolver::SurfacesPostPrinter::AddMeasurementEps(double idx_value_dimensi
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   // Interface Participation adds energy contriutions E_elec + E_cap
@@ -634,7 +634,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   auto probe_field = post_op.ProbeEField();
@@ -649,7 +649,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementE(double idx_value_dimensionful
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
-      auto val = iodata.DimensionalizeValue(VT::FIELD_E, probe_field[i * v_dim + i_dim]);
+      auto val = iodata.units.Dimensionalize<VT::FIELD_E>(probe_field[i * v_dim + i_dim]);
       probe_E.table[format("E{}_{}_re", idx, i_dim)] << val.real();
       if (has_imag)
       {
@@ -669,7 +669,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
   {
     return;
   }
-  using VT = IoData::ValueType;
+  using VT = Units::ValueType;
   using fmt::format;
 
   auto probe_field = post_op.ProbeBField();
@@ -684,7 +684,7 @@ void BaseSolver::ProbePostPrinter::AddMeasurementB(double idx_value_dimensionful
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
-      auto val = iodata.DimensionalizeValue(VT::FIELD_B, probe_field[i * v_dim + i_dim]);
+      auto val = iodata.units.Dimensionalize<VT::FIELD_B>(probe_field[i * v_dim + i_dim]);
       probe_B.table[format("B{}_{}_re", idx, i_dim)] << val.real();
       if (has_imag)
       {
