@@ -17,7 +17,6 @@
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
-#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 
 namespace palace

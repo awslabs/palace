@@ -214,7 +214,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // closest to the specified target, σ.
   const double target = iodata.solver.eigenmode.target;
   {
-    const double f_target = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
+    const double f_target =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
   if (C)
