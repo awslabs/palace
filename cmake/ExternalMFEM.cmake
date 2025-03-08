@@ -378,6 +378,13 @@ else()
   endforeach()
 endif()
 
+# Avoid "Error: symbol `fatbinData' is already defined" caused by LTO when compiled with CUDA
+if(PALACE_WITH_CUDA)
+  set(MFEM_TEST_COMMAND "")
+else()
+  set(MFEM_TEST_COMMAND "${CMAKE_MAKE_PROGRAM} ex1 ex1p")
+endif()
+
 string(REPLACE ";" "; " MFEM_OPTIONS_PRINT "${MFEM_OPTIONS}")
 message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
@@ -405,5 +412,5 @@ ExternalProject_Add(mfem
     git clean -fd &&
     git apply "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
-  TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
+  TEST_COMMAND      ${MFEM_TEST_COMMAND}
 )

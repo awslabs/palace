@@ -54,6 +54,12 @@ if(PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
+# Avoid "Error: symbol `fatbinData' is already defined" caused by LTO when compiled with CUDA
+if(PALACE_WITH_CUDA)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-lto")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-lto")
+endif()
+
 # Enable CUDA/HIP if required
 if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
   message(FATAL_ERROR "PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
