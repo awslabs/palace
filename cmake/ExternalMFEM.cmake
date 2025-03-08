@@ -378,7 +378,7 @@ else()
   endforeach()
 endif()
 
-# Avoid "Error: symbol `fatbinData' is already defined" caused by LTO when compiled with CUDA
+# Avoid "Error: symbol `fatbinData' is already defined" caused by LTO when compiling with CUDA
 if(PALACE_WITH_CUDA)
   set(MFEM_TEST_COMMAND "")
 else()
