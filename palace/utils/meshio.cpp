@@ -17,51 +17,51 @@ namespace
 
 inline int ElemTypeComsol(const std::string &type)
 {
-  if (!type.compare("tri"))  // 3-node triangle
+  if (!type.compare(0, 3, "tri"))  // 3-node triangle
   {
     return 2;
   }
-  if (!type.compare("quad"))  // 4-node quadrangle
+  if (!type.compare(0, 4, "quad"))  // 4-node quadrangle
   {
     return 3;
   }
-  if (!type.compare("tet"))  // 4-node tetrahedron
+  if (!type.compare(0, 3, "tet"))  // 4-node tetrahedron
   {
     return 4;
   }
-  if (!type.compare("hex"))  // 8-node hexahedron
+  if (!type.compare(0, 3, "hex"))  // 8-node hexahedron
   {
     return 5;
   }
-  if (!type.compare("prism"))  // 6-node prism
+  if (!type.compare(0, 5, "prism"))  // 6-node prism
   {
     return 6;
   }
-  if (!type.compare("pyr"))  // 5-node pyramid
+  if (!type.compare(0, 3, "pyr"))  // 5-node pyramid
   {
     return 7;
   }
-  if (!type.compare("tri2"))  // 6-node triangle
+  if (!type.compare(0, 4, "tri2"))  // 6-node triangle
   {
     return 9;
   }
-  if (!type.compare("quad2"))  // 9-node quadrangle
+  if (!type.compare(0, 5, "quad2"))  // 9-node quadrangle
   {
     return 10;
   }
-  if (!type.compare("tet2"))  // 10-node tetrahedron
+  if (!type.compare(0, 4, "tet2"))  // 10-node tetrahedron
   {
     return 11;
   }
-  if (!type.compare("hex2"))  // 27-node hexahedron
+  if (!type.compare(0, 4, "hex2"))  // 27-node hexahedron
   {
     return 12;
   }
-  if (!type.compare("prism2"))  // 18-node prism
+  if (!type.compare(0, 6, "prism2"))  // 18-node prism
   {
     return 13;
   }
-  if (!type.compare("pyr2"))  // 14-node pyramid
+  if (!type.compare(0, 4, "pyr2"))  // 14-node pyramid
   {
     return 14;
   }
@@ -241,7 +241,7 @@ inline std::string GetLineNastran(std::ifstream &input)
 {
   std::string str;
   std::getline(input, str);
-  MFEM_VERIFY(input.good() || input.eof(), "Unexpected read failure parsing mesh file!");
+  MFEM_VERIFY(input.good(), "Unexpected read failure parsing mesh file!");
   return str[0] == '$' ? "" : str;
 }
 
@@ -539,13 +539,13 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                 "Invalid COMSOL object version!");
 
     // If yes, then ready to parse the mesh.
-    if (!object_class.compare("Mesh"))
+    if (!object_class.compare(0, 4, "Mesh"))
     {
       break;
     }
 
     // Otherwise, parse over the selection to the next object.
-    MFEM_VERIFY(!object_class.compare("Selection"),
+    MFEM_VERIFY(!object_class.compare(0, 9, "Selection"),
                 "COMSOL mesh file only supports Mesh and Selection objects!");
     int version = -1;
     std::string label_str;
@@ -938,7 +938,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
     auto line = GetLineNastran(input);
     if (line.length() > 0)
     {
-      if (!line.compare("BEGIN BULK"))
+      if (!line.compare(0, 10, "BEGIN BULK"))
       {
         break;
       }
@@ -954,9 +954,9 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   while (true)
   {
     auto line = GetLineNastran(input);
-    if (line.length() > 0)
+    if (line.length() > 0 && !input.eof())
     {
-      if (!line.compare("ENDDATA"))
+      if (!line.compare(0, 7, "ENDDATA"))
       {
         break;  // Done parsing file
       }
