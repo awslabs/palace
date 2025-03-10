@@ -241,7 +241,7 @@ inline std::string GetLineNastran(std::ifstream &input)
 {
   std::string str;
   std::getline(input, str);
-  MFEM_VERIFY(input, "Unexpected read failure parsing mesh file!");
+  MFEM_VERIFY(input.good() || input.eof(), "Unexpected read failure parsing mesh file!");
   return str[0] == '$' ? "" : str;
 }
 
