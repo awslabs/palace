@@ -214,7 +214,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
     MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC ||
                     data.type == config::SurfaceFluxData::Type::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
-                "for electrostatic problems!");
+                "for magnetostatic problems!");
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
   }
 
