@@ -1958,7 +1958,6 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                const double tol = 1e-8)
 {
   // Get mesh dimensions, will be used to define a reasonable tolerance in mesh units.
-  const int sdim = mesh->SpaceDimension();
   mfem::Vector bbmin, bbmax;
   mesh->GetBoundingBox(bbmin, bbmax);
   bbmax -= bbmin;
