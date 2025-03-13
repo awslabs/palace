@@ -4,7 +4,9 @@
 #ifndef PALACE_LIBCEED_UTILS_32_QF_H
 #define PALACE_LIBCEED_UTILS_32_QF_H
 
+#ifndef CEED_RUNNING_JIT_PASS
 #include <math.h>
+#endif
 
 CEED_QFUNCTION_HELPER CeedScalar DetJ32(const CeedScalar J[6])
 {
