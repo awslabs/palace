@@ -319,7 +319,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   wave_vector = 0.0;
   for (const auto &data : iodata.boundaries.periodic)
   {
-    MFEM_VERIFY(data.wave_vector.size() == sdim,
+    MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
                 "Floquet wave vector size must equal the spatial dimension.");
     std::copy(data.wave_vector.begin(), data.wave_vector.end(),
               local_wave_vector.GetData());
@@ -328,7 +328,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
 
   // Get Floquet wave vector specified outside of periodic boundary definitions.
   const auto &data = iodata.boundaries.floquet;
-  MFEM_VERIFY(data.wave_vector.size() == sdim,
+  MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
               "Floquet wave vector size must equal the spatial dimension.");
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
   wave_vector += local_wave_vector;

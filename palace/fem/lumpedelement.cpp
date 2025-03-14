@@ -89,7 +89,7 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
               "Boundary elements must be coplanar to define a coaxial lumped element!");
 
   // Direction of the excitation as +/-r̂.
-  direction = (input_dir[0] > 0);
+  direction = (input_dir[0] > 0 ? +1 : -1);
   origin.SetSize(bounding_ball.center.size());
   std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), origin.begin());
 

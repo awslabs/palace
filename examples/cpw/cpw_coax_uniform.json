@@ -80,13 +80,13 @@
       {
         "Index": 3,
         "Attributes": [6],
-        "Direction": "+R",
+        "Direction": "-R",
         "R": 56.02  // Ω
       },
       {
         "Index": 4,
         "Attributes": [7],
-        "Direction": "+R",
+        "Direction": "-R",
         "R": 56.02  // Ω
       }
     ],
