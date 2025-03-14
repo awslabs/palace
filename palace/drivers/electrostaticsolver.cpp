@@ -37,11 +37,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
-  PostOperator post_op(iodata, laplace_op);
+  PostOperator<config::ProblemData::Type::ELECTROSTATIC> post_op(iodata, laplace_op);
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0, "No terminal boundaries specified for electrostatic simulation!");
-  PostprocessPrintResults post_results(post_dir, post_op,
-                                       iodata.solver.electrostatic.n_post);
 
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width()), E(Grad.Height());
@@ -70,29 +68,22 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     laplace_op.GetExcitationVector(idx, *K, V[step], RHS);
     ksp.Mult(RHS, V[step]);
 
-    // Compute E = -∇V on the true dofs, and set the internal GridFunctions in PostOperator
-    // for all postprocessing operations.
+    // Start Post-processing.
     BlockTimer bt2(Timer::POSTPRO);
-    E = 0.0;
-    Grad.AddMult(V[step], E, -1.0);
-    post_op.SetVGridFunction(V[step]);
-    post_op.SetEGridFunction(E);
-    post_op.MeasureAll();
-    const double E_elec = post_op.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplace_op.GetComm(), V[step]),
                linalg::Norml2(laplace_op.GetComm(), RHS));
-    {
-      const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
-      Mpi::Print(" Field energy E = {:.3e} J\n", E_elec * J);
-    }
+
+    // Compute E = -∇V on the true dofs.
+    E = 0.0;
+    Grad.AddMult(V[step], E, -1.0);
+
+    // Measurment and printing.
+    auto total_domain_energy = post_op.MeasurePrintAll(step, V[step], E, idx);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, E_elec, indicator);
-
-    // Postprocess field solutions and optionally write solution to disk.
-    post_results.PostprocessStep(iodata, post_op, step, idx);
+    estimator.AddErrorIndicator(E, total_domain_energy, indicator);
 
     // Next terminal.
     step++;
@@ -102,12 +93,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
-  post_results.PostprocessFinal(post_op, indicator);
+  post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};
 }
 
 void ElectrostaticSolver::PostprocessTerminals(
-    PostOperator &post_op, const std::map<int, mfem::Array<int>> &terminal_sources,
+    PostOperator<config::ProblemData::Type::ELECTROSTATIC> &post_op,
+    const std::map<int, mfem::Array<int>> &terminal_sources,
     const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
@@ -162,12 +154,11 @@ void ElectrostaticSolver::PostprocessTerminals(
                                                const mfem::DenseMatrix &mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
-    output.table.insert_column(Column("i", "i", 0, {}, {}, ""));
+    output.table.insert(Column("i", "i", 0, {}, {}, ""));
     int j = 0;
     for (const auto &[idx2, data2] : terminal_sources)
     {
-      output.table.insert_column(format("i2{}", idx2),
-                                 format("{}[i][{}] {}", name, idx2, unit));
+      output.table.insert(format("i2{}", idx2), format("{}[i][{}] {}", name, idx2, unit));
       // Use the fact that iterator over i and j is the same span
       output.table["i"] << idx2;
 
@@ -188,8 +179,8 @@ void ElectrostaticSolver::PostprocessTerminals(
   // Also write out a file with terminal voltage excitations.
   {
     TableWithCSVFile terminal_V(post_dir / "terminal-V.csv");
-    terminal_V.table.insert_column(Column("i", "i", 0, {}, {}, ""));
-    terminal_V.table.insert_column("Vinc", "V_inc[i] (V)");
+    terminal_V.table.insert(Column("i", "i", 0, {}, {}, ""));
+    terminal_V.table.insert("Vinc", "V_inc[i] (V)");
     int i = 0;
     for (const auto &[idx, data] : terminal_sources)
     {
@@ -198,42 +189,6 @@ void ElectrostaticSolver::PostprocessTerminals(
       i++;
     }
     terminal_V.WriteFullTableTrunc();
-  }
-}
-
-ElectrostaticSolver::PostprocessPrintResults::PostprocessPrintResults(
-    const fs::path &post_dir, const PostOperator &post_op, int n_post_)
-  : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{post_dir, post_op, "i", n_post}, surfaces{post_dir, post_op, "i", n_post},
-    probes{post_dir, post_op, "i", n_post}, error_indicator{post_dir}
-{
-}
-
-void ElectrostaticSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator &post_op, int step, int idx)
-{
-  domains.AddMeasurement(idx, post_op, iodata);
-  surfaces.AddMeasurement(idx, post_op, iodata);
-  probes.AddMeasurement(idx, post_op, iodata);
-
-  // The internal GridFunctions in PostOperator have already been set from V:
-  if (write_paraview_fields && step < n_post)
-  {
-    Mpi::Print("\n");
-    post_op.WriteFields(step, idx);
-    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
-  }
-}
-
-void ElectrostaticSolver::PostprocessPrintResults::PostprocessFinal(
-    const PostOperator &post_op, const ErrorIndicator &indicator)
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
-  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
-  if (write_paraview_fields)
-  {
-    post_op.WriteFieldsFinal(&indicator);
   }
 }
 

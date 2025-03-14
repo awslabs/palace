@@ -37,9 +37,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
-  PostOperator post_op(iodata, space_op);
-  PostprocessPrintResults post_results(post_dir, post_op, space_op, n_step,
-                                       iodata.solver.transient.delta_post);
+  PostOperator<config::ProblemData::Type::TRANSIENT> post_op(iodata, space_op);
 
   {
     Mpi::Print("\nComputing transient response for:\n");
@@ -107,31 +105,21 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     BlockTimer bt2(Timer::POSTPRO);
     const Vector &E = time_op.GetE();
     const Vector &B = time_op.GetB();
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.MeasureAll(space_op);
-
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
-    {
-      const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
-      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-                 E_mag * J, (E_elec + E_mag) * J);
-    }
+
+    auto total_domain_energy = post_op.MeasurePrintAll(step, E, B, t, J_coef(t));
+
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
-
-    post_results.PostprocessStep(iodata, post_op, space_op, step, t, J_coef(t));
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   }
   // Final postprocessing & printing
   BlockTimer bt1(Timer::POSTPRO);
   time_op.PrintStats();
   SaveMetadata(time_op.GetLinearSolver());
-  post_results.PostprocessFinal(post_op, indicator);
+  post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
@@ -242,167 +230,6 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
   double dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
                    (delta > 0.0 && dfinal - end < delta_eps * end));
-}
-
-TransientSolver::CurrentsPostPrinter::CurrentsPostPrinter(const fs::path &post_dir,
-                                                          const SpaceOperator &space_op,
-                                                          int n_expected_rows)
-{
-  const auto &surf_j_op = space_op.GetSurfaceCurrentOp();
-  if (surf_j_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-
-  surface_I = TableWithCSVFile(post_dir / "surface-I.csv");
-  surface_I.table.reserve(n_expected_rows, surf_j_op.Size());
-  surface_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
-  for (const auto &[idx, data] : surf_j_op)
-  {
-    surface_I.table.insert_column(format("I_{}", idx), format("I_inc[{}] (A)", idx));
-  }
-  surface_I.AppendHeader();
-}
-
-void TransientSolver::CurrentsPostPrinter::AddMeasurement(double t, double J_coef,
-                                                          const SpaceOperator &space_op,
-                                                          const IoData &iodata)
-{
-  const auto &surf_j_op = space_op.GetSurfaceCurrentOp();
-  if (surf_j_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-  using fmt::format;
-
-  surface_I.table["idx"] << iodata.units.Dimensionalize<VT::TIME>(t);
-  for (const auto &[idx, data] : surf_j_op)
-  {
-    auto I_inc = data.GetExcitationCurrent() * J_coef;  // I_inc(t) = g(t) I_inc
-    surface_I.table[format("I_{}", idx)] << iodata.units.Dimensionalize<VT::CURRENT>(I_inc);
-  }
-  surface_I.AppendRow();
-}
-
-TransientSolver::PortsPostPrinter::PortsPostPrinter(const fs::path &post_dir,
-                                                    const SpaceOperator &space_op,
-                                                    int n_expected_rows)
-{
-  const auto &lumped_port_op = space_op.GetLumpedPortOp();
-  if (lumped_port_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-  port_V = TableWithCSVFile(post_dir / "port-V.csv");
-  port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_V.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
-
-  port_I = TableWithCSVFile(post_dir / "port-I.csv");
-  port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_I.table.insert_column(Column("idx", "t (ns)", 0, {}, {}, ""));
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      port_V.table.insert_column(format("inc{}", idx), format("V_inc[{}] (V)", idx));
-      port_I.table.insert_column(format("inc{}", idx), format("I_inc[{}] (A)", idx));
-    }
-    port_V.table.insert_column(format("re{}", idx), format("V[{}] (V)", idx));
-    port_I.table.insert_column(format("re{}", idx), format("I[{}] (A)", idx));
-  }
-  port_V.AppendHeader();
-  port_I.AppendHeader();
-}
-
-void TransientSolver::PortsPostPrinter::AddMeasurement(
-    double t, double J_coef, const PostOperator &post_op,
-    const LumpedPortOperator &lumped_port_op, const IoData &iodata)
-{
-  if (lumped_port_op.Size() == 0 || !Mpi::Root(post_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-  using VT = Units::ValueType;
-
-  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
-  // = sqrt(2) * RMS).
-  auto time = iodata.units.Dimensionalize<VT::TIME>(t);
-  port_V.table["idx"] << time;
-  port_I.table["idx"] << time;
-
-  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
-  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      double V_inc = data.GetExcitationVoltage() * J_coef;  // V_inc(t) = g(t) V_inc
-      double I_inc = (std::abs(V_inc) > 0.0)
-                         ? data.GetExcitationPower() * J_coef * J_coef / V_inc
-                         : 0.0;
-
-      port_V.table[format("inc{}", idx)] << V_inc * unit_V;
-      port_I.table[format("inc{}", idx)] << I_inc * unit_A;
-    }
-
-    std::complex<double> V_i = post_op.GetPortVoltage(idx);
-    std::complex<double> I_i = post_op.GetPortCurrent(idx);
-
-    port_V.table[format("re{}", idx)] << V_i.real() * unit_V;
-    port_I.table[format("re{}", idx)] << I_i.real() * unit_A;
-  }
-  port_V.AppendRow();
-  port_I.AppendRow();
-}
-
-TransientSolver::PostprocessPrintResults::PostprocessPrintResults(
-    const fs::path &post_dir, const PostOperator &post_op, const SpaceOperator &space_op,
-    int n_expected_rows, int delta_post_)
-  : delta_post{delta_post_}, write_paraview_fields(delta_post_ > 0),
-    domains{post_dir, post_op, "t (ns)", n_expected_rows},
-    surfaces{post_dir, post_op, "t (ns)", n_expected_rows},
-    currents{post_dir, space_op, n_expected_rows},
-    probes{post_dir, post_op, "t (ns)", n_expected_rows},
-    ports{post_dir, space_op, n_expected_rows}, error_indicator{post_dir}
-{
-}
-
-void TransientSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator &post_op, const SpaceOperator &space_op,
-    int step, double t, double J_coef)
-{
-  auto time = iodata.units.Dimensionalize<Units::ValueType::TIME>(t);
-  domains.AddMeasurement(time, post_op, iodata);
-  surfaces.AddMeasurement(time, post_op, iodata);
-  currents.AddMeasurement(t, J_coef, space_op, iodata);
-  probes.AddMeasurement(time, post_op, iodata);
-  ports.AddMeasurement(t, J_coef, post_op, space_op.GetLumpedPortOp(), iodata);
-
-  // The internal GridFunctions in PostOperator have already been set:
-  if (write_paraview_fields && (step % delta_post == 0))
-  {
-    Mpi::Print("\n");
-    post_op.WriteFields(step / delta_post, time);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
-  }
-}
-
-void TransientSolver::PostprocessPrintResults::PostprocessFinal(
-    const PostOperator &post_op, const ErrorIndicator &indicator)
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
-  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
-  if (write_paraview_fields)
-  {
-    post_op.WriteFieldsFinal(&indicator);
-  }
 }
 
 }  // namespace palace

@@ -42,9 +42,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator post_op(iodata, space_op);
-  PostprocessPrintResults post_results(post_dir, post_op, space_op,
-                                       iodata.solver.eigenmode.n_post);
+  PostOperator<config::ProblemData::Type::EIGENMODE> post_op(iodata, space_op);
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
@@ -287,9 +285,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
-  // Update printer now we know num_conv
-  post_results.eigen.stdout_int_print_width = 1 + static_cast<int>(std::log10(num_conv));
-
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
   if (!KM)
@@ -302,7 +297,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
-  post_results.eigen.PrintStdoutHeader();  // Print headerline for logfile mode
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -332,358 +326,23 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // B = -1/(iω) ∇ x E + 1/ω kp x E.
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.SetFrequency(omega);
-    post_op.MeasureAll(space_op);
 
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
+    auto total_domain_energy =
+        post_op.MeasurePrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
     {
-      estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
-    // Postprocess state and write fields to file
-    post_results.PostprocessStep(iodata, post_op, space_op, i, error_abs, error_bkwd);
-
-    // Final write: Different condition than end of loop (i = num_conv - 1)
+    // Final write: Different condition than end of loop (i = num_conv - 1).
     if (i == iodata.solver.eigenmode.n - 1)
     {
-      post_results.PostprocessFinal(post_op, indicator);
+      post_op.MeasureFinalize(indicator);
     }
   }
   return {indicator, space_op.GlobalTrueVSize()};
-}
-
-void EigenSolver::EigenPostPrinter::PrintStdoutHeader()
-{
-  if (!root_)
-  {
-    return;
-  }
-  auto save_defaults(eig.table.col_options);
-
-  eig.table.col_options.float_precision = 6;
-  eig.table.col_options.min_left_padding = 6;
-
-  // Separate printing due to printing lead as integer not float
-  fmt::memory_buffer buf;
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
-
-  to("{}", eig.table[0].format_header(stdout_int_print_width));
-  for (int i = 1; i < eig.table.n_cols(); i++)
-  {
-    if (i > 0)
-    {
-      to("{:s}", eig.table.print_col_separator);
-    }
-    to("{:s}", eig.table[i].format_header());
-  }
-  to("{:s}", eig.table.print_row_separator);
-
-  Mpi::Print("{}{}\n", std::string{buf.data(), buf.size()},
-             std::string(stdout_int_print_width + 4 * eig.table[1].col_width(), '='));
-  eig.table.col_options = save_defaults;
-}
-
-void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
-{
-  if (!root_)
-  {
-    return;
-  }
-  auto save_defaults(eig.table.col_options);
-  eig.table.col_options.float_precision = 6;
-  eig.table.col_options.min_left_padding = 6;
-
-  // Separate printing due to integer lead
-  fmt::memory_buffer buf;
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
-
-  to("{:{}d}", int(eig.table[0].data.at(j)), stdout_int_print_width);
-  for (int i = 1; i < eig.table.n_cols(); i++)
-  {
-    if (i > 0)
-    {
-      to("{:s}", eig.table.print_col_separator);
-    }
-    to("{:s}", eig.table[i].format_row(j));
-  }
-  to("{:s}", eig.table.print_row_separator);
-  Mpi::Print("{}", fmt::to_string(buf));
-  eig.table.col_options = save_defaults;
-}
-
-EigenSolver::EigenPostPrinter::EigenPostPrinter(const fs::path &post_dir,
-                                                const SpaceOperator &space_op, int n_post)
-  : root_(Mpi::Root(space_op.GetComm())),
-    stdout_int_print_width(1 + static_cast<int>(std::log10(n_post)))
-{
-  // Note: we switch to n_eig rather than n_conv for padding since we don't know n_conv
-  // until solve
-  if (!root_)
-  {
-    return;
-  }
-  eig = TableWithCSVFile(post_dir / "eig.csv");
-  eig.table.reserve(n_post, 6);
-  eig.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-  eig.table.insert_column("f_re", "Re{f} (GHz)");
-  eig.table.insert_column("f_im", "Im{f} (GHz)");
-  eig.table.insert_column("q", "Q");
-  eig.table.insert_column("err_back", "Error (Bkwd.)");
-  eig.table.insert_column("err_abs", "Error (Abs.)");
-  eig.AppendHeader();
-}
-
-void EigenSolver::EigenPostPrinter::AddMeasurement(int eigen_print_idx,
-                                                   const PostOperator &post_op,
-                                                   double error_bkwd, double error_abs,
-                                                   const IoData &iodata)
-{
-  if (!root_)
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-  using fmt::format;
-
-  std::complex<double> f =
-      iodata.units.Dimensionalize<VT::FREQUENCY>(post_op.GetFrequency());
-  double Q = (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
-
-  eig.table["idx"] << eigen_print_idx;
-  eig.table["f_re"] << f.real();
-  eig.table["f_im"] << f.imag();
-  eig.table["q"] << Q;
-  eig.table["err_back"] << error_bkwd;
-  eig.table["err_abs"] << error_abs;
-
-  eig.AppendRow();
-  PrintStdoutRow(eig.table.n_rows() - 1);
-}
-
-EigenSolver::PortsPostPrinter::PortsPostPrinter(const fs::path &post_dir,
-                                                const SpaceOperator &space_op,
-                                                int n_expected_rows)
-{
-  const auto &lumped_port_op = space_op.GetLumpedPortOp();
-  if (lumped_port_op.Size() == 0 || !Mpi::Root(space_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-  port_V = TableWithCSVFile(post_dir / "port-V.csv");
-  port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_V.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-
-  port_I = TableWithCSVFile(post_dir / "port-I.csv");
-  port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_I.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    port_V.table.insert_column(format("re{}", idx), format("Re{{V[{}]}} (V)", idx));
-    port_V.table.insert_column(format("im{}", idx), format("Im{{V[{}]}} (V)", idx));
-
-    port_I.table.insert_column(format("re{}", idx), format("Re{{I[{}]}} (A)", idx));
-    port_I.table.insert_column(format("im{}", idx), format("Im{{I[{}]}} (A)", idx));
-  }
-  port_V.AppendHeader();
-  port_I.AppendHeader();
-}
-
-void EigenSolver::PortsPostPrinter::AddMeasurement(int eigen_print_idx,
-                                                   const PostOperator &post_op,
-                                                   const LumpedPortOperator &lumped_port_op,
-                                                   const IoData &iodata)
-{
-  if (lumped_port_op.Size() == 0 || !Mpi::Root(post_op.GetComm()))
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-
-  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
-  // = sqrt(2) * RMS).
-  port_V.table["idx"] << eigen_print_idx;
-  port_I.table["idx"] << eigen_print_idx;
-
-  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
-  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    std::complex<double> V_i = post_op.GetPortVoltage(idx);
-    std::complex<double> I_i = post_op.GetPortCurrent(idx);
-
-    port_V.table[fmt::format("re{}", idx)] << V_i.real() * unit_V;
-    port_V.table[fmt::format("im{}", idx)] << V_i.imag() * unit_V;
-
-    port_I.table[fmt::format("re{}", idx)] << I_i.real() * unit_A;
-    port_I.table[fmt::format("im{}", idx)] << I_i.imag() * unit_A;
-  }
-  port_V.AppendRow();
-  port_I.AppendRow();
-}
-
-EigenSolver::EPRPostPrinter::EPRPostPrinter(const fs::path &post_dir,
-                                            const SpaceOperator &space_op,
-                                            int n_expected_rows)
-{
-  const auto &lumped_port_op = space_op.GetLumpedPortOp();
-  // Mode EPR for lumped inductor elements:
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.L) > 0.0)
-    {
-      ports_with_L.push_back(idx);
-    }
-    if (std::abs(data.R) > 0.0)
-    {
-      ports_with_R.push_back(idx);
-    }
-  }
-
-  if ((ports_with_L.empty() && ports_with_R.empty()) || !Mpi::Root(space_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-
-  if (!ports_with_L.empty())
-  {
-    port_EPR = TableWithCSVFile(post_dir / "port-EPR.csv");
-    port_EPR.table.reserve(n_expected_rows, 1 + ports_with_L.size());
-    port_EPR.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-    for (const auto idx : ports_with_L)
-    {
-      port_EPR.table.insert_column(format("p_{}", idx), format("p[{}]", idx));
-    }
-    port_EPR.AppendHeader();
-  }
-  if (!ports_with_R.empty())
-  {
-    port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
-    port_Q.table.reserve(n_expected_rows, 1 + ports_with_R.size());
-    port_Q.table.insert_column(Column("idx", "m", 0, {}, {}, ""));
-    for (const auto idx : ports_with_R)
-    {
-      port_Q.table.insert_column(format("Ql_{}", idx), format("Q_ext[{}]", idx));
-      port_Q.table.insert_column(format("Kl_{}", idx), format("κ_ext[{}] (GHz)", idx));
-    }
-    port_Q.AppendHeader();
-  }
-}
-
-void EigenSolver::EPRPostPrinter::AddMeasurementEPR(
-    double eigen_print_idx, const PostOperator &post_op,
-    const LumpedPortOperator &lumped_port_op, const IoData &iodata)
-{
-  if (ports_with_L.empty() || !Mpi::Root(post_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-
-  double E_elec = post_op.GetEFieldEnergy();
-  double E_cap = post_op.GetLumpedCapacitorEnergy();
-  double E_m = E_elec + E_cap;
-
-  port_EPR.table["idx"] << eigen_print_idx;
-  for (const auto idx : ports_with_L)
-  {
-    port_EPR.table[format("p_{}", idx)]
-        << post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
-  }
-  port_EPR.AppendRow();
-}
-
-void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
-                                                  const PostOperator &post_op,
-                                                  const LumpedPortOperator &lumped_port_op,
-                                                  const IoData &iodata)
-{
-  if (ports_with_R.empty() || !Mpi::Root(post_op.GetComm()))
-  {
-    return;
-  }
-  using fmt::format;
-  using VT = Units::ValueType;
-
-  auto omega = post_op.GetFrequency();
-  double E_elec = post_op.GetEFieldEnergy();
-  double E_cap = post_op.GetLumpedCapacitorEnergy();
-  double E_m = E_elec + E_cap;
-
-  port_EPR.table["idx"] << eigen_print_idx;
-  for (const auto idx : ports_with_R)
-  {
-    double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
-    double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
-
-    port_Q.table[format("Ql_{}", idx)] << Ql;
-    port_Q.table[format("Kl_{}", idx)] << iodata.units.Dimensionalize<VT::FREQUENCY>(Kl);
-  }
-  port_Q.AppendRow();
-}
-
-void EigenSolver::EPRPostPrinter::AddMeasurement(double eigen_print_idx,
-                                                 const PostOperator &post_op,
-                                                 const LumpedPortOperator &lumped_port_op,
-                                                 const IoData &iodata)
-{
-  AddMeasurementEPR(eigen_print_idx, post_op, lumped_port_op, iodata);
-  AddMeasurementQ(eigen_print_idx, post_op, lumped_port_op, iodata);
-}
-
-EigenSolver::PostprocessPrintResults::PostprocessPrintResults(const fs::path &post_dir,
-                                                              const PostOperator &post_op,
-                                                              const SpaceOperator &space_op,
-                                                              int n_post_)
-  : n_post(n_post_), write_paraview_fields(n_post_ > 0),
-    domains{post_dir, post_op, "m", n_post}, surfaces{post_dir, post_op, "m", n_post},
-    probes{post_dir, post_op, "m", n_post}, eigen{post_dir, space_op, n_post},
-    epr{post_dir, space_op, n_post}, error_indicator{post_dir}
-{
-}
-
-void EigenSolver::PostprocessPrintResults::PostprocessStep(const IoData &iodata,
-                                                           const PostOperator &post_op,
-                                                           const SpaceOperator &space_op,
-                                                           int step, double error_abs,
-                                                           double error_bkward)
-{
-  int eigen_print_idx = step + 1;
-  domains.AddMeasurement(eigen_print_idx, post_op, iodata);
-  surfaces.AddMeasurement(eigen_print_idx, post_op, iodata);
-  probes.AddMeasurement(eigen_print_idx, post_op, iodata);
-  eigen.AddMeasurement(eigen_print_idx, post_op, error_bkward, error_abs, iodata);
-  epr.AddMeasurement(eigen_print_idx, post_op, space_op.GetLumpedPortOp(), iodata);
-
-  // The internal GridFunctions in PostOperator have already been set:
-  if (write_paraview_fields && step < n_post)
-  {
-    post_op.WriteFields(step, eigen_print_idx);
-    Mpi::Print(" Wrote mode {:d} to disk\n", eigen_print_idx);
-  }
-}
-
-void EigenSolver::PostprocessPrintResults::PostprocessFinal(const PostOperator &post_op,
-                                                            const ErrorIndicator &indicator)
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
-  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
-  if (write_paraview_fields)
-  {
-    post_op.WriteFieldsFinal(&indicator);
-  }
 }
 
 }  // namespace palace

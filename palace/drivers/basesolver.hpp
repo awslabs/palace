@@ -5,21 +5,19 @@
 #define PALACE_DRIVERS_BASE_SOLVER_HPP
 
 #include <memory>
-#include <string>
 #include <vector>
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
+#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace
 {
 
-class DomainPostOperator;
 class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
-class PostOperator;
 class Timer;
 
 //
@@ -34,85 +32,6 @@ protected:
   // Parameters for writing postprocessing outputs.
   fs::path post_dir;
   bool root;
-
-  // Common domain postprocessing for all simulation types.
-  class DomainsPostPrinter
-  {
-    bool root_ = false;
-    bool do_measurement_ = false;
-    TableWithCSVFile domain_E;
-
-  public:
-    DomainsPostPrinter() = default;
-    DomainsPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                       const PostOperator &post_op, const std::string &idx_col_name,
-                       int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        const IoData &iodata);
-  };
-
-  // Common surface postprocessing for all simulation types.
-  class SurfacesPostPrinter
-  {
-    bool root_ = false;
-    bool do_measurement_flux_ = false;
-    bool do_measurement_eps_ = false;
-    TableWithCSVFile surface_F;
-    TableWithCSVFile surface_Q;
-
-  public:
-    SurfacesPostPrinter() = default;
-    SurfacesPostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                        const PostOperator &post_op, const std::string &idx_col_name,
-                        int n_expected_rows);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        const IoData &iodata);
-    void AddMeasurementFlux(double idx_value_dimensionful, const PostOperator &post_op,
-                            const IoData &iodata);
-    void AddMeasurementEps(double idx_value_dimensionful, const PostOperator &post_op,
-                           const IoData &iodata);
-  };
-
-  // Common probe postprocessing for all simulation types.
-  class ProbePostPrinter
-  {
-    bool root_ = false;
-    bool do_measurement_E_ = false;
-    bool do_measurement_B_ = false;
-    TableWithCSVFile probe_E;
-    TableWithCSVFile probe_B;
-
-    int v_dim = 0;
-    bool has_imag = false;
-
-  public:
-    ProbePostPrinter() = default;
-    ProbePostPrinter(bool do_measurement, bool root, const fs::path &post_dir,
-                     const PostOperator &post_op, const std::string &idx_col_name,
-                     int n_expected_rows);
-
-    void AddMeasurementE(double idx_value_dimensionful, const PostOperator &post_op,
-                         const IoData &iodata);
-    void AddMeasurementB(double idx_value_dimensionful, const PostOperator &post_op,
-                         const IoData &iodata);
-    void AddMeasurement(double idx_value_dimensionful, const PostOperator &post_op,
-                        const IoData &iodata);
-  };
-
-  // Common error indicator postprocessing for all simulation types. //
-  // This is trivial since data is only added at the end of the solve, rather after each
-  // step (time / frequency / eigenvector).
-  class ErrorIndicatorPostPrinter
-  {
-    TableWithCSVFile error_indicator;
-
-  public:
-    ErrorIndicatorPostPrinter() = default;
-    ErrorIndicatorPostPrinter(bool do_measurement, bool root, const fs::path &post_dir);
-
-    void PrintIndicatorStatistics(const PostOperator &post_op,
-                                  const ErrorIndicator::SummaryStatistics &indicator_stats);
-  };
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.

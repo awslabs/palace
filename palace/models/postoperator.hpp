@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
@@ -17,7 +18,11 @@
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "utils/configfile.hpp"
+#include "utils/tablecsv.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -32,29 +37,123 @@ class SurfaceCurrentOperator;
 class WavePortOperator;
 
 //
+// Map solver type to fem_op type
+//
+
+// Heleper struct that does not exists in C++17.
+// TODO(C++20): use std::type identify or constrain T using FemOp concept.
+template <class T>
+struct type_identity
+{
+  using type = T;
+};
+
+// TODO(C++20): Replace with this lambda in unevaluated context in decltype of fem_op_t.
+template <config::ProblemData::Type solver_t>
+struct fem_op_map_type
+{
+  static constexpr auto map_type()
+  {
+    if constexpr (solver_t == config::ProblemData::Type::ELECTROSTATIC)
+    {
+      return type_identity<LaplaceOperator>{};
+    }
+    else if constexpr (solver_t == config::ProblemData::Type::MAGNETOSTATIC)
+    {
+      return type_identity<CurlCurlOperator>{};
+    }
+    else
+    {
+      return type_identity<SpaceOperator>{};
+    }
+  }
+
+  using type = typename decltype(map_type())::type;
+};
+
+// Helper alias
+template <config::ProblemData::Type solver_t>
+using fem_op_t = typename fem_op_map_type<solver_t>::type;
+
+// Statically check if solver type has complex fields
+
+template <config::ProblemData::Type solver_t>
+constexpr bool HasComplexGridFunction()
+{
+  return solver_t == config::ProblemData::Type::DRIVEN ||
+         solver_t == config::ProblemData::Type::EIGENMODE;
+}
+
+// Statically check what fields solver type has
+// TODO(C++20): Change these to inline consteval and use with requires.
+
+template <config::ProblemData::Type solver_t>
+constexpr bool HasVGridFunction()
+{
+  return solver_t == config::ProblemData::Type::ELECTROSTATIC;
+}
+
+template <config::ProblemData::Type solver_t>
+constexpr bool HasAGridFunction()
+{
+  return solver_t == config::ProblemData::Type::MAGNETOSTATIC;
+}
+
+template <config::ProblemData::Type solver_t>
+constexpr bool HasEGridFunction()
+{
+  return solver_t != config::ProblemData::Type::MAGNETOSTATIC;
+}
+
+template <config::ProblemData::Type solver_t>
+constexpr bool HasBGridFunction()
+{
+  return solver_t != config::ProblemData::Type::ELECTROSTATIC;
+}
+
+//
 // A class to handle solution postprocessing.
 //
+template <config::ProblemData::Type solver_t>
 class PostOperator
 {
 private:
-  // Reference to material property operator (not owned).
-  const MaterialOperator &mat_op;
+  // Pointer to operator handling discretization and FEM space appropriate to solver,
+  // also contains reference to all domains, boundary contions, etc. for measurements.
+  // TODO(C++20): Use std::reference_wrapper with incomplete types.
+  fem_op_t<solver_t> *fem_op;
 
-  // Objects for grid function postprocessing from the FE solution.
+  // Copy of unit converter from IOData to scale mesh and dimensionalize measurements
+  Units units;
+
+  // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
+
+  // Base post-op output directory.
+  fs::path post_dir;
+
+  // ******
+
+  // Option to write paraview fields at all
+  size_t paraview_delta_post = 0;  // printing rate for paraview (DRIVEN & TRANSIENT)
+  size_t paraview_n_post = 0;      // max printing for paraview (OTHER SOLVERS)
+  bool write_paraview_fields() const
+  {
+    return (paraview_delta_post > 0) || (paraview_n_post > 0);
+  }
+
+  // Data collection for writing fields to disk for visualization.
+  std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+
+  // Measurements of field solution for paraview files (full domain or surfaces).
+
+  // Poyting Coefficient, Electric Boundary Field (re+im), Magnetic Boundary Field (re+im),
+  // Vector Potential Boundary Field, Surface Current (re+im).
   std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
+
+  // Electric Energy Density, Magnetic Energy Density, Scalar Potential Boundary Field,
+  // Surface Charge (re+im).
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
-
-  // Data collection for writing fields to disk for visualization
-  // Paraview fields are mutable as the writing is triggered by const solver printer
-  mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
-  double mesh_Lc0;
-
-  // ----- Measurements from Fields -----
-
-  DomainPostOperator dom_post_op;           // Energy in bulk
-  SurfacePostOperator surf_post_op;         //  Dielectric Interface Energy and Flux
-  mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
@@ -63,8 +162,36 @@ private:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-public:
-  // Mini storage clases for cache: Definitions are public
+  void InitializeParaviewDataCollection();
+
+  // Write to disk the E- and B-fields extracted from the solution vectors. Note that
+  // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
+  // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
+  void WriteFields(double time, int step);
+  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
+
+  // ******
+
+  // Small friend class for saving csv measurements.
+  friend PostOperatorCSV<solver_t>;
+
+  PostOperatorCSV<solver_t> post_op_csv;
+
+  // Measurement from field for csv files.
+
+  DomainPostOperator dom_post_op;           // Energy in bulk
+  SurfacePostOperator surf_post_op;         // Dielectric Interface Energy and Flux
+  mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
+
+  // Mini storage for data measurements.
+
+  struct DomainData
+  {
+    int idx;
+    double energy;
+    double participation_ratio;
+  };
+
   struct FluxData
   {
     int idx;                   // Surface index
@@ -74,205 +201,253 @@ public:
 
   struct InterfaceData
   {
-    int idx;          // Interface index
-    double energy;    // Surface ELectric Field Energy
-    double tandelta;  // Dissipation tangent tan(δ)
+    int idx;                      // Interface index
+    double energy;                // Surface ELectric Field Energy
+    double tandelta;              // Dissipation tangent tan(δ)
+    double energy_participation;  // ratio of interface energy / total_energy
+    double quality_factor;        // 1 / (energy_paricipation_p * tan δ)
   };
 
   // For both lumped and wave port
   struct PortPostData
   {
-    std::complex<double> P, V, S;
-    std::array<std::complex<double>, 3> I;  // Separate R, L, and C branches
+    std::complex<double> P = 0.0;
+    std::complex<double> V = 0.0;
+    std::complex<double> I = 0.0;
+    // Separate R, L, and C branches for current via Z
+    std::array<std::complex<double>, 3> I_RLC = {0.0, 0.0, 0.0};
+
+    // S-Parameter
+    std::complex<double> S = 0.0;
+    double abs_S_ij = 0.0;
+    double arg_S_ij = 0.0;
+
+    // Energies (currently only for lumped port).
+    double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
+    double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
+
+    // Resitive lumped port (only EIGENMODE)
+    double mode_port_kappa = 0.0;
+    double quality_factor = mfem::infinity();
+
+    // Inductive lumped port (only EIGENMODE)
+    double inductive_energy_participation = 0.0;
   };
 
-private:
-  struct MeasurementCache
+  // Results of measurements on field. All computations should return answers in SI units.
+  // i.e. Dimenzionalize<units>(value).
+  struct Measurement
   {
-    std::complex<double> omega = {0.0, 0.0};
+    // "Pseudo-measurements" — input required during measurement
+    std::complex<double> freq = {0.0, 0.0};  // TODO(C++20): requires driven & eigenvalue.
+    // Modulation factor for input excitation:
+    // I_inc(t) = J(t) I_in for transient
+    // I_inc(omega) = I_in for driven, so Jcoeff_excitation = 1.0
+    double Jcoeff_excitation = 1.0;  // TODO(C++20): requires transient || driven.
 
     double domain_E_field_energy_all = 0.0;
     double domain_H_field_energy_all = 0.0;
 
-    std::map<int, double> domain_E_field_energy_i;
-    std::map<int, double> domain_H_field_energy_i;
+    std::vector<DomainData> domain_E_field_energy_i;
+    std::vector<DomainData> domain_H_field_energy_i;
 
-    std::vector<FluxData> surface_flux_i;
-    std::vector<InterfaceData> interface_eps_i;
+    double lumped_port_capacitor_energy = 0.0;
+    double lumped_port_inductor_energy = 0.0;
 
     std::map<int, PortPostData> lumped_port_vi;
     std::map<int, PortPostData> wave_port_vi;
 
-    double lumped_port_inductor_energy = 0.0;
-    double lumped_port_capacitor_energy = 0.0;
-
     std::vector<std::complex<double>> probe_E_field;
     std::vector<std::complex<double>> probe_B_field;
+
+    std::vector<FluxData> surface_flux_i;
+    std::vector<InterfaceData> interface_eps_i;
+
+    // Eigenmode data // TODO(C++20): requires eigenmode
+    double eigenmode_Q;
+    double error_bkwd;
+    double error_abs;
   };
-  MeasurementCache measurement_cache = {};
 
-  void InitializeDataCollection(const IoData &iodata);
+  mutable Measurement measurement_cache;
 
-  // Component measurements to fill the cache.
-  void MeasureEFieldEnergy();
-  void MeasureHFieldEnergy();
-  void MeasureSurfaceFlux();
-  void MeasureProbes();
-  void MeasureInterfaceEFieldEnergy();
+  // Component measurements to fill the cache which will then be returned and printed.
+  void MeasureDomainFieldEnergy() const;
+  void MeasureLumpedPorts() const;
+  void MeasureWavePorts() const;
+  void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
+  void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts
+  void MeasureSurfaceFlux() const;
+  void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
+  void MeasureProbes() const;
 
-  // Measure and cache port voltages and currents for lumped and wave port operators.
-  void MeasureLumpedPorts(const LumpedPortOperator &lumped_port_op);
-  void MeasureWavePorts(const WavePortOperator &wave_port_op);
+  void MeasureAllImpl() const
+  {
+    // Call order matter due to dependent measurements!
+    MeasureDomainFieldEnergy();
+    MeasureLumpedPorts();
+    MeasureWavePorts();
+    MeasureLumpedPortsEig();
+    MeasureSParameter();
+    MeasureSurfaceFlux();
+    MeasureInterfaceEFieldEnergy();
+    MeasureProbes();
+  }
 
-public:
-  PostOperator(const IoData &iodata, SpaceOperator &space_op);
-  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op);
-  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op);
-
-  // Access to surface and domain postprocessing objects.
-  const auto &GetSurfacePostOp() const { return surf_post_op; }
-  const auto &GetDomainPostOp() const { return dom_post_op; }
-
-  // Return options for postprocessing configuration.
-  bool HasE() const { return E != nullptr; }
-  bool HasB() const { return B != nullptr; }
-  bool HasImag() const { return HasE() ? E->HasImag() : B->HasImag(); }
+  // ******
 
   // Populate the grid function solutions for the E- and B-field using the solution vectors
   // on the true dofs. For the real-valued overload, the electric scalar potential can be
   // specified too for electrostatic simulations. The output mesh and fields are
   // nondimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
-  void SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true);
-  void SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true);
-  void SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true);
-  void SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true);
-  void SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true);
-  void SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true);
+  // TODO(C++20): Switch SFINE to requires.
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
+  {
+    E->Real().SetFromTrueDofs(e.Real());  // Parallel distribute
+    E->Imag().SetFromTrueDofs(e.Imag());
+    if (exchange_face_nbr_data)
+    {
+      E->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+      E->Imag().ExchangeFaceNbrData();
+    }
+  }
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
+  {
+    E->Real().SetFromTrueDofs(e);
+    if (exchange_face_nbr_data)
+    {
+      E->Real().ExchangeFaceNbrData();
+    }
+  }
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasBGridFunction<U>() && HasComplexGridFunction<U>(), void>
+  {
+    B->Real().SetFromTrueDofs(b.Real());  // Parallel distribute
+    B->Imag().SetFromTrueDofs(b.Imag());
+    if (exchange_face_nbr_data)
+    {
+      B->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+      B->Imag().ExchangeFaceNbrData();
+    }
+  }
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasBGridFunction<U>() && !HasComplexGridFunction<U>(), void>
+  {
+    B->Real().SetFromTrueDofs(b);
+    if (exchange_face_nbr_data)
+    {
+      B->Real().ExchangeFaceNbrData();
+    }
+  }
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasVGridFunction<U>() && !HasComplexGridFunction<U>(), void>
+  {
+    V->Real().SetFromTrueDofs(v);
+    if (exchange_face_nbr_data)
+    {
+      V->Real().ExchangeFaceNbrData();
+    }
+  }
+
+  template <config::ProblemData::Type U = solver_t>
+  auto SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<HasAGridFunction<U>() && !HasComplexGridFunction<U>(), void>
+  {
+    A->Real().SetFromTrueDofs(a);
+    if (exchange_face_nbr_data)
+    {
+      A->Real().ExchangeFaceNbrData();
+    }
+  }
+
+public:
+  explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
+                        int nr_expected_measurement_rows = 1);
+
+  // Function that triggers all available measurements; specialize by solver type.
+  // TODO: Upgrade SFINE to C++20 concepts to simplify static selection since we can just
+  // write `MeasurePrintAll(...) requires (solver_t == Type::A)`.
+
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
+                       std::complex<double> omega)
+      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
+
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
+                       std::complex<double> omega, double error_abs, double error_bkwd,
+                       int num_conv)
+      -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>;
+
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasurePrintAll(int step, const Vector &v, const Vector &e, int idx)
+      -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>;
+
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasurePrintAll(int step, const Vector &a, const Vector &b, int idx)
+      -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>;
+
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasurePrintAll(int step, const Vector &e, const Vector &b, double t, double J_coef)
+      -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>;
+
+  // Write error indicator into paraview file and deregister all paraview objects
+  void MeasureFinalize(const ErrorIndicator &indicator);
+
+  // Mini-measurement needed for PROM construction where energy is needed for error
+  // indicator, but no other measurement / printing should be done.
+  template <config::ProblemData::Type U = solver_t>
+  auto MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b,
+                                    bool exchange_face_nbr_data = true)
+      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   // Access grid functions for field solutions.
-  auto &GetEGridFunction()
+  // Note these are NOT const — The electrostatics and magnetostatics globallly solver
+  // do measurements in the solver and use these as scratch spaces. TODO: Consider moving
+  // those global measurements into MeasureFinalize?
+  // TODO(C++20): Switch SFINE to requires.
+  template <config::ProblemData::Type U = solver_t>
+  auto GetEGridFunction() -> std::enable_if_t<HasEGridFunction<U>(), decltype(*E) &>
   {
-    MFEM_ASSERT(E, "Missing GridFunction object when accessing from PostOperator!");
     return *E;
   }
-  auto &GetBGridFunction()
+
+  template <config::ProblemData::Type U = solver_t>
+  auto GetBGridFunction() -> std::enable_if_t<HasBGridFunction<U>(), decltype(*B) &>
   {
-    MFEM_ASSERT(B, "Missing GridFunction object when accessing from PostOperator!");
     return *B;
   }
-  auto &GetVGridFunction()
+
+  template <config::ProblemData::Type U = solver_t>
+  auto GetVGridFunction() -> std::enable_if_t<HasVGridFunction<U>(), decltype(*V) &>
   {
-    MFEM_ASSERT(V, "Missing GridFunction object when accessing from PostOperator!");
     return *V;
   }
-  auto &GetAGridFunction()
+
+  template <config::ProblemData::Type U = solver_t>
+  auto GetAGridFunction() -> std::enable_if_t<HasAGridFunction<U>(), decltype(*A) &>
   {
-    MFEM_ASSERT(A, "Missing GridFunction object when accessing from PostOperator!");
     return *A;
   }
 
-  // Function that triggers all available post-processing measurements and populate cache.
-  // If SpaceOperator is provided, will perform any port measurements.
-  void MeasureAll();
-  void MeasureAll(const SpaceOperator &space_op);
+  // Access to domain postprocessing objects. Use in electro & magnetostatic global
+  // post-processing.
+  const auto &GetDomainPostOp() const { return dom_post_op; }
 
-  // Clear internal measurement caches
-  void ClearAllMeasurementCache();
-
-  // Treat the frequency, for driven and eigenmode solvers, as a "measurement", that other
-  // measurements can depend on. This has to be supplied during the solver loop separate
-  // from the fields.
-  void SetFrequency(double omega) { measurement_cache.omega = std::complex<double>(omega); }
-  void SetFrequency(std::complex<double> omega) { measurement_cache.omega = omega; }
-
-  // Return stored frequency that was given in SetFrequency.
-  std::complex<double> GetFrequency() const { return measurement_cache.omega; }
-
-  // Postprocess the total electric and magnetic field energies in the electric and magnetic
-  // fields.
-  double GetEFieldEnergy() const { return measurement_cache.domain_E_field_energy_all; }
-  double GetHFieldEnergy() const { return measurement_cache.domain_H_field_energy_all; }
-
-  // Postprocess the electric and magnetic field energies in the domain with the given
-  // index.
-  double GetEFieldEnergy(int idx) const;
-  double GetHFieldEnergy(int idx) const;
-
-  // Postprocess the electric or magnetic field flux for a surface index using the computed
-  // electric field and/or magnetic flux density field solutions.
-  std::vector<FluxData> GetSurfaceFluxes() const
-  {
-    return measurement_cache.surface_flux_i;
-  }
-  FluxData GetSurfaceFlux(int idx) const;
-
-  // Postprocess the participation ratio for interface lossy dielectric losses in the
-  // electric field mode.
-  double GetInterfaceParticipation(int idx, double E_m) const;
-  const std::vector<InterfaceData> &GetInterfaceEFieldEnergyAll() const
-  {
-    return measurement_cache.interface_eps_i;
-  }
-  const InterfaceData &GetInterfaceEFieldEnergy(int idx) const;
-
-  // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
-  // the provided set.
-  double GetLumpedInductorEnergy() const
-  {
-    return measurement_cache.lumped_port_inductor_energy;
-  }
-  double GetLumpedCapacitorEnergy() const
-  {
-    return measurement_cache.lumped_port_capacitor_energy;
-  }
-
-  // Postprocess the S-parameter for receiving lumped or wave port index using the electric
-  // field solution.
-  // TODO: In multi-excitation PR we will guarantee that lumped & wave ports have unique idx
-  // TODO: Merge lumped and wave port S_ij calculations to allow both at same time.
-  std::complex<double> GetSParameter(const LumpedPortOperator &lumped_port_op, int idx,
-                                     int source_idx) const;
-  std::complex<double> GetSParameter(const WavePortOperator &wave_port_op, int idx,
-                                     int source_idx) const;
-
-  // Postprocess the circuit voltage and current across lumped port index using the electric
-  // field solution. When the internal grid functions are real-valued, the returned voltage
-  // has only a nonzero real part.
-  std::complex<double> GetPortPower(int idx) const;
-  std::complex<double> GetPortVoltage(int idx) const;
-  std::complex<double>
-  GetPortCurrent(int idx,
-                 LumpedPortData::Branch branch = LumpedPortData::Branch::TOTAL) const;
-
-  // Postprocess the EPR for the electric field solution and lumped port index.
-  double GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
-                                  double E_m) const;
-
-  // Postprocess the coupling rate for radiative loss to the given I-O port index.
-  double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                          double E_m) const;
-
-  // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
-  // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
-  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(int step, double time) const;
-  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr) const;
-
-  // Probe the E- and B-fields for their vector-values at speceified locations in space.
-  // Locations of probes are set up in constructor from configuration file data. If
-  // the internal grid functions are real-valued, the returned fields have only nonzero real
-  // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
-  // v2y, v2z, ...].
-  const auto &GetProbes() const { return interp_op.GetProbes(); }
-  std::vector<std::complex<double>> ProbeEField() const;
-  std::vector<std::complex<double>> ProbeBField() const;
-  int GetInterpolationOpVDim() const { return interp_op.GetVDim(); }
-
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const
-  {
-    return (E) ? E->ParFESpace()->GetComm() : B->ParFESpace()->GetComm();
-  }
+  // Expose MPI communicator for Cap & Ind matrix custom processing.
+  auto GetComm() const { return fem_op->GetComm(); }
 };
 
 }  // namespace palace
