@@ -76,8 +76,8 @@ the table. Timer categories are exclusive, they do not overlap. The categories f
 down the total simulation time are:
 
 ```
-Initialization                  // < Time spent parsing the configuration file,
-                                //   preprocessing and partitioning the mesh
+Initialization                  // < Time spent parsing the configuration file
+  Mesh Preprocessing            // < Time spent preprocessing and partitioning the mesh
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
