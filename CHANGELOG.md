@@ -55,6 +55,8 @@ The format of this changelog is based on
     `config["Boundaries"]["Periodic"]` configuration.
   - Fixed bug where the default `config["Model"]["CrackDisplacementFactor"]` would cause
     lumped port discovery to fail by reducing default from `1e-3` to `1e-12`.
+  - Fixed bug in Nastran mesh reader where carriage returns (`\r`) in the mesh file could
+    cause a failure to read the mesh.
 
 ## [0.13.0] - 2024-05-20
 
