@@ -382,7 +382,7 @@ endif()
 if(PALACE_WITH_CUDA)
   set(MFEM_TEST_COMMAND "")
 else()
-  set(MFEM_TEST_COMMAND "${CMAKE_MAKE_PROGRAM} ex1 ex1p")
+  set(MFEM_TEST_COMMAND ${CMAKE_MAKE_PROGRAM} ex1 ex1p)
 endif()
 
 string(REPLACE ";" "; " MFEM_OPTIONS_PRINT "${MFEM_OPTIONS}")
