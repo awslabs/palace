@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <vector>
 
 #include "utils/constants.hpp"
 
@@ -126,32 +127,50 @@ public:
   }
 
   template <ValueType unit, typename T>
-  T Dimensionalize(T value) const
+  auto Dimensionalize(T value) const
   {
     return value * GetScaleFactor<unit>();
   }
 
   template <ValueType unit, typename T, std::size_t N>
-  std::array<T, N> Dimensionalize(const std::array<T, N> &value) const
+  auto Dimensionalize(const std::array<T, N> &value) const
   {
     auto out = value;
     std::transform(out.begin(), out.end(), out.begin(),
-                   [this](double v) { return Dimensionalize<unit>(v); });
+                   [this](T v) { return Dimensionalize<unit>(v); });
     return out;
   }
 
   template <ValueType unit, typename T>
-  T NonDimensionalize(T value) const
+  auto Dimensionalize(const std::vector<T> &value) const
+  {
+    auto out = value;
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [this](T v) { return Dimensionalize<unit>(v); });
+    return out;
+  }
+
+  template <ValueType unit, typename T>
+  auto NonDimensionalize(T value) const
   {
     return value / GetScaleFactor<unit>();
   }
 
   template <ValueType unit, typename T, std::size_t N>
-  std::array<T, N> NonDimensionalize(const std::array<T, N> &value) const
+  auto NonDimensionalize(const std::array<T, N> &value) const
   {
     auto out = value;
     std::transform(out.begin(), out.end(), out.begin(),
-                   [this](double v) { return NonDimensionalize<unit>(v); });
+                   [this](T v) { return NonDimensionalize<unit>(v); });
+    return out;
+  }
+
+  template <ValueType unit, typename T>
+  auto NonDimensionalize(const std::vector<T> &value) const
+  {
+    auto out = value;
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [this](T v) { return NonDimensionalize<unit>(v); });
     return out;
   }
 };

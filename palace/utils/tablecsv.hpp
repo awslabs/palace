@@ -65,11 +65,19 @@ public:
     if ((i >= 0) && (i < data.size()))
     {
       auto val = data[i];
-      auto sign = fmt_sign.value_or(defaults->fmt_sign);
-      auto prec = float_precision.value_or(defaults->float_precision);
-      auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
-                                 fmt::arg("width", width_), fmt::arg("prec", prec));
-      return fmt::format(fmt::runtime(fmt_str), val);
+      if (print_as_int)
+      {  // Quick-fix to force int printing
+        auto fmt_str = fmt::format("{{:>{width}d}}", fmt::arg("width", width_));
+        return fmt::format(fmt::runtime(fmt_str), int(val));
+      }
+      else
+      {
+        auto sign = fmt_sign.value_or(defaults->fmt_sign);
+        auto prec = float_precision.value_or(defaults->float_precision);
+        auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
+                                   fmt::arg("width", width_), fmt::arg("prec", prec));
+        return fmt::format(fmt::runtime(fmt_str), val);
+      }
     }
     auto empty_cell = empty_cell_val.value_or(defaults->empty_cell_val);
     return fmt::format("{:>{width}s}", empty_cell, fmt::arg("width", width_));
@@ -93,10 +101,18 @@ public:
   std::optional<std::string> empty_cell_val;
   std::optional<std::string> fmt_sign;
 
+  // Quick-fix since leading column of eig is int stored as double (rather then implementing
+  // a templated & type erased solution).
+  bool print_as_int = false;
+
   [[nodiscard]] size_t n_rows() const { return data.size(); }
 
   // Convenience operator at higher level
-  auto operator<<(double val) { return data.emplace_back(val); }
+  auto operator<<(double val)
+  {
+    data.emplace_back(val);
+    return *this;
+  }
 };
 
 class Table
@@ -142,7 +158,7 @@ public:
   }
 
   // Insert columns: map like interface
-  bool insert_column(Column &&column)
+  bool insert(Column &&column)
   {
     auto it = std::find_if(cols.begin(), cols.end(),
                            [&column](auto &c) { return c.name == column.name; });
@@ -159,9 +175,9 @@ public:
     return true;
   }
   template <typename... Args>
-  bool insert_column(Args &&...args)
+  bool insert(Args &&...args)
   {
-    return insert_column(Column(std::forward<Args>(args)...));
+    return insert(Column(std::forward<Args>(args)...));
   }
 
   // Access columns via vector position or column name

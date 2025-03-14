@@ -48,7 +48,7 @@ public:
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
-  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &E) const;
+  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
 };
 
 }  // namespace palace

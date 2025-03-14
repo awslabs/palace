@@ -51,9 +51,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Frequencies will be sampled uniformly in the frequency domain. Index sets are for
   // computing things like S-parameters in postprocessing.
-  PostOperator post_op(iodata, space_op);
-  PostprocessPrintResults post_results(root, post_dir, post_op, space_op, n_step,
-                                       iodata.solver.driven.delta_post);
+  PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
 
   {
     Mpi::Print("\nComputing {}frequency response for:\n", adaptive ? "adaptive fast " : "");
@@ -104,17 +102,15 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  return {adaptive ? SweepAdaptive(space_op, post_op, post_results, n_step, step0, omega0,
-                                   delta_omega)
-                   : SweepUniform(space_op, post_op, post_results, n_step, step0, omega0,
-                                  delta_omega),
+  return {adaptive ? SweepAdaptive(space_op, post_op, n_step, step0, omega0, delta_omega)
+                   : SweepUniform(space_op, post_op, n_step, step0, omega0, delta_omega),
           space_op.GlobalTrueVSize()};
 }
 
-ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator &post_op,
-                                          PostprocessPrintResults &post_results, int n_step,
-                                          int step0, double omega0,
-                                          double delta_omega) const
+ErrorIndicator
+DrivenSolver::SweepUniform(SpaceOperator &space_op,
+                           PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                           int n_step, int step0, double omega0, double delta_omega) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -188,9 +184,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for all postprocessing operations.
+    // Start Post-processing.
     BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(space_op.GetComm(), E),
+               linalg::Norml2(space_op.GetComm(), RHS));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -200,39 +200,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.SetFrequency(omega);
-    post_op.MeasureAll(space_op);
 
-    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(space_op.GetComm(), E),
-               linalg::Norml2(space_op.GetComm(), RHS));
-
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-
-    const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
-    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-               E_mag * J, (E_elec + E_mag) * J);
+    auto total_domain_energy = post_op.MeasurePrintAll(step, E, B, omega);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
-
-    post_results.PostprocessStep(iodata, post_op, space_op, step);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
   SaveMetadata(ksp);
-  post_results.PostprocessFinal(post_op, indicator);
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
-ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op,
-                                           PostprocessPrintResults &post_results,
-                                           int n_step, int step0, double omega0,
-                                           double delta_omega) const
+ErrorIndicator
+DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
+                            PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                            int n_step, int step0, double omega0, double delta_omega) const
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -307,11 +292,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E, false);
-    post_op.SetBGridFunction(B, false);
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
+    // Measure domain energies for the error indictor only: don't exchange face_nbr_data.
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, false);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
   prom_op.SolveHDM(omega0, E);
   UpdatePROM(omega0);
@@ -388,9 +371,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     prom_op.SolvePROM(omega, E);
     Mpi::Print("\n");
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for all postprocessing operations.
+    // Start Post-processing.
     BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -400,25 +385,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.SetFrequency(omega);
-    post_op.MeasureAll(space_op);
 
-    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
-
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    const double J = iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0);
-    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-               E_mag * J, (E_elec + E_mag) * J);
-
-    post_results.PostprocessStep(iodata, post_op, space_op, step);
+    auto measurement = post_op.MeasurePrintAll(step, E, B, omega);
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
   SaveMetadata(prom_op.GetLinearSolver());
-  post_results.PostprocessFinal(post_op, indicator);
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
@@ -435,295 +408,6 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
   double dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
                    (delta > 0.0 && dfinal - end < delta_eps * end));
-}
-
-// -----------------
-// Measurements / Postprocessing
-
-DrivenSolver::CurrentsPostPrinter::CurrentsPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const SurfaceCurrentOperator &surf_j_op, int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement             //
-                     && (surf_j_op.Size() > 0)  // Needs surface currents
-                 }
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  surface_I = TableWithCSVFile(post_dir / "surface-I.csv");
-  surface_I.table.reserve(n_expected_rows, surf_j_op.Size());
-  surface_I.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
-  for (const auto &[idx, data] : surf_j_op)
-  {
-    surface_I.table.insert_column(fmt::format("I_{}", idx),
-                                  fmt::format("I_inc[{}] (A)", idx));
-  }
-  surface_I.AppendHeader();
-}
-
-void DrivenSolver::CurrentsPostPrinter::AddMeasurement(double freq,
-                                                       const SpaceOperator &space_op,
-                                                       const IoData &iodata)
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-  using fmt::format;
-
-  surface_I.table["idx"] << freq;
-  for (const auto &[idx, data] : surf_j_op)
-  {
-    auto I_inc = data.GetExcitationCurrent();
-    surface_I.table[format("I_{}", idx)] << iodata.units.Dimensionalize<VT::CURRENT>(I_inc);
-  }
-  surface_I.AppendRow();
-}
-
-DrivenSolver::PortsPostPrinter::PortsPostPrinter(bool do_measurement, bool root,
-                                                 const fs::path &post_dir,
-                                                 const LumpedPortOperator &lumped_port_op,
-                                                 int n_expected_rows)
-  : root_{root}, do_measurement_{
-                     do_measurement                  //
-                     && (lumped_port_op.Size() > 0)  // Only works for lumped ports
-                 }
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  using fmt::format;
-  port_V = TableWithCSVFile(post_dir / "port-V.csv");
-  port_V.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_V.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
-
-  port_I = TableWithCSVFile(post_dir / "port-I.csv");
-  port_I.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_I.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      port_V.table.insert_column(format("inc{}", idx), format("V_inc[{}] (V)", idx));
-      port_I.table.insert_column(format("inc{}", idx), format("I_inc[{}] (A)", idx));
-    }
-
-    port_V.table.insert_column(format("re{}", idx), format("Re{{V[{}]}} (V)", idx));
-    port_V.table.insert_column(format("im{}", idx), format("Im{{V[{}]}} (V)", idx));
-
-    port_I.table.insert_column(format("re{}", idx), format("Re{{I[{}]}} (A)", idx));
-    port_I.table.insert_column(format("im{}", idx), format("Im{{I[{}]}} (A)", idx));
-  }
-  port_V.AppendHeader();
-  port_I.AppendHeader();
-}
-
-void DrivenSolver::PortsPostPrinter::AddMeasurement(
-    double freq, const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-    const IoData &iodata)
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-
-  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
-  // = sqrt(2) * RMS).
-  port_V.table["idx"] << freq;
-  port_I.table["idx"] << freq;
-
-  auto unit_V = iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
-  auto unit_A = iodata.units.Dimensionalize<VT::CURRENT>(1.0);
-
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      double V_inc = data.GetExcitationVoltage();
-      double I_inc = (std::abs(V_inc) > 0.0) ? data.GetExcitationPower() / V_inc : 0.0;
-
-      port_V.table[fmt::format("inc{}", idx)] << V_inc * unit_V;
-      port_I.table[fmt::format("inc{}", idx)] << I_inc * unit_A;
-    }
-
-    std::complex<double> V_i = post_op.GetPortVoltage(idx);
-    std::complex<double> I_i = post_op.GetPortCurrent(idx);
-
-    port_V.table[fmt::format("re{}", idx)] << V_i.real() * unit_V;
-    port_V.table[fmt::format("im{}", idx)] << V_i.imag() * unit_V;
-
-    port_I.table[fmt::format("re{}", idx)] << I_i.real() * unit_A;
-    port_I.table[fmt::format("im{}", idx)] << I_i.imag() * unit_A;
-  }
-  port_V.AppendRow();
-  port_I.AppendRow();
-}
-
-DrivenSolver::SParametersPostPrinter::SParametersPostPrinter(
-    bool do_measurement, bool root, const fs::path &post_dir,
-    const LumpedPortOperator &lumped_port_op, const WavePortOperator &wave_port_op,
-    int n_expected_rows)
-  : root_{root},
-    do_measurement_{
-        do_measurement  //
-        && ((lumped_port_op.Size() > 0) xor
-            (wave_port_op.Size() > 0))  // either lumped or wave but not both
-
-    },
-    src_lumped_port{lumped_port_op.Size() > 0}
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  // Get excitation index as is currently done: if -1 then no excitation
-  // Already ensured that one of lumped or wave ports are empty
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      source_idx = idx;
-    }
-  }
-  for (const auto &[idx, data] : wave_port_op)
-  {
-    if (data.excitation)
-    {
-      source_idx = idx;
-    }
-  }
-
-  do_measurement_ = do_measurement_ && (source_idx > 0);
-
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  using fmt::format;
-  port_S = TableWithCSVFile(post_dir / "port-S.csv");
-  port_S.table.reserve(n_expected_rows, lumped_port_op.Size());
-  port_S.table.insert_column(Column("idx", "f (GHz)", 0, {}, {}, ""));
-
-  // Already ensured that one of lumped or wave ports are empty
-  for (const auto &[o_idx, data] : lumped_port_op)
-  {
-    port_S.table.insert_column(format("abs_{}_{}", o_idx, source_idx),
-                               format("|S[{}][{}]| (dB)", o_idx, source_idx));
-    port_S.table.insert_column(format("arg_{}_{}", o_idx, source_idx),
-                               format("arg(S[{}][{}]) (deg.)", o_idx, source_idx));
-  }
-  for (const auto &[o_idx, data] : wave_port_op)
-  {
-    port_S.table.insert_column(format("abs_{}_{}", o_idx, source_idx),
-                               format("|S[{}][{}]| (dB)", o_idx, source_idx));
-    port_S.table.insert_column(format("arg_{}_{}", o_idx, source_idx),
-                               format("arg(S[{}][{}]) (deg.)", o_idx, source_idx));
-  }
-  port_S.AppendHeader();
-}
-
-void DrivenSolver::SParametersPostPrinter::AddMeasurement(
-    double freq, const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-    const WavePortOperator &wave_port_op, const IoData &iodata)
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  using VT = Units::ValueType;
-  using fmt::format;
-
-  // Add frequencies
-  port_S.table["idx"] << freq;
-
-  std::vector<int> all_port_indices;
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    all_port_indices.emplace_back(idx);
-  }
-  for (const auto &[idx, data] : wave_port_op)
-  {
-    all_port_indices.emplace_back(idx);
-  }
-
-  for (const auto o_idx : all_port_indices)
-  {
-    std::complex<double> S_ij =
-        (lumped_port_op.Size() > 0)
-            ? post_op.GetSParameter(lumped_port_op, o_idx, source_idx)
-            : post_op.GetSParameter(wave_port_op, o_idx, source_idx);
-
-    auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
-    auto arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
-
-    port_S.table[format("abs_{}_{}", o_idx, source_idx)] << abs_S_ij;
-    port_S.table[format("arg_{}_{}", o_idx, source_idx)] << arg_S_ij;
-
-    Mpi::Print(" {sij} = {:+.3e}{:+.3e}i, |{sij}| = {:+.3e}, arg({sij}) = {:+.3e}\n",
-               S_ij.real(), S_ij.imag(), abs_S_ij, arg_S_ij,
-               fmt::arg("sij", format("S[{}][{}]", o_idx, source_idx)));
-  }
-  // Regenerate from scratch each time since not row-wise (TODO: improve)
-  port_S.WriteFullTableTrunc();
-}
-
-DrivenSolver::PostprocessPrintResults::PostprocessPrintResults(
-    bool root, const fs::path &post_dir, const PostOperator &post_op,
-    const SpaceOperator &space_op, int n_expected_rows, int delta_post_)
-  : delta_post{delta_post_}, write_paraview_fields{delta_post_ > 0},
-    domains{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    surfaces{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    currents{true, root, post_dir, space_op.GetSurfaceCurrentOp(), n_expected_rows},
-    probes{true, root, post_dir, post_op, "f (GHz)", n_expected_rows},
-    ports{true, root, post_dir, space_op.GetLumpedPortOp(), n_expected_rows},
-    s_parameters{true,
-                 root,
-                 post_dir,
-                 space_op.GetLumpedPortOp(),
-                 space_op.GetWavePortOp(),
-                 n_expected_rows},
-    error_indicator{true, root, post_dir}
-{
-}
-
-void DrivenSolver::PostprocessPrintResults::PostprocessStep(
-    const IoData &iodata, const PostOperator::Measurement &measurement, int step)
-{
-  double omega = post_op.GetFrequency().real();
-  auto freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
-
-  domains.AddMeasurement(freq, post_op, iodata);
-  surfaces.AddMeasurement(freq, post_op, iodata);
-  currents.AddMeasurement(freq, space_op.GetSurfaceCurrentOp(), iodata);
-  probes.AddMeasurement(freq, post_op, iodata);
-  ports.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(), iodata);
-  s_parameters.AddMeasurement(freq, post_op, space_op.GetLumpedPortOp(),
-                              space_op.GetWavePortOp(), iodata);
-  // The internal GridFunctions in PostOperator have already been set:
-  if (write_paraview_fields && (step % delta_post == 0))
-  {
-    Mpi::Print("\n");
-    post_op.WriteFields(step / delta_post, freq);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
-  }
-}
-
-void DrivenSolver::PostprocessPrintResults::PostprocessFinal(
-    const PostOperator &post_op, const ErrorIndicator &indicator)
-{
-  BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(post_op.GetComm());
-  error_indicator.PrintIndicatorStatistics(post_op, indicator_stats);
-  if (write_paraview_fields)
-  {
-    post_op.WriteFieldsFinal(&indicator);
-  }
 }
 
 }  // namespace palace

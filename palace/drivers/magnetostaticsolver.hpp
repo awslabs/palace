@@ -14,6 +14,7 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
+template <config::ProblemData::Type>
 class PostOperator;
 class SurfaceCurrentOperator;
 
@@ -23,25 +24,8 @@ class SurfaceCurrentOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  struct PostprocessPrintResults
-  {
-    bool write_paraview_fields = false;
-    int n_post = 0;
-
-    DomainsPostPrinter domains;
-    SurfacesPostPrinter surfaces;
-    ProbePostPrinter probes;
-
-    ErrorIndicatorPostPrinter error_indicator;
-
-    PostprocessPrintResults(const fs::path &post_dir, const PostOperator &post_op,
-                            int n_post_);
-    void PostprocessStep(const IoData &iodata, const PostOperator &post_op, int step,
-                         int idx);
-    void PostprocessFinal(const PostOperator &post_op, const ErrorIndicator &indicator);
-  };
-
-  void PostprocessTerminals(PostOperator &post_op, const SurfaceCurrentOperator &surf_j_op,
+  void PostprocessTerminals(PostOperator<config::ProblemData::Type::MAGNETOSTATIC> &post_op,
+                            const SurfaceCurrentOperator &surf_j_op,
                             const std::vector<Vector> &A,
                             const std::vector<double> &I_inc) const;
 

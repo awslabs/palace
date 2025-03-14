@@ -21,7 +21,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
 
   // Add and access columns
   {
-    auto status_1 = table.insert_column("col_1");
+    auto status_1 = table.insert("col_1");
     REQUIRE(status_1);
     auto &col_1 = table["col_1"];
     CHECK(col_1.header_text == "");
@@ -30,7 +30,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
     auto &col_1i = table[0];
     CHECK(col_1i.header_text == "Header Col 1");
 
-    auto status_2 = table.insert_column("col_2", "Header Col 2");
+    auto status_2 = table.insert("col_2", "Header Col 2");
     REQUIRE(status_2);
 
     auto &col_2 = table["col_2"];
@@ -56,7 +56,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
   }
 
   {
-    table.insert_column(Column("col_3", "Header Col 3"));
+    table.insert(Column("col_3", "Header Col 3"));
     auto &col_3 = table["col_3"];
     CHECK(col_3.header_text == "Header Col 3");
     col_3.data.push_back(3.0);
