@@ -268,15 +268,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
   if constexpr (false)
   {
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
+    auto tmp = fs::path(iodata.problem.output) / "tmp";
+    if (Mpi::Root(comm) && !fs::exists(tmp))
     {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    if (Mpi::Root(comm) && !std::filesystem::exists(tmp))
-    {
-      std::filesystem::create_directories(tmp);
+      fs::create_directories(tmp);
     }
     int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
     std::unique_ptr<mfem::Mesh> gsmesh =
@@ -285,7 +280,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
     {
       std::string pfile =
-          mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
+          mfem::MakeParFilename(tmp.string() + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
@@ -293,7 +288,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     }
     {
       std::string pfile =
-          mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
+          mfem::MakeParFilename(tmp.string() + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
@@ -504,7 +499,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // Print some mesh information.
   mfem::Vector bbmin, bbmax;
   GetAxisAlignedBoundingBox(*mesh[0], bbmin, bbmax);
-  const double Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
+  const double Lc = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
   Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
              mesh[0]->GetNodes()
                  ? std::to_string(mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder())
@@ -1556,15 +1551,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
 
   if constexpr (false)
   {
-    if (dim == 3)
-    {
-      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})", normal(0),
-                 normal(1), normal(2));
-    }
-    else
-    {
-      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e})", normal(0), normal(1));
-    }
+    Mpi::Print(comm, " Surface normal = ({:+.3e})", fmt::join(normal, ", "));
   }
   return normal;
 }
@@ -1630,12 +1617,8 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
   if (iodata.model.refinement.save_adapt_mesh)
   {
     // Create a separate serial mesh to write to disk.
-    std::string sfile = iodata.problem.output;
-    if (sfile.back() != '/')
-    {
-      sfile += '/';
-    }
-    sfile += std::filesystem::path(iodata.model.mesh).stem().string() + ".mesh";
+    auto sfile = fs::path(iodata.problem.output) / fs::path(iodata.model.mesh).stem();
+    sfile += ".mesh";
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
@@ -1647,7 +1630,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
         // fo << std::fixed;
         fo << std::scientific;
         fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(smesh, iodata.GetMeshLengthScale());
+        mesh::DimensionalizeMesh(smesh, iodata.units.GetMeshLengthRelativeScale());
         smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
       }
       Mpi::Barrier(comm);
@@ -2058,7 +2041,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   // or error out if not supported.
   constexpr bool generate_edges = false, refine = false, fix_orientation = true;
   std::unique_ptr<mfem::Mesh> mesh;
-  std::filesystem::path mesh_path(mesh_file);
+  fs::path mesh_path(mesh_file);
   if (mesh_path.extension() == ".mphtxt" || mesh_path.extension() == ".mphbin" ||
       mesh_path.extension() == ".nas" || mesh_path.extension() == ".bdf")
   {

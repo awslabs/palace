@@ -12,12 +12,10 @@ namespace palace
 {
 
 class ErrorIndicator;
-class LumpedPortOperator;
 class Mesh;
+template <config::ProblemData::Type>
 class PostOperator;
 class SpaceOperator;
-class SurfaceCurrentOperator;
-class WavePortOperator;
 
 //
 // Driver class for driven terminal simulations.
@@ -27,29 +25,15 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  ErrorIndicator SweepUniform(SpaceOperator &space_op, PostOperator &post_op, int n_step,
-                              int step0, double omega0, double delta_omega) const;
+  ErrorIndicator SweepUniform(SpaceOperator &space_op,
+                              PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                              int n_step, int step0, double omega0,
+                              double delta_omega) const;
 
-  ErrorIndicator SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op, int n_step,
-                               int step0, double omega0, double delta_omega) const;
-
-  void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
-                   const WavePortOperator &wave_port_op,
-                   const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, const ErrorIndicator *indicator) const;
-
-  void PostprocessCurrents(const PostOperator &post_op,
-                           const SurfaceCurrentOperator &surf_j_op, int step,
-                           double omega) const;
-
-  void PostprocessPorts(const PostOperator &post_op,
-                        const LumpedPortOperator &lumped_port_op, int step,
-                        double omega) const;
-
-  void PostprocessSParameters(const PostOperator &post_op,
-                              const LumpedPortOperator &lumped_port_op,
-                              const WavePortOperator &wave_port_op, int step,
-                              double omega) const;
+  ErrorIndicator SweepAdaptive(SpaceOperator &space_op,
+                               PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                               int n_step, int step0, double omega0,
+                               double delta_omega) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
