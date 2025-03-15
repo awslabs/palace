@@ -57,6 +57,13 @@ public:
     FIELD_B        // [Wb/m²] = [V⋅s/m²]
   };
 
+  // Helper class to essentially allow static_assert(false) in constexpr if branch.
+  // Obsolsee in current compiles, but can only remove in C++23.
+  template <ValueType T>
+  struct always_false : std::false_type
+  {
+  };
+
   template <ValueType unit>
   double GetScaleFactor() const
   {
@@ -122,7 +129,7 @@ public:
     }
     else
     {
-      static_assert(false, "ValueType unkown");
+      static_assert(always_false<unit>::value, "ValueType unkown");
     }
   }
 
