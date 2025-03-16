@@ -34,8 +34,6 @@ class Column
   // View to default options in table class, will be set when columns are added to Table
   ColumnOptions *defaults = nullptr;
 
-  // ----
-
   // Map-like index, to interface via Table class
   std::string name;
 
@@ -55,7 +53,7 @@ public:
   [[nodiscard]] auto format_header(const std::optional<size_t> &width = {}) const
   {
     auto w = width.value_or(col_width());
-    return fmt::format("{:>{width}s}", header_text, fmt::arg("width", w));
+    return fmt::format("{0:>{1}s}", header_text, w);
   }
 
   [[nodiscard]] auto format_row(size_t i, const std::optional<size_t> &width = {}) const
@@ -80,7 +78,7 @@ public:
       }
     }
     auto empty_cell = empty_cell_val.value_or(defaults->empty_cell_val);
-    return fmt::format("{:>{width}s}", empty_cell, fmt::arg("width", width_));
+    return fmt::format("{0:>{1}s}", empty_cell, width_);
   }
   Column(std::string name, std::string header_text = "",
          std::optional<size_t> min_left_padding = {},

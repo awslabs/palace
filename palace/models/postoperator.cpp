@@ -840,9 +840,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
-      Mpi::Print(" {sij} = {:+.3e}{:+.3e}i, |{sij}| = {:+.3e}, arg({sij}) = {:+.3e}\n",
-                 S_ij.real(), S_ij.imag(), vi.abs_S_ij, vi.arg_S_ij,
-                 fmt::arg("sij", format("S[{}][{}]", idx, driven_source_index)));
+      Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
+                 format("S[{}][{}]", idx, driven_source_index), S_ij.real(), S_ij.imag(),
+                 vi.abs_S_ij, vi.arg_S_ij);
     }
   }
 }
