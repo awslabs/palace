@@ -8,9 +8,7 @@
 #include <vector>
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
-#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/tablecsv.hpp"
 
 namespace palace
 {
@@ -27,6 +25,7 @@ class BaseSolver
 {
 protected:
   // Reference to configuration file data (not owned).
+  // TODO(C++20): Update to reference wrapper of incomplete type.
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.

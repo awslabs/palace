@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {

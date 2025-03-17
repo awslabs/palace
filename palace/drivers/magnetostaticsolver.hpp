@@ -8,6 +8,7 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {

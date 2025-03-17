@@ -21,7 +21,6 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
-#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace

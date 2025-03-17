@@ -4,7 +4,6 @@
 #include <optional>
 #include "fem/errorindicator.hpp"
 #include "utils/configfile.hpp"
-#include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace

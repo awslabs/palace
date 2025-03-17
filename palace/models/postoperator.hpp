@@ -8,7 +8,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <string>
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
@@ -21,7 +20,7 @@
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/configfile.hpp"
-#include "utils/tablecsv.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/units.hpp"
 
 namespace palace

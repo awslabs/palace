@@ -4,7 +4,6 @@
 #ifndef PALACE_DRIVERS_EIGEN_SOLVER_HPP
 #define PALACE_DRIVERS_EIGEN_SOLVER_HPP
 
-#include <complex>
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
@@ -13,11 +12,7 @@ namespace palace
 {
 
 class ErrorIndicator;
-// class LumpedPortOperator;
 class Mesh;
-template <config::ProblemData::Type>
-class PostOperator;
-// class SpaceOperator;
 
 //
 // Driver class for eigenmode simulations.

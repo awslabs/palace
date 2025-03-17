@@ -3,6 +3,7 @@
 
 #include "eigensolver.hpp"
 
+#include <complex>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"

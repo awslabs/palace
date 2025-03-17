@@ -3,6 +3,7 @@
 
 #include "postoperator.hpp"
 
+#include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -12,7 +13,6 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
