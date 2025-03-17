@@ -95,6 +95,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
     std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
     if (C)
+    if (nonlinear)
+    {
+      slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
+                                                      iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with
+      // split operators (no callbacks)
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing
+      // all Eigs slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires
+      // Jacobian and TARGET_MAGNITUDE
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and
+      // TARGET_MAGNITUDE slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI);
+      // //only works with split operators (no callbacks)
+      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
+    }
+    else if (C)
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
@@ -231,6 +247,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+      // eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test
+      // for SLP/RII/NARNOLDI/?
     }
   }
   else
