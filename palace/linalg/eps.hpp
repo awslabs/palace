@@ -14,7 +14,6 @@ namespace palace
 
 template <typename VecType>
 class DivFreeSolver;
-class SpaceOperator;
 
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or
@@ -59,9 +58,6 @@ public:
                             ScaleType type) = 0;
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type) = 0;
-  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                            const ComplexOperator &C, const ComplexOperator &M,
-                            ScaleType type) = 0;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no

@@ -20,12 +20,10 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "models/spaceoperator.hpp"  //is there a way to avoid this?
 
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;
 typedef struct _p_PEP *PEP;
-typedef struct _p_NEP *NEP;
 typedef struct _p_BV *BV;
 typedef struct _p_ST *ST;
 typedef struct _p_RG *RG;
@@ -62,9 +60,7 @@ public:
     GEN_INDEFINITE,
     GEN_NON_HERMITIAN,
     HYPERBOLIC,
-    GYROSCOPIC,
-    GENERAL,  // for NEP
-    RATIONAL  // for NEP
+    GYROSCOPIC
   };
 
   enum class Type
@@ -75,13 +71,7 @@ public:
     TOAR,
     STOAR,
     QARNOLDI,
-    JD,
-    RII,       // NEP types
-    SLP,       // NEP types
-    NARNOLDI,  // NEP types
-    CISS,      // NEP types
-    INTERPOL,  // NEP types
-    NLEIGS     // NEP types
+    JD
   };
 
   // Workspace vector for operator applications.
@@ -144,13 +134,10 @@ public:
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
-                    ScaleType type) override;  // for NEP?
   // For the linear generalized case, the linear solver should be configured to compute the
-  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic (or
-  // nonlinear?) case, the linear solver should be configured to compute the action of M⁻¹
-  // (with no spectral transformation) or P(σ)⁻¹.
+  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
+  // case, the linear solver should be configured to compute the action of M⁻¹ (with no
+  // spectral transformation) or P(σ)⁻¹.
   void SetLinearSolver(const ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -188,7 +175,7 @@ public:
   virtual BV GetBV() const = 0;
 
   // Get the spectral transformation object.
-  virtual ST GetST() const = 0;  // this is causing issues since not available in NEP
+  virtual ST GetST() const = 0;
 
   // Get the filtering region object.
   virtual RG GetRG() const = 0;
@@ -198,108 +185,6 @@ public:
 
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
-};
-
-// Class for SLEPc's NEP problem type.
-// Should it be derived directly from SlepcEigenvalueSolver or maybe SlepcEPSBaseSolver?
-// (could be renamed SlecpBaseSolver)
-class SlepcNEPSolver : public SlepcEigenvalueSolver
-{
-protected:
-  // SLEPc eigensolver object.
-  NEP nep;
-
-  // Shell matrices for the nonlinear eigenvalue problem.
-  Mat T, TJ;  // not sure?
-
-  void Customize() override;
-
-  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
-
-public:
-  //
-  SlepcNEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
-
-  //
-  ~SlepcNEPSolver() override;
-
-  //
-  operator NEP() const { return nep; }
-
-  // Below copied from SlepcEPSSolverBase, not sure what we actually need. Keep override or
-  // not?
-  void SetNumModes(int num_eig, int num_vec = 0) override;
-
-  void SetTol(PetscReal tol) override;
-
-  void SetMaxIter(int max_it) override;
-
-  void SetWhichEigenpairs(WhichType type) override;
-
-  void SetProblemType(ProblemType type) override;
-
-  void SetType(Type type) override;
-
-  void SetInitialSpace(const ComplexVector &v) override;
-
-  int Solve() override;
-
-  std::complex<double> GetEigenvalue(int i) const override;
-
-  void GetEigenvector(int i, ComplexVector &x) const override;
-
-  BV GetBV() const override;
-
-  ST GetST() const override;
-
-  RG GetRG() const override;
-
-  MPI_Comm GetComm() const override
-  {
-    return nep ? PetscObjectComm(reinterpret_cast<PetscObject>(nep)) : MPI_COMM_NULL;
-  }
-
-  operator PetscObject() const override { return reinterpret_cast<PetscObject>(nep); };
-
-  // below copied directly from SlepcEPSSolver, remove unneeded and clean things up
-  // (multiple public, private, protected sections)
-public:
-  using SlepcEigenvalueSolver::delta;
-  using SlepcEigenvalueSolver::gamma;
-  using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInv;
-  using SlepcEigenvalueSolver::opProj;
-  using SlepcEigenvalueSolver::sigma;
-  using SlepcEigenvalueSolver::sinvert;
-
-  // References to matrices defining the linear eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opC, *opM;
-
-  // Matrices defining the nonlinear eigenvalue problem
-  std::unique_ptr<ComplexOperator> opA, opA2, opJ; //
-  // ComplexOperator opA, opA2, opJ;
-  // ComplexOperator *opA, *opA2, *opJ; // need J?
-  //  do we need to own A (and A2?) since they will change?
-  PetscScalar lambda_test; // remove this?
-
-  // Reference to space operator so we recompute A
-  SpaceOperator *space_op;
-
-private:
-  // Operator norms for scaling.
-  mutable PetscReal normA, normJ;  // not sure if we need...
-
-protected:
-  PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
-                            ComplexVector &r) const override;
-
-  PetscReal GetBackwardScaling(PetscScalar l) const override;
-
-public:
-  using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
-                    ScaleType type) override;
 };
 
 // Base class for SLEPc's EPS problem type.

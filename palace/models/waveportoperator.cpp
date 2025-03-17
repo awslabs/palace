@@ -1152,10 +1152,9 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     ports.try_emplace(idx, data, iodata.solver, mat_op, nd_fespace, h1_fespace,
                       port_dbc_bcs);
   }
-  MFEM_VERIFY(ports.empty() ||
-                  (iodata.problem.type == config::ProblemData::Type::DRIVEN ||
-                   iodata.problem.type == config::ProblemData::Type::EIGENMODE),
-              "Wave port boundaries are only available for frequency domain simulations!");
+  MFEM_VERIFY(
+      ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,
+      "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 
 void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
