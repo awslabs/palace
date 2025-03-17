@@ -58,7 +58,7 @@ public:
   };
 
   // Helper class to essentially allow static_assert(false) in constexpr if branch.
-  // Obsolsee in current compiles, but can only remove in C++23.
+  // static_assert(false) fixed as defect report for C++23 (P2593).
   template <ValueType T>
   struct always_false : std::false_type
   {

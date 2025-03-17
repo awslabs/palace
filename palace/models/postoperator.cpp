@@ -42,34 +42,6 @@ std::string ParaviewFoldername(const config::ProblemData::Type solver_t)
   }
 }
 
-// bool WriteParaviewFields(const config::ProblemData::Type solver_t, const IoData &iodata)
-// {
-//   if (solver_t == config::ProblemData::Type::DRIVEN)
-//   {
-//     return (iodata.solver.driven.delta_post > 0);
-//   }
-//   else if (solver_t == config::ProblemData::Type::EIGENMODE)
-//   {
-//     return (iodata.solver.eigenmode.n_post > 0);
-//   }
-//   else if (solver_t == config::ProblemData::Type::ELECTROSTATIC)
-//   {
-//     return (iodata.solver.electrostatic.n_post > 0);
-//   }
-//   else if (solver_t == config::ProblemData::Type::ELECTROSTATIC)
-//   {
-//     return (iodata.solver.magnetostatic.n_post > 0);
-//   }
-//   else if (solver_t == config::ProblemData::Type::TRANSIENT)
-//   {
-//     return (iodata.solver.transient.delta_post > 0);
-//   }
-//   else
-//   {
-//     return false;
-//   }
-// }
-
 }  // namespace
 
 template <config::ProblemData::Type solver_t>
@@ -78,7 +50,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
     post_op_csv(this, nr_expected_measurement_rows),
     surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
-    // dom_post_op does not have a default ctor so immediately specialize via lambda
+    // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
         {
@@ -100,7 +72,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
         }())),
     interp_op(iodata, fem_op->GetNDSpace())
 {
-  // Define primary grid-functions
+  // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
   {
     V = std::make_unique<GridFunction>(fem_op->GetH1Space());
@@ -120,7 +92,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                        HasComplexGridFunction<solver_t>());
   }
 
-  // Add wave port boundary mode postprocessing when available.
+  // Add wave port boundary mode postprocessing, if available.
   if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
   {
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
@@ -156,7 +128,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
   InitializeParaviewDataCollection();
 
-  // Initilize CSV files for measurements
+  // Initilize CSV files for measurements.
   post_op_csv.InitializeCSVDataCollection();
 }
 
@@ -414,7 +386,6 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
 
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
-  // TODO(phdum): remove conditional now that we have fem_op always?
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
@@ -428,6 +399,7 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
+  Mpi::Barrier(fem_op->GetComm());
 }
 
 template <config::ProblemData::Type solver_t>
@@ -446,7 +418,6 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
   // need for these to be parallel objects, since the data is local to each process and
   // there isn't a need to ever access the element neighbors. We set the time to some
   // non-used value to make the step identifiable within the data collection.
-  // TODO(phdum): remove conditional now that we have fem_op always?
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   paraview->SetCycle(paraview->GetCycle() + 1);
@@ -513,6 +484,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
     paraview->RegisterVCoeffField(name, gf);
   }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  Mpi::Barrier(fem_op->GetComm());
 }
 
 // Measurements
@@ -879,20 +851,21 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 {
-  // Depends on Capacitive Lumped Port Energy
+  // Depends on Lumped Port Energy since this is used in normalization of participation
+  // ratio.
 
   // Compute the surface dielectric participation ratio and associated quality factor for
   // the material interface given by index idx. We have:
   //                            1/Q_mj = p_mj tan(δ)_j
   // with:
-  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
+  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} / (E_elec + E_cap).
   measurement_cache.interface_eps_i.clear();
   if constexpr (HasEGridFunction<solver_t>())
   {
-
-    // These two must have been measured first.
-    // E_cap returns zero if the solver does not support lumped ports.
-    // TODO: Shold this not include other types of energy too (surface impedance case)?
+    // Domain and port energies must have been measured first. E_cap returns zero if the
+    // solver does not support lumped ports.
+    //
+    // TODO: Should this not include other types of energy too (surface impedance case)?
     auto energy_electric_all = measurement_cache.domain_E_field_energy_all +
                                measurement_cache.lumped_port_capacitor_energy;
 
@@ -920,6 +893,7 @@ void PostOperator<solver_t>::MeasureProbes() const
   measurement_cache.probe_E_field.clear();
   measurement_cache.probe_B_field.clear();
 
+#if defined(MFEM_USE_GSLIB)
   if constexpr (HasEGridFunction<solver_t>())
   {
     if (interp_op.GetProbes().size() > 0)
@@ -936,6 +910,7 @@ void PostOperator<solver_t>::MeasureProbes() const
           units.Dimensionalize<Units::ValueType::FIELD_B>(interp_op.ProbeField(*B));
     }
   }
+#endif
 }
 
 using fmt::format;
@@ -949,7 +924,6 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   SetEGridFunction(e);
   SetBGridFunction(b);
@@ -963,7 +937,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");
-    WriteFields(step / paraview_delta_post, freq_re);
+    WriteFields(double(step) / paraview_delta_post, freq_re);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
@@ -981,7 +955,6 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   SetEGridFunction(e);
   SetBGridFunction(b);
@@ -995,8 +968,8 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
   measurement_cache.error_bkwd = error_bkwd;
 
   // Mini pretty-print table of eig summaries: always print with header since other
-  // measurements may log their results. TODO(phdum+hughcars): Discuss.
-  if (Mpi::Root(GetComm()))
+  // measurements may log their results.
+  if (Mpi::Root(fem_op->GetComm()))
   {
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
@@ -1085,7 +1058,6 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &e, const Ve
     -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-
   auto time = units.Dimensionalize<Units::ValueType::TIME>(t);
   SetEGridFunction(e);
   SetBGridFunction(b);
@@ -1098,7 +1070,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &e, const Ve
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");
-    WriteFields(step / paraview_delta_post, time);
+    WriteFields(double(step) / paraview_delta_post, time);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
@@ -1144,7 +1116,8 @@ template class PostOperator<config::ProblemData::Type::ELECTROSTATIC>;
 template class PostOperator<config::ProblemData::Type::MAGNETOSTATIC>;
 template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 
-// Function explict instation (TODO(C++20): with requires, we won't need a second template)
+// Function explict instantiation.
+// TODO(C++20): with requires, we won't need a second template
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasurePrintAll<
     config::ProblemData::Type::DRIVEN>(int step, const ComplexVector &e,

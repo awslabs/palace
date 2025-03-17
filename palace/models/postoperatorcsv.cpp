@@ -15,7 +15,7 @@ namespace
 {
 
 // TODO(C++20): Do constexpr with string
-std::string DimLabeler(int i)
+std::string DimLabel(int i)
 {
   switch (i)
   {
@@ -234,14 +234,14 @@ void PostOperatorCSV<solver_t>::InitializeProbeE()
       if constexpr (HasComplexGridFunction<solver_t>())
       {
         probe_E->table.insert(format("E{}_{}_re", idx, i_dim),
-                              format("Re{{E_{}[{}]}} (V/m)", DimLabeler(i_dim), idx));
+                              format("Re{{E_{}[{}]}} (V/m)", DimLabel(i_dim), idx));
         probe_E->table.insert(format("E{}_{}_im", idx, i_dim),
-                              format("Im{{E_{}[{}]}} (V/m)", DimLabeler(i_dim), idx));
+                              format("Im{{E_{}[{}]}} (V/m)", DimLabel(i_dim), idx));
       }
       else
       {
         probe_E->table.insert(format("E{}_{}_re", idx, i_dim),
-                              format("E_{}[{}] (V/m)", DimLabeler(i_dim), idx));
+                              format("E_{}[{}] (V/m)", DimLabel(i_dim), idx));
       }
     }
   }
@@ -304,14 +304,14 @@ void PostOperatorCSV<solver_t>::InitializeProbeB()
       if (HasComplexGridFunction<solver_t>())
       {
         probe_B->table.insert(format("B{}_{}_re", idx, i_dim),
-                              format("Re{{B_{}[{}]}} (Wb/m²)", DimLabeler(i_dim), idx));
+                              format("Re{{B_{}[{}]}} (Wb/m²)", DimLabel(i_dim), idx));
         probe_B->table.insert(format("B{}_{}_im", idx, i_dim),
-                              format("Im{{B_{}[{}]}} (Wb/m²)", DimLabeler(i_dim), idx));
+                              format("Im{{B_{}[{}]}} (Wb/m²)", DimLabel(i_dim), idx));
       }
       else
       {
         probe_B->table.insert(format("B{}_{}_re", idx, i_dim),
-                              format("B_{}[{}] (Wb/m²)", DimLabeler(i_dim), idx));
+                              format("B_{}[{}] (Wb/m²)", DimLabel(i_dim), idx));
       }
     }
   }
@@ -680,7 +680,7 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
 {
-  // TODO(C++20): Make this a filterd iterator in LumpedPortOp
+  // TODO(C++20): Make this a filtered iterator in LumpedPortOp
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
   {
     if (std::abs(data.R) > 0.0)
@@ -736,15 +736,10 @@ void PostOperatorCSV<solver_t>::PrintErrorIndicator(
   TableWithCSVFile error_indicator(post_op->post_dir / "error-indicators.csv");
   error_indicator.table.reserve(1, 4);
 
-  error_indicator.table.insert("norm", "Norm");
-  error_indicator.table.insert("min", "Minimum");
-  error_indicator.table.insert("max", "Maximum");
-  error_indicator.table.insert("mean", "Mean");
-
-  error_indicator.table["norm"] << indicator_stats.norm;
-  error_indicator.table["min"] << indicator_stats.min;
-  error_indicator.table["max"] << indicator_stats.max;
-  error_indicator.table["mean"] << indicator_stats.mean;
+  error_indicator.table.insert(Column("norm", "Norm") << indicator_stats.norm);
+  error_indicator.table.insert(Column("min", "Minimum") << indicator_stats.min);
+  error_indicator.table.insert(Column("max", "Maximum") << indicator_stats.max);
+  error_indicator.table.insert(Column("mean", "Mean") << indicator_stats.mean);
 
   error_indicator.WriteFullTableTrunc();
 }

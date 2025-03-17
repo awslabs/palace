@@ -291,7 +291,7 @@ DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    // Measure domain energies for the error indictor only: don't exchange face_nbr_data.
+    // Measure domain energies for the error indicator only: don't exchange face_nbr_data.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, false);
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
@@ -384,8 +384,7 @@ DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-
-    auto measurement = post_op.MeasurePrintAll(step, E, B, omega);
+    post_op.MeasurePrintAll(step, E, B, omega);
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);

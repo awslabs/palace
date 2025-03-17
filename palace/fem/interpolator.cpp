@@ -22,6 +22,12 @@ constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
 namespace
 {
+
+// Statically determine vector sizes associated with FiniteElementSpace before individual
+// elements are constructed. Remove once mfem 4.8 is release. See
+// https://github.com/mfem/mfem/pull/4598.
+//
+
 int MFEM_GridFunction_VectorDim(const mfem::FiniteElementSpace *fes)
 {
   using namespace mfem;

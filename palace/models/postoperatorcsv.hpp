@@ -13,7 +13,7 @@ namespace palace
 template <config::ProblemData::Type solver_t>
 class PostOperator;
 
-// Helper class to PostOperator to collect csv talbes and printers for measurment that will
+// Helper class to PostOperator to collect csv tables and printers for measurement that will
 // be saved to file. This class contains a pointer to the corresponding PostOperator class
 // and is a friend to a PostOperator class; practically it is the as having these members
 // and methods in PostOperator. It exists for code clarity.
@@ -57,7 +57,7 @@ class PostOperatorCSV
   // TODO: Upgrade SFINE to C++20 concepts to simplify static selection since we can just
   // use `void Function(...) requires (solver_t == Type::A);`.
 
-  // Eigen + Driven + Transient
+  // Eigenmode + Driven + Transient
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
 
@@ -96,7 +96,7 @@ class PostOperatorCSV
   template <config::ProblemData::Type U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>;
 
-  // Eigensolver
+  // Eigenmode
   std::optional<TableWithCSVFile> eig;
 
   template <config::ProblemData::Type U = solver_t>
@@ -130,7 +130,7 @@ public:
   // Print all data from post_op->measurement_cache.
   void PrintAllCSVData(double idx_value_dimensionful, int step, int column_block = 0);
 
-  // Special case of gloabl indicator — init and print all at once.
+  // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);
 
   PostOperatorCSV() = delete;

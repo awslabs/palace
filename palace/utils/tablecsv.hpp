@@ -40,6 +40,12 @@ class Column
 public:
   [[nodiscard]] size_t col_width() const
   {
+    // Quickfix to specify full column width in integer case to match current formatting
+    if (print_as_int)
+    {
+      return std::max(min_left_padding.value_or(defaults->min_left_padding),
+                      header_text.size());
+    }
     size_t pad = min_left_padding.value_or(defaults->min_left_padding);
     size_t prec = float_precision.value_or(defaults->float_precision);
 
@@ -268,7 +274,10 @@ public:
 class TableWithCSVFile
 {
   std::string csv_file_fullpath_;
-  unsigned long file_append_curser = -1;
+
+  // Index to keep track of which row we are currently at the beginning of / printing. Row
+  // [-1, 0) is the header, row [0, 1) the first numeric row, etc.
+  unsigned long file_append_cursor = -1;
 
 public:
   Table table = {};
@@ -287,35 +296,33 @@ public:
     auto file_buf = fmt::output_file(
         csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
     file_buf.print("{}", table.format_table());
-    file_append_curser = table.n_rows();
+    file_append_cursor = table.n_rows();
   }
 
   void AppendHeader()
   {
-    if (file_append_curser != -1)
+    if (file_append_cursor != -1)
     {
-      // ReplaceHeader;
-      return;
+      WriteFullTableTrunc();
     }
     auto file_buf =
         fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
     file_buf.print("{}", table.format_header());
-    file_append_curser++;
+    file_append_cursor++;
   }
   void AppendRow()
   {
-    if (file_append_curser < 0)
+    if (file_append_cursor < 0)
     {
-      // ReplaceHeader;
-      return;
+      WriteFullTableTrunc();
     }
     auto file_buf =
         fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-    file_buf.print("{}", table.format_row(file_append_curser));
-    file_append_curser++;
+    file_buf.print("{}", table.format_row(file_append_cursor));
+    file_append_cursor++;
   }
 
-  [[nodiscard]] auto GetAppendRowCurser() const { return file_append_curser; }
+  [[nodiscard]] auto GetAppendRowCursor() const { return file_append_cursor; }
 };
 
 }  // namespace palace
