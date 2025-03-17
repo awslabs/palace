@@ -28,6 +28,8 @@ public:
                    iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
                    iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
                       ? mfem::MUMPSSolver::SYMMETRIC_POSITIVE_DEFINITE
+                  : iodata.solver.linear.complex_coarse_solve
+                      ? mfem::MUMPSSolver::UNSYMMETRIC
                       : mfem::MUMPSSolver::SYMMETRIC_INDEFINITE,
                   iodata.solver.linear.sym_fact_type,
                   (iodata.solver.linear.strumpack_compression_type ==
