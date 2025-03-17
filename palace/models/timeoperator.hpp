@@ -33,8 +33,8 @@ private:
   std::unique_ptr<mfem::TimeDependentOperator> op;
 
   // Adaptive time-stepping parameters.
-  int order;
   double rel_tol, abs_tol;
+  int order;
   bool use_mfem_integrator = false;
 
 public:

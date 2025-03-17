@@ -122,6 +122,7 @@ mesh length units.
   - `"RefineCrackElements" [true]`
   - `"CrackDisplacementFactor" [1.0e-12]`
   - `"AddInterfaceBoundaryElements" [true]`
+  - `"ExportPrerefinedMesh" [false]`
   - `"ReorientTetMesh" [false]`
   - `"Partitioning" [""]`
   - `"MaxNCLevels" [1]`
