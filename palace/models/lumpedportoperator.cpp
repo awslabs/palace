@@ -361,10 +361,9 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   {
     return;
   }
-
   fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [](auto &buf, auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  auto to = []<typename... ft>(auto &buf, fmt::format_string<ft...> f, ft &&...a)
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<ft>(a)...); };
   using VT = Units::ValueType;
 
   // Print out BC info for all port attributes, for both active and inactive ports.
