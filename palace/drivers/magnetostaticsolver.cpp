@@ -54,8 +54,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ErrorIndicator indicator;
 
   // Main loop over current source boundaries.
-  Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", n_step,
-             (n_step > 1) ? "ies" : "y");
+  Mpi::Print("\nComputing magnetostatic fields for {:d} source {}\n", n_step,
+             (n_step > 1) ? "boundaries" : "boundary");
   int step = 0;
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
@@ -80,10 +80,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Compute B = ∇ x A on the true dofs.
     Curl.Mult(A[step], B);
 
-    // Save excitaiton current for inductance matrix calculation.
+    // Save excitation current for inductance matrix calculation.
     I_inc[step] = data.GetExcitationCurrent();
 
-    // Measurment and printing.
+    // Measurement and printing.
     auto total_domain_energy = post_op.MeasurePrintAll(step, A[step], B, idx);
 
     // Calculate and record the error indicators.

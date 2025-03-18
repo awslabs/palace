@@ -25,13 +25,13 @@ class PostOperatorCSV
 
   // Cache Index for printing of primary "index" column.
   double current_idx_value_dimensionful;
-  // Cache current row index being written
+  // Cache current row index being written.
   int current_idx_row;
-  // Cache column block (for future multi-excitation)
+  // Cache column block (for future multi-excitation).
   int current_column_block;
 
-  // These are all std::optional since: should only be instantiated on the root mpi process,
-  // they should only be written if the data is non-empty.
+  // These are all std::optional since: (a) should only be instantiated on the root mpi
+  // process, (b) they should only be written if the data is non-empty.
 
   // Base (all solvers)
   std::optional<TableWithCSVFile> domain_E;

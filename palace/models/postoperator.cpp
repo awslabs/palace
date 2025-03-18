@@ -104,7 +104,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
 
   // If we write paraview fields, initialize paraview files and dependant measurements. We
-  // currently don't use the dependant grid functions for non-paraview measurments, so only
+  // currently don't use the dependant grid functions for non-paraview measurements, so only
   // initialize if needed.
   if (solver_t == config::ProblemData::Type::DRIVEN)
   {
@@ -128,7 +128,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
   InitializeParaviewDataCollection();
 
-  // Initilize CSV files for measurements.
+  // Initialize CSV files for measurements.
   post_op_csv.InitializeCSVDataCollection();
 }
 
@@ -636,7 +636,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       }
       else
       {
-        // Compute current from P = V I^* since there is no frequency & characterisitc
+        // Compute current from P = V I^* since there is no frequency & characteristic
         // impedance of the lumped element.
         vi.I = (std::abs(vi.V) > 0.0) ? std::conj(vi.P / vi.V) : 0.0;
       }

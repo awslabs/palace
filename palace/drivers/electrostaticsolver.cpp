@@ -53,8 +53,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ErrorIndicator indicator;
 
   // Main loop over terminal boundaries.
-  Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", n_step,
-             (n_step > 1) ? "ies" : "y");
+  Mpi::Print("\nComputing electrostatic fields for {:d} terminal {}\n", n_step,
+             (n_step > 1) ? "boundaries" : "boundary");
   int step = 0;
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplace_op.GetSources())
@@ -78,7 +78,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     E = 0.0;
     Grad.AddMult(V[step], E, -1.0);
 
-    // Measurment and printing.
+    // Measurement and printing.
     auto total_domain_energy = post_op.MeasurePrintAll(step, V[step], E, idx);
 
     // Calculate and record the error indicators.
@@ -147,7 +147,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   using VT = Units::ValueType;
   using fmt::format;
 
-  // Write capactance matrix data.
+  // Write capacitance matrix data.
   auto PrintMatrix = [&terminal_sources, this](const std::string &file,
                                                const std::string &name,
                                                const std::string &unit,

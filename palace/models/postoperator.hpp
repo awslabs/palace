@@ -178,7 +178,7 @@ private:
   // PostOperatorCSV<solver_t> is a class that contains csv tables and printers of
   // measurements. Conceptually, its members could be a part of this class, like the
   // ParaView fields and functions above. It has been separated out for code readability. To
-  // achieve this, it is has a pointer back to it's "parent" PostOperator class and is a
+  // achieve this, it is has a pointer back to its "parent" PostOperator class and is a
   // friend class so it can access the the private measurement_cache and references of the
   // system from fem_op.
   friend PostOperatorCSV<solver_t>;
@@ -230,7 +230,7 @@ private:
     double abs_S_ij = 0.0;
     double arg_S_ij = 0.0;
 
-    // Energies (currently only for lumped port).
+    // Energies (currently only for lumped port)
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
 
@@ -254,11 +254,11 @@ private:
     std::complex<double> freq = {0.0, 0.0};  // driven || eigenvalue.
 
     // Modulation factor for input excitation:
-    // I_inc(t) = J(t) I_in for transient
-    // I_inc(omega) = I_in for driven, so Jcoeff_excitation = 1.0
-    double Jcoeff_excitation = 1.0;  // transient || driven.
+    // - I_inc(t) = J(t) I_in, for transient
+    // - I_inc(omega) = I_in, for driven so that Jcoeff_excitation = 1.0
+    double Jcoeff_excitation = 1.0;  // transient || driven
 
-    // Eigenmode data including error from solver // eigenmode
+    // Eigenmode data including error from solver
     double eigenmode_Q = 0.0;
     double error_bkwd = 0.0;
     double error_abs = 0.0;
