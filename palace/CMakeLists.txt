@@ -60,6 +60,7 @@ if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
 endif()
 if(PALACE_WITH_CUDA)
   enable_language(CUDA)
+  find_package(CUDAToolkit)
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
@@ -220,9 +221,12 @@ if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (PALACE_WITH_CUDA OR PALACE_WI
   )
 endif()
 
-# Resolve linker error with CUDA and static linkage
 if(PALACE_WITH_CUDA)
-  set_target_properties(${TARGET_NAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  if (BUILD_SHARED_LIBS)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart)
+  else()
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart_static)
+  endif()
 endif()
 
 # Add JIT source file path definition for libCEED
