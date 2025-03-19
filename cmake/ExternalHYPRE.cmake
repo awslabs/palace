@@ -26,8 +26,8 @@ if(HYPRE_CFLAGS MATCHES "-pedantic" AND (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
   string(REGEX REPLACE "-pedantic" "" HYPRE_CXXFLAGS ${HYPRE_CXXFLAGS})
 endif()
 if(PALACE_WITH_CUDA)
-  set(HYPRE_CFLAGS "${HYPRE_CFLAGS} -isystem ${CUDA_DIR}/include")
-  set(HYPRE_CXXFLAGS "${HYPRE_CXXFLAGS} -isystem ${CUDA_DIR}/include")
+  set(HYPRE_CFLAGS "${HYPRE_CFLAGS} -isystem ${CUDAToolkit_INCLUDE_DIRS}")
+  set(HYPRE_CXXFLAGS "${HYPRE_CXXFLAGS} -isystem ${CUDAToolkit_INCLUDE_DIRS}")
 endif()
 if(PALACE_WITH_HIP)
   set(HYPRE_CFLAGS "${HYPRE_CFLAGS} -isystem ${ROCM_DIR}/include")
@@ -138,7 +138,7 @@ endif()
 if(PALACE_WITH_CUDA)
   list(APPEND HYPRE_OPTIONS
     "--with-cuda"
-    "--with-cuda-home=${CUDA_DIR}"
+    "--with-cuda-home=${CUDAToolkit_LIBRARY_ROOT}"
     "--enable-curand"
     "--enable-cusparse"
     "--enable-device-memory-pool"

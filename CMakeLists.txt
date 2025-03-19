@@ -55,12 +55,7 @@ if(PALACE_WITH_CUDA)
   # Note: The new behavior of CMake policy CMP0104 will initialize CMAKE_CUDA_ARCHITECTURES
   # to an (old) compatible value even when not set by the user.
   enable_language(CUDA)
-  get_filename_component(NVCC_DIR ${CMAKE_CUDA_COMPILER} DIRECTORY)
-  get_filename_component(BIN_NVCC_DIR ${NVCC_DIR} DIRECTORY)
-  set(CUDA_DIR "${BIN_NVCC_DIR}" CACHE STRING
-    "CUDA installation directory, typically /usr/local/cuda or /opt/cuda"
-  )
-  message(STATUS "Found CUDA: ${CUDA_DIR}")
+  find_package(CUDAToolkit REQUIRED)
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     message(STATUS "Setting CMAKE_CUDA_ARCHITECTURES to '70' as none were specified")
     set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING
