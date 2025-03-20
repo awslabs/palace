@@ -420,59 +420,85 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void PostprocessPROM(const IoData &iodata, const RomOperator &prom_op)
+void DrivenSolver::PrintPROMMatrices(const RomOperator &prom_op)
 {
-  if (!do_measurement_ || !root_)
+  if (!root)
   {
     return;
   }
   Mpi::Print("Post-process synthesized circuit");
-  using VT = IoData::ValueType;
 
-  // Don't use structured binding for lambda below: captured structured bindings are C++20
+  // Don't use structured binding for lambda below: captured structured bindings are C++20.
+  // TODO(C++20): Simplify with structured bindings.
   const auto &prom_mat = prom_op.GetReducedMatrices();
   const auto &Kr = std::get<0>(prom_mat);
   const auto &Mr = std::get<1>(prom_mat);
   const auto &Cr = std::get<2>(prom_mat);
-  const auto &v_norms = std::get<3>(prom_mat);
+  const auto &voltage_norm_H = std::get<3>(prom_mat);
   const auto &v_label = std::get<4>(prom_mat);
 
   auto prom_size = Kr.rows();
   MFEM_VERIFY((Mr.rows() == prom_size) && ((Cr.rows() == prom_size) || (Cr.rows() == 0)) &&
-                  (v_norms.rows() == prom_size) && (v_label.size() == prom_size),
+                  (voltage_norm_H.rows() == prom_size) && (v_label.size() == prom_size),
               "Inconsisten PROM size!");
 
-  auto print_table = [&](const Eigen::MatrixXd &mat, std::string_view filename)
+  auto &post_dir_ = post_dir;
+
+  auto print_table = [prom_size, &post_dir_, &v_label](const Eigen::MatrixXd &mat,
+                                                       std::string_view filename)
   {
     auto out = TableWithCSVFile(post_dir_ / filename);
     out.table.col_options.float_precision = 17;
     for (int i = 0; i < prom_size; i++)
     {
-      out.table.insert_column(v_label[i], v_label[i]);
+      out.table.insert(v_label[i], v_label[i]);
+      auto &col = out.table[v_label[i]];
       for (int j = 0; j < prom_size; j++)
       {
-        out.table[v_label[i]] << mat(i, j);
+        col << mat(i, j);
       }
     }
     out.WriteFullTableTrunc();
   };
 
-  // De-normalize all volltages
-  auto v_d = v_norms.asDiagonal();
+  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
+  {
+    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
+  };
 
-  // PROM matrices should be real
-  auto unit_H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
+  // De-normalize port voltages.
+  Eigen::VectorXd v_conc(prom_size);
+  for (long j = 0; j < prom_size; j++)
+  {
+    if (starts_with(v_label[j], "port"))
+    {
+      v_conc[j] = voltage_norm_H[j];
+    }
+    else
+    {
+      v_conc[j] = 1.0;
+    }
+  }
+  // Lazy diagonal representation of inverse.
+  auto v_d = v_conc.cwiseInverse().asDiagonal();
+
+  using VT = Units::ValueType;
+
+  // PROM matrices should be real.
+  // TODO: Implications of periodic boundary conditions.
+  auto unit_H = iodata.units.GetScaleFactor<VT::INDUCTANCE>();
   Eigen::MatrixXd m_Linv = (1.0 / unit_H * v_d) * Kr.real() * v_d;
   print_table(m_Linv, "prom-Linv.csv");
 
-  auto unit_F = iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
+  auto unit_F = iodata.units.GetScaleFactor<VT::CAPACITANCE>();
   Eigen::MatrixXd m_C = (unit_F * v_d) * Mr.real() * v_d;
   print_table(m_C, "prom-C.csv");
 
-  // In principle, Cr need not exist
+  // Cr need not exist, if no dissipation. Currently, Cr always exists since we need
+  // dissipative ports for a  driven response, but this may change in the future.
   if (Cr.size() > 0)
   {
-    auto unit_ohm = iodata.DimensionalizeValue(VT::IMPEDANCE, 1.0);
+    auto unit_ohm = iodata.units.GetScaleFactor<VT::IMPEDANCE>();
     Eigen::MatrixXd m_Rinv = (1.0 / unit_ohm * v_d) * Cr.real() * v_d;
     print_table(m_Rinv, "prom-Rinv.csv");
   }
