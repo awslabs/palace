@@ -7,6 +7,7 @@
 #include <map>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
+#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -68,7 +69,7 @@ public:
     }
   };
 
-  std::map<int, SingleExcitationSpec> excitations = {};
+  std::map<ExcitationIdx, SingleExcitationSpec> excitations = {};
 
   auto begin() { return excitations.begin(); }
   auto end() { return excitations.end(); }
@@ -81,7 +82,8 @@ public:
   {
     for (const auto &[idx, port] : lumped_port_op)
     {
-      if (port.excitation == 0)  // Pre-ranges filter
+      if (port.excitation ==
+          ExcitationIdx(0))  // LumpedPortData does not have HasExcitaiton
       {
         continue;
       }
@@ -90,7 +92,7 @@ public:
     }
     for (const auto &[idx, port] : wave_port_op)
     {
-      if (port.excitation == 0)
+      if (port.excitation == ExcitationIdx(0))  // WavePortData does not have HasExcitaiton
       {
         continue;
       }
@@ -114,11 +116,11 @@ public:
     }
   };
 
-  [[nodiscard]] int MaxIdx() const
+  [[nodiscard]] ExcitationIdx MaxIdx() const
   {
     if (excitations.empty())
     {
-      return 0;
+      return ExcitationIdx(0);
     }
     // Map is stored order by key so max key is last item
     return std::next(std::rend(excitations))->first;
@@ -129,7 +131,7 @@ public:
   [[nodiscard]] std::string FmtLog() const;
 
   // Single Simple (only 1 port per excitation) Excitation
-  [[nodiscard]] std::tuple<bool, int, PortType, int> IsSingleSimple() const
+  [[nodiscard]] std::tuple<bool, ExcitationIdx, PortType, int> IsSingleSimple() const
   {
     if (Size() == 1)
     {
@@ -140,7 +142,7 @@ public:
         return std::make_tuple(true, ex_idx, port_type, port_idx);
       }
     }
-    return std::make_tuple(false, 0, PortType::Undefined, 0);
+    return std::make_tuple(false, ExcitationIdx(0), PortType::Undefined, 0);
   }
 
   // Multiple Simple (only 1 port per excitation) Excitation
