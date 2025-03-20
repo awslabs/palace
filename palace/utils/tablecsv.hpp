@@ -22,7 +22,7 @@ namespace palace
 struct ColumnOptions
 {
   size_t min_left_padding = 8;
-  size_t float_precision = 9;
+  size_t float_precision = 17;
   std::string empty_cell_val = {"NULL"};
   std::string fmt_sign = {"+"};
 };

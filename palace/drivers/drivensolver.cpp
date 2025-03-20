@@ -1159,7 +1159,7 @@ void DrivenSolver::SParametersPostPrinter::AddMeasurement(
     std::complex<double> S_ij = post_op.GetSParameter(src_lumped_port, o_idx, port_idx);
 
     auto abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
-    auto arg_S_ij = std::arg(S_ij) * 180.8 / M_PI;
+    auto arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
     port_S.table[format("abs_{}_{}", o_idx, excitation_idx)] << abs_S_ij;
     port_S.table[format("arg_{}_{}", o_idx, excitation_idx)] << arg_S_ij;
@@ -1211,8 +1211,27 @@ void DrivenSolver::PROMPostPrinter::PostprocessPROM(const IoData &iodata,
     out.WriteFullTableTrunc();
   };
 
+  auto starts_with = [](const std::string& str, const std::string_view prefix) -> bool {
+    return str.length() >= prefix.length() &&
+           str.compare(0, prefix.length(), prefix) == 0;
+  };
+
+
   // De-normalize all volltages
-  auto v_d = v_norms.asDiagonal();
+  Eigen::VectorXd v_conc(prom_size);
+  for (int j = 0; j < prom_size; j++)
+  {
+    if (starts_with(v_label[j], "port")) {
+      v_conc[j] = v_norms[j];
+    } else {
+      v_conc[j] = 1.0;
+    }
+  }
+  v_conc = v_conc.cwiseInverse();
+  auto v_d = v_conc.asDiagonal();
+
+  std::cout << v_conc << std::endl;
+  Mpi::Print("Post-process synthesized circuit 2");
 
   // PROM matrices should be real
   auto unit_H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
