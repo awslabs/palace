@@ -422,7 +422,7 @@ void RomOperator::SolveHDM(ExcitationIdx excitation_idx, double omega, ComplexVe
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u)
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
 
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
@@ -436,14 +436,19 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
   const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
-                        static_cast<std::size_t>(has_imag));
+  const std::size_t new_dim_V = dim_V + std::size_t(has_real) + std::size_t(has_imag);
+  v_node_label.reserve(new_dim_V);
+  std::vector<double> H(new_dim_V);
+  voltage_norm_H.conservativeResize(new_dim_V);
+
   if (has_real)
   {
     V[dim_V] = u.Real();
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = H[dim_V];
+    v_node_label.emplace_back(fmt::format("{}_re", node_label));
     dim_V++;
   }
   if (has_imag)
@@ -452,6 +457,8 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
     H[dim_V] = linalg::Norml2(comm, V[dim_V]);
     V[dim_V] *= 1.0 / H[dim_V];
+    voltage_norm_H[dim_V] = H[dim_V];
+    v_node_label.emplace_back(fmt::format("{}_im", node_label));
     dim_V++;
   }
 

@@ -917,6 +917,47 @@ bool SpaceOperator::GetExcitationVector(ExcitationIdx excitation_idx, double ome
   return nnz1 || nnz2;
 }
 
+bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &RHS,
+                                                  bool zero_metal)
+{
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  MFEM_VERIFY(RHS.Size() == GetNDSpace().GetTrueVSize(),
+              "Invalid T-vector size for AddExcitationVector1Internal!");
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+
+  const auto &data = lumped_port_op.GetPort(port_idx);
+
+  mfem::Array<int> attr_list;
+  mfem::Array<int> attr_marker;
+
+  for (const auto &elem : data.elems)
+  {
+    attr_list.Append(elem->GetAttrList());
+    fb.AddCoefficient(
+        elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * data.elems.size())));
+  }
+  auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  mfem::LinearForm rhs1(&GetNDSpace().Get());
+  rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
+  rhs1.UseFastAssembly(false);
+  rhs1.UseDevice(false);
+  rhs1.Assemble();
+  rhs1.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS.Real());
+
+  if (zero_metal)
+  {
+    linalg::SetSubVector(RHS.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  }
+  return true;
+}
+
 bool SpaceOperator::GetExcitationVector1(ExcitationIdx excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence

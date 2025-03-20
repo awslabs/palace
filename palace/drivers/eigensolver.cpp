@@ -367,7 +367,7 @@ void EigenSolver::EigenPostPrinter::PrintStdoutHeader()
   }
   to("{:s}", eig.table.print_row_separator);
 
-  Mpi::Print("{}{}", std::string{buf.data(), buf.size()},
+  Mpi::Print("{}{}\n", std::string{buf.data(), buf.size()},
              std::string(stdout_int_print_width + 4 * eig.table[1].col_width(), '='));
   eig.table.col_options = save_defaults;
 }
@@ -397,7 +397,7 @@ void EigenSolver::EigenPostPrinter::PrintStdoutRow(size_t j)
     to("{:s}", eig.table[i].format_row(j));
   }
   to("{:s}", eig.table.print_row_separator);
-  Mpi::Print("{}", buf);
+  Mpi::Print("{}", fmt::to_string(buf));
   eig.table.col_options = save_defaults;
 }
 
@@ -613,7 +613,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
   double E_cap = post_op.GetLumpedCapacitorEnergy();
   double E_m = E_elec + E_cap;
 
-  port_EPR.table["idx"] << eigen_print_idx;
+  port_Q.table["idx"] << eigen_print_idx;
   for (const auto idx : ports_with_R)
   {
     double Kl = post_op.GetExternalKappa(idx, E_m);
