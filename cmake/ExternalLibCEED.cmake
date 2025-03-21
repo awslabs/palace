@@ -32,7 +32,7 @@ endif()
 
 # Silence some CUDA/HIP include file warnings
 if(PALACE_WITH_CUDA)
-  set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${CUDA_DIR}/include")
+  set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${CUDAToolkit_INCLUDE_DIRS}")
 endif()
 if(PALACE_WITH_HIP)
   set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${ROCM_DIR}/include")
@@ -86,7 +86,7 @@ if(PALACE_WITH_LIBXSMM)
 endif()
 if(PALACE_WITH_CUDA)
   list(APPEND LIBCEED_OPTIONS
-    "CUDA_DIR=${CUDA_DIR}"
+    "CUDA_DIR=${CUDAToolkit_LIBRARY_ROOT}"
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     list(GET CMAKE_CUDA_ARCHITECTURES 0 LIBCEED_CUDA_ARCH)
