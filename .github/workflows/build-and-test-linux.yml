@@ -416,6 +416,10 @@ jobs:
           fi
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$LD_LIBRARY_PATH
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
+          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
+            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
+          fi
+
           cd $(pwd)/palace-build/palace-build/test/unit
 
           # Run tests
