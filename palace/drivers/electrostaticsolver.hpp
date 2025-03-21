@@ -9,6 +9,7 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/configfile.hpp"
 
 namespace mfem
 {
@@ -23,6 +24,7 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
+template <config::ProblemData::Type>
 class PostOperator;
 
 //
@@ -31,10 +33,7 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &post_op, int step, int idx, double E_elec,
-                   const ErrorIndicator *indicator) const;
-
-  void PostprocessTerminals(PostOperator &post_op,
+  void PostprocessTerminals(PostOperator<config::ProblemData::Type::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 

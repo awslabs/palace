@@ -60,6 +60,19 @@ public:
 
   // Return the mean local error indicator.
   auto Mean(MPI_Comm comm) const { return linalg::Mean(comm, local); }
+
+  struct SummaryStatistics
+  {
+    double norm;
+    double min;
+    double max;
+    double mean;
+  };
+
+  SummaryStatistics GetSummaryStatistics(MPI_Comm comm) const
+  {
+    return {Norml2(comm), Min(comm), Max(comm), Mean(comm)};
+  }
 };
 
 }  // namespace palace

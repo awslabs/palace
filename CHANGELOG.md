@@ -57,6 +57,20 @@ The format of this changelog is based on
     lumped port discovery to fail by reducing default from `1e-3` to `1e-12`.
   - Fixed bug in Nastran mesh reader where carriage returns (`\r`) in the mesh file could
     cause a failure to read the mesh.
+  - Changed post-processing, so that appropriate measurements are always written to disk as CSV
+    files. This is a breaking change, since users are now required to specify valid a output
+    folder in `config["Problem"]["Output"]`. Previously an empty string `""` would suppress file
+    printing. ParaView printing is still controlled and suppressed by the `"Save"` or `"SaveStep"`
+    options in the `config["Solver"][...]`.
+  - Changed measurement and printing during post-processing substantially. This change is not
+    user-facing, but will enable future multi-excitation support. All measurements are now
+    performed as part of the `PostOperator` class, which is templated on solver type. The public
+    interface of the `PostOperator` has been simplified: measurements can no longer be called
+    individually, but are grouped in a `MeasurePrintAll` function. The actual printing of
+    measurements has moved out of individual solvers and is orchestrated by the `PostOperatorCSV`
+    class. Other helper classes include a small `Table` class (for data storage and formatting)
+    and a light wrapper `TableWithCSVFile` (with file interaction).
+  - Changed unit conversion interface: this was moved out of `IOData` into a separate `Units` class.
 
 ## [0.13.0] - 2024-05-20
 

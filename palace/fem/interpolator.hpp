@@ -13,6 +13,7 @@ namespace palace
 
 class GridFunction;
 class IoData;
+class FiniteElementSpace;
 
 //
 // A class which wraps MFEM's GSLIB interface for high-order field interpolation.
@@ -25,11 +26,14 @@ private:
 #endif
   std::vector<int> op_idx;
 
+  int v_dim_fes;  // dimension of interpolated vector from NDSpace
+
   std::vector<double> ProbeField(const mfem::ParGridFunction &U);
 
 public:
-  InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
 
+  auto GetVDim() const { return v_dim_fes; }
   const auto &GetProbes() const { return op_idx; }
 
   std::vector<std::complex<double>> ProbeField(const GridFunction &U);

@@ -4,6 +4,7 @@
 #include "interpolator.hpp"
 
 #include <algorithm>
+#include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -19,14 +20,47 @@ constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
 }  // namespace
 
+namespace
+{
+
+// Statically determine vector sizes associated with FiniteElementSpace before individual
+// elements are constructed. Remove once mfem 4.8 is release. See
+// https://github.com/mfem/mfem/pull/4598.
+//
+
+int MFEM_GridFunction_VectorDim(const mfem::FiniteElementSpace *fes)
+{
+  using namespace mfem;
+  const FiniteElement *fe;
+  if (!fes->GetNE())
+  {
+    static const Geometry::Type geoms[3] = {Geometry::SEGMENT, Geometry::TRIANGLE,
+                                            Geometry::TETRAHEDRON};
+    fe = fes->FEColl()->FiniteElementForGeometry(geoms[fes->GetMesh()->Dimension() - 1]);
+  }
+  else
+  {
+    fe = fes->GetFE(0);
+  }
+  if (!fe || fe->GetRangeType() == FiniteElement::SCALAR)
+  {
+    return fes->GetVDim();
+  }
+  return fes->GetVDim() * std::max(fes->GetMesh()->SpaceDimension(), fe->GetRangeDim());
+}
+}  // namespace
+
 #if defined(MFEM_USE_GSLIB)
-InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh)
-  : op(mesh.GetComm())
+InterpolationOperator::InterpolationOperator(const IoData &iodata,
+                                             FiniteElementSpace &nd_space)
+  : op(nd_space.GetParMesh().GetComm()),
+    v_dim_fes(MFEM_GridFunction_VectorDim(&nd_space.Get()))
 #else
 InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh)
 #endif
 {
 #if defined(MFEM_USE_GSLIB)
+  auto &mesh = nd_space.GetParMesh();
   // Set up probes interpolation. All processes search for all points.
   if (iodata.domains.postpro.probe.empty())
   {
@@ -57,12 +91,10 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
   {
     if (op.GetCode()[i++] == 2)
     {
-      Mpi::Warning("Probe {:d} at ({:.3e}, {:.3e}, {:.3e}) m could not be found!\n"
-                   "Using default value 0.0!\n",
-                   idx,
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[0]),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[1]),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[2]));
+      Mpi::Warning(
+          "Probe {:d} at ({:.3e}) m could not be found!\n Using default value 0.0!\n", idx,
+          fmt::join(iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.center),
+                    ", "));
     }
   }
 #else
@@ -116,7 +148,7 @@ std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFu
   }
   else
   {
-    return std::vector<std::complex<double>>(vr.begin(), vr.end());
+    return {vr.begin(), vr.end()};
   }
 }
 

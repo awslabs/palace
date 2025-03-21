@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
@@ -189,32 +190,14 @@ void ParseElementData(json &elem, const std::string &name, bool required,
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &data)
 {
-  bool first = true;
-  for (const auto &x : data)
-  {
-    if (!first)
-    {
-      os << ' ';
-    }
-    os << x;
-    first = false;
-  }
+  os << fmt::format("{}", fmt::join(data, " "));
   return os;
 }
 
 template <typename T, std::size_t N>
 std::ostream &operator<<(std::ostream &os, const std::array<T, N> &data)
 {
-  bool first = true;
-  for (const auto &x : data)
-  {
-    if (!first)
-    {
-      os << ' ';
-    }
-    os << x;
-    first = false;
-  }
+  os << fmt::format("{}", fmt::join(data, " "));
   return os;
 }
 
