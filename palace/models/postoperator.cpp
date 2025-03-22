@@ -133,26 +133,39 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 }
 
 template <config::ProblemData::Type solver_t>
-void PostOperator<solver_t>::SetNewParaviewOutput(const fs::path &paraview_path)
+template <config::ProblemData::Type U>
+auto PostOperator<solver_t>::InitializeParaviewDataCollection(ExcitationIdx ex_idx)
+    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
 {
-  paraview = {paraview_path / name_, &mesh_ND.get()};
-  paraview_bdr = {paraview_path / (name_ + "_boundary"), &mesh_ND.get()};
-  InitializeParaviewDataCollection();
+  fs::path sub_folder_name = "";
+  auto nr_excitations = fem_op->GetPortExcitationHelper().Size();
+  if ((nr_excitations > 1) && (ex_idx > ExcitationIdx(0)))
+  {
+    int spacing = 1 + int(std::log10(nr_excitations));
+    sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
+  }
+  InitializeParaviewDataCollection(sub_folder_name);
 }
 
 template <config::ProblemData::Type solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection()
+void PostOperator<solver_t>::InitializeParaviewDataCollection(
+    const fs::path &sub_folder_name)
 {
   if (!write_paraview_fields())
   {
     return;
   }
+  fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
+  fs::path paraview_dir_b =
+      post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
+  if (!sub_folder_name.empty())
+  {
+    paraview_dir_v /= sub_folder_name;
+    paraview_dir_b /= sub_folder_name;
+  }
   // Set up postprocessing for output to disk.
-  paraview = {post_dir / "paraview" / ParaviewFoldername(solver_t),
-              &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {post_dir / "paraview" /
-                      fmt::format("{}_boundary", ParaviewFoldername(solver_t)),
-                  &fem_op->GetNDSpace().GetParMesh()};
+  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
+  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -736,45 +749,31 @@ void PostOperator<solver_t>::MeasureSParameter() const
     using fmt::format;
     using std::complex_literals::operator""i;
 
-    // TODO: The excitation index logic will be improved in the the multi-excitation MR;
-    // don't fix this for now.
-    // Get source index of single excitation from space_op
-    int driven_source_index = -1;
-    // Get excitation index as is currently done: if -1 then no excitation
-    // Already ensured that one of lumped or wave ports are empty
-    for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
-    {
-      if (data.excitation)
-      {
-        driven_source_index = idx;
-      }
-    }
-    for (const auto &[idx, data] : fem_op->GetWavePortOp())
-    {
-      if (data.excitation)
-      {
-        driven_source_index = idx;
-      }
-    }
-    if (!(driven_source_index > 0))
+    // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
+    // don't support mixing wave and lumped ports, because we need to fix consistent
+    // conventions / de-embedding.
+    if (!fem_op->GetPortExcitationHelper().IsMultipleSimple() ||
+        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
     {
       return;
     }
 
-    // Currently S-Parameters are not calculated for mixed lumped & wave ports,
-    // so can treat them separately.
+    // Get single port index corresponding to current excitation.
+    auto drive_port_idx = *fem_op->GetPortExcitationHelper()
+                         .excitations.at(measurement_cache.ex_idx)
+                         .flatten_port_indices()
+                         .begin();
+
+    // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
+    // combine output iterators.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
 
-      const LumpedPortData &src_data =
-          fem_op->GetLumpedPortOp().GetPort(driven_source_index);
-      MFEM_VERIFY(src_data.excitation, "Lumped port index "
-                                           << driven_source_index
-                                           << " is not marked for excitation!");
+      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
       std::complex<double> S_ij = vi.S;
-      if (idx == driven_source_index)
+      if (idx == drive_port_idx)
       {
         S_ij.real(S_ij.real() - 1.0);
       }
@@ -789,8 +788,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, driven_source_index), S_ij.real(), S_ij.imag(),
-                 vi.abs_S_ij, vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(), vi.abs_S_ij,
+                 vi.arg_S_ij);
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
@@ -799,12 +798,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
 
       // Wave port modes are not normalized to a characteristic impedance so no generalized
       // S-parameters are available.
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(driven_source_index);
-      MFEM_VERIFY(src_data.excitation, "Wave port index "
-                                           << driven_source_index
-                                           << " is not marked for excitation!");
+      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
       std::complex<double> S_ij = vi.S;
-      if (idx == driven_source_index)
+      if (idx == drive_port_idx)
       {
         S_ij.real(S_ij.real() - 1.0);
       }
@@ -818,8 +814,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, driven_source_index), S_ij.real(), S_ij.imag(),
-                 vi.abs_S_ij, vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(), vi.abs_S_ij,
+                 vi.arg_S_ij);
     }
   }
 }
@@ -922,7 +918,8 @@ using fmt::format;
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(ExcitationIdx ex_idx, int step,
+                                                const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
@@ -934,10 +931,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   measurement_cache = {};
   measurement_cache.freq = freq;
+  measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
   auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(freq_re, step);
+  post_op_csv.PrintAllCSVData(freq_re, step, ex_idx);
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");
@@ -1098,14 +1096,21 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
-                                                          const ComplexVector &b,
-                                                          bool exchange_face_nbr_data)
+auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(
+    const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data,
+    std::optional<std::pair<int, double>> debug_print_paraview_opt)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   SetEGridFunction(e, exchange_face_nbr_data);
   SetBGridFunction(b, exchange_face_nbr_data);
   MeasureDomainFieldEnergy();
+
+  // Debug print prom fields
+  if (debug_print_paraview_opt.has_value())
+  {
+    WriteFields(debug_print_paraview_opt->first, debug_print_paraview_opt->second);
+  }
+
   // Return total domain energy for normalizing error indicator
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all +
@@ -1125,9 +1130,9 @@ template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 // TODO(C++20): with requires, we won't need a second template
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
-    config::ProblemData::Type::DRIVEN>(int step, const ComplexVector &e,
-                                       const ComplexVector &b, std::complex<double> omega)
-    -> double;
+    config::ProblemData::Type::DRIVEN>(ExcitationIdx ex_idx, int step,
+                                       const ComplexVector &e, const ComplexVector &b,
+                                       std::complex<double> omega) -> double;
 
 template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasureAndPrintAll<
     config::ProblemData::Type::EIGENMODE>(int step, const ComplexVector &e,
@@ -1148,7 +1153,13 @@ template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrin
                                           double t, double J_coef) -> double;
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
-    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b,
-                                       bool exchange_face_nbr_data = true) -> double;
+    config::ProblemData::Type::DRIVEN>(
+    const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data = true,
+    std::optional<std::pair<int, double>> debug_print_paraview_opt = std::nullopt)
+    -> double;
+
+template auto
+PostOperator<config::ProblemData::Type::DRIVEN>::InitializeParaviewDataCollection(
+    ExcitationIdx ex_idx) -> void;
 
 }  // namespace palace
