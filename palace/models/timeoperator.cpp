@@ -66,7 +66,7 @@ public:
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
     // Already asserted that only that time dependant solver only has a single excitation
-    auto excitation_helper = space_op.BuildPortExcitationHelper();
+    auto excitation_helper = space_op.GetPortExcitationHelper();
     auto excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -287,7 +287,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
     order(iodata.solver.transient.order)
 {
   // Must have one and only one excitation
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
   // Should have already asserted that time dependant solver only has a single excitation
   MFEM_VERIFY(excitation_helper.Size() == 1,
               fmt::format("Transient evoluation currently only allows for a single "
