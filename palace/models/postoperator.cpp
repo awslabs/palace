@@ -928,7 +928,8 @@ template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
                                              const ComplexVector &b,
-                                             std::complex<double> omega)
+                                             std::complex<double> omega,
+                                             ExcitationIdx ex_idx)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -941,7 +942,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
   MeasureAllImpl();
 
   auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(freq_re, step);
+  post_op_csv.PrintAllCSVData(freq_re, step, );
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");

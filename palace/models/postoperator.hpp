@@ -434,7 +434,7 @@ public:
 
   template <config::ProblemData::Type U = solver_t>
   auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                       std::complex<double> omega)
+                       std::complex<double> omega, ExcitationIdx ex_idx)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   template <config::ProblemData::Type U = solver_t>
