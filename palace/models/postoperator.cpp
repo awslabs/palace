@@ -133,6 +133,14 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 }
 
 template <config::ProblemData::Type solver_t>
+void PostOperator<solver_t>::SetNewParaviewOutput(const fs::path &paraview_path)
+{
+  paraview = {paraview_path / name_, &mesh_ND.get()};
+  paraview_bdr = {paraview_path / (name_ + "_boundary"), &mesh_ND.get()};
+  InitializeParaviewDataCollection();
+}
+
+template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection()
 {
   if (!write_paraview_fields())
@@ -920,7 +928,8 @@ template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
                                              const ComplexVector &b,
-                                             std::complex<double> omega)
+                                             std::complex<double> omega,
+                                             ExcitationIdx ex_idx)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -933,7 +942,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
   MeasureAllImpl();
 
   auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(freq_re, step);
+  post_op_csv.PrintAllCSVData(freq_re, step, );
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");

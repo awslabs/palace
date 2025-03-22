@@ -21,6 +21,7 @@
 #include "models/surfacepostoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/strongtype.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -405,6 +406,10 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
                         int nr_expected_measurement_rows = 1);
 
+  // Make new paraview output target for multiple excitations / prom
+  // Previous output must be correctly closed / deregistered
+  void SetNewParaviewOutput(const fs::path &paraview_path);
+
   // MeasurePrintAll is primary public interface of this class. It specialized by solver
   // type, since each solver has different fields and extra data required. These functions
   // all:
@@ -429,7 +434,7 @@ public:
 
   template <config::ProblemData::Type U = solver_t>
   auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                       std::complex<double> omega)
+                       std::complex<double> omega, ExcitationIdx ex_idx)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   template <config::ProblemData::Type U = solver_t>
