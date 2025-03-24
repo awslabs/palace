@@ -100,12 +100,8 @@ public:
   }
 
   // Access columns via vector position or column name
-
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
-  inline const Column &operator[](std::size_t idx) const { return (*this)[idx]; }
-
   Column &operator[](std::string_view name);
-  const Column &operator[](std::string_view name) const { return (*this)[name]; }
 
   inline auto begin() { return cols.begin(); }
   inline auto end() { return cols.end(); }
@@ -134,7 +130,7 @@ class TableWithCSVFile
 
   // Index to keep track of which row we are currently at the beginning of / printing. Row
   // [-1, 0) is the header, row [0, 1) the first numeric row, etc.
-  unsigned long file_append_cursor = -1;
+  long file_append_cursor = -1;
 
 public:
   Table table = {};
