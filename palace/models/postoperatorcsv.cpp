@@ -58,7 +58,7 @@ void PostOperatorCSV<solver_t>::InitializeDomainE()
   using fmt::format;
   domain_E = TableWithCSVFile(post_op->post_dir / "domain-E.csv");
   domain_E->table.reserve(nr_expected_measurement_rows,
-                          4 + post_op->dom_post_op.M_i.size());
+                          4 * (1 + post_op->dom_post_op.M_i.size()));
   domain_E->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
 
   domain_E->table.insert("Ee", "E_elec (J)");
@@ -112,7 +112,8 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
   using fmt::format;
   surface_F = TableWithCSVFile(post_op->post_dir / "surface-F.csv");
   surface_F->table.reserve(nr_expected_measurement_rows,
-                           1 + 2 * post_op->surf_post_op.flux_surfs.size());
+                           1 + (HasComplexGridFunction<solver_t>() ? 2 : 1) *
+                                   post_op->surf_post_op.flux_surfs.size());
   surface_F->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
   for (const auto &[idx, data] : post_op->surf_post_op.flux_surfs)
   {

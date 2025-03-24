@@ -37,37 +37,10 @@ class WavePortOperator;
 
 // Statically map solver (config::ProblemData::Type) to finite element operator
 
-// Helper struct that does not exists in C++17. TODO(C++20): use std::type_identity.
-template <class T>
-struct type_identity
-{
-  using type = T;
-};
-
-// TODO(C++20): Replace with this lambda in unevaluated context in decltype of fem_op_t.
-// TODO(C++20): Add a FemOp concepts that statically defines the shared interface of
-// SpaceOperator, LaplaceOperator, CurlCurlOperator.
 template <config::ProblemData::Type solver_t>
-struct fem_op_map_type
-{
-  static constexpr auto map_type()  // TODO(C++20) -> FemOp
-  {
-    if constexpr (solver_t == config::ProblemData::Type::ELECTROSTATIC)
-    {
-      return type_identity<LaplaceOperator>{};
-    }
-    else if constexpr (solver_t == config::ProblemData::Type::MAGNETOSTATIC)
-    {
-      return type_identity<CurlCurlOperator>{};
-    }
-    else
-    {
-      return type_identity<SpaceOperator>{};
-    }
-  }
-
-  using type = typename decltype(map_type())::type;
-};
+struct fem_op_map_type { using type = SpaceOperator; };
+template <> struct fem_op_map_type<config::ProblemData::Type::ELECTROSTATIC>{ using type = LaplaceOperator; };
+template <> struct fem_op_map_type<config::ProblemData::Type::MAGNETOSTATIC>{ using type = CurlCurlOperator; };
 
 template <config::ProblemData::Type solver_t>
 using fem_op_t = typename fem_op_map_type<solver_t>::type;
@@ -321,8 +294,8 @@ private:
   // non-dimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
   //
   // These functions are private helper functions. We want to enforce that a caller passes
-  // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a runtime
-  // check to see that they have been set.
+  // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a
+  // runtime check to see that they have been set.
   //
   // TODO(C++20): Switch SFINE to requires.
 
@@ -426,13 +399,13 @@ public:
 
   template <config::ProblemData::Type U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                       std::complex<double> omega)
+                          std::complex<double> omega)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   template <config::ProblemData::Type U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                       std::complex<double> omega, double error_abs, double error_bkwd,
-                       int num_conv)
+                          std::complex<double> omega, double error_abs, double error_bkwd,
+                          int num_conv)
       -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>;
 
   template <config::ProblemData::Type U = solver_t>
@@ -444,7 +417,8 @@ public:
       -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>;
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double t, double J_coef)
+  auto MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double t,
+                          double J_coef)
       -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be

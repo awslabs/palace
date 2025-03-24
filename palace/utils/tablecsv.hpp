@@ -36,7 +36,8 @@ public:
 
   [[nodiscard]] auto format_header(const std::optional<std::size_t> &width = {}) const;
 
-  [[nodiscard]] auto format_row(std::size_t i, const std::optional<std::size_t> &width = {}) const;
+  [[nodiscard]] auto format_row(std::size_t i,
+                                const std::optional<std::size_t> &width = {}) const;
 
   Column(std::string name, std::string header_text = "",
          std::optional<std::size_t> min_left_padding = {},
