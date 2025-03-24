@@ -762,12 +762,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
 
       const LumpedPortData &src_data =
           fem_op->GetLumpedPortOp().GetPort(driven_source_index);
-      // const auto it = measurement_cache.lumped_port_vi.find(idx);
       MFEM_VERIFY(src_data.excitation, "Lumped port index "
                                            << driven_source_index
                                            << " is not marked for excitation!");
-      // MFEM_VERIFY(it != measurement_cache.lumped_port_vi.end(),
-      //             "Could not find lumped port when calculating port S-parameters!");
       std::complex<double> S_ij = vi.S;
       if (idx == driven_source_index)
       {
