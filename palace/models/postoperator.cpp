@@ -501,7 +501,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   if constexpr (HasEGridFunction<solver_t>())
   {
     // Use V if it has it rather than E.
-    auto field = V ? *V : *E;
+    auto &field = V ? *V : *E;
     auto energy_raw = dom_post_op.GetElectricFieldEnergy(field);
     measurement_cache.domain_E_field_energy_all =
         units.Dimensionalize<Units::ValueType::ENERGY>(energy_raw);
@@ -528,7 +528,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 
   if (HasBGridFunction<solver_t>())
   {
-    auto field = A ? *A : *B;
+    auto &field = A ? *A : *B;
     auto energy_raw = dom_post_op.GetMagneticFieldEnergy(field);
     measurement_cache.domain_H_field_energy_all =
         units.Dimensionalize<Units::ValueType::ENERGY>(energy_raw);
