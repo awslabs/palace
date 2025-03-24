@@ -38,9 +38,20 @@ class WavePortOperator;
 // Statically map solver (config::ProblemData::Type) to finite element operator
 
 template <config::ProblemData::Type solver_t>
-struct fem_op_map_type { using type = SpaceOperator; };
-template <> struct fem_op_map_type<config::ProblemData::Type::ELECTROSTATIC>{ using type = LaplaceOperator; };
-template <> struct fem_op_map_type<config::ProblemData::Type::MAGNETOSTATIC>{ using type = CurlCurlOperator; };
+struct fem_op_map_type
+{
+  using type = SpaceOperator;
+};
+template <>
+struct fem_op_map_type<config::ProblemData::Type::ELECTROSTATIC>
+{
+  using type = LaplaceOperator;
+};
+template <>
+struct fem_op_map_type<config::ProblemData::Type::MAGNETOSTATIC>
+{
+  using type = CurlCurlOperator;
+};
 
 template <config::ProblemData::Type solver_t>
 using fem_op_t = typename fem_op_map_type<solver_t>::type;
