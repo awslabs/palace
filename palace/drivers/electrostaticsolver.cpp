@@ -79,7 +79,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
 
     // Measurement and printing.
-    auto total_domain_energy = post_op.MeasurePrintAll(step, V[step], E, idx);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");

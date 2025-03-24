@@ -109,7 +109,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
 
-    auto total_domain_energy = post_op.MeasurePrintAll(step, E, B, t, J_coef(t));
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, t, J_coef(t));
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");

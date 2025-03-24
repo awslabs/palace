@@ -84,7 +84,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     I_inc[step] = data.GetExcitationCurrent();
 
     // Measurement and printing.
-    auto total_domain_energy = post_op.MeasurePrintAll(step, A[step], B, idx);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, A[step], B, idx);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");

@@ -329,7 +329,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     auto total_domain_energy =
-        post_op.MeasurePrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
