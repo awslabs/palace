@@ -562,7 +562,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
   }
-  else
+  else if constexpr (solver_t != config::ProblemData::Type::EIGENMODE)
   {
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
                measurement_cache.domain_E_field_energy_all,
@@ -978,7 +978,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("err_back", "Error (Bkwd.)") << error_abs);
     table.insert(Column("err_abs", "Error (Abs.)") << error_bkwd);
     table[0].print_as_int = true;
-    Mpi::Print("{}", table.format_table());
+    Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
   MeasureAllImpl();
 
