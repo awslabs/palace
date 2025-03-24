@@ -4,25 +4,19 @@
 #ifndef PALACE_UTILS_TABLECSV_HPP
 #define PALACE_UTILS_TABLECSV_HPP
 
-#include <algorithm>
 #include <cstddef>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
-#include <fmt/format.h>
-#include <fmt/os.h>
-#include <fmt/ranges.h>
 
 namespace palace
 {
 
 struct ColumnOptions
 {
-  size_t min_left_padding = 8;
-  size_t float_precision = 9;
+  std::size_t min_left_padding = 8;
+  std::size_t float_precision = 9;
   std::string empty_cell_val = {"NULL"};
   std::string fmt_sign = {"+"};
 };
@@ -38,70 +32,23 @@ class Column
   std::string name;
 
 public:
-  [[nodiscard]] size_t col_width() const
-  {
-    // Quickfix to specify full column width in integer case to match current formatting
-    if (print_as_int)
-    {
-      return std::max(min_left_padding.value_or(defaults->min_left_padding),
-                      header_text.size());
-    }
-    size_t pad = min_left_padding.value_or(defaults->min_left_padding);
-    size_t prec = float_precision.value_or(defaults->float_precision);
+  [[nodiscard]] std::size_t col_width() const;
 
-    // Normal float in our exponent format needs float_precision + 7 ("+" , leading digit,
-    // ".", "e", "+", +2 exponent. Sometimes exponent maybe +3 if very small or large; see
-    // std::numeric_limits<double>::max_exponent. We pick +7 for consistency, but
-    // min_left_padding should be at least 1, which is not currently enforced.
-    return std::max(pad + prec + 7, header_text.size());
-  }
+  [[nodiscard]] auto format_header(const std::optional<std::size_t> &width = {}) const;
 
-  [[nodiscard]] auto format_header(const std::optional<size_t> &width = {}) const
-  {
-    auto w = width.value_or(col_width());
-    return fmt::format("{0:>{1}s}", header_text, w);
-  }
+  [[nodiscard]] auto format_row(std::size_t i, const std::optional<std::size_t> &width = {}) const;
 
-  [[nodiscard]] auto format_row(size_t i, const std::optional<size_t> &width = {}) const
-  {
-    auto width_ = width.value_or(col_width());
-    // If data available format double
-    if ((i >= 0) && (i < data.size()))
-    {
-      auto val = data[i];
-      if (print_as_int)
-      {  // Quick-fix to force int printing
-        auto fmt_str = fmt::format("{{:>{width}d}}", fmt::arg("width", width_));
-        return fmt::format(fmt::runtime(fmt_str), int(val));
-      }
-      else
-      {
-        auto sign = fmt_sign.value_or(defaults->fmt_sign);
-        auto prec = float_precision.value_or(defaults->float_precision);
-        auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
-                                   fmt::arg("width", width_), fmt::arg("prec", prec));
-        return fmt::format(fmt::runtime(fmt_str), val);
-      }
-    }
-    auto empty_cell = empty_cell_val.value_or(defaults->empty_cell_val);
-    return fmt::format("{0:>{1}s}", empty_cell, width_);
-  }
   Column(std::string name, std::string header_text = "",
-         std::optional<size_t> min_left_padding = {},
-         std::optional<size_t> float_precision = {},
+         std::optional<std::size_t> min_left_padding = {},
+         std::optional<std::size_t> float_precision = {},
          std::optional<std::string> empty_cell_val = {},
-         std::optional<std::string> fmt_sign = {})
-    : name(std::move(name)), header_text(std::move(header_text)),
-      min_left_padding(min_left_padding), float_precision(float_precision),
-      empty_cell_val(std::move(empty_cell_val)), fmt_sign(std::move(fmt_sign))
-  {
-  }
+         std::optional<std::string> fmt_sign = {});
 
   std::vector<double> data;
   std::string header_text;
 
-  std::optional<size_t> min_left_padding;
-  std::optional<size_t> float_precision;
+  std::optional<std::size_t> min_left_padding;
+  std::optional<std::size_t> float_precision;
   std::optional<std::string> empty_cell_val;
   std::optional<std::string> fmt_sign;
 
@@ -109,10 +56,10 @@ public:
   // a templated & type erased solution).
   bool print_as_int = false;
 
-  [[nodiscard]] size_t n_rows() const { return data.size(); }
+  [[nodiscard]] inline std::size_t n_rows() const { return data.size(); }
 
   // Convenience operator at higher level
-  auto operator<<(double val)
+  inline auto operator<<(double val)
   {
     data.emplace_back(val);
     return *this;
@@ -126,7 +73,7 @@ class Table
   std::vector<Column> cols;
 
   // Cache value to reserve vector space by default
-  size_t reserve_n_rows = 0;
+  std::size_t reserve_n_rows = 0;
 
 public:
   // Default column options; can be overwritten column-wise
@@ -138,46 +85,13 @@ public:
 
   // Table properties
 
-  [[nodiscard]] size_t n_cols() const { return cols.size(); }
-  [[nodiscard]] size_t n_rows() const
-  {
-    if (n_cols() == 0)
-    {
-      return 0;
-    }
-    auto max_col =
-        std::max_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
-                         { return a.n_rows() < b.n_rows(); });
-    return max_col->n_rows();
-  }
+  [[nodiscard]] std::size_t n_cols() const { return cols.size(); }
+  [[nodiscard]] std::size_t n_rows() const;
 
-  void reserve(size_t n_rows, size_t n_cols)
-  {
-    reserve_n_rows = n_rows;
-    cols.reserve(n_cols);
-    for (auto &col : cols)
-    {
-      col.data.reserve(n_rows);
-    }
-  }
+  void reserve(std::size_t n_rows, std::size_t n_cols);
 
   // Insert columns: map like interface
-  bool insert(Column &&column)
-  {
-    auto it = std::find_if(cols.begin(), cols.end(),
-                           [&column](auto &c) { return c.name == column.name; });
-    if (it != cols.end())
-    {
-      return false;
-    }
-    auto &col = cols.emplace_back(std::move(column));
-    col.defaults = &col_options;
-    if (reserve_n_rows > 0)
-    {
-      col.data.reserve(reserve_n_rows);
-    }
-    return true;
-  }
+  bool insert(Column &&column);
   template <typename... Args>
   bool insert(Args &&...args)
   {
@@ -186,87 +100,29 @@ public:
 
   // Access columns via vector position or column name
 
-  Column &operator[](size_t idx) { return cols.at(idx); }
-  const Column &operator[](size_t idx) const { return (*this)[idx]; }
+  inline Column &operator[](std::size_t idx) { return cols.at(idx); }
+  inline const Column &operator[](std::size_t idx) const { return (*this)[idx]; }
 
-  Column &operator[](std::string_view name)
-  {
-    auto it =
-        std::find_if(cols.begin(), cols.end(), [&name](auto &c) { return c.name == name; });
-    if (it == cols.end())
-    {
-      throw std::out_of_range(fmt::format("Column {} not found in table", name).c_str());
-    }
-    return *it;
-  }
+  Column &operator[](std::string_view name);
   const Column &operator[](std::string_view name) const { return (*this)[name]; }
 
-  auto begin() { return cols.begin(); }
-  auto end() { return cols.end(); }
-  auto cbegin() const { return cols.begin(); }
-  auto cend() const { return cols.end(); }
+  inline auto begin() { return cols.begin(); }
+  inline auto end() { return cols.end(); }
+  inline auto cbegin() const { return cols.begin(); }
+  inline auto cend() const { return cols.end(); }
 
   // Formatting and Printing Options
-  // TODO: Improve all the functions below with ranges in C++20
+  template <typename T>
+  void append_header(T &buf) const;
 
   template <typename T>
-  void append_header(T &buf) const
-  {
-    auto to = [&buf](auto f, auto &&...a)
-    { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
+  void append_row(T &buf, std::size_t row_j) const;
 
-    for (size_t i = 0; i < n_cols(); i++)
-    {
-      if (i > 0)
-      {
-        to("{:s}", print_col_separator);
-      }
-      to("{:s}", cols[i].format_header());
-    }
-    to("{:s}", print_row_separator);
-  }
+  [[nodiscard]] std::string format_header() const;
 
-  template <typename T>
-  void append_row(T &buf, size_t row_j) const
-  {
-    auto to = [&buf](auto f, auto &&...a)
-    { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
+  [[nodiscard]] std::string format_row(std::size_t j) const;
 
-    for (size_t i = 0; i < n_cols(); i++)
-    {
-      if (i > 0)
-      {
-        to("{:s}", print_col_separator);
-      }
-      to("{:s}", cols[i].format_row(row_j));
-    }
-    to("{:s}", print_row_separator);
-  }
-
-  [[nodiscard]] std::string format_header() const
-  {
-    fmt::memory_buffer buf{};
-    append_header(buf);
-    return {buf.data(), buf.size()};
-  }
-
-  [[nodiscard]] std::string format_row(size_t j) const
-  {
-    fmt::memory_buffer buf{};
-    append_row(buf, j);
-    return {buf.data(), buf.size()};
-  }
-
-  [[nodiscard]] std::string format_table() const
-  {
-    fmt::memory_buffer buf{};
-    append_header(buf);
-    for (size_t j = 0; j < n_rows(); j++)
-    {
-      append_row(buf, j);
-    }
-    return {buf.data(), buf.size()};
-  }
+  [[nodiscard]] std::string format_table() const;
 };
 
 // Wrapper for storing Table to csv file wish row wise updates
@@ -283,44 +139,13 @@ public:
   Table table = {};
 
   TableWithCSVFile() = default;
-  explicit TableWithCSVFile(std::string csv_file_fullpath)
-    : csv_file_fullpath_{std::move(csv_file_fullpath)}
-  {
-    // Validate
-    auto file_buf = fmt::output_file(
-        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-  }
+  explicit TableWithCSVFile(std::string csv_file_fullpath);
 
-  void WriteFullTableTrunc()
-  {
-    auto file_buf = fmt::output_file(
-        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-    file_buf.print("{}", table.format_table());
-    file_append_cursor = table.n_rows();
-  }
+  void WriteFullTableTrunc();
 
-  void AppendHeader()
-  {
-    if (file_append_cursor != -1)
-    {
-      WriteFullTableTrunc();
-    }
-    auto file_buf =
-        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-    file_buf.print("{}", table.format_header());
-    file_append_cursor++;
-  }
-  void AppendRow()
-  {
-    if (file_append_cursor < 0)
-    {
-      WriteFullTableTrunc();
-    }
-    auto file_buf =
-        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-    file_buf.print("{}", table.format_row(file_append_cursor));
-    file_append_cursor++;
-  }
+  void AppendHeader();
+
+  void AppendRow();
 
   [[nodiscard]] auto GetAppendRowCursor() const { return file_append_cursor; }
 };
