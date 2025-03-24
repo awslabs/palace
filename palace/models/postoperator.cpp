@@ -914,7 +914,6 @@ void PostOperator<solver_t>::MeasureProbes() const
 }
 
 using fmt::format;
-// **********
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
