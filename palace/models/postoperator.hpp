@@ -131,7 +131,6 @@ private:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // **************************************************************************************
   // ParaView Measure & Print
 
   // Option to write ParaView fields at all and rate / number of iterations printed.
@@ -172,7 +171,6 @@ private:
   void WriteFields(double time, int step);
   void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
 
-  // **************************************************************************************
   // CSV Measure & Print
 
   // PostOperatorCSV<solver_t> is a class that contains csv tables and printers of
@@ -315,7 +313,6 @@ private:
     MeasureProbes();
   }
 
-  // **************************************************************************************
   // Setting grid functions.
   //
   // Populate the grid function solutions for the E- and B-field using the solution vectors
