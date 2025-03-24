@@ -918,7 +918,7 @@ using fmt::format;
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
                                              const ComplexVector &b,
                                              std::complex<double> omega)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
@@ -948,7 +948,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
                                              const ComplexVector &b,
                                              std::complex<double> omega, double error_abs,
                                              double error_bkwd, int num_conv)
@@ -1000,7 +1000,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const ComplexVector &e,
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &v, const Vector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
                                              int idx)
     -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>
 {
@@ -1026,7 +1026,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &v, const Ve
 }
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &a, const Vector &b,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
                                              int idx)
     -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>
 {
@@ -1053,7 +1053,7 @@ auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &a, const Ve
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasurePrintAll(int step, const Vector &e, const Vector &b,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
                                              double t, double J_coef)
     -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>
 {
@@ -1119,26 +1119,26 @@ template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 // Function explict instantiation.
 // TODO(C++20): with requires, we won't need a second template
 
-template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasurePrintAll<
+template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
     config::ProblemData::Type::DRIVEN>(int step, const ComplexVector &e,
                                        const ComplexVector &b, std::complex<double> omega)
     -> double;
 
-template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasurePrintAll<
+template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasureAndPrintAll<
     config::ProblemData::Type::EIGENMODE>(int step, const ComplexVector &e,
                                           const ComplexVector &b,
                                           std::complex<double> omega, double error_abs,
                                           double error_bkwd, int num_conv) -> double;
 
-template auto PostOperator<config::ProblemData::Type::ELECTROSTATIC>::MeasurePrintAll<
+template auto PostOperator<config::ProblemData::Type::ELECTROSTATIC>::MeasureAndPrintAll<
     config::ProblemData::Type::ELECTROSTATIC>(int step, const Vector &v, const Vector &e,
                                               int idx) -> double;
 
-template auto PostOperator<config::ProblemData::Type::MAGNETOSTATIC>::MeasurePrintAll<
+template auto PostOperator<config::ProblemData::Type::MAGNETOSTATIC>::MeasureAndPrintAll<
     config::ProblemData::Type::MAGNETOSTATIC>(int step, const Vector &a, const Vector &b,
                                               int idx) -> double;
 
-template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasurePrintAll<
+template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrintAll<
     config::ProblemData::Type::TRANSIENT>(int step, const Vector &e, const Vector &b,
                                           double t, double J_coef) -> double;
 

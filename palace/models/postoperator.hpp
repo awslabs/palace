@@ -324,7 +324,7 @@ private:
   // non-dimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
   //
   // These functions are private helper functions. We want to enforce that a caller passes
-  // the appropriate ones as part of the MeasurePrintAll interface, rather than do a runtime
+  // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a runtime
   // check to see that they have been set.
   //
   // TODO(C++20): Switch SFINE to requires.
@@ -405,7 +405,7 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
                         int nr_expected_measurement_rows = 1);
 
-  // MeasurePrintAll is primary public interface of this class. It specialized by solver
+  // MeasureAndPrintAll is primary public interface of this class. It specialized by solver
   // type, since each solver has different fields and extra data required. These functions
   // all:
   // 1) Set the GridFunctions which have to be passed as part of the call.
@@ -424,30 +424,30 @@ public:
   // The measure functions will also do logging of (some) measurements to stdout.
   //
   // TODO(C++20): Upgrade SFINE to C++20 concepts to simplify static selection since we can
-  // just write `MeasurePrintAll(...) requires (solver_t == Type::A)` without extra
+  // just write `MeasureAndPrintAll(...) requires (solver_t == Type::A)` without extra
   // template.
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
+  auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                        std::complex<double> omega)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasurePrintAll(int step, const ComplexVector &e, const ComplexVector &b,
+  auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                        std::complex<double> omega, double error_abs, double error_bkwd,
                        int num_conv)
       -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>;
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasurePrintAll(int step, const Vector &v, const Vector &e, int idx)
+  auto MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
       -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>;
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasurePrintAll(int step, const Vector &a, const Vector &b, int idx)
+  auto MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
       -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>;
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasurePrintAll(int step, const Vector &e, const Vector &b, double t, double J_coef)
+  auto MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double t, double J_coef)
       -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be

@@ -200,7 +200,7 @@ DrivenSolver::SweepUniform(SpaceOperator &space_op,
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy = post_op.MeasurePrintAll(step, E, B, omega);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, omega);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
@@ -384,7 +384,7 @@ DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.MeasurePrintAll(step, E, B, omega);
+    post_op.MeasureAndPrintAll(step, E, B, omega);
   }
   // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
