@@ -918,8 +918,8 @@ using fmt::format;
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                             const ComplexVector &b,
-                                             std::complex<double> omega)
+                                                const ComplexVector &b,
+                                                std::complex<double> omega)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -948,9 +948,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                             const ComplexVector &b,
-                                             std::complex<double> omega, double error_abs,
-                                             double error_bkwd, int num_conv)
+                                                const ComplexVector &b,
+                                                std::complex<double> omega,
+                                                double error_abs, double error_bkwd,
+                                                int num_conv)
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -1000,7 +1001,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
-                                             int idx)
+                                                int idx)
     -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -1026,7 +1027,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
-                                             int idx)
+                                                int idx)
     -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -1053,7 +1054,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
-                                             double t, double J_coef)
+                                                double t, double J_coef)
     -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
