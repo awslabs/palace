@@ -15,7 +15,7 @@ class PostOperator;
 
 // Helper class to PostOperator to collect csv tables and printers for measurement that will
 // be saved to file. This class contains a pointer to the corresponding PostOperator class
-// and is a friend to a PostOperator class; practically it is the as having these members
+// and is a friend to a PostOperator class; this is equivalent to having these members
 // and methods in PostOperator. It exists for code clarity.
 template <config::ProblemData::Type solver_t>
 class PostOperatorCSV
@@ -54,12 +54,16 @@ class PostOperatorCSV
   void InitializeProbeB();
   void PrintProbeB();
 
-  // TODO: Upgrade SFINE to C++20 concepts to simplify static selection since we can just
+  // TODO: Upgrade SFINAE to C++20 concepts to simplify static selection since we can just
   // use `void Function(...) requires (solver_t == Type::A);`.
 
   // Eigenmode + Driven + Transient
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
+
+  // Initialize and print methods for various output quantities. The initialize methods
+  // prepare the tables for data insertion, whilst the print methods insert data
+  // appropriately. Methods are only enabled when valid given the problem type.
 
   template <config::ProblemData::Type U = solver_t>
   auto InitializePortVI() -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE ||

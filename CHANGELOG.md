@@ -58,7 +58,7 @@ The format of this changelog is based on
   - Fixed bug in Nastran mesh reader where carriage returns (`\r`) in the mesh file could
     cause a failure to read the mesh.
   - Changed post-processing, so that appropriate measurements are always written to disk as CSV
-    files. This is a breaking change, since users are now required to specify valid a output
+    files. This is a breaking change, since users are now required to specify a valid output
     folder in `config["Problem"]["Output"]`. Previously an empty string `""` would suppress file
     printing. ParaView printing is still controlled and suppressed by the `"Save"` or `"SaveStep"`
     options in the `config["Solver"][...]`.

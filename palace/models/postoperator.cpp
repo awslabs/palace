@@ -655,7 +655,7 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
                                measurement_cache.lumped_port_capacitor_energy;
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
-      // Get previously computed data: should never fail as defind by MeasureLumpedPorts.
+      // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
 
       // Resistive Lumped Ports:
@@ -669,7 +669,7 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
       {
         std::complex<double> I_mj = vi.I_RLC[0];
         // Power = 1/2 R_j I_mj².
-        // Note convetions: mean(I²) = (I_r² + I_i²) / 2;
+        // Note conventions: mean(I²) = (I_r² + I_i²) / 2;
         auto resistor_power = 0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj));
         vi.mode_port_kappa = units.Dimensionalize<Units::ValueType::FREQUENCY>(
             std::copysign(resistor_power / energy_electric_all, I_mj.real()));
@@ -757,7 +757,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // so can treat them separatley.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
-      // Get previously computed data: should never fail as defind by MeasureLumpedPorts.
+      // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
 
       const LumpedPortData &src_data =
@@ -789,7 +789,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get previously computed data: should never fail as defind by MeasureWavePorts.
+      // Get previously computed data: should never fail as defined by MeasureWavePorts.
       auto &vi = measurement_cache.wave_port_vi.at(idx);
 
       // Wave port modes are not normalized to a characteristic impedance so no generalized
