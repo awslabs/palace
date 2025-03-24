@@ -521,7 +521,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
     data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
     data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-    data.Cs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   }
 
   // Floquet periodic boundaries.

@@ -297,7 +297,7 @@ private:
   // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a
   // runtime check to see that they have been set.
   //
-  // TODO(C++20): Switch SFINE to requires.
+  // TODO(C++20): Switch SFINAE to requires.
 
   template <config::ProblemData::Type U = solver_t>
   auto SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true)
@@ -375,9 +375,9 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
                         int nr_expected_measurement_rows = 1);
 
-  // MeasureAndPrintAll is primary public interface of this class. It specialized by solver
-  // type, since each solver has different fields and extra data required. These functions
-  // all:
+  // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
+  // solver type, since each solver has different fields and extra data required. These
+  // functions all:
   // 1) Set the GridFunctions which have to be passed as part of the call.
   // 2) Perform all measurements and populate measurement_cache with temporary results. This
   //    cache structure exists since measurements have dependencies; we may use some
@@ -393,7 +393,7 @@ public:
   //
   // The measure functions will also do logging of (some) measurements to stdout.
   //
-  // TODO(C++20): Upgrade SFINE to C++20 concepts to simplify static selection since we can
+  // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
   // just write `MeasureAndPrintAll(...) requires (solver_t == Type::A)` without extra
   // template.
 
@@ -426,10 +426,10 @@ public:
   void MeasureFinalize(const ErrorIndicator &indicator);
 
   // Measurement of the domain energy without printing. This is needed during the driven
-  // simulation with PROM. There samples are taken and wee need the total domain energy for
+  // simulation with PROM. There samples are taken and we need the total domain energy for
   // the error indicator, but no other measurement / printing should be done.
   //
-  // TODO(C++20): SFINE to requires.
+  // TODO(C++20): SFINAE to requires.
   template <config::ProblemData::Type U = solver_t>
   auto MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b,
                                     bool exchange_face_nbr_data = true)
@@ -443,7 +443,7 @@ public:
   // Future: Consider moving those cap/ind measurements into this class and MeasureFinalize?
   // Would need to store vector of V,A.
   //
-  // TODO(C++20): Switch SFINE to requires.
+  // TODO(C++20): Switch SFINAE to requires.
   template <config::ProblemData::Type U = solver_t>
   auto GetEGridFunction() -> std::enable_if_t<HasEGridFunction<U>(), decltype(*E) &>
   {

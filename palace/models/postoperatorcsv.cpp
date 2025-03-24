@@ -634,7 +634,7 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
 {
-  // TODO(C++20): Make this a filterd iterator in LumpedPortOp
+  // TODO(C++20): Make this a filtered iterator in LumpedPortOp
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
   {
     if (std::abs(data.L) > 0.0)
