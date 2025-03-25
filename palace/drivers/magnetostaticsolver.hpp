@@ -8,12 +8,14 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {
 
 class ErrorIndicator;
 class Mesh;
+template <config::ProblemData::Type>
 class PostOperator;
 class SurfaceCurrentOperator;
 
@@ -23,10 +25,8 @@ class SurfaceCurrentOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &post_op, int step, int idx, double I_inc,
-                   double E_mag, const ErrorIndicator *indicator) const;
-
-  void PostprocessTerminals(PostOperator &post_op, const SurfaceCurrentOperator &surf_j_op,
+  void PostprocessTerminals(PostOperator<config::ProblemData::Type::MAGNETOSTATIC> &post_op,
+                            const SurfaceCurrentOperator &surf_j_op,
                             const std::vector<Vector> &A,
                             const std::vector<double> &I_inc) const;
 

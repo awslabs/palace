@@ -50,7 +50,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Frequencies will be sampled uniformly in the frequency domain. Index sets are for
   // computing things like S-parameters in postprocessing.
-  PostOperator post_op(iodata, space_op, "driven");
+  PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
+
   {
     Mpi::Print("\nComputing {}frequency response for:\n", adaptive ? "adaptive fast " : "");
     bool first = true;
@@ -105,9 +106,10 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           space_op.GlobalTrueVSize()};
 }
 
-ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator &post_op,
-                                          int n_step, int step0, double omega0,
-                                          double delta_omega) const
+ErrorIndicator
+DrivenSolver::SweepUniform(SpaceOperator &space_op,
+                           PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                           int n_step, int step0, double omega0, double delta_omega) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -157,12 +159,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
   }
 
   // Main frequency sweep loop.
-  int step = step0;
   double omega = omega0;
   auto t0 = Timer::Now();
-  while (step < n_step)
+  for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    const double freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
@@ -182,9 +183,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for all postprocessing operations.
+    // Start Post-processing.
     BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(space_op.GetComm(), E),
+               linalg::Norml2(space_op.GetComm(), RHS));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -194,41 +199,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, PostOperator 
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(space_op.GetComm(), E),
-               linalg::Norml2(space_op.GetComm(), RHS));
-    {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-                 E_mag * J, (E_elec + E_mag) * J);
-    }
+
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, omega);
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
-
-    // Postprocess S-parameters and optionally write solution to disk.
-    Postprocess(post_op, space_op.GetLumpedPortOp(), space_op.GetWavePortOp(),
-                space_op.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                (step == n_step - 1) ? &indicator : nullptr);
-
-    // Increment frequency.
-    step++;
-    omega += delta_omega;
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   }
+  // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
   SaveMetadata(ksp);
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
-ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op,
-                                           int n_step, int step0, double omega0,
-                                           double delta_omega) const
+ErrorIndicator
+DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
+                            PostOperator<config::ProblemData::Type::DRIVEN> &post_op,
+                            int n_step, int step0, double omega0, double delta_omega) const
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -273,7 +261,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
   auto t0 = Timer::Now();
-  const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
+  const double f0 = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              n_step - step0, omega0 * f0,
@@ -303,11 +291,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E, false);
-    post_op.SetBGridFunction(B, false);
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
+    // Measure domain energies for the error indicator only: don't exchange face_nbr_data.
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, false);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
   prom_op.SolveHDM(omega0, E);
   UpdatePROM(omega0);
@@ -373,11 +359,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  int step = step0;
   double omega = omega0;
-  while (step < n_step)
+  for (int step = step0; step < n_step; step++, omega += delta_omega)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    const double freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                n_step, freq, Timer::Duration(Timer::Now() - t0).count());
 
@@ -385,9 +370,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
     prom_op.SolvePROM(omega, E);
     Mpi::Print("\n");
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for all postprocessing operations.
+    // Start Post-processing.
     BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -397,29 +384,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, PostOperator
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp(), space_op.GetWavePortOp(), omega);
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
-    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
-    {
-      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
-                 E_mag * J, (E_elec + E_mag) * J);
-    }
-
-    // Postprocess S-parameters and optionally write solution to disk.
-    Postprocess(post_op, space_op.GetLumpedPortOp(), space_op.GetWavePortOp(),
-                space_op.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                (step == n_step - 1) ? &indicator : nullptr);
-
-    // Increment frequency.
-    step++;
-    omega += delta_omega;
+    post_op.MeasureAndPrintAll(step, E, B, omega);
   }
+  // Final postprocessing & printing
   BlockTimer bt0(Timer::POSTPRO);
   SaveMetadata(prom_op.GetLinearSolver());
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
@@ -436,366 +406,6 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
   double dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
                    (delta > 0.0 && dfinal - end < delta_eps * end));
-}
-
-void DrivenSolver::Postprocess(const PostOperator &post_op,
-                               const LumpedPortOperator &lumped_port_op,
-                               const WavePortOperator &wave_port_op,
-                               const SurfaceCurrentOperator &surf_j_op, int step,
-                               double omega, double E_elec, double E_mag,
-                               const ErrorIndicator *indicator) const
-{
-  // The internal GridFunctions for PostOperator have already been set from the E and B
-  // solutions in the main frequency sweep loop.
-  const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
-  PostprocessCurrents(post_op, surf_j_op, step, omega);
-  PostprocessPorts(post_op, lumped_port_op, step, omega);
-  if (surf_j_op.Size() == 0)
-  {
-    PostprocessSParameters(post_op, lumped_port_op, wave_port_op, step, omega);
-  }
-  PostprocessDomains(post_op, "f (GHz)", step, freq, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(post_op, "f (GHz)", step, freq, E_elec + E_cap, E_mag + E_ind);
-  PostprocessProbes(post_op, "f (GHz)", step, freq);
-  if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
-  {
-    Mpi::Print("\n");
-    PostprocessFields(post_op, step / iodata.solver.driven.delta_post, freq);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
-  }
-  if (indicator)
-  {
-    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.driven.delta_post > 0);
-  }
-}
-
-namespace
-{
-
-struct CurrentData
-{
-  const int idx;       // Current source index
-  const double I_inc;  // Excitation current
-};
-
-struct PortVIData
-{
-  const int idx;                        // Lumped port index
-  const bool excitation;                // Flag for excited ports
-  const double V_inc, I_inc;            // Incident voltage, current
-  const std::complex<double> V_i, I_i;  // Port voltage, current
-};
-
-struct PortSData
-{
-  const int idx;                    // Port index
-  const std::complex<double> S_ij;  // Scattering parameter
-};
-
-}  // namespace
-
-void DrivenSolver::PostprocessCurrents(const PostOperator &post_op,
-                                       const SurfaceCurrentOperator &surf_j_op, int step,
-                                       double omega) const
-{
-  // Postprocess the frequency domain surface current excitations.
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
-  std::vector<CurrentData> j_data;
-  j_data.reserve(surf_j_op.Size());
-  for (const auto &[idx, data] : surf_j_op)
-  {
-    const double I_inc = data.GetExcitationCurrent();
-    j_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc)});
-  }
-  if (root && !j_data.empty())
-  {
-    std::string path = post_dir + "surface-I.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", "f (GHz)", table.w1);
-      for (const auto &data : j_data)
-      {
-        // clang-format off
-        output.print("{:>{}s}{}",
-                     "I_inc[" + std::to_string(data.idx) + "] (A)", table.w,
-                     (data.idx == j_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    // clang-format off
-    output.print("{:{}.{}e},",
-                 iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega),
-                 table.w1, table.p1);
-    // clang-format on
-    for (const auto &data : j_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e}{}",
-                   data.I_inc, table.w, table.p,
-                   (data.idx == j_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
-}
-
-void DrivenSolver::PostprocessPorts(const PostOperator &post_op,
-                                    const LumpedPortOperator &lumped_port_op, int step,
-                                    double omega) const
-{
-  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
-  // = sqrt(2) * RMS).
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
-  std::vector<PortVIData> port_data;
-  port_data.reserve(lumped_port_op.Size());
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    const double V_inc = data.GetExcitationVoltage();
-    const double I_inc = (std::abs(V_inc) > 0.0) ? data.GetExcitationPower() / V_inc : 0.0;
-    const std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
-    const std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
-    port_data.push_back({idx, data.excitation,
-                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_inc),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc),
-                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
-  }
-  if (root && !port_data.empty())
-  {
-    // Write the port voltages.
-    {
-      std::string path = post_dir + "port-V.csv";
-      auto output = OutputFile(path, (step > 0));
-      if (step == 0)
-      {
-        output.print("{:>{}s},", "f (GHz)", table.w1);
-        for (const auto &data : port_data)
-        {
-          if (data.excitation)
-          {
-            // clang-format off
-            output.print("{:>{}s},",
-                         "V_inc[" + std::to_string(data.idx) + "] (V)", table.w);
-            // clang-format on
-          }
-        }
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s},{:>{}s}{}",
-                       "Re{V[" + std::to_string(data.idx) + "]} (V)", table.w,
-                       "Im{V[" + std::to_string(data.idx) + "]} (V)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega),
-                   table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        if (data.excitation)
-        {
-          // clang-format off
-          output.print("{:+{}.{}e},",
-                       data.V_inc, table.w, table.p);
-          // clang-format on
-        }
-      }
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.V_i.real(), table.w, table.p,
-                     data.V_i.imag(), table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-
-    // Write the port currents.
-    {
-      std::string path = post_dir + "port-I.csv";
-      auto output = OutputFile(path, (step > 0));
-      if (step == 0)
-      {
-        output.print("{:>{}s},", "f (GHz)", table.w1);
-        for (const auto &data : port_data)
-        {
-          if (data.excitation)
-          {
-            // clang-format off
-            output.print("{:>{}s},",
-                         "I_inc[" + std::to_string(data.idx) + "] (A)", table.w);
-            // clang-format on
-          }
-        }
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s},{:>{}s}{}",
-                       "Re{I[" + std::to_string(data.idx) + "]} (A)", table.w,
-                       "Im{I[" + std::to_string(data.idx) + "]} (A)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega),
-                   table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        if (data.excitation)
-        {
-          // clang-format off
-          output.print("{:+{}.{}e},",
-                       data.I_inc, table.w, table.p);
-          // clang-format on
-        }
-      }
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.I_i.real(), table.w, table.p,
-                     data.I_i.imag(), table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-  }
-}
-
-void DrivenSolver::PostprocessSParameters(const PostOperator &post_op,
-                                          const LumpedPortOperator &lumped_port_op,
-                                          const WavePortOperator &wave_port_op, int step,
-                                          double omega) const
-{
-  // Postprocess S-parameters. This computes a column of the S matrix corresponding to the
-  // excited port index specified in the configuration file, storing |S_ij| and arg
-  // (S_ij) in dB and degrees, respectively. S-parameter output is only available for a
-  // single lumped or wave port excitation.
-  bool src_lumped_port = false;
-  bool src_wave_port = false;
-  int source_idx = -1;
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (data.excitation)
-    {
-      if (src_lumped_port || src_wave_port)
-      {
-        return;
-      }
-      src_lumped_port = true;
-      source_idx = idx;
-    }
-  }
-  for (const auto &[idx, data] : wave_port_op)
-  {
-    if (data.excitation)
-    {
-      if (src_lumped_port || src_wave_port)
-      {
-        return;
-      }
-      src_wave_port = true;
-      source_idx = idx;
-    }
-  }
-  if (!src_lumped_port && !src_wave_port)
-  {
-    return;
-  }
-  std::vector<PortSData> port_data;
-  port_data.reserve(src_lumped_port ? lumped_port_op.Size() : wave_port_op.Size());
-  if (src_lumped_port)
-  {
-    // Compute lumped port S-parameters.
-    for (const auto &[idx, data] : lumped_port_op)
-    {
-      const std::complex<double> S_ij =
-          post_op.GetSParameter(lumped_port_op, idx, source_idx);
-      port_data.push_back({idx, S_ij});
-    }
-  }
-  else  // src_wave_port
-  {
-    // Compute wave port S-parameters.
-    for (const auto &[idx, data] : wave_port_op)
-    {
-      const std::complex<double> S_ij =
-          post_op.GetSParameter(wave_port_op, idx, source_idx);
-      port_data.push_back({idx, S_ij});
-    }
-  }
-
-  // Print table to stdout.
-  for (const auto &data : port_data)
-  {
-    std::string str =
-        "S[" + std::to_string(data.idx) + "][" + std::to_string(source_idx) + "]";
-    // clang-format off
-    Mpi::Print(" {} = {:+.3e}{:+.3e}i, |{}| = {:+.3e}, arg({}) = {:+.3e}\n",
-               str, data.S_ij.real(), data.S_ij.imag(),
-               str, 20.0 * std::log10(std::abs(data.S_ij)),
-               str, std::arg(data.S_ij) * 180.0 / M_PI);
-    // clang-format on
-  }
-
-  // Print table to file.
-  if (root && post_dir.length() > 0)
-  {
-    std::string path = post_dir + "port-S.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", "f (GHz)", table.w1);
-      for (const auto &data : port_data)
-      {
-        std::string str =
-            "S[" + std::to_string(data.idx) + "][" + std::to_string(source_idx) + "]";
-        // clang-format off
-        output.print("{:>{}s},{:>{}s}{}",
-                     "|" + str + "| (dB)", table.w,
-                     "arg(" + str + ") (deg.)", table.w,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    // clang-format off
-    output.print("{:{}.{}e},",
-                 iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega),
-                 table.w1, table.p1);
-    for (const auto &data : port_data)
-    {
-      // clang-format off
-      output.print("{:>+{}.{}e},{:>+{}.{}e}{}",
-                   20.0 * std::log10(std::abs(data.S_ij)), table.w, table.p,
-                   std::arg(data.S_ij) * 180.0 / M_PI, table.w, table.p,
-                   (data.idx == port_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
 }
 
 }  // namespace palace

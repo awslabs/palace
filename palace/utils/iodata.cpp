@@ -17,7 +17,6 @@
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
-#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 
 namespace palace
@@ -155,7 +154,7 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
-IoData::IoData(const char *filename, bool print) : Lc(1.0), tc(1.0), init(false)
+IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
   // ranges.
@@ -467,11 +466,12 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     bbmax -= bbmin;
     model.Lc = *std::max_element(bbmax.begin(), bbmax.end());
   }
-  Lc = model.Lc * model.L0;                 // [m]
-  tc = 1.0e9 * Lc / electromagnetics::c0_;  // [ns]
+  // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
+  units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.
-  auto DivideLengthScale = [Lc0 = GetMeshLengthScale()](double val) { return val / Lc0; };
+  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
+  { return val / Lc0; };
   for (auto &box : model.refinement.GetBoxes())
   {
     std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
@@ -481,7 +481,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   }
   for (auto &sphere : model.refinement.GetSpheres())
   {
-    sphere.r /= GetMeshLengthScale();
+    sphere.r /= units.GetMeshLengthRelativeScale();
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
                    DivideLengthScale);
   }
@@ -489,8 +489,8 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
   {
-    data.sigma /= 1.0 / (electromagnetics::Z0_ * Lc);
-    data.lambda_L /= GetMeshLengthScale();
+    data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    data.lambda_L /= units.GetMeshLengthRelativeScale();
   }
 
   // Probe location coordinates.
@@ -503,44 +503,44 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {
-    data.sigma /= 1.0 / (electromagnetics::Z0_ * Lc);
-    data.h /= GetMeshLengthScale();
+    data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    data.h /= units.GetMeshLengthRelativeScale();
   }
 
   // Impedance boundaries and lumped ports.
   for (auto &data : boundaries.impedance)
   {
-    data.Rs /= electromagnetics::Z0_;
-    data.Ls /= electromagnetics::mu0_ * Lc;
-    data.Cs /= electromagnetics::epsilon0_ * Lc;
+    data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   }
   for (auto &[idx, data] : boundaries.lumpedport)
   {
-    data.R /= electromagnetics::Z0_;
-    data.L /= electromagnetics::mu0_ * Lc;
-    data.C /= electromagnetics::epsilon0_ * Lc;
-    data.Rs /= electromagnetics::Z0_;
-    data.Ls /= electromagnetics::mu0_ * Lc;
-    data.Cs /= electromagnetics::epsilon0_ * Lc;
+    data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   }
 
   // Floquet periodic boundaries.
-  for (auto &x : boundaries.floquet.wave_vector)
+  for (auto &k : boundaries.floquet.wave_vector)
   {
-    x *= GetMeshLengthScale();
+    k *= units.GetMeshLengthRelativeScale();
   }
   for (auto &data : boundaries.periodic)
   {
-    for (auto &x : data.wave_vector)
+    for (auto &k : data.wave_vector)
     {
-      x *= GetMeshLengthScale();
+      k *= units.GetMeshLengthRelativeScale();
     }
   }
 
   // Wave port offset distance.
   for (auto &[idx, data] : boundaries.waveport)
   {
-    data.d_offset /= GetMeshLengthScale();
+    data.d_offset /= units.GetMeshLengthRelativeScale();
   }
 
   // Center coordinates for surface flux.
@@ -553,90 +553,31 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
-    data.t /= GetMeshLengthScale();
+    data.t /= units.GetMeshLengthRelativeScale();
   }
 
   // For eigenmode simulations:
-  solver.eigenmode.target *= 2.0 * M_PI * tc;
+  solver.eigenmode.target /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
 
   // For driven simulations:
-  solver.driven.min_f *= 2.0 * M_PI * tc;
-  solver.driven.max_f *= 2.0 * M_PI * tc;
-  solver.driven.delta_f *= 2.0 * M_PI * tc;
+  solver.driven.min_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.driven.max_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.driven.delta_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
 
   // For transient simulations:
-  solver.transient.pulse_f *= 2.0 * M_PI * tc;
-  solver.transient.pulse_tau /= tc;
-  solver.transient.max_t /= tc;
-  solver.transient.delta_t /= tc;
+  solver.transient.pulse_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.transient.pulse_tau /= units.GetScaleFactor<Units::ValueType::TIME>();
+  solver.transient.max_t /= units.GetScaleFactor<Units::ValueType::TIME>();
+  solver.transient.delta_t /= units.GetScaleFactor<Units::ValueType::TIME>();
 
   // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, GetMeshLengthScale());
+  mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),
              "\nCharacteristic length and time scales:\n L₀ = {:.3e} m, t₀ = {:.3e} ns\n",
-             Lc, tc);
+             units.GetScaleFactor<Units::ValueType::LENGTH>(),
+             units.GetScaleFactor<Units::ValueType::TIME>());
 }
-
-template <typename T>
-T IoData::DimensionalizeValue(IoData::ValueType type, T v) const
-{
-  // Characteristic reference magnetic field strength Hc² = 1 / (Zc * Lc²) A/m (with Ec =
-  // Hc Zc). Yields Pc = Hc² Zc Lc² = 1 W.
-  const T Hc = 1.0 / std::sqrt(electromagnetics::Z0_ * Lc * Lc);  // [A/m]
-  T sf = 1.0;
-  switch (type)
-  {
-    case ValueType::TIME:
-      sf = tc;  // [ns]
-      break;
-    case ValueType::FREQUENCY:
-      sf = 1.0 / (2.0 * M_PI * tc);  // [GHz/rad]
-      break;
-    case ValueType::LENGTH:
-      sf = Lc;  // [m]
-      break;
-    case ValueType::IMPEDANCE:
-      sf = electromagnetics::Z0_;  // [Ω]
-      break;
-    case ValueType::INDUCTANCE:
-      sf = electromagnetics::mu0_ * Lc;  // [H]
-      break;
-    case ValueType::CAPACITANCE:
-      sf = electromagnetics::epsilon0_ * Lc;  // [F]
-      break;
-    case ValueType::CONDUCTIVITY:
-      sf = 1.0 / (electromagnetics::Z0_ * Lc);  // [S/m]
-      break;
-    case ValueType::VOLTAGE:
-      sf = Hc * electromagnetics::Z0_ * Lc;  // [V]
-      break;
-    case ValueType::CURRENT:
-      sf = Hc * Lc;  // [A]
-      break;
-    case ValueType::POWER:
-      sf = Hc * Hc * electromagnetics::Z0_ * Lc * Lc;  // [W]
-      break;
-    case ValueType::ENERGY:
-      sf = Hc * Hc * electromagnetics::Z0_ * Lc * Lc * tc;  // [J]
-      break;
-    case ValueType::FIELD_E:
-      sf = Hc * electromagnetics::Z0_;  // [V/m]
-      break;
-    case ValueType::FIELD_D:
-      sf = electromagnetics::epsilon0_ * Hc * electromagnetics::Z0_;  // [C/m²]
-      break;
-    case ValueType::FIELD_H:
-      sf = Hc;  // [A/m]
-      break;
-    case ValueType::FIELD_B:
-      sf = electromagnetics::mu0_ * Hc;  // [Wb/m²]
-      break;
-  }
-  return v * sf;
-}
-
-template double IoData::DimensionalizeValue(IoData::ValueType, double) const;
 
 }  // namespace palace

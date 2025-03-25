@@ -3,6 +3,7 @@
 
 #include "eigensolver.hpp"
 
+#include <complex>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -42,7 +43,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator post_op(iodata, space_op, "eigenmode");
+  PostOperator<config::ProblemData::Type::EIGENMODE> post_op(iodata, space_op);
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
@@ -213,7 +214,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const double target = iodata.solver.eigenmode.target;
   {
     const double f_target =
-        iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
   if (C)
@@ -296,6 +297,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->RescaleEigenvectors(num_conv);
   }
   Mpi::Print("\n");
+
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -325,328 +327,23 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // B = -1/(iω) ∇ x E + 1/ω kp x E.
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    post_op.SetEGridFunction(E);
-    post_op.SetBGridFunction(B);
-    post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());
-    const double E_elec = post_op.GetEFieldEnergy();
-    const double E_mag = post_op.GetHFieldEnergy();
+
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
     {
-      estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
-    // Postprocess the mode.
-    Postprocess(post_op, space_op.GetLumpedPortOp(), i, omega, error_bkwd, error_abs,
-                num_conv, E_elec, E_mag,
-                (i == iodata.solver.eigenmode.n - 1) ? &indicator : nullptr);
+    // Final write: Different condition than end of loop (i = num_conv - 1).
+    if (i == iodata.solver.eigenmode.n - 1)
+    {
+      post_op.MeasureFinalize(indicator);
+    }
   }
   return {indicator, space_op.GlobalTrueVSize()};
-}
-
-void EigenSolver::Postprocess(const PostOperator &post_op,
-                              const LumpedPortOperator &lumped_port_op, int i,
-                              std::complex<double> omega, double error_bkwd,
-                              double error_abs, int num_conv, double E_elec, double E_mag,
-                              const ErrorIndicator *indicator) const
-{
-  // The internal GridFunctions for PostOperator have already been set from the E and B
-  // solutions in the main loop over converged eigenvalues.
-  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
-  PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
-  PostprocessPorts(post_op, lumped_port_op, i);
-  PostprocessEPR(post_op, lumped_port_op, i, omega, E_elec + E_cap);
-  PostprocessDomains(post_op, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(post_op, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind);
-  PostprocessProbes(post_op, "m", i, i + 1);
-  if (i < iodata.solver.eigenmode.n_post)
-  {
-    PostprocessFields(post_op, i, i + 1);
-    Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
-  }
-  if (indicator)
-  {
-    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.eigenmode.n_post > 0);
-  }
-}
-
-namespace
-{
-
-struct PortVIData
-{
-  const int idx;                        // Lumped port index
-  const std::complex<double> V_i, I_i;  // Port voltage, current
-};
-
-struct EprLData
-{
-  const int idx;    // Lumped port index
-  const double pj;  // Inductor energy-participation ratio
-};
-
-struct EprIOData
-{
-  const int idx;    // Lumped port index
-  const double Ql;  // Quality factor
-  const double Kl;  // κ for loss rate
-};
-
-}  // namespace
-
-void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double error_bkwd,
-                                   double error_abs, int num_conv) const
-{
-  // Dimensionalize the result and print in a nice table of frequencies and Q-factors. Save
-  // to file if user has specified.
-  const std::complex<double> f = {
-      iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.real()),
-      iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.imag())};
-  const double Q =
-      (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
-
-  // Print table to stdout.
-  {
-    const int int_width = 1 + static_cast<int>(std::log10(num_conv));
-    constexpr int p = 6;
-    constexpr int w = 6 + p + 7;  // Column spaces + precision + extra for table
-    if (i == 0)
-    {
-      // clang-format off
-      Mpi::Print("{:>{}s}{:>{}s}{:>{}s}{:>{}s}{:>{}s}\n{}\n",
-                 "m", int_width,
-                 "Re{ω}/2π (GHz)", w,
-                 "Im{ω}/2π (GHz)", w,
-                 "Bkwd. Error", w,
-                 "Abs. Error", w,
-                 std::string(int_width + 4 * w, '='));
-      // clang-format on
-    }
-    // clang-format off
-    Mpi::Print("{:{}d}{:+{}.{}e}{:+{}.{}e}{:+{}.{}e}{:+{}.{}e}\n",
-               i + 1, int_width,
-               f.real(), w, p,
-               f.imag(), w, p,
-               error_bkwd, w, p,
-               error_abs, w, p);
-    // clang-format on
-  }
-
-  // Print table to file.
-  if (root && post_dir.length() > 0)
-  {
-    std::string path = post_dir + "eig.csv";
-    auto output = OutputFile(path, (i > 0));
-    if (i == 0)
-    {
-      // clang-format off
-      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
-                   "m", table.w1,
-                   "Re{f} (GHz)", table.w,
-                   "Im{f} (GHz)", table.w,
-                   "Q", table.w,
-                   "Error (Bkwd.)", table.w,
-                   "Error (Abs.)", table.w);
-      // clang-format on
-    }
-    // clang-format off
-    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
-                 static_cast<double>(i + 1), table.w1, table.p1,
-                 f.real(), table.w, table.p,
-                 f.imag(), table.w, table.p,
-                 Q, table.w, table.p,
-                 error_bkwd, table.w, table.p,
-                 error_abs, table.w, table.p);
-    // clang-format on
-  }
-}
-
-void EigenSolver::PostprocessPorts(const PostOperator &post_op,
-                                   const LumpedPortOperator &lumped_port_op, int i) const
-{
-  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
-  // = sqrt(2) * RMS).
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
-  std::vector<PortVIData> port_data;
-  port_data.reserve(lumped_port_op.Size());
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    const std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
-    const std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
-    port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
-  }
-  if (root && !port_data.empty())
-  {
-    // Write the port voltages.
-    {
-      std::string path = post_dir + "port-V.csv";
-      auto output = OutputFile(path, (i > 0));
-      if (i == 0)
-      {
-        output.print("{:>{}s},", "m", table.w1);
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s},{:>{}s}{}",
-                       "Re{V[" + std::to_string(data.idx) + "]} (V)", table.w,
-                       "Im{V[" + std::to_string(data.idx) + "]} (V)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   static_cast<double>(i + 1), table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.V_i.real(), table.w, table.p,
-                     data.V_i.imag(), table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-
-    // Write the port currents.
-    {
-      std::string path = post_dir + "port-I.csv";
-      auto output = OutputFile(path, (i > 0));
-      if (i == 0)
-      {
-        output.print("{:>{}s},", "m", table.w1);
-        for (const auto &data : port_data)
-        {
-          // clang-format off
-          output.print("{:>{}s},{:>{}s}{}",
-                       "Re{I[" + std::to_string(data.idx) + "]} (A)", table.w,
-                       "Im{I[" + std::to_string(data.idx) + "]} (A)", table.w,
-                       (data.idx == port_data.back().idx) ? "" : ",");
-          // clang-format on
-        }
-        output.print("\n");
-      }
-      // clang-format off
-      output.print("{:{}.{}e},",
-                   static_cast<double>(i + 1), table.w1, table.p1);
-      // clang-format on
-      for (const auto &data : port_data)
-      {
-        // clang-format off
-        output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.I_i.real(), table.w, table.p,
-                     data.I_i.imag(), table.w, table.p,
-                     (data.idx == port_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-  }
-}
-
-void EigenSolver::PostprocessEPR(const PostOperator &post_op,
-                                 const LumpedPortOperator &lumped_port_op, int i,
-                                 std::complex<double> omega, double E_m) const
-{
-  // If ports have been specified in the model, compute the corresponding energy-
-  // participation ratios (EPR) and write out to disk.
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
-
-  // Write the mode EPR for lumped inductor elements.
-  std::vector<EprLData> epr_L_data;
-  epr_L_data.reserve(lumped_port_op.Size());
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.L) > 0.0)
-    {
-      const double pj = post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
-      epr_L_data.push_back({idx, pj});
-    }
-  }
-  if (root && !epr_L_data.empty())
-  {
-    std::string path = post_dir + "port-EPR.csv";
-    auto output = OutputFile(path, (i > 0));
-    if (i == 0)
-    {
-      output.print("{:>{}s},", "m", table.w1);
-      for (const auto &data : epr_L_data)
-      {
-        // clang-format off
-        output.print("{:>{}s}{}",
-                     "p[" + std::to_string(data.idx) + "]", table.w,
-                     (data.idx == epr_L_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", static_cast<double>(i + 1), table.w1, table.p1);
-    for (const auto &data : epr_L_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e}{}",
-                   data.pj, table.w, table.p,
-                   (data.idx == epr_L_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
-
-  // Write the mode EPR for lumped resistor elements.
-  std::vector<EprIOData> epr_IO_data;
-  epr_IO_data.reserve(lumped_port_op.Size());
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.R) > 0.0)
-    {
-      const double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
-      const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
-      epr_IO_data.push_back(
-          {idx, Ql, iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, Kl)});
-    }
-  }
-  if (root && !epr_IO_data.empty())
-  {
-    std::string path = post_dir + "port-Q.csv";
-    auto output = OutputFile(path, (i > 0));
-    if (i == 0)
-    {
-      output.print("{:>{}s},", "m", table.w1);
-      for (const auto &data : epr_IO_data)
-      {
-        // clang-format off
-        output.print("{:>{}s},{:>{}s}{}",
-                     "Q_ext[" + std::to_string(data.idx) + "]", table.w,
-                     "κ_ext[" + std::to_string(data.idx) + "] (GHz)", table.w,
-                     (data.idx == epr_IO_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", static_cast<double>(i + 1), table.w1, table.p1);
-    for (const auto &data : epr_IO_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                   data.Ql, table.w, table.p,
-                   data.Kl, table.w, table.p,
-                   (data.idx == epr_IO_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
 }
 
 }  // namespace palace
