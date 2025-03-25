@@ -47,7 +47,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
-
+  bool nonlinear = true; //false // SHOULD DETECT BASED ON CONFIG!
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
@@ -97,6 +97,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (C)
     if (nonlinear)
     {
+      Mpi::Print("Using SLEPc NEP solver\n");
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
@@ -131,17 +132,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     }
+    if (!nonlinear) // this is ugly, need to handle better!
+    {
     slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetOrthogonalization(
         iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS,
         iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::CGS2);
+    }
     eigen = std::move(slepc);
 #endif
   }
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (C)
+  if (nonlinear)
+  {
+    eigen->SetOperators(space_op, *K, *C, *M, scale);
+  }
+  else if (C)
   {
     eigen->SetOperators(*K, *C, *M, scale);
   }

@@ -360,6 +360,15 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
+void SlepcEigenvalueSolver::SetOperators(SpaceOperator &space_op,
+  const ComplexOperator &K, const ComplexOperator &C,
+  const ComplexOperator &M,
+  EigenvalueSolver::ScaleType type)
+{
+MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
+}
+
+
 void SlepcEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
 {
   opInv = &ksp;
