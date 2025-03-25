@@ -20,6 +20,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/spaceoperator.hpp" // not sure?
 
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;
@@ -27,6 +28,7 @@ typedef struct _p_PEP *PEP;
 typedef struct _p_BV *BV;
 typedef struct _p_ST *ST;
 typedef struct _p_RG *RG;
+typedef struct _p_NEP *NEP;
 
 namespace palace
 {
@@ -60,7 +62,9 @@ public:
     GEN_INDEFINITE,
     GEN_NON_HERMITIAN,
     HYPERBOLIC,
-    GYROSCOPIC
+    GYROSCOPIC,
+    GENERAL, // for NEP
+    RATIONAL // for NEP
   };
 
   enum class Type
@@ -71,7 +75,13 @@ public:
     TOAR,
     STOAR,
     QARNOLDI,
-    JD
+    JD,
+    NLEIGS, // for NEP
+    RII, // try Jacobian based ones too?
+    SLP,
+    NARNOLDI,
+    CISS,
+    INTERPOL
   };
 
   // Workspace vector for operator applications.
@@ -134,6 +144,9 @@ public:
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                      const ComplexOperator &C, const ComplexOperator &M,
+                      ScaleType type) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
