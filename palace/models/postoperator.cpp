@@ -913,11 +913,10 @@ void PostOperator<solver_t>::MeasureProbes() const
 using fmt::format;
 
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                                const ComplexVector &b,
-                                                std::complex<double> omega)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega)
+  requires(solver_t == config::ProblemData::Type::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
@@ -943,13 +942,12 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 }
 
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                                const ComplexVector &b,
-                                                std::complex<double> omega,
-                                                double error_abs, double error_bkwd,
-                                                int num_conv)
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega,
+                                                  double error_abs, double error_bkwd,
+                                                  int num_conv)
+  requires(solver_t == config::ProblemData::Type::EIGENMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
@@ -970,7 +968,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   {
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
-    table.col_options = {6, 6};
+    table.col_options = {.min_left_padding = 6, .float_precision = 6};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)") << freq.real());
     table.insert(Column("f_im", "Im{f} (GHz)") << freq.imag());
@@ -996,10 +994,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 }
 
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
-                                                int idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v,
+                                                  const Vector &e, int idx)
+  requires(solver_t == config::ProblemData::Type::ELECTROSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetVGridFunction(v);
@@ -1022,10 +1019,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
   return total_energy;
 }
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
-                                                int idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
+                                                  const Vector &b, int idx)
+  requires(solver_t == config::ProblemData::Type::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetAGridFunction(a);
@@ -1049,10 +1045,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 }
 
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
-                                                double t, double J_coef)
-    -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e,
+                                                  const Vector &b, double t, double J_coef)
+  requires(solver_t == config::ProblemData::Type::TRANSIENT)
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto time = units.Dimensionalize<Units::ValueType::TIME>(t);
@@ -1089,11 +1084,10 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 }
 
 template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
-                                                          const ComplexVector &b,
-                                                          bool exchange_face_nbr_data)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
+double PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                            const ComplexVector &b,
+                                                            bool exchange_face_nbr_data)
+  requires(solver_t == config::ProblemData::Type::DRIVEN)
 {
   SetEGridFunction(e, exchange_face_nbr_data);
   SetBGridFunction(b, exchange_face_nbr_data);
@@ -1112,35 +1106,5 @@ template class PostOperator<config::ProblemData::Type::EIGENMODE>;
 template class PostOperator<config::ProblemData::Type::ELECTROSTATIC>;
 template class PostOperator<config::ProblemData::Type::MAGNETOSTATIC>;
 template class PostOperator<config::ProblemData::Type::TRANSIENT>;
-
-// Function explict instantiation.
-// TODO(C++20): with requires, we won't need a second template
-
-template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
-    config::ProblemData::Type::DRIVEN>(int step, const ComplexVector &e,
-                                       const ComplexVector &b, std::complex<double> omega)
-    -> double;
-
-template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasureAndPrintAll<
-    config::ProblemData::Type::EIGENMODE>(int step, const ComplexVector &e,
-                                          const ComplexVector &b,
-                                          std::complex<double> omega, double error_abs,
-                                          double error_bkwd, int num_conv) -> double;
-
-template auto PostOperator<config::ProblemData::Type::ELECTROSTATIC>::MeasureAndPrintAll<
-    config::ProblemData::Type::ELECTROSTATIC>(int step, const Vector &v, const Vector &e,
-                                              int idx) -> double;
-
-template auto PostOperator<config::ProblemData::Type::MAGNETOSTATIC>::MeasureAndPrintAll<
-    config::ProblemData::Type::MAGNETOSTATIC>(int step, const Vector &a, const Vector &b,
-                                              int idx) -> double;
-
-template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrintAll<
-    config::ProblemData::Type::TRANSIENT>(int step, const Vector &e, const Vector &b,
-                                          double t, double J_coef) -> double;
-
-template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
-    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b,
-                                       bool exchange_face_nbr_data = true) -> double;
 
 }  // namespace palace
