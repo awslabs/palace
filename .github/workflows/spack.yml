@@ -155,7 +155,7 @@ jobs:
 
       - name: Build Palace
         # Build palace from source using this current directory
-        run: spack -e ${SPACK_ENV} install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
+        run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
