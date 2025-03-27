@@ -13,6 +13,7 @@ concurrency:
 env:
   SPACK_COLOR: always
   REGISTRY: ghcr.io/awslabs/palace
+  SPACK_ROOT: /opt/spack
   SPACK_CACHE: /opt/spack-cache
   tempdir: /opt/spack-cache
   TMP: /opt/spack-cache
@@ -54,8 +55,8 @@ jobs:
 
       - name: Setup Spack
         run: |
-          git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git
-          echo "${PWD}/spack/bin" >> "$GITHUB_PATH"
+          git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git ${SPACK_ROOT}
+          echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
       - name: Setup Environment
         run: |
