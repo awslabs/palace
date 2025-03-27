@@ -147,7 +147,7 @@ jobs:
         run: spack -e ${SPACK_ENV} concretize -f
 
       - name: Build Dependencies
-        run: spack -e ${SPACK_ENV} install --no-check-signature --fail-fast --show-log-on-error --only dependencies
+        run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Push Dependencies
         # We should sign our pushes here if we want to make these publically accessible
@@ -155,7 +155,7 @@ jobs:
 
       - name: Build Palace
         # Build palace from source using this current directory
-        run: spack -e ${SPACK_ENV} install --keep-stage --show-log-on-error --only package --no-cache
+        run: spack -e ${SPACK_ENV} install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
