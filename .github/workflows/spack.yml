@@ -60,6 +60,7 @@ jobs:
 
       - name: Setup Environment
         run: |
+          set -x
 
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
@@ -72,6 +73,7 @@ jobs:
 
           mkdir -p $SPACK_ENV
           spack env create -d $SPACK_ENV
+          touch $SPACK_ENV/spack.yaml
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
@@ -112,6 +114,10 @@ jobs:
           spack -e $SPACK_ENV config add duplicates:strategy:none
           # Target the most generic microarch to encourage re-use
           spack -e $SPACK_ENV config add concretizer:targets:granularity:generic
+          # Lets make sure that spack uses our cache directory...
+          spack -e $SPACK_ENV config add config:source_cache $SPACK_CACHE
+          spack -e $SPACK_ENV config add config:misc_cache $SPACK_CACHE
+          spack -e $SPACK_ENV config add config:build_stage $SPACK_CACHE
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up...
