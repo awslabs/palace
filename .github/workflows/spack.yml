@@ -30,6 +30,7 @@ jobs:
           - compiler: gcc
             mpi: openmpi
             gpu: none
+            blas: intel-oneapi-mkl
 
           # - compiler: gcc
           #   mpi: mpich
@@ -69,13 +70,14 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          mkdir -p $SPACK_ENV
+          mkdir -p ${SPACK_ENV}
           # I don't know why spack struggles so much with the environment creation...
-          cd $SPACK_ENV
+          cd ${SPACK_ENV}
           # We could configure settings here, but that's done through CLI later
+          # We at least want our core spec to be here or else env looks empty...
           cat << EOF > spack.yaml
           spack:
-            specs: []
+            specs: local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
             view: false
             concretizer:
               unify: true
@@ -84,71 +86,72 @@ jobs:
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
-          spack -e $SPACK_ENV repo add spack/local
+          spack -e ${SPACK_ENV} repo add spack/local
 
           # Using `spack develop` in order to have an in-source build
           # Can use this build directory later for testing
           # NOTE: Compiler spec must be last here due to spack updates
-          spack -e $SPACK_ENV develop --path=$(pwd) \
+          spack -e ${SPACK_ENV} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
-            $GPU_VARIANT ^${{ matrix.mpi }} \
-            ^petsc~hdf5 ^intel-oneapi-mkl \
-            %${{ matrix.compiler }}
+            $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
 
       - name: Configure Spack settings
         run: |
-          set -x
           # Views are only for environments being used in-situ...
-          spack -e $SPACK_ENV config add view:false
+          spack -e ${SPACK_ENV} config add view:false
           # We want to re-use externals/buildcache
-          spack -e $SPACK_ENV config add concretizer:reuse:true
+          spack -e ${SPACK_ENV} config add concretizer:reuse:true
           # Unify doesn't really apply until you have more than one core spec
-          spack -e $SPACK_ENV config add concretizer:unify:true
+          spack -e ${SPACK_ENV} config add concretizer:unify:true
           # Allow splicing of MPI / Compilers from build cache for faster builds
-          spack -e $SPACK_ENV config add concretizer:splice:automatic:true
+          spack -e ${SPACK_ENV} config add concretizer:splice:automatic:true
           # Try to prevent duplcate packages in concretization
-          spack -e $SPACK_ENV config add concretizer:duplicates:strategy:none
+          spack -e ${SPACK_ENV} config add concretizer:duplicates:strategy:none
           # Target the most generic microarch to encourage re-use
-          spack -e $SPACK_ENV config add concretizer:targets:granularity:generic
+          spack -e ${SPACK_ENV} config add concretizer:targets:granularity:generic
           # Lets make sure that spack uses our cache directory...
-          spack -e $SPACK_ENV config add config:source_cache:$SPACK_CACHE
-          spack -e $SPACK_ENV config add config:misc_cache:$SPACK_CACHE
-          spack -e $SPACK_ENV config add config:build_stage:$SPACK_CACHE
+          spack -e ${SPACK_ENV} config add config:source_cache:${SPACK_CACHE}
+          spack -e ${SPACK_ENV} config add config:misc_cache:${SPACK_CACHE}
+          spack -e ${SPACK_ENV} config add config:build_stage:${SPACK_CACHE}
+          # We have some requirements for other package variants
+          spack -e ${SPACK_ENV} config add packages:petsc:require:~hdf5
+          # We want our blas provider to be specific
+          spack -e ${SPACK_ENV} config add packages:all:providers:blas:${{ matrix.blas }}
 
       - name: Configure Binary Mirrors / External Packages
         run: |
           # Find all externals to reduce build times
-          spack -e $SPACK_ENV external find --all
+          spack -e ${SPACK_ENV} external find --all
           # Add access to our GitHub Container Registry cache
-          spack -e $SPACK_ENV mirror add local-buildcache oci://${{ env.REGISTRY }}
+          spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
           # Secrets are auto-configured by GitHub pipelines / permissions
-          spack -e $SPACK_ENV mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
+          spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # Install the public buildcache as well
-          spack -e $SPACK_ENV mirror add spack https://binaries.spack.io/develop
-          spack -e $SPACK_ENV buildcache keys --install --trust
+          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          spack -e ${SPACK_ENV} buildcache keys --install --trust
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up...
-        run: spack -e $SPACK_ENV concretize -f
+        run: spack -e ${SPACK_ENV} concretize -f
 
       - name: Build Dependencies
-        run: spack -e $SPACK_ENV install --no-check-signature --fail-fast --show-log-on-error --verbose --only dependencies
+        run: spack -e ${SPACK_ENV} install --no-check-signature --fail-fast --show-log-on-error --verbose --only dependencies
 
       - name: Push Dependencies
         # We should sign our pushes here if we want to make these publically accessible
-        run: spack -e $SPACK_ENV buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
+        run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
 
       - name: Build Palace
         # Build palace from source using this current directory...
-        run: spack --debug -e $SPACK_ENV install --keep-stage --verbose --show-log-on-error --only package --no-cache
+        run: spack --debug -e ${SPACK_ENV} install --keep-stage --verbose --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
         run: |
           # Need to load the MPI built by spack
-          spack -e $SPACK_ENV --sh load ${{ matrix.mpi }} > env.txt
+          spack -e ${SPACK_ENV} --sh load ${{ matrix.mpi }} > env.txt
           source env.txt
-          cd $(spack -e $SPACK_ENV location --build-dir local.palace@develop)
+          cd $(spack -e ${SPACK_ENV} location --build-dir local.palace@develop)
           ls -al
           cd ./test/unit
           mpirun -np 2 ./unit-tests --skip-benchmarks
@@ -174,4 +177,4 @@ jobs:
       - name: Push Palace
         # Should also sign here...
         # --force here since we want the latest version in the buildcache...
-        run: spack -e $SPACK_ENV buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
+        run: spack -e ${SPACK_ENV} buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
