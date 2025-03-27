@@ -93,10 +93,10 @@ jobs:
           # Can use this build directory later for testing
           # NOTE: Compiler spec must be last here due to spack updates
           spack -e $SPACK_ENV develop --path=$(pwd) \
-            local.palace@git.%"${{ github.head_ref || github.ref_name }}"=develop \
+            local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
             $GPU_VARIANT ^${{ matrix.mpi }} \
             ^petsc~hdf5 ^intel-oneapi-mkl \
-            ^${{ matrix.compiler }}
+            %${{ matrix.compiler }}
 
       - name: Configure Binary Mirrors / External Packages
         run: |
