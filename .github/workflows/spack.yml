@@ -71,9 +71,7 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          mkdir -p $SPACK_ENV
           spack env create -d $SPACK_ENV
-          touch $SPACK_ENV/spack.yaml
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
