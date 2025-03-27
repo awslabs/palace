@@ -109,7 +109,7 @@ jobs:
           # Unify doesn't really apply until you have more than one core spec
           spack -e ${SPACK_ENV} config add concretizer:unify:true
           # Allow splicing of MPI / Compilers from build cache for faster builds
-          spack -e ${SPACK_ENV} config add concretizer:splice:automatic:true
+          spack -e ${SPACK_ENV} config add concretizer:splice:automatic:false
           # Try to prevent duplcate packages in concretization
           spack -e ${SPACK_ENV} config add concretizer:duplicates:strategy:none
           # Target the most generic microarch to encourage re-use
