@@ -60,8 +60,6 @@ jobs:
 
       - name: Setup Environment
         run: |
-          set -x
-
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
             GPU_VARIANT="+cuda cuda_arch=70"
