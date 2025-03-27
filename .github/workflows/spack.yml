@@ -119,7 +119,7 @@ jobs:
           # Allow splicing of MPI / Compilers from build cache for faster builds
           spack -e $SPACK_ENV config add concretizer:splice:automatic:true
           # Try to prevent duplcate packages in concretization
-          spack -e $SPACK_ENV config add duplicates:strategy:none
+          spack -e $SPACK_ENV config add concretizer:duplicates:strategy:none
           # Target the most generic microarch to encourage re-use
           spack -e $SPACK_ENV config add concretizer:targets:granularity:generic
           # Lets make sure that spack uses our cache directory...
