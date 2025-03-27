@@ -56,6 +56,7 @@ jobs:
 
       - name: Setup Spack
         run: |
+          # We need to pin this version to get effective re-use of our local cache
           git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git ${SPACK_ROOT}
           echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
@@ -101,11 +102,10 @@ jobs:
 
       - name: Configure Spack settings
         run: |
-          # Views are only for environments being used in-situ...
+          # Views are only for environments being used in-situ
           spack -e ${SPACK_ENV} config add view:false
-          # We want to re-use externals/buildcache...
-          # Unfortunately reuse:true can often result in wild DAGs
-          spack -e ${SPACK_ENV} config add concretizer:reuse:false
+          # We want to re-use externals/buildcache
+          spack -e ${SPACK_ENV} config add concretizer:reuse:true
           # Unify doesn't really apply until you have more than one core spec
           spack -e ${SPACK_ENV} config add concretizer:unify:true
           # Allow splicing of MPI / Compilers from build cache for faster builds
@@ -114,7 +114,7 @@ jobs:
           spack -e ${SPACK_ENV} config add concretizer:duplicates:strategy:none
           # Target the most generic microarch to encourage re-use
           spack -e ${SPACK_ENV} config add concretizer:targets:granularity:generic
-          # Lets make sure that spack uses our cache directory...
+          # Lets make sure that spack uses our tmp directories
           spack -e ${SPACK_ENV} config add config:source_cache:${SPACK_CACHE}
           spack -e ${SPACK_ENV} config add config:misc_cache:${SPACK_CACHE}
           spack -e ${SPACK_ENV} config add config:build_stage:${SPACK_CACHE}
@@ -126,6 +126,7 @@ jobs:
           # Find all externals to reduce build times
           spack -e ${SPACK_ENV} external find --all
           # Add access to our GitHub Container Registry cache
+          # Order of being added determines order in which spack looks to reuse.
           spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
@@ -135,7 +136,8 @@ jobs:
           spack -e ${SPACK_ENV} buildcache keys --install --trust
 
       - name: Concretize
-        # In theory we can re-use a concretization and pin a spack to speed this up...
+        # In theory we can re-use a concretization and pin a spack to speed this up.
+        # Unfortunately it then becomes difficult to know when to re-concretize.
         run: spack -e ${SPACK_ENV} concretize -f
 
       - name: Build Dependencies
@@ -146,7 +148,7 @@ jobs:
         run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
 
       - name: Build Palace
-        # Build palace from source using this current directory...
+        # Build palace from source using this current directory
         run: spack -e ${SPACK_ENV} install --keep-stage --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
