@@ -94,7 +94,7 @@ jobs:
           # NOTE: Compiler spec must be last here due to spack updates
           spack -e ${SPACK_ENV} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
-            $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
+            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }}  %${{ matrix.compiler }}
 
       - name: Configure Spack settings
         run: |
@@ -133,7 +133,7 @@ jobs:
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up...
-        run: spack -e ${SPACK_ENV} concretize -f
+        run: spack --debug -e ${SPACK_ENV} concretize -f
 
       - name: Build Dependencies
         run: spack -e ${SPACK_ENV} install --no-check-signature --fail-fast --show-log-on-error --verbose --only dependencies
