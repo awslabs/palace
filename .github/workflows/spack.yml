@@ -78,7 +78,7 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs: 
-              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} %${{ matrix.compiler }}
+              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
             view: false
             concretizer:
               unify: true
@@ -94,7 +94,7 @@ jobs:
           # NOTE: Compiler spec must be last here due to spack updates
           spack -e ${SPACK_ENV} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
-            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }}  %${{ matrix.compiler }}
+            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
 
       - name: Configure Spack settings
         run: |
