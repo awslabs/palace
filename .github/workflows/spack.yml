@@ -10,12 +10,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SPACK_COLOR: always
+  REGISTRY: ghcr.io/awslabs/palace
+  SPACK_CACHE: /opt/spack-cache
+  tempdir: /opt/spack-cache
+  TMP: /opt/spack-cache
+  TMPDIR: /opt/spack-cache
+  SPACAK_ENV: /opt/spack-env
+  USERNAME: palace_bot
+
 jobs:
   build-and-test-spack:
     strategy:
       fail-fast: false
       matrix:
-        include:  # Include GPU build tests
+        include: # Include GPU build tests
           - compiler: gcc
             mpi: openmpi
             gpu: none
@@ -32,22 +42,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure Open MPI
-        if: matrix.mpi == 'openmpi'
-        run: |
-          sudo apt-get install -y openmpi-bin libopenmpi-dev
-
-      - name: Configure MPICH
-        if: matrix.mpi == 'mpich'
-        run: |
-          sudo apt-get install -y mpich libmpich-dev
-
-      - name: Configure Intel MPI
-        if: matrix.mpi == 'intelmpi'
-        uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: ${{ matrix.mpi }}
-
       - name: Configure Clang compiler
         if: matrix.compiler == 'clang'
         run: |
@@ -61,15 +55,12 @@ jobs:
 
       - uses: vsoch/spack-package-action/install@main
 
-      - name: Build Palace
+      - name: Setup Spack
         run: |
-          # Clean up Android SDK install (confuses Spack MKL link line?)
-          sudo rm -rf $ANDROID_HOME
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
           . /opt/spack/share/spack/setup-env.sh
-          spack external find --all
           spack repo add spack/local
 
           # Configure GPU variant
@@ -81,25 +72,87 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          # Build and install
-          PALACE_SPEC="local.palace@develop%${{ matrix.compiler }}$GPU_VARIANT ^${{ matrix.mpi }}"
-          PALACE_SPEC="$PALACE_SPEC ^petsc~hdf5 ^intel-oneapi-mkl"
-          spack spec $PALACE_SPEC
-          spack dev-build $PALACE_SPEC
+          mkdir -p $SPACK_ENV
+          spack env create -d $SPACK_ENV
 
-      - name: Run tests
-        if: matrix.gpu == 'none'  # Skip tests for GPU builds
+          # Using `spack develop` in order to have an in-source build
+          # Can use this build directory later for testing
+          spack -e $SPACK_ENV develop --path=$(pwd) \
+            local.palace@git.%"${{ github.head_ref || github.ref_name }}"=develop \
+            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.compiler }} \
+            ^petsc~hdf5 ^intel-oneapi-mkl
+
+      - name: Configure Binary Mirrors / External Packages
+        run: |
+          # Find all externals to reduce build times
+          spack external find --all
+          # Add access to our GitHub Container Registry cache
+          spack -e $SPACK_ENV mirror add local-buildcache oci://${{ env.REGISTRY }}
+          spack -e $SPACK_ENV mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
+          # Install the public buildcache as well
+          spack -e $SPACK_ENV mirror add spack https://binaries.spack.io/develop
+          spack -e $SPACK_ENV buildcache keys --install --trust
+
+      - name: Configure Spack settings
+        run: |
+          # Views are only for environments being used in-situ...
+          spack -e $SPACK_ENV config add view:false
+          # We want to re-use externals/buildcache
+          spack -e $SPACK_ENV config add concretizer:reuse:true
+          # Unify doesn't really apply until you have more than one core spec
+          spack -e $SPACK_ENV config add concretizer:unify:true
+          # Allow splicing of MPI / Compilers from build cache for faster builds
+          spack -e $SPACK_ENV config add concretizer:splice:automatic:true
+          # Try to prevent duplcate packages in concretization
+          spack -e $SPACK_ENV config add duplicates:strategy:none
+          # Target the most generic microarch to encourage re-use
+          spack -e $SPACK_ENV config add concretizer:targets:granularity:generic
+
+      - name: Concretize
+        # In theory we can re-use a concretization and pin a spack to speed this up...
+        run: spack -e $SPACK_ENV concretize -f
+
+      - name: Build Dependencies
+        run: spack -e $SPACK_ENV install --no-check-signature --fail-fast --show-log-on-error --verbose --only dependencies
+
+      - name: Push Dependencies
+        # We should sign our pushes here if we want to make these publically accessible
+        run: spack -e $SPACK_ENV buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
+
+      - name: Build Palace
+        # Build palace from source using this current directory...
+        run: spack --debug -e $SPACK_ENV install --keep-stage --verbose --show-log-on-error --only package --no-cache
+
+      - name: Run Unit Tests
+        # Since we ran `spack develop` here, we have the build dir ready to run tests in
+        run: |
+          # Need to load the MPI built by spack
+          spack -e $SPACK_ENV --sh load ${{ matrix.mpi }} > env.txt
+          source env.txt
+          cd $(spack -e $SPACK_ENV location --build-dir local.palace@develop)
+          ls -al
+          cd ./test/unit
+          mpirun -np 2 ./unit-tests --skip-benchmarks
+          cd -
+
+      - name: Run Integration Tests
+        if: matrix.gpu == 'none' # Skip tests for GPU builds
         env:
-          NUM_PROC_TEST_MAX: '8'
+          NUM_PROC_TEST_MAX: "8"
         run: |
           # Configure environment
           export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
-          . /opt/spack/share/spack/setup-env.sh
+
           spack load palace
 
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
+
+      - name: Push Palace
+        # Should also sign here...
+        # --force here since we want the latest version in the buildcache...
+        run: spack -e $SPACK_ENV buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
