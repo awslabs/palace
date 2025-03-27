@@ -111,9 +111,9 @@ jobs:
           # Target the most generic microarch to encourage re-use
           spack -e $SPACK_ENV config add concretizer:targets:granularity:generic
           # Lets make sure that spack uses our cache directory...
-          spack -e $SPACK_ENV config add config:source_cache $SPACK_CACHE
-          spack -e $SPACK_ENV config add config:misc_cache $SPACK_CACHE
-          spack -e $SPACK_ENV config add config:build_stage $SPACK_CACHE
+          spack -e $SPACK_ENV config add config:source_cache:$SPACK_CACHE
+          spack -e $SPACK_ENV config add config:misc_cache:$SPACK_CACHE
+          spack -e $SPACK_ENV config add config:build_stage:$SPACK_CACHE
 
       - name: Configure Binary Mirrors / External Packages
         run: |
