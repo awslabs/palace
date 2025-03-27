@@ -17,7 +17,7 @@ env:
   tempdir: /opt/spack-cache
   TMP: /opt/spack-cache
   TMPDIR: /opt/spack-cache
-  SPACAK_ENV: /opt/spack-env
+  SPACK_ENV: /opt/spack-env
   USERNAME: palace_bot
 
 jobs:
@@ -44,23 +44,24 @@ jobs:
 
       - name: Configure Clang compiler
         if: matrix.compiler == 'clang'
-        run: |
-          sudo apt-get install -y clang lld
+        run: sudo apt-get install -y clang lld
 
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
-        run: |
+        run:
           sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
-                                  intel-oneapi-compiler-fortran=2024.2.1-1079
-
-      - uses: vsoch/spack-package-action/install@main
+          intel-oneapi-compiler-fortran=2024.2.1-1079
 
       - name: Setup Spack
+        run: |
+          git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git
+          echo "${PWD}/spack/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Environment
         run: |
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
-          . /opt/spack/share/spack/setup-env.sh
           spack repo add spack/local
 
           # Configure GPU variant
@@ -77,17 +78,20 @@ jobs:
 
           # Using `spack develop` in order to have an in-source build
           # Can use this build directory later for testing
+          # NOTE: Compiler spec must be last here due to spack updates
           spack -e $SPACK_ENV develop --path=$(pwd) \
             local.palace@git.%"${{ github.head_ref || github.ref_name }}"=develop \
-            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.compiler }} \
-            ^petsc~hdf5 ^intel-oneapi-mkl
+            $GPU_VARIANT ^${{ matrix.mpi }} \
+            ^petsc~hdf5 ^intel-oneapi-mkl \
+            ^${{ matrix.compiler }}
 
       - name: Configure Binary Mirrors / External Packages
         run: |
           # Find all externals to reduce build times
-          spack external find --all
+          spack -e $SPACK_ENV external find --all
           # Add access to our GitHub Container Registry cache
           spack -e $SPACK_ENV mirror add local-buildcache oci://${{ env.REGISTRY }}
+          # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e $SPACK_ENV mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # Install the public buildcache as well
           spack -e $SPACK_ENV mirror add spack https://binaries.spack.io/develop
