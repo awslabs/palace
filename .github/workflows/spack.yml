@@ -78,15 +78,10 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs: 
-              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
+              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} %${{ matrix.compiler }}
             view: false
             concretizer:
               unify: true
-            packages:
-              all:
-                providers:
-                  blas:
-                    - ${{ matrix.blas }}
           EOF
           cd -
 
@@ -105,8 +100,9 @@ jobs:
         run: |
           # Views are only for environments being used in-situ...
           spack -e ${SPACK_ENV} config add view:false
-          # We want to re-use externals/buildcache
-          spack -e ${SPACK_ENV} config add concretizer:reuse:true
+          # We want to re-use externals/buildcache...
+          # Unfortunately reuse:true can often result in wild DAGs
+          spack -e ${SPACK_ENV} config add concretizer:reuse:false
           # Unify doesn't really apply until you have more than one core spec
           spack -e ${SPACK_ENV} config add concretizer:unify:true
           # Allow splicing of MPI / Compilers from build cache for faster builds
@@ -132,6 +128,7 @@ jobs:
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # Install the public buildcache as well
           spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          # If we cached these, that would be faster and safer
           spack -e ${SPACK_ENV} buildcache keys --install --trust
 
       - name: Concretize
