@@ -82,6 +82,11 @@ jobs:
             view: false
             concretizer:
               unify: true
+            packages:
+              all:
+                providers:
+                  blas:
+                    - ${{ matrix.blas }}
           EOF
           cd -
 
@@ -116,8 +121,6 @@ jobs:
           spack -e ${SPACK_ENV} config add config:build_stage:${SPACK_CACHE}
           # We have some requirements for other package variants
           spack -e ${SPACK_ENV} config add packages:petsc:require:~hdf5
-          # We want our blas provider to be specific
-          spack -e ${SPACK_ENV} config add packages:all:providers:blas:${{ matrix.blas }}
 
       - name: Configure Binary Mirrors / External Packages
         run: |
