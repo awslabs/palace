@@ -57,7 +57,7 @@ jobs:
       - name: Setup Spack
         run: |
           # We need to pin this version to get effective re-use of our local cache
-          git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git ${SPACK_ROOT}
+          git clone -c feature.manyFiles=true --depth=2 --branch v1.0.0-alpha.4 https://github.com/spack/spack.git ${SPACK_ROOT}
           echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
           # Clean up Android SDK install (confuses Spack MKL link line?)
@@ -105,7 +105,7 @@ jobs:
           # Views are only for environments being used in-situ
           spack -e ${SPACK_ENV} config add view:false
           # We want to re-use externals/buildcache
-          spack -e ${SPACK_ENV} config add concretizer:reuse:true
+          spack -e ${SPACK_ENV} config add concretizer:reuse:false
           # Unify doesn't really apply until you have more than one core spec
           spack -e ${SPACK_ENV} config add concretizer:unify:true
           # Allow splicing of MPI / Compilers from build cache for faster builds
