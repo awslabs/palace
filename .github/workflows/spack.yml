@@ -124,7 +124,7 @@ jobs:
       - name: Configure Binary Mirrors / External Packages
         run: |
           # Find all externals to reduce build times
-          spack -e ${SPACK_ENV} external find --all
+          spack -e ${SPACK_ENV} external find --all --exclude openssl
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
           spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
