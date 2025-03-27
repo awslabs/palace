@@ -18,7 +18,7 @@ env:
   tempdir: /opt/spack-cache
   TMP: /opt/spack-cache
   TMPDIR: /opt/spack-cache
-  SPACK_ENV: /opt/spack-env
+  SPACK_ENV: ./spack-env
   USERNAME: palace_bot
 
 jobs:
@@ -71,7 +71,19 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          spack env create -d $SPACK_ENV
+          mkdir -p $SPACK_ENV
+          # I don't know why spack struggles so much with the environment creation...
+          cd $SPACK_ENV
+          # We could configure settings here, but that's done through CLI later
+          cat << EOF > spack.yaml
+          spack:
+            # add package specs to the `specs` list
+            specs: []
+            view: true
+            concretizer:
+              unify: true
+          EOF
+          cd -
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
