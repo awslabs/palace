@@ -59,6 +59,9 @@ jobs:
           git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git ${SPACK_ROOT}
           echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
+          # Clean up Android SDK install (confuses Spack MKL link line?)
+          sudo rm -rf $ANDROID_HOME
+
       - name: Setup Environment
         run: |
           # Configure GPU variant
