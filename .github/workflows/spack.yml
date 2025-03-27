@@ -77,7 +77,8 @@ jobs:
           # We at least want our core spec to be here or else env looks empty...
           cat << EOF > spack.yaml
           spack:
-            specs: local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
+            specs: 
+              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}
             view: false
             concretizer:
               unify: true
