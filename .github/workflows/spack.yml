@@ -129,6 +129,7 @@ jobs:
           spack -e ${SPACK_ENV} external find --all \
             --exclude openssl \
             --exclude python \
+            --exculde ncurses \
             --exclude curl
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
