@@ -75,9 +75,8 @@ jobs:
           # We could configure settings here, but that's done through CLI later
           cat << EOF > spack.yaml
           spack:
-            # add package specs to the `specs` list
             specs: []
-            view: true
+            view: false
             concretizer:
               unify: true
           EOF
@@ -96,20 +95,9 @@ jobs:
             ^petsc~hdf5 ^intel-oneapi-mkl \
             %${{ matrix.compiler }}
 
-      - name: Configure Binary Mirrors / External Packages
-        run: |
-          # Find all externals to reduce build times
-          spack -e $SPACK_ENV external find --all
-          # Add access to our GitHub Container Registry cache
-          spack -e $SPACK_ENV mirror add local-buildcache oci://${{ env.REGISTRY }}
-          # Secrets are auto-configured by GitHub pipelines / permissions
-          spack -e $SPACK_ENV mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # Install the public buildcache as well
-          spack -e $SPACK_ENV mirror add spack https://binaries.spack.io/develop
-          spack -e $SPACK_ENV buildcache keys --install --trust
-
       - name: Configure Spack settings
         run: |
+          set -x
           # Views are only for environments being used in-situ...
           spack -e $SPACK_ENV config add view:false
           # We want to re-use externals/buildcache
@@ -126,6 +114,18 @@ jobs:
           spack -e $SPACK_ENV config add config:source_cache $SPACK_CACHE
           spack -e $SPACK_ENV config add config:misc_cache $SPACK_CACHE
           spack -e $SPACK_ENV config add config:build_stage $SPACK_CACHE
+
+      - name: Configure Binary Mirrors / External Packages
+        run: |
+          # Find all externals to reduce build times
+          spack -e $SPACK_ENV external find --all
+          # Add access to our GitHub Container Registry cache
+          spack -e $SPACK_ENV mirror add local-buildcache oci://${{ env.REGISTRY }}
+          # Secrets are auto-configured by GitHub pipelines / permissions
+          spack -e $SPACK_ENV mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
+          # Install the public buildcache as well
+          spack -e $SPACK_ENV mirror add spack https://binaries.spack.io/develop
+          spack -e $SPACK_ENV buildcache keys --install --trust
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up...
