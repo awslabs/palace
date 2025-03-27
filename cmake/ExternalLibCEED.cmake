@@ -47,6 +47,7 @@ else()
 endif()
 
 # Build libCEED (always as a shared library)
+# STATIC=1 builds static lib
 set(LIBCEED_OPTIONS
   "prefix=${CMAKE_INSTALL_PREFIX}"
   "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
@@ -54,7 +55,7 @@ set(LIBCEED_OPTIONS
   "CXX=${CMAKE_CXX_COMPILER}"
   "FC="
   "OPT=${LIBCEED_OPT_FLAGS}"
-  "STATIC="
+  "STATIC=0"
   "PEDANTIC=${LIBCEED_PEDANTIC}"
 )
 
