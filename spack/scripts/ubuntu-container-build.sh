@@ -17,7 +17,7 @@ fi
 UBUNTU_TAG=oracular
 FINCH_TEST="finch run --rm ubuntu:${UBUNTU_TAG} echo Finch runs Ubuntu..."
 CONTAINER_ROOT=/scratch
-CONTAINER_SPACK_ROOT=${CONTAINER_ROOT}/local-clone-of-spack
+CONTAINER_SPACK_ROOT=/opt/local-spack
 # Changing tmpdir requires changing local-build.sh as well.
 TMPDIR=/tmp/spack-tmp
 
@@ -30,4 +30,5 @@ finch run --rm \
   --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
   -w ${CONTAINER_ROOT} \
   ubuntu:${UBUNTU_TAG} \
-  ${CONTAINER_ROOT}/spack/scripts/local-build.sh
+  bash -c 'ls -al;echo $SPACK_ROOT;ls -al $SPACK_ROOT'
+# ${CONTAINER_ROOT}/spack/scripts/local-build.sh
