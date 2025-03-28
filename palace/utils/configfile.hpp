@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
+#include "utils/strongtype.hpp"
 
 namespace palace::config
 {
@@ -18,6 +19,13 @@ using json = nlohmann::json;
 //
 // Data structures for storing configuration file data.
 //
+
+enum class TriBool : std::uint8_t
+{
+  False = 0,
+  True = 1,
+  Uninitialized = 2
+};
 
 namespace internal
 {
@@ -88,6 +96,8 @@ struct ElementData
 };
 
 }  // namespace internal
+
+// Problem & Model Config.
 
 struct ProblemData
 {
@@ -250,6 +260,8 @@ public:
   void SetUp(json &config);
 };
 
+// Domain Config.
+
 // Store symmetric matrix data as set of outer products: Σᵢ sᵢ * vᵢ *  vᵢᵀ.
 template <std::size_t N>
 struct SymmetricMatrixData
@@ -350,6 +362,8 @@ public:
   void SetUp(json &config);
 };
 
+// Boundary Configuration.
+
 struct PecBoundaryData
 {
 public:
@@ -389,7 +403,7 @@ public:
   // Approximation order for farfield ABC.
   int order = 1;
 
-  // List of boundary attributes with farfield absortbing boundary conditions.
+  // List of boundary attributes with farfield absorbing boundary conditions.
   std::vector<int> attributes = {};
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
@@ -453,8 +467,10 @@ public:
   double Ls = 0.0;
   double Cs = 0.0;
 
-  // Flag for source term in driven and transient simulations.
-  bool excitation = false;
+  // Input excitation for driven & transient solver:
+  // - Wave/Lumped ports with same index are excited together.
+  // - 1-based index if excited; 0 if not excited.
+  ExcitationIdx excitation = ExcitationIdx(0);
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -467,7 +483,13 @@ public:
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
 {
 public:
-  void SetUp(json &boundaries);
+  struct SetUpReturnInfo
+  {
+    TriBool excitation_input_is_bool = TriBool::Uninitialized;
+    TriBool has_terminal_spec = TriBool::Uninitialized;
+  };
+
+  SetUpReturnInfo SetUp(json &boundaries);
 };
 
 struct PeriodicData
@@ -520,8 +542,10 @@ public:
   };
   EigenSolverType eigen_type = EigenSolverType::DEFAULT;
 
-  // Flag for source term in driven and transient simulations.
-  bool excitation = false;
+  // Input excitation for driven & transient solver:
+  // - Wave/Lumped ports with same index are excited together.
+  // - 1-based index if excited; 0 if not excited.
+  ExcitationIdx excitation = ExcitationIdx(0);
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -545,7 +569,12 @@ public:
 struct WavePortBoundaryData : public internal::DataMap<WavePortData>
 {
 public:
-  void SetUp(json &boundaries);
+  struct SetUpReturnInfo
+  {
+    TriBool excitation_input_is_bool = TriBool::Uninitialized;
+  };
+
+  SetUpReturnInfo SetUp(json &boundaries);
 };
 
 struct SurfaceCurrentData
@@ -662,6 +691,8 @@ public:
 
   void SetUp(json &config);
 };
+
+// Solver Configuration.
 
 struct DrivenSolverData
 {

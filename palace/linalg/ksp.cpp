@@ -81,7 +81,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
           gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
           break;
         case config::LinearSolverData::SideType::DEFAULT:
-          // Do nothing
+          // Do nothing.
           break;
       }
     }

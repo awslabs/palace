@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
+#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -36,13 +37,14 @@ public:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // To accomodate multielement lumped ports, a port may be made up of elements with
+  // To accommodate multielement lumped ports, a port may be made up of elements with
   // different attributes and directions which add in parallel.
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
   // Lumped port properties.
   double R, L, C;
-  bool excitation, active;
+  ExcitationIdx excitation;
+  bool active;
 
 private:
   // Linear forms for postprocessing integrated quantities on the port.
@@ -57,6 +59,11 @@ public:
   double GetToSquare(const LumpedElementData &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
+  }
+
+  [[nodiscard]] constexpr bool HasExcitation() const
+  {
+    return excitation != ExcitationIdx(0);
   }
 
   enum class Branch
@@ -119,7 +126,7 @@ public:
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
-  void AddExcitationBdrCoefficients(SumVectorCoefficient &fb);
+  void AddExcitationBdrCoefficients(ExcitationIdx excitation_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

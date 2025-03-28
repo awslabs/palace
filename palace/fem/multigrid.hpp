@@ -101,7 +101,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
                                                            dbc_tdof_lists->emplace_back());
   }
 
-  // h-refinement
+  // h-refinement.
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
@@ -112,7 +112,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     }
   }
 
-  // p-refinement
+  // p-refinement.
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh.back(), fecs[l].get()));

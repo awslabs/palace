@@ -17,21 +17,20 @@ namespace palace
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
 {
   BlockTimer bt(Timer::IO);
-  // Validate and make folder on root
+  // Validate and make folder on root.
   auto root = Mpi::Root(comm);
   auto &output_str = iodata.problem.output;
   if (root)
   {
     MFEM_VERIFY(!output_str.empty(),
                 fmt::format("Invalid output directory, got empty string \"\"."))
-    // Remove any trailing "/" to get folder name
+    // Remove any trailing "/" to get folder name.
     if (output_str.back() == '/')
     {
       output_str.erase(output_str.end() - 1);
     }
-    // Resolve canonical path (no ".", etc)
     auto output_path = fs::path(output_str);
-    // Make folder if it does not exist
+    // Make folder if it does not exist.
     if (!fs::exists(output_path))
     {
       MFEM_VERIFY(fs::create_directories(output_path),
@@ -49,7 +48,7 @@ inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
                      output_path.string());
       }
     }
-    // Ensure we can write to folder by making test file
+    // Ensure we can write to folder by making test file.
     {
       fs::path tmp_ = output_path / "tmp_test_file.txt";
       auto file_buf = fmt::output_file(
@@ -64,7 +63,7 @@ inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
     output_str = output_path.string();
   }
 
-  // Broadcast new output_str to all ranks
+  // Broadcast new output_str to all ranks.
   if (Mpi::Size(comm) > 1)
   {
     int str_len = static_cast<int>(output_str.size());
