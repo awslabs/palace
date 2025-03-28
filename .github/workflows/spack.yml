@@ -83,6 +83,7 @@ jobs:
           spack:
             specs: 
               - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+              - libceed
             view: false
             concretizer:
               unify: true
@@ -136,10 +137,11 @@ jobs:
           spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # Install the public buildcache as well
-          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          # Install using the public buildcache as well
+          # Normally we want to install everything ourself the first time anyway
+          # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
           # If we cached these, that would be faster and safer
-          spack -e ${SPACK_ENV} buildcache keys --install --trust
+          # spack -e ${SPACK_ENV} buildcache keys --install --trust
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
@@ -150,6 +152,9 @@ jobs:
         run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Push Dependencies
+        # Sometimes a dependency will fail to build
+        # We should still push any new dependencies we built successfully
+        if: "!cancelled()"
         # We should sign our pushes here if we want to make these publically accessible
         run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
 
