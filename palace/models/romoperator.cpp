@@ -11,7 +11,7 @@
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
-// Eigen does not provide a complex-valued genearlized eigenvalue solver, so we use LAPACK
+// Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
 // for this.
 extern "C"
 {
@@ -357,7 +357,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       orthog_type = GmresSolverBase::OrthogType::CGS2;
       break;
   }
-  // Set up MRI
+  // Set up MRI.
   for (const auto &[excitation_idx, data] : excitation_helper)
   {
     mri.emplace(excitation_idx, MinimalRationInterpolation(max_size_per_excitation));
@@ -376,7 +376,7 @@ void RomOperator::SetExcitationIndex(ExcitationIdx excitation_idx)
   }
   else
   {
-    // Project RHS1 to RHS1r with current PROM
+    // Project RHS1 to RHS1r with current PROM.
     if (dim_V > 0)
     {
       auto comm = space_op.GetComm();
@@ -531,13 +531,13 @@ void RomOperator::SolvePROM(ExcitationIdx excitation_idx, double omega, ComplexV
   BlockTimer bt(Timer::SOLVE_PROM);
   if constexpr (false)
   {
-    // LDLT solve
+    // LDLT solve.
     RHSr = Ar.ldlt().solve(RHSr);
     RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
   }
   else
   {
-    // LU solve
+    // LU solve.
     RHSr = Ar.partialPivLu().solve(RHSr);
   }
   ProlongatePROMSolution(dim_V, V, RHSr, u);

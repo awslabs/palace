@@ -65,7 +65,7 @@ public:
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
-    // Already asserted that only that time dependant solver only has a single excitation
+    // Already asserted that only that time dependant solver only has a single excitation.
     auto excitation_helper = space_op.GetPortExcitationHelper();
     auto excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
@@ -107,7 +107,7 @@ public:
     }
   }
 
-  // Form the RHS for the first-order ODE system
+  // Form the RHS for the first-order ODE system.
   void FormRHS(const Vector &u, Vector &rhs) const
   {
     Vector u1, u2, u3, rhs1, rhs2, rhs3;
@@ -180,7 +180,7 @@ public:
   void ImplicitSolve(double dt, const Vector &u, Vector &k) override
   {
     // Solve: M k = f(u + dt k, t)
-    // Use block elimination to avoid solving a 3n x 3n linear system
+    // Use block elimination to avoid solving a 3n x 3n linear system.
     if (!kspA || dt != dt_)
     {
       // Configure the linear solver, including the system matrix and also the matrix
@@ -226,16 +226,16 @@ public:
   int SUNImplicitSetup(const Vector &y, const Vector &fy, int jok, int *jcur,
                        double gamma) override
   {
-    // Update Jacobian matrix
+    // Update Jacobian matrix.
     if (!kspA || gamma != saved_gamma)
     {
       ConfigureLinearSolver(gamma);
     }
 
-    // Indicate Jacobian was updated
+    // Indicate Jacobian was updated.
     *jcur = 1;
 
-    // Save gamma for use in solve
+    // Save gamma for use in solve.
     saved_gamma = gamma;
 
     return 0;
@@ -286,12 +286,11 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
   : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
     order(iodata.solver.transient.order)
 {
-  // Must have one and only one excitation
   auto excitation_helper = space_op.GetPortExcitationHelper();
-  // Should have already asserted that time dependant solver only has a single excitation
+  // Should have already asserted that time dependant solver only has a single excitation.
   MFEM_VERIFY(excitation_helper.Size() == 1,
-              fmt::format("Transient evoluation currently only allows for a single "
-                          "excitation, recieved {}",
+              fmt::format("Transient evolution currently only allows for a single "
+                          "excitation, received {}",
                           excitation_helper.Size()));
 
   // Get sizes.

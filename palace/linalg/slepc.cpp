@@ -313,7 +313,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   }
 }
 
-// Eigensolver base class methods
+// Eigensolver base class methods.
 
 SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
@@ -498,7 +498,7 @@ void SlepcEigenvalueSolver::RescaleEigenvectors(int num_eig)
   }
 }
 
-// EPS specific methods
+// EPS specific methods.
 
 SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcEigenvalueSolver(print)
@@ -981,7 +981,7 @@ PetscReal SlepcPEPLinearSolver::GetBackwardScaling(PetscScalar l) const
   return normK + t * normC + t * t * normM;
 }
 
-// PEP specific methods
+// PEP specific methods.
 
 SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::string &prefix)
   : SlepcEigenvalueSolver(print)

@@ -1,3 +1,4 @@
+#include <string>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -16,7 +17,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
   auto config = json::parse(jsonstream);
 
   {
-    // Basic passing config with bool excitaiotn
+    // Basic passing config with bool excitation.
     config::BoundaryData boundary_ex_bool;
     REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
 
@@ -28,12 +29,12 @@ TEST_CASE("Config Boundary Ports", "[config]")
     CHECK(boundary_ex_bool.waveport.at(5).excitation == ExcitationIdx(0));
     CHECK(boundary_ex_bool.waveport.at(6).excitation == ExcitationIdx(0));
 
-    // Equivalent config with int excitaiotn
+    // Equivalent config with int excitation.
     config::BoundaryData boundary_ex_int;
     REQUIRE_NOTHROW(
         boundary_ex_int.SetUp(*config.find("boundaries_1_pass_excitation_int")));
 
-    // FUTURE: Default equality is C++20
+    // FUTURE: Default equality is C++20.
     // CHECK(boundary_ex_bool == boundary_ex_int);
 
     REQUIRE(boundary_ex_bool.lumpedport.size() == boundary_ex_bool.lumpedport.size());
@@ -45,7 +46,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
       CHECK(it_bool->second.excitation == it_int->second.excitation);
     }
   }
-  // Excitation Specification
+  // Excitation Specification.
   {
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_1")));
@@ -69,7 +70,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
     CHECK_THROWS(
         boundary_data.SetUp(*config.find("boundaries_excitation_no_mix_int_bool_3")));
   }
-  // Index Specification
+  // Index Specification.
   {
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_lumped")));
@@ -90,7 +91,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
   }
-  // Mark single excitation index
+  // Mark single excitation index.
   {
     config::BoundaryData boundary_data;
     CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));

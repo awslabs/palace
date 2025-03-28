@@ -71,7 +71,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
     case config::LinearSolverData::SymFactType::PTSCOTCH:
     case config::LinearSolverData::SymFactType::PORD:
     case config::LinearSolverData::SymFactType::DEFAULT:
-      // Should have good default
+      // Should have good default.
       break;
   }
   // solver.SetRowPermutation(mfem::superlu::NOROWPERM);

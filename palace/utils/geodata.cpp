@@ -51,7 +51,7 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &, bool = t
 // the high-order nodes with GSLIB.
 void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
 
-// Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
+// Optionally reorder mesh elements based on MFEM's internal reordering tools for improved
 // cache usage.
 void ReorderMeshElements(mfem::Mesh &, bool = true);
 
@@ -1717,7 +1717,7 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh, const T &ele
   normal = 0.0;
   mfem::Array<int> vert_bdr;
 
-  // Ensure that the computed normal points "inside" or "outside"
+  // Ensure that the computed normal points "inside" or "outside".
   auto Alignment = [&](int el, auto &align)
   {
     int eladj, info;
@@ -1906,7 +1906,7 @@ std::vector<int> CreatePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   mfem::Vector from(4), to(4);
   for (int vi : donor_v)
   {
-    // TODO: mfem patch to allow SetVector direct from pointer
+    // TODO: mfem patch to allow SetVector direct from pointer.
     std::copy(mesh->GetVertex(vi), mesh->GetVertex(vi) + 3, from.begin());
     from[3] = 1.0;             // reset
     transform.Mult(from, to);  // receiver = transform * donor

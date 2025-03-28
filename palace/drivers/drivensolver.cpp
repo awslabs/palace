@@ -130,7 +130,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);
 
-    // Frequency loop
+    // Frequency loop.
     double omega = omega0;
     for (int step = step0; step < n_step; step++, omega += delta_omega)
     {
@@ -139,7 +139,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega),
                  Timer::Duration(Timer::Now() - t0).count());
 
-      // Assemble matrices: skip if already done (first excitation & first freq point)
+      // Assemble matrices: skip if already done (first excitation & first freq point).
       if (!first_iter_set)
       {
         // Update frequency-dependent excitation and operators.
@@ -152,7 +152,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
         ksp.SetOperators(*A, *P);
       }
       first_iter_set = false;
-      // Solve linear system
+      // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
@@ -181,7 +181,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
       Mpi::Print(" Updating solution error estimates\n");
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
-    // Final postprocessing & printing
+    // Final postprocessing & printing.
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(ksp);
   }
@@ -206,7 +206,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   {
     max_size_per_excitation = 20;  // Default value
   }
-  // Maximum size — no more than nr steps needed
+  // Maximum size — no more than nr steps needed.
   max_size_per_excitation = std::min(max_size_per_excitation, (n_step - step0));
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
@@ -278,13 +278,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    // Debug option to print prom samples fields to paraview file
+    // Debug option to print prom samples fields to paraview file.
     std::optional<std::pair<int, double>> debug_print_paraview_opt = {};
     if constexpr (debug_prom_paraview)
     {
       // Paraview times are printed as excitation * padding + freq with padding gives enough
       // space for f_max + 1, e.g. if f_max = 102 GHz, then we get time n0fff where n is the
-      // excitation index and fff is the frequency
+      // excitation index and fff is the frequency.
       double excitation_padding =
           std::pow(10.0, 3.0 + static_cast<int>(std::log10(iodata.solver.driven.max_f)));
       auto freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
@@ -299,7 +299,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 
-  // Loop excitations to add to PROM
+  // Loop excitations to add to PROM.
   auto print_counter_excitation_prom = 0;  // 1 based indexing; will increment at start
   for (const auto &[excitation_idx, spec] : excitation_helper.excitations)
   {
@@ -386,7 +386,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);
 
-    // Frequency loop
+    // Frequency loop.
     double omega = omega0;
     for (int step = step0; step < n_step; step++, omega += delta_omega)
     {
@@ -414,7 +414,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
       }
       post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
     }
-    // Final postprocessing & printing: no change to indicator since prom
+    // Final postprocessing & printing: no change to indicator since these are in PROM.
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }

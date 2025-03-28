@@ -159,7 +159,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     for (const auto &[idx2, data2] : terminal_sources)
     {
       output.table.insert(format("i2{}", idx2), format("{}[i][{}] {}", name, idx2, unit));
-      // Use the fact that iterator over i and j is the same span
+      // Use the fact that iterator over i and j is the same span.
       output.table["i"] << idx2;
 
       auto &col = output.table[format("i2{}", idx2)];
