@@ -66,7 +66,7 @@ if [ ${FRESH_INSTALL} = "true" ]; then
   if [ -d ${SPACK_ENV} ]; then
     rm -rfd ${SPACK_ENV}
   fi
-  spack env create -d ${SPACK_ENV}
+  spack env create -d ${SPACK_ENV} || exit 1
 
   # We don't need to clean every time, but might as well to avoid issues...
   # spack -e ${SPACK_ENV} clean -m

@@ -30,5 +30,4 @@ finch run --rm \
   --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
   -w ${CONTAINER_ROOT} \
   ubuntu:${UBUNTU_TAG} \
-  bash -c 'ls -al;echo $SPACK_ROOT;ls -al $SPACK_ROOT'
-# ${CONTAINER_ROOT}/spack/scripts/local-build.sh
+  ${CONTAINER_ROOT}/spack/scripts/local-build.sh
