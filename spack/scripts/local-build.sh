@@ -18,7 +18,7 @@ if [ ! -f ${SPACK_ROOT}/share/spack/setup-env.sh ]; then
   git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_ROOT
 fi
 
-source ${SPACK_ROOT}/share/spack/setup-env.sh
+source ${SPACK_ROOT}/share/spack/setup-env.sh || exit 1
 
 SPACK_ENV=${PWD}/$(spack arch --generic)
 
