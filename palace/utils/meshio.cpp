@@ -17,51 +17,51 @@ namespace
 
 inline int ElemTypeComsol(const std::string &type)
 {
-  if (!type.compare(0, 3, "tri"))  // 3-node triangle
+  if (!type.compare("tri"))  // 3-node triangle
   {
     return 2;
   }
-  if (!type.compare(0, 4, "quad"))  // 4-node quadrangle
+  if (!type.compare("quad"))  // 4-node quadrangle
   {
     return 3;
   }
-  if (!type.compare(0, 3, "tet"))  // 4-node tetrahedron
+  if (!type.compare("tet"))  // 4-node tetrahedron
   {
     return 4;
   }
-  if (!type.compare(0, 3, "hex"))  // 8-node hexahedron
+  if (!type.compare("hex"))  // 8-node hexahedron
   {
     return 5;
   }
-  if (!type.compare(0, 5, "prism"))  // 6-node prism
+  if (!type.compare("prism"))  // 6-node prism
   {
     return 6;
   }
-  if (!type.compare(0, 3, "pyr"))  // 5-node pyramid
+  if (!type.compare("pyr"))  // 5-node pyramid
   {
     return 7;
   }
-  if (!type.compare(0, 4, "tri2"))  // 6-node triangle
+  if (!type.compare("tri2"))  // 6-node triangle
   {
     return 9;
   }
-  if (!type.compare(0, 5, "quad2"))  // 9-node quadrangle
+  if (!type.compare("quad2"))  // 9-node quadrangle
   {
     return 10;
   }
-  if (!type.compare(0, 4, "tet2"))  // 10-node tetrahedron
+  if (!type.compare("tet2"))  // 10-node tetrahedron
   {
     return 11;
   }
-  if (!type.compare(0, 4, "hex2"))  // 27-node hexahedron
+  if (!type.compare("hex2"))  // 27-node hexahedron
   {
     return 12;
   }
-  if (!type.compare(0, 6, "prism2"))  // 18-node prism
+  if (!type.compare("prism2"))  // 18-node prism
   {
     return 13;
   }
-  if (!type.compare(0, 4, "pyr2"))  // 14-node pyramid
+  if (!type.compare("pyr2"))  // 14-node pyramid
   {
     return 14;
   }
