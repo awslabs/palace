@@ -140,13 +140,17 @@ fi
 
 spack -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete
 
-DEV_PATH=$(spack -e ${SPACK_ENV} location --stage-dir ${PALACE_SPEC})
+DEV_PATH=$(spack -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
 
 echo
 echo "Installation done / cancelled / failed. Feel free to re-run build with:"
 echo
-echo "    cd build-$(spack arch --generic)-<hash>"
+echo "    cd ${DEV_PATH}/spack-build"
 echo "    make -j"
 echo
 echo "OR re-run the script without -f as so:"
 echo "    ${PWD}/spack/scripts/$(basename $0)"
+echo
+echo "NOTE: The path in the cd command is also in ./build-$(spack arch)-<hash>"
+echo "      which is symlinked to the one output above."
+echo
