@@ -1,4 +1,4 @@
-build*/
+build*
 examples/**/postpro*/
 examples/**/log*/
 spack/local/packages/palace/__pycache__/
@@ -9,3 +9,4 @@ test/examples/ref/**/*.json
 .gitlab-ci-local
 Manifest.toml
 .vscode/
+darwin*
