@@ -83,7 +83,6 @@ jobs:
           spack:
             specs: 
               - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
-              - libceed
             view: false
             concretizer:
               unify: true
