@@ -179,9 +179,6 @@ EOF
     done
   fi
 
-  # This is slow in a container
-  # TODO: Inherit from a HEREDOC YAML or something similar
-
   cat >config.yaml <<EOF
 # Views are only for environments being used with many core spack specs
 view: false

@@ -79,15 +79,29 @@ jobs:
           cd ${SPACK_ENV}
           # We could configure settings here, but that's done through CLI later
           # We at least want our core spec to be here or else env looks empty...
-          cat << EOF > spack.yaml
+          cat << EOF> spack.yaml
           spack:
             specs: 
               - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
-              - libceed
             view: false
             concretizer:
+              reuse: false
               unify: true
+              splice:
+                automatic: false
+              duplicates:
+                strategy: none
+              targets:
+                granularity: generic
+            config:
+              source_cache: ${SPACK_CACHE}
+              misc_cache: ${SPACK_CACHE}
+              build_stage: ${SPACK_CACHE}
+            packages:
+              petsc:
+                require: ~hdf5
           EOF
+
           cd -
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
@@ -95,32 +109,9 @@ jobs:
           spack -e ${SPACK_ENV} repo add spack/local
 
           # Using `spack develop` in order to have an in-source build
-          # Can use this build directory later for testing
-          # NOTE: Compiler spec must be last here due to spack updates
           spack -e ${SPACK_ENV} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
             $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
-
-      - name: Configure Spack settings
-        run: |
-          # Views are only for environments being used in-situ
-          spack -e ${SPACK_ENV} config add view:false
-          # We want to re-use externals/buildcache
-          spack -e ${SPACK_ENV} config add concretizer:reuse:false
-          # Unify doesn't really apply until you have more than one core spec
-          spack -e ${SPACK_ENV} config add concretizer:unify:true
-          # Allow splicing of MPI / Compilers from build cache for faster builds
-          spack -e ${SPACK_ENV} config add concretizer:splice:automatic:false
-          # Try to prevent duplcate packages in concretization
-          spack -e ${SPACK_ENV} config add concretizer:duplicates:strategy:none
-          # Target the most generic microarch to encourage re-use
-          spack -e ${SPACK_ENV} config add concretizer:targets:granularity:generic
-          # Lets make sure that spack uses our tmp directories
-          spack -e ${SPACK_ENV} config add config:source_cache:${SPACK_CACHE}
-          spack -e ${SPACK_ENV} config add config:misc_cache:${SPACK_CACHE}
-          spack -e ${SPACK_ENV} config add config:build_stage:${SPACK_CACHE}
-          # We have some requirements for other package variants
-          spack -e ${SPACK_ENV} config add packages:petsc:require:~hdf5
 
       - name: Configure Binary Mirrors / External Packages
         run: |
