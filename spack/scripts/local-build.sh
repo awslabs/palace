@@ -143,7 +143,7 @@ if [ ${FRESH_INSTALL} = "true" ]; then
 EOF
 
   # We don't need to clean every time, but might as well to avoid issues...
-  ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
+  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
   # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -m
   # *** The next one removes everything spack has installed ***
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
@@ -179,32 +179,27 @@ EOF
     done
   fi
 
+  # These used to all be separate commands
+  # By using a YAML config, you save time on each iteration
+  # To enable / disable using a build cache aggressively, toggle:
+  #   - reuse: true
+  #   - splce: automatic: true
   cat >config.yaml <<EOF
-# Views are only for environments being used with many core spack specs
 view: false
 concretizer:
-  # We want to re-use externals/buildcache
-  # However, the concretization kept giving new-deps, so disabling...
-  # Maybe reuse:dependencies would be better
-  reuse: false
-  # Unify doesn't really apply until you have more than one core spec
+  reuse: true
   unify: true
-  # Allow splicing of MPI / Compilers from build cache for faster builds
   splice:
-    # While splicing does speed up builds, it often creates wild DAGs
-    automatic: false
-  # Try to prevent duplcate packages in concretization
+    automatic: true
   duplicates:
     strategy: none
   targets:
-    # Target the most generic microarch to encourage re-use
     granularity: generic
 source_cache: ${TMP}
 misc_cache: ${TMP}
 build_stage: ${TMP}
 packages:
   petsc:
-    # We have some requirements for other package variants
     require: ~hdf5
 EOF
 
@@ -213,6 +208,12 @@ EOF
   # Add public mirror to help with build times
   ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add develop https://binaries.spack.io/develop
   ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+
+  if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
+    ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add \
+      --oci-password-variable GITHUB_PAT \
+      oci://ghcr.io/awslabs/palace
+  fi
 
   # TODO: Add config to add GitHub cache
   # TODO: Configure secrets in a secure way...

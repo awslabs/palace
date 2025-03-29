@@ -8,6 +8,12 @@ if [[ ! -f ${PWD}/spack/scripts/$(basename $0) ]]; then
   exit 1
 fi
 
+if [[ ! -f ${PWD}/.secrets ]]; then
+  echo "Make sure to configure a .secrets file with"
+  echo "GITHUB_PAT=<GITHUB_PAT with private registry read-only access>"
+  exit 1
+fi
+
 if [[ -z ${SPACK_ROOT} ]]; then
   echo "You have not configured a system spack!"
   echo "Please set SPACK_ROOT and re-run to continue"
@@ -54,6 +60,8 @@ finch run --rm \
   -v ${SPACK_ROOT}:${CONTAINER_SPACK_ROOT} \
   -v ${TMPDIR}:${TMPDIR} \
   --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
+  --env SPACK_DISABLE_LOCAL_CONFIG=1 \
+  --env-file .secrets \
   -w ${CONTAINER_ROOT} \
   ${CONTAINER} --color always"
 

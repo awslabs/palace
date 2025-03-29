@@ -10,3 +10,6 @@ test/examples/ref/**/*.json
 Manifest.toml
 .vscode/
 darwin*
+linux*
+.secrets
+config.yaml
