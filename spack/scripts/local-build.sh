@@ -116,7 +116,7 @@ export tempdir=${TMP}
 mkdir -p $TMP
 
 # Should do a fresh install if no spack.yaml in env
-if [ ! -f ${SPACK_ENV}/spack.yaml ]; then
+if [ ! -f ${PWD}/${GARCH}/spack.yaml ]; then
   FRESH_INSTALL=true
 fi
 
@@ -177,9 +177,8 @@ EOF
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Configure externals / compiler
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
-
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
+    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
     PACKAGES=(
@@ -192,6 +191,8 @@ EOF
       # We could also add specification of virtual providers here...
       ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
     done
+  else
+    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl
   fi
 
   # Add public mirror to help with build times
