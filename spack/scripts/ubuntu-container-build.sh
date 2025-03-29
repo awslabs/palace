@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Assumes that you have finch installed locally
+# This would work with dev-containers in future
 
 if [[ ! -f ${PWD}/spack/scripts/$(basename $0) ]]; then
   echo "Please run this script from the palace root dir."
@@ -17,12 +18,16 @@ fi
 # This is technically Debian and not ubuntu, but I didn't want to wait
 # for Python to install each time while debugging.
 CONTAINER=spack/ubuntu-noble
-CONTAINER_ROOT=/scratch
+# Need to export this for later...
+export CONTAINER_ROOT=/scratch
 CONTAINER_SPACK_ROOT=/opt/local-spack
 # Changing tmpdir requires changing local-build.sh as well.
 TMPDIR=/tmp/spack-tmp
 
-finch vm start >/dev/null 2>&1 || true
+STATUS=$(finch vm status)
+if [ ! "${STATUS}" == "Running" ]; then
+  finch vm start
+fi
 
 # This is our magic command that:
 #   - Runs spack in the ubuntu container
@@ -35,23 +40,25 @@ finch vm start >/dev/null 2>&1 || true
 # In the long term, devcontainers are nicer (once they work).
 #
 # To iterate quickly, and to cache well, these scripts are nice.
-finch run --rm \
-  -v ${PWD}:${CONTAINER_ROOT} \
-  -v ${SPACK_ROOT}:${CONTAINER_SPACK_ROOT} \
-  -v ${TMPDIR}:${TMPDIR} \
-  --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
-  -w ${CONTAINER_ROOT} \
-  ${CONTAINER} \
-  "--version"
+#   finch run --rm -it \
+#     -v ${PWD}:${CONTAINER_ROOT} \
+#     -v ${SPACK_ROOT}:${CONTAINER_SPACK_ROOT} \
+#     -v ${TMPDIR}:${TMPDIR} \
+#     --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
+#     -w ${CONTAINER_ROOT} \
+#     ${CONTAINER} --color always
 
-SPACK_COMMAND="\
+export SPACK_COMMAND="\
 finch run --rm \
   -v ${PWD}:${CONTAINER_ROOT} \
   -v ${SPACK_ROOT}:${CONTAINER_SPACK_ROOT} \
   -v ${TMPDIR}:${TMPDIR} \
   --env SPACK_ROOT=${CONTAINER_SPACK_ROOT} \
   -w ${CONTAINER_ROOT} \
-  ${CONTAINER}"
+  ${CONTAINER} --color always"
+
+# Colour isn't optional ;)
+# One could also add a global --debug flag to spack here
 
 echo Using:
 echo
@@ -60,4 +67,4 @@ echo
 echo As the pseudo-spack command for the local build script.
 echo
 
-SPACK_COMMAND=$SPACK_COMMAND ./spack/scripts/local-build.sh
+./spack/scripts/local-build.sh $1

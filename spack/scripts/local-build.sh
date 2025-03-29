@@ -1,9 +1,12 @@
 #!/bin/bash
 
+set -e
+
 if [[ ! -z $SPACK_COMMAND ]]; then
   echo "..."
   echo
 else
+  # SPACK_COMMAND="spack --debug"
   SPACK_COMMAND=spack
 fi
 
@@ -61,20 +64,24 @@ if [ ! $? -eq 0 ]; then
 
 fi
 
-if [[ ! -z $SPACK_COMMAND ]]; then
-  if [[ $SPACK_COMMAND == "spack" ]]; then
-    SPACK_PYTHON=$(which python3)
-    source ${SPACK_ROOT}/share/spack/setup-env.sh
-  fi
+if [[ $SPACK_COMMAND == "spack" ]]; then
+  SPACK_PYTHON=$(which python3)
+  source ${SPACK_ROOT}/share/spack/setup-env.sh
 fi
 
 # A quick check to make sure spack is working...
-echo Using spack@$(${SPACK_COMMAND} --version) || exit 1
+# echo Using spack@$(${SPACK_COMMAND} --version) || exit 1
 
 # Maybe this could be a one-liner...
 GARCH_STR="${SPACK_COMMAND} arch --generic"
 GARCH="$(${GARCH_STR})"
-SPACK_ENV=${PWD}/${GARCH}
+if [[ $SPACK_COMMAND == "spack" ]]; then
+  export SPACK_ENV=${PWD}/${GARCH}
+else
+  export SPACK_ENV=${CONTAINER_ROOT}/${GARCH}
+fi
+
+echo $SPACK_ENV
 
 # Can easily change compiler / MPI / blas spec
 # NOTES:
@@ -82,9 +89,7 @@ SPACK_ENV=${PWD}/${GARCH}
 # PALACE_SPEC="local.palace@develop ^intel-oneapi-mkl ^openmpi"
 PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
 
-# Somtimes we want to default to true
 FRESH_INSTALL=false
-# FRESH_INSTALL=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -116,35 +121,54 @@ if [ ! -f ${SPACK_ENV}/spack.yaml ]; then
 fi
 
 if [ ${FRESH_INSTALL} = "true" ]; then
-  if [ -d ${SPACK_ENV} ]; then
-    rm -rfd ${SPACK_ENV}
+
+  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
+    if [ -d ${SPACK_ENV} ]; then
+      rm -rfd ${SPACK_ENV}
+    fi
+    mkdir -p ${SPACK_ENV}
+    export TMP_SPACK_ENV=${SPACK_ENV}
+  else
+    export TMP_SPACK_ENV=${PWD}/${GARCH}
+    if [ -d ${TMP_SPACK_ENV} ]; then
+      rm -rfd ${TMP_SPACK_ENV}
+    fi
+    mkdir -p ${TMP_SPACK_ENV}
   fi
-  ${SPACK_COMMAND} env create -d ${SPACK_ENV} || exit 1
+
+  cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
+  spack:
+    specs: 
+      - local.palace@develop
+EOF
 
   # We don't need to clean every time, but might as well to avoid issues...
-  ${SPACK_COMMAND} -e ${SPACK_ENV} clean -m
+  ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
+  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -m
+  # *** The next one removes everything spack has installed ***
+  # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Add our repo-local definition of palace spack package
   ${SPACK_COMMAND} -e ${SPACK_ENV} repo add spack/local
 
   # Add our package
   ${SPACK_COMMAND} -e ${SPACK_ENV} add ${PALACE_SPEC}
-  ${SPACK_COMMAND} -e ${SPACK_ENV} develop --path=${PWD} ${PALACE_SPEC}
+
+  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
+    ${SPACK_COMMAND} -e ${SPACK_ENV} develop --path=${PWD} ${PALACE_SPEC}
+  else
+    ${SPACK_COMMAND} -e ${SPACK_ENV} develop --path=${CONTAINER_ROOT} ${PALACE_SPEC}
+  fi
 
   # Configure externals / concretizer
   ${SPACK_COMMAND} -e ${SPACK_ENV} compiler find
   ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
 
-  __IS_MAC=${__IS_MAC:-$(test $(uname -s) == "Darwin" && echo 'true')}
-
-  if [ -n "${__IS_MAC}" ]; then
+  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
     PACKAGES=(
       "openblas"
-      "openmpi"
-      "python"
-      "cmake"
       "curl"
     )
     for PKG in "${PACKAGES[@]}"; do
@@ -155,31 +179,47 @@ if [ ${FRESH_INSTALL} = "true" ]; then
     done
   fi
 
-  # Views are only for environments being used with many core specs
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add view:false
+  # This is slow in a container
+  # TODO: Inherit from a HEREDOC YAML or something similar
+
+  cat >config.yaml <<EOF
+# Views are only for environments being used with many core spack specs
+view: false
+concretizer:
   # We want to re-use externals/buildcache
   # However, the concretization kept giving new-deps, so disabling...
   # Maybe reuse:dependencies would be better
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add concretizer:reuse:false
+  reuse: false
   # Unify doesn't really apply until you have more than one core spec
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add concretizer:unify:true
+  unify: true
   # Allow splicing of MPI / Compilers from build cache for faster builds
-  # While splicing does speed up builds, it often creates wild DAGs
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add concretizer:splice:automatic:false
+  splice:
+    # While splicing does speed up builds, it often creates wild DAGs
+    automatic: false
   # Try to prevent duplcate packages in concretization
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add concretizer:duplicates:strategy:none
-  # Target the most generic microarch to encourage re-use
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add concretizer:targets:granularity:generic
-  # Lets make sure that ${SPACK_COMMAND} uses our tmp directories
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add config:source_cache:${TMP}
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add config:misc_cache:${TMP}
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add config:build_stage:${TMP}
-  # We have some requirements for other package variants
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:petsc:require:~hdf5
+  duplicates:
+    strategy: none
+  targets:
+    # Target the most generic microarch to encourage re-use
+    granularity: generic
+source_cache: ${TMP}
+misc_cache: ${TMP}
+build_stage: ${TMP}
+packages:
+  petsc:
+    # We have some requirements for other package variants
+    require: ~hdf5
+EOF
+
+  ${SPACK_COMMAND} -e ${SPACK_ENV} config add --file ${TMP_SPACK_ENV}/../config.yaml
 
   # Add public mirror to help with build times
   ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add develop https://binaries.spack.io/develop
   ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+
+  # TODO: Add config to add GitHub cache
+  # TODO: Configure secrets in a secure way...
+  # TODO: We will have many caches...
 
   # Verify concretization is correct before installing
   ${SPACK_COMMAND} -e ${SPACK_ENV} concretize -f || exit 1
