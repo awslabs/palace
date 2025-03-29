@@ -136,10 +136,38 @@ if [ ${FRESH_INSTALL} = "true" ]; then
     mkdir -p ${TMP_SPACK_ENV}
   fi
 
+  # To enable / disable using a build cache aggressively, toggle:
+  #   - reuse: true
+  #   - splce: automatic: true
   cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
   spack:
     specs: 
-      - local.palace@develop
+      - ${PALACE_SPEC}
+    repos:
+    - ${SPACK_ENV}/../spack/local
+    develop:
+      palace:
+        spec: ${PALACE_SPEC}
+        path: ${SPACK_ENV}/..
+    view: false
+    concretizer:
+      reuse: false
+      unify: true
+      splice:
+        automatic: false
+      duplicates:
+        strategy: none
+      targets:
+        granularity: generic
+    config:
+      source_cache: ${TMP}
+      misc_cache: ${TMP}
+      build_stage: ${TMP}
+    packages:
+      petsc:
+        require: ~hdf5
+    mirrors:
+        develop: https://binaries.spack.io/develop
 EOF
 
   # We don't need to clean every time, but might as well to avoid issues...
@@ -148,20 +176,7 @@ EOF
   # *** The next one removes everything spack has installed ***
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
-  # Add our repo-local definition of palace spack package
-  ${SPACK_COMMAND} -e ${SPACK_ENV} repo add spack/local
-
-  # Add our package
-  ${SPACK_COMMAND} -e ${SPACK_ENV} add ${PALACE_SPEC}
-
-  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
-    ${SPACK_COMMAND} -e ${SPACK_ENV} develop --path=${PWD} ${PALACE_SPEC}
-  else
-    ${SPACK_COMMAND} -e ${SPACK_ENV} develop --path=${CONTAINER_ROOT} ${PALACE_SPEC}
-  fi
-
-  # Configure externals / concretizer
-  ${SPACK_COMMAND} -e ${SPACK_ENV} compiler find
+  # Configure externals / compiler
   ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
 
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
@@ -179,41 +194,16 @@ EOF
     done
   fi
 
-  # These used to all be separate commands
-  # By using a YAML config, you save time on each iteration
-  # To enable / disable using a build cache aggressively, toggle:
-  #   - reuse: true
-  #   - splce: automatic: true
-  cat >config.yaml <<EOF
-view: false
-concretizer:
-  reuse: true
-  unify: true
-  splice:
-    automatic: true
-  duplicates:
-    strategy: none
-  targets:
-    granularity: generic
-source_cache: ${TMP}
-misc_cache: ${TMP}
-build_stage: ${TMP}
-packages:
-  petsc:
-    require: ~hdf5
-EOF
-
-  ${SPACK_COMMAND} -e ${SPACK_ENV} config add --file ${TMP_SPACK_ENV}/../config.yaml
-
   # Add public mirror to help with build times
-  ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add develop https://binaries.spack.io/develop
   ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
 
-  if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
-    ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add \
-      --oci-password-variable GITHUB_PAT \
-      oci://ghcr.io/awslabs/palace
-  fi
+  # TODO: FIX
+  # if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
+  #   # ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add \
+  #   #   --oci-password-variable GITHUB_PAT \
+  #   #   --oci-username cameronrutherford \
+  #   #   github oci://ghcr.io/awslabs/palace
+  # fi
 
   # TODO: Add config to add GitHub cache
   # TODO: Configure secrets in a secure way...
