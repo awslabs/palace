@@ -21,6 +21,7 @@
 #include "models/surfacepostoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/strongtype.hpp"
 #include "utils/units.hpp"
 
 namespace palace

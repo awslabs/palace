@@ -31,7 +31,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
               "Lumped port boundary has both R/L/C and Rs/Ls/Cs defined, "
               "should only use one!");
 
-  if (excitation != 0)
+  if (HasExcitation())
   {
     if (has_circ)
     {
@@ -134,13 +134,13 @@ double LumpedPortData::GetExcitationPower() const
 {
   // The lumped port excitation is normalized such that the power integrated over the port
   // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1.
-  return excitation ? 1.0 : 0.0;
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 double LumpedPortData::GetExcitationVoltage() const
 {
   // Incident voltage should be the same across all elements of an excited lumped port.
-  if (excitation)
+  if (HasExcitation())
   {
     double V_inc = 0.0;
     for (const auto &elem : elems)
@@ -429,7 +429,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   // Print some information for excited lumped ports.
   for (const auto &[idx, data] : ports)
   {
-    if (data.excitation == 0)
+    if (!data.HasExcitation())
     {
       continue;
     }
@@ -601,7 +601,7 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
+void LumpedPortOperator::AddExcitationBdrCoefficients(ExcitationIdx excitation_idx,
                                                       SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
