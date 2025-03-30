@@ -14,12 +14,12 @@ namespace palace
 namespace
 {
 
-// TODO(C++20): Do constexpr with string
+// TODO(C++20): Do constexpr with string.
 std::string DimLabel(int i)
 {
   switch (i)
   {
-    // Note: Zero-based indexing here
+    // Note: Zero-based indexing here.
     case 0:
       return "x";
     case 1:
@@ -31,7 +31,7 @@ std::string DimLabel(int i)
   }
 }
 
-// TODO(C++20): Do constexpr with string
+// TODO(C++20): Do constexpr with string.
 std::string LabelIndexCol(const config::ProblemData::Type solver_t)
 {
   switch (solver_t)
@@ -475,7 +475,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
     return;
   }
   using fmt::format;
-  // Currently only works for lumped ports
+  // Currently only works for lumped ports.
   const auto &lumped_port_op = post_op->fem_op->GetLumpedPortOp();
   port_V = TableWithCSVFile(post_op->post_dir / "port-V.csv");
   port_I = TableWithCSVFile(post_op->post_dir / "port-I.csv");
@@ -543,7 +543,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
     return;
   }
   using fmt::format;
-  // Currently only works for lumped ports
+  // Currently only works for lumped ports.
   const auto &lumped_port_op = post_op->fem_op->GetLumpedPortOp();
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
@@ -693,7 +693,7 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp
+  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
   {
     if (std::abs(data.L) > 0.0)
@@ -740,7 +740,7 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
     -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp
+  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
   {
     if (std::abs(data.R) > 0.0)
@@ -902,7 +902,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, i
   }
 }
 
-// Explict template instantiation
+// Explict template instantiation.
 
 template class PostOperatorCSV<config::ProblemData::Type::DRIVEN>;
 template class PostOperatorCSV<config::ProblemData::Type::EIGENMODE>;

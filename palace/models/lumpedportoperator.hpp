@@ -37,7 +37,7 @@ public:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // To accomodate multielement lumped ports, a port may be made up of elements with
+  // To accommodate multielement lumped ports, a port may be made up of elements with
   // different attributes and directions which add in parallel.
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 

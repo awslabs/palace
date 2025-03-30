@@ -14,16 +14,16 @@ private:
   T value;
 
 public:
-  // Explicit initialization only
+  // Explicit initialization only.
   explicit constexpr StrongT(T v) noexcept : value(v) {}
 
-  // Explicit conversion only
+  // Explicit conversion only.
   explicit constexpr operator T() const noexcept { return value; }
 
   [[nodiscard]] constexpr T get() const noexcept { return value; }
 
-  // Comparison boilerplate
-  // TODO(C++20): Simplify with spaceship operator
+  // Comparison boilerplate.
+  // TODO(C++20): Simplify with spaceship operator.
   constexpr bool operator==(const StrongT &other) const noexcept
   {
     return value == other.value;
@@ -50,7 +50,7 @@ public:
   }
 };
 
-// fmt for StrongT using default of underlying T
+// fmt for StrongT using default of underlying T.
 template <typename Tag, typename T>
 struct fmt::formatter<StrongT<Tag, T>> : fmt::formatter<T>
 {
@@ -61,8 +61,8 @@ struct fmt::formatter<StrongT<Tag, T>> : fmt::formatter<T>
   }
 };
 
-// JSON serialization / deserialization for StrongT using underlying T
-// Specialize full adl_serializer since we don't have a default constructor
+// JSON serialization / deserialization for StrongT using underlying T.
+// Specialize full adl_serializer since we don't have a default constructor.
 namespace nlohmann
 {
 template <typename Tag, typename T>

@@ -74,7 +74,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
     case config::LinearSolverData::SymFactType::PORD:
     case config::LinearSolverData::SymFactType::DEFAULT:
-      // Should have good default
+      // Should have good default.
       break;
   }
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern

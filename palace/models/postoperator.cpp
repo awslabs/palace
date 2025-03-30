@@ -508,7 +508,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
   Mpi::Barrier(fem_op->GetComm());
 }
 
-// Measurements
+// Measurements.
 
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
@@ -539,7 +539,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
   else
   {
-    // Magnetic field only
+    // Magnetic field only.
     measurement_cache.domain_E_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -566,7 +566,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
   else
   {
-    // Electric field only
+    // Electric field only.
     measurement_cache.domain_H_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -574,7 +574,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     }
   }
 
-  // Log Domain Energy
+  // Log Domain Energy.
   if constexpr (HasEGridFunction<solver_t>() && !HasBGridFunction<solver_t>())
   {
     Mpi::Print(" Field energy E = {:.3e} J\n", measurement_cache.domain_E_field_energy_all);
@@ -614,7 +614,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       {
         // Compute current from the port impedance, separate contributions for R, L, C
         // branches.
-        // Get value and make real: Matches current behaviour (even for eigensolver!)
+        // Get value and make real: Matches current behaviour (even for eigensolver!).
         auto omega_re =
             units.NonDimensionalize<Units::ValueType::FREQUENCY>(measurement_cache.freq)
                 .real();
@@ -668,7 +668,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureLumpedPortsEig() const
 {
-  // Depends on MeasureLumpedPorts
+  // Depends on MeasureLumpedPorts.
   if constexpr (solver_t == config::ProblemData::Type::EIGENMODE)
   {
     auto freq_re = measurement_cache.freq.real();
@@ -727,7 +727,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
   {
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get value and make real: Matches current behaviour
+      // Get value and make real: Matches current behaviour.
       auto freq_re = measurement_cache.freq.real();  // TODO: Fix
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
@@ -743,7 +743,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureSParameter() const
 {
-  // Depends on LumpedPorts, WavePorts
+  // Depends on LumpedPorts, WavePorts.
   if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
   {
     using fmt::format;
@@ -760,9 +760,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
 
     // Get single port index corresponding to current excitation.
     auto drive_port_idx = *fem_op->GetPortExcitationHelper()
-                         .excitations.at(measurement_cache.ex_idx)
-                         .flatten_port_indices()
-                         .begin();
+                               .excitations.at(measurement_cache.ex_idx)
+                               .flatten_port_indices()
+                               .begin();
 
     // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
     // combine output iterators.
@@ -788,8 +788,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(), vi.abs_S_ij,
-                 vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
+                 vi.abs_S_ij, vi.arg_S_ij);
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
@@ -814,8 +814,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(), vi.abs_S_ij,
-                 vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
+                 vi.abs_S_ij, vi.arg_S_ij);
     }
   }
 }
@@ -1105,20 +1105,20 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(
   SetBGridFunction(b, exchange_face_nbr_data);
   MeasureDomainFieldEnergy();
 
-  // Debug print prom fields
+  // Debug print prom fields.
   if (debug_print_paraview_opt.has_value())
   {
     WriteFields(debug_print_paraview_opt->first, debug_print_paraview_opt->second);
   }
 
-  // Return total domain energy for normalizing error indicator
+  // Return total domain energy for normalizing error indicator.
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all +
       measurement_cache.domain_H_field_energy_all);
   return total_energy;
 }
 
-// Explict template instantiation
+// Explict template instantiation.
 
 template class PostOperator<config::ProblemData::Type::DRIVEN>;
 template class PostOperator<config::ProblemData::Type::EIGENMODE>;
@@ -1127,7 +1127,7 @@ template class PostOperator<config::ProblemData::Type::MAGNETOSTATIC>;
 template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 
 // Function explict instantiation.
-// TODO(C++20): with requires, we won't need a second template
+// TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
     config::ProblemData::Type::DRIVEN>(ExcitationIdx ex_idx, int step,

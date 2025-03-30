@@ -25,10 +25,10 @@ class Column
 {
   friend class Table;
 
-  // View to default options in table class, will be set when columns are added to Table
+  // View to default options in table class, will be set when columns are added to Table.
   ColumnOptions *defaults = nullptr;
 
-  // Map-like index, to interface via Table class
+  // Map-like index, to interface via Table class.
   std::string name;
 
 public:
@@ -59,7 +59,7 @@ public:
 
   [[nodiscard]] inline std::size_t n_rows() const { return data.size(); }
 
-  // Convenience operator at higher level
+  // Convenience operator at higher level.
   inline auto operator<<(double val)
   {
     data.emplace_back(val);
@@ -70,28 +70,28 @@ public:
 class Table
 {
   // Column-wise mini-table for storing data and and printing to csv file for doubles.
-  // Future: allow int and other output, allow non-owning memory via span
+  // Future: allow int and other output, allow non-owning memory via span.
   std::vector<Column> cols;
 
-  // Cache value to reserve vector space by default
+  // Cache value to reserve vector space by default.
   std::size_t reserve_n_rows = 0;
 
 public:
-  // Default column options; can be overwritten column-wise
+  // Default column options; can be overwritten column-wise.
   ColumnOptions col_options = {};
 
-  // Global printing options
+  // Global printing options.
   std::string print_col_separator = ",";
   std::string print_row_separator = "\n";
 
-  // Table properties
+  // Table properties.
 
   [[nodiscard]] std::size_t n_cols() const { return cols.size(); }
   [[nodiscard]] std::size_t n_rows() const;
 
   void reserve(std::size_t n_rows, std::size_t n_cols);
 
-  // Insert columns: map like interface
+  // Insert columns: map like interface.
   bool insert(Column &&column);
   template <typename... Args>
   bool insert(Args &&...args)
@@ -99,7 +99,7 @@ public:
     return insert(Column(std::forward<Args>(args)...));
   }
 
-  // Access columns via vector position or column name
+  // Access columns via vector position or column name.
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
   Column &operator[](std::string_view name);
 
@@ -108,7 +108,7 @@ public:
   inline auto cbegin() const { return cols.begin(); }
   inline auto cend() const { return cols.end(); }
 
-  // Formatting and Printing Options
+  // Formatting and Printing Options.
   template <typename T>
   void append_header(T &buf) const;
 
@@ -122,7 +122,7 @@ public:
   [[nodiscard]] std::string format_table() const;
 };
 
-// Wrapper for storing Table to csv file wish row wise updates
+// Wrapper for storing Table to csv file wish row wise updates.
 
 class TableWithCSVFile
 {

@@ -928,10 +928,10 @@ ExcitationIdx ParsePortExcitation(json::iterator &port_it,
   auto it_excitation = port_it->find("Excitation");
   if (it_excitation == port_it->end())
   {
-    // Keep default; don't set input flag
+    // Keep default; don't set input flag.
     return default_excitation;
   }
-  // For error printing
+  // For error printing.
   int port_idx = port_it->at("Index");
 
   if (it_excitation->is_boolean())
@@ -955,7 +955,7 @@ ExcitationIdx ParsePortExcitation(json::iterator &port_it,
     MFEM_VERIFY(
         excitation_used_bool_input == TriBool::False,
         fmt::format("\"Excitation\" on port index {:d} specified with an "
-                    "integer after using bools; consitantly use either one or the other!",
+                    "integer after using bools; consistently use either one or the other!",
                     port_idx));
     return it_excitation->get<ExcitationIdx>();
   }
@@ -1503,7 +1503,7 @@ void BoundaryData::SetUp(json &config)
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
 
-  // Ensure consistent excitation specifier
+  // Ensure consistent excitation specifier.
   MFEM_VERIFY((lumpedport_setup_info.excitation_input_is_bool == TriBool::Uninitialized ||
                waveport_setup_info.excitation_input_is_bool == TriBool::Uninitialized ||
                lumpedport_setup_info.excitation_input_is_bool ==
@@ -1511,7 +1511,7 @@ void BoundaryData::SetUp(json &config)
               "\"Excitation\" on lumped and wave ports should be specified using "
               "either integers or using bools, but not both.")
 
-  // Ensure unique indexing of lumpedport, waveport, current
+  // Ensure unique indexing of lumpedport, waveport, current.
   {
     std::vector<std::pair<int, std::string_view>> index_map;
     std::string lumpedport_str = (lumpedport_setup_info.has_terminal_spec == TriBool::True)

@@ -36,7 +36,7 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
-// Statically map solver (config::ProblemData::Type) to finite element operator
+// Statically map solver (config::ProblemData::Type) to finite element operator.
 
 template <config::ProblemData::Type solver_t>
 struct fem_op_map_type
@@ -57,7 +57,7 @@ struct fem_op_map_type<config::ProblemData::Type::MAGNETOSTATIC>
 template <config::ProblemData::Type solver_t>
 using fem_op_t = typename fem_op_map_type<solver_t>::type;
 
-// Statically specify if solver uses real or complex fields
+// Statically specify if solver uses real or complex fields.
 
 template <config::ProblemData::Type solver_t>
 constexpr bool HasComplexGridFunction()
@@ -116,7 +116,7 @@ private:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // ParaView Measure & Print
+  // ParaView Measure & Print.
 
   // Option to write ParaView fields at all and rate / number of iterations printed.
   size_t paraview_delta_post = 0;  // printing rate for ParaView (DRIVEN & TRANSIENT)
@@ -166,7 +166,7 @@ private:
   void WriteFields(double time, int step);
   void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
 
-  // CSV Measure & Print
+  // CSV Measure & Print.
 
   // PostOperatorCSV<solver_t> is a class that contains csv tables and printers of
   // measurements. Conceptually, its members could be a part of this class, like the
@@ -209,29 +209,29 @@ private:
     double quality_factor;        // 1 / (energy_participation * tan δ)
   };
 
-  // For both lumped and wave port
+  // Data for both lumped and wave port.
   struct PortPostData
   {
     std::complex<double> P = 0.0;
     std::complex<double> V = 0.0;
     std::complex<double> I = 0.0;
-    // Separate R, L, and C branches for current via Z
+    // Separate R, L, and C branches for current via Z.
     std::array<std::complex<double>, 3> I_RLC = {0.0, 0.0, 0.0};
 
-    // S-Parameter
+    // S-Parameter.
     std::complex<double> S = 0.0;
     double abs_S_ij = 0.0;
     double arg_S_ij = 0.0;
 
-    // Energies (currently only for lumped port)
+    // Energies (currently only for lumped port).
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
 
-    // Resistive lumped port (only EIGENMODE)
+    // Resistive lumped port (only eigenmode).
     double mode_port_kappa = 0.0;
     double quality_factor = mfem::infinity();
 
-    // Inductive lumped port (only EIGENMODE)
+    // Inductive lumped port (only eigenmode).
     double inductive_energy_participation = 0.0;
   };
 
@@ -253,12 +253,12 @@ private:
     // - I_inc(omega) = I_in, for driven so that Jcoeff_excitation = 1.0
     double Jcoeff_excitation = 1.0;  // transient || driven
 
-    // Eigenmode data including error from solver
+    // Eigenmode data including error from solver.
     double eigenmode_Q = 0.0;
     double error_bkwd = 0.0;
     double error_abs = 0.0;
 
-    // "Actual measurements"
+    // "Actual measurements".
 
     double domain_E_field_energy_all = 0.0;
     double domain_H_field_energy_all = 0.0;

@@ -712,7 +712,7 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
                                                                  double a2, double a3)
 {
-  // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
+  // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix).
 
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh. When appropriate, we build the

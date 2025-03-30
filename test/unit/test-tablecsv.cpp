@@ -12,14 +12,14 @@ TEST_CASE("TableCSV", "[tablecsv]")
   Table table{};
   table.reserve(5, 2);
 
-  // Quick defaults
+  // Quick defaults.
   CHECK(table.print_col_separator == ",");
   CHECK(table.print_row_separator == "\n");
 
   REQUIRE(table.n_rows() == 0);
   REQUIRE(table.n_cols() == 0);
 
-  // Add and access columns
+  // Add and access columns.
   {
     auto status_1 = table.insert("col_1");
     REQUIRE(status_1);
@@ -44,11 +44,11 @@ TEST_CASE("TableCSV", "[tablecsv]")
   REQUIRE(table.n_rows() == 1);
   REQUIRE(table.n_cols() == 2);
 
-  // Invalid access
+  // Invalid access.
   CHECK_THROWS(table["col3"]);
   CHECK_THROWS(table[2]);
 
-  // Check reserved: invalidates references
+  // Check reserved: invalidates references.
   {
     table.reserve(6, 3);
     CHECK(table["col_1"].data.capacity() == 6);

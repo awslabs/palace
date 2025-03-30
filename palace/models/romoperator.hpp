@@ -21,7 +21,7 @@ class SpaceOperator;
 
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and to efficiently selecting next frequency sample points in PROM
-// construciton. Each excitation gets a separate MRI, so sample frequencies are not shared.
+// construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
 class MinimalRationInterpolation
 {
 private:
@@ -54,13 +54,13 @@ private:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
-  // Used for constructing & resuse of RHS1
+  // Used for constructing & resuse of RHS1.
   ExcitationIdx excitation_idx_cache = ExcitationIdx(0);
 
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  // Defaults: will be toggeled by SetExcitationIndex & SolveHDM
+  // Defaults: will be toggeled by SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
@@ -78,7 +78,7 @@ private:
   std::size_t dim_V = 0;
   GmresSolverBase::OrthogType orthog_type;
 
-  // MRIs: one for each excitation index
+  // MRIs: one for each excitation index.
   std::map<ExcitationIdx, MinimalRationInterpolation> mri;
 
 public:
@@ -96,7 +96,7 @@ public:
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
-  // Set excitation index to build corresponding RHS vector (linear in frequency part)
+  // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(ExcitationIdx excitation_idx);
 
   // Assemble and solve the HDM at the specified frequency.

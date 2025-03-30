@@ -33,7 +33,7 @@ public:
     std::vector<int> wave_port = {};
     std::vector<int> current_port = {};
 
-    // TODO: C++20 to replace this with iterator over joined range
+    // TODO: C++20 to replace this with iterator over joined range.
     auto flatten_port_indices() const
     {
       std::vector<int> out;
@@ -43,7 +43,7 @@ public:
       return out;
     }
 
-    // Only a single port is excitated in the excitation
+    // Only a single port is excited.
     std::tuple<bool, PortType, int> is_simple() const
     {
       auto n_lumped = lumped_port.size();
@@ -83,7 +83,7 @@ public:
     for (const auto &[idx, port] : lumped_port_op)
     {
       if (port.excitation ==
-          ExcitationIdx(0))  // LumpedPortData does not have HasExcitaiton
+          ExcitationIdx(0))  // LumpedPortData does not have a HasExcitation() function
       {
         continue;
       }
@@ -92,7 +92,8 @@ public:
     }
     for (const auto &[idx, port] : wave_port_op)
     {
-      if (port.excitation == ExcitationIdx(0))  // WavePortData does not have HasExcitaiton
+      if (port.excitation ==
+          ExcitationIdx(0))  // WavePortData does not have a HasExcitation() function
       {
         continue;
       }
@@ -122,7 +123,7 @@ public:
     {
       return ExcitationIdx(0);
     }
-    // Map is stored order by key so max key is last item
+    // Map is stored order by key so max key is last item.
     return std::next(std::rend(excitations))->first;
   }
   [[nodiscard]] auto Size() const { return excitations.size(); }
@@ -130,7 +131,7 @@ public:
 
   [[nodiscard]] std::string FmtLog() const;
 
-  // Single Simple (only 1 port per excitation) Excitation
+  // Single Simple (only 1 port per excitation) Excitation.
   [[nodiscard]] std::tuple<bool, ExcitationIdx, PortType, int> IsSingleSimple() const
   {
     if (Size() == 1)
@@ -145,7 +146,7 @@ public:
     return std::make_tuple(false, ExcitationIdx(0), PortType::Undefined, 0);
   }
 
-  // Multiple Simple (only 1 port per excitation) Excitation
+  // Multiple Simple (only 1 port per excitation) Excitation.
   [[nodiscard]] bool IsMultipleSimple() const
   {
     return std::all_of(excitations.begin(), excitations.end(),

@@ -93,7 +93,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   }
-  // Final postprocessing & printing
+  // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);
   time_op.PrintStats();
   SaveMetadata(time_op.GetLinearSolver());

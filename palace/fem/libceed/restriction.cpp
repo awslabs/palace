@@ -25,7 +25,7 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
                                                 mfem::DofTransformation &dof_trans,
                                                 const int P, const int e)
 {
-  // Get coordinates of face dofs
+  // Get coordinates of face dofs.
   int elem_id, face_info;
   fespace.GetMesh()->GetBdrElementAdjacentElement(e, elem_id, face_info);
   mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(e);
@@ -48,13 +48,13 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   mfem::DenseMatrix face_pm;
   fespace.GetMesh()->GetNodes()->GetVectorValues(Loc1.Transf, face_ir, face_pm);
 
-  // Get coordinates of element dofs
+  // Get coordinates of element dofs.
   mfem::DenseMatrix elem_pm;
   const mfem::FiniteElement *fe_elem = fespace.GetFE(elem_id);
   mfem::ElementTransformation *T = fespace.GetMesh()->GetElementTransformation(elem_id);
   T->Transform(fe_elem->GetNodes(), elem_pm);
 
-  // Find the dofs
+  // Find the dofs.
   double tol = 1E-5;
   mfem::Array<int> elem_dofs, dofs(P);
   fespace.GetElementDofs(elem_id, elem_dofs, dof_trans);

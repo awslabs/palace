@@ -9,7 +9,7 @@
 namespace palace
 {
 
-// Advance declaration
+// Advance declaration.
 template <config::ProblemData::Type solver_t>
 class PostOperator;
 
@@ -23,13 +23,12 @@ class PostOperatorCSV
   PostOperator<solver_t> *post_op = nullptr;
   int nr_expected_measurement_rows = 1;
 
-  // Alias for code clarity
-  auto m_cache() const { return post_op->measurement_cache; }
+  auto m_cache() const { return post_op->measurement_cache; }  // Alias for code clarity
 
   // Current measurement step index being written.
   int m_idx_row;
 
-  // Current measurement index valus for printing of primary "index" column; assumed
+  // Current measurement index values for printing of primary "index" column; assumed
   // dimensionful like all measurements.
   double m_idx_value;
 
