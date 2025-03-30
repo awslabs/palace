@@ -1104,11 +1104,13 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(
   SetEGridFunction(e, exchange_face_nbr_data);
   SetBGridFunction(b, exchange_face_nbr_data);
   MeasureDomainFieldEnergy();
+  Mpi::Barrier(fem_op->GetComm());
 
   // Debug print prom fields.
   if (debug_print_paraview_opt.has_value())
   {
     WriteFields(debug_print_paraview_opt->first, debug_print_paraview_opt->second);
+    Mpi::Barrier(fem_op->GetComm());
   }
 
   // Return total domain energy for normalizing error indicator.
