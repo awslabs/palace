@@ -80,5 +80,44 @@
         { "Attributes": [17], "Index": 5, "Excitation": false }
       ]
     }
+  },
+  "boundaries_repeated_index_lumped": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": true  },
+        { "Attributes": [16], "Index": 1, "R": 50, "Direction": "-Y", "Excitation": false }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 2, "Excitation": true } ]
+    }
+  },
+  "boundaries_repeated_index_wave": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": true } ],
+      "WavePort": [
+        { "Attributes": [6], "Index": 2, "Excitation": true },
+        { "Attributes": [7], "Index": 2, "Excitation": true }
+      ]
+    }
+  },
+  "boundaries_repeated_index_mixed": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": true  },
+        { "Attributes": [16], "Index": 2, "R": 50, "Direction": "-Y", "Excitation": false }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 1, "Excitation": true } ]
+    }
+  },
+  "boundaries_negative_index_1": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": -1, "R": 50, "Direction": "+Y" } ],
+      "WavePort"  : [ { "Attributes": [6], "Index":  1                             } ]
+    }
+  },
+  "boundaries_negative_index_2": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index":  1, "R": 50, "Direction": "+Y" } ],
+      "WavePort"  : [ { "Attributes": [6], "Index": -1                             } ]
+    }
   }
 }

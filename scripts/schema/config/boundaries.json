@@ -98,7 +98,7 @@
           "Excitation": {
             "oneOf" : [
               { "type": "boolean" },
-              { "type": "integer" }
+              { "type": "integer", "minimum": 0 }
             ]
           },
           "Active": { "type": "boolean" },
@@ -141,7 +141,7 @@
           "Excitation": {
             "oneOf" : [
               { "type": "boolean" },
-              { "type": "integer" }
+              { "type": "integer", "minimum": 0 }
             ]
           },
           "Active": { "type": "boolean" },

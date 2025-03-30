@@ -23,7 +23,7 @@ enum class TriBool : std::uint8_t
 {
   False = 0,
   True = 1,
-  Uninitalized = 2
+  Uninitialized = 2
 };
 
 namespace internal
@@ -487,8 +487,8 @@ struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
 public:
   struct SetUpReturnInfo
   {
-    TriBool excitation_input_is_bool = TriBool::Uninitalized;
-    TriBool has_terminal_spec = TriBool::Uninitalized;
+    TriBool excitation_input_is_bool = TriBool::Uninitialized;
+    TriBool has_terminal_spec = TriBool::Uninitialized;
   };
 
   SetUpReturnInfo SetUp(json &boundaries);
@@ -573,7 +573,7 @@ struct WavePortBoundaryData : public internal::DataMap<WavePortData>
 public:
   struct SetUpReturnInfo
   {
-    TriBool excitation_input_is_bool = TriBool::Uninitalized;
+    TriBool excitation_input_is_bool = TriBool::Uninitialized;
   };
 
   SetUpReturnInfo SetUp(json &boundaries);
