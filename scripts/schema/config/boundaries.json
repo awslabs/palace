@@ -95,7 +95,12 @@
           "Rs": { "type": "number" },
           "Ls": { "type": "number" },
           "Cs": { "type": "number" },
-          "Excitation": { "type": "boolean" },
+          "Excitation": {
+            "oneOf" : [
+              { "type": "boolean" },
+              { "type": "integer" }
+            ]
+          },
           "Active": { "type": "boolean" },
           "Elements":
           {
@@ -133,7 +138,12 @@
           "Mode": { "type": "integer", "exclusiveMinimum": 0 },
           "Offset": { "type": "number", "minimum": 0.0 },
           "SolverType": { "type": "string" },
-          "Excitation": { "type": "boolean" },
+          "Excitation": {
+            "oneOf" : [
+              { "type": "boolean" },
+              { "type": "integer" }
+            ]
+          },
           "Active": { "type": "boolean" },
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
