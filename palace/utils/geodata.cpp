@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <utility>
 #include <Eigen/Dense>
+#include <fmt/ranges.h>
 #include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"

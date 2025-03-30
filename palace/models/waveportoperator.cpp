@@ -4,6 +4,7 @@
 #include "waveportoperator.hpp"
 
 #include <tuple>
+#include <fmt/ranges.h>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"

@@ -3,6 +3,7 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
