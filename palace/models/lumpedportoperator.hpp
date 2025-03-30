@@ -120,7 +120,7 @@ public:
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
-  void AddExcitationBdrCoefficients(SumVectorCoefficient &fb);
+  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

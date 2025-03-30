@@ -64,9 +64,14 @@ public:
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
+    auto excitation_helper = space_op.BuildPortExcitationHelper();
+    // Should have already asserted that time dependant solver only has a single excitation
+    MFEM_VERIFY(excitation_helper.Size() == 1,
+                "Transient evoluation currently only supports a single excitation!");
+    int excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
-    space_op.GetExcitationVector(NegJ);
+    space_op.GetExcitationVector(excitation_idx, NegJ);
     RHS.SetSize(2 * size_E + size_B);
     RHS.UseDevice(true);
 

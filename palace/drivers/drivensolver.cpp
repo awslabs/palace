@@ -13,6 +13,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/portexcitationhelper.hpp"
 #include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -34,6 +35,9 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
   SpaceOperator space_op(iodata, mesh);
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  MFEM_VERIFY(!excitation_helper.Empty(), "No excitation specified for driven simulation!");
+
   int n_step = GetNumSteps(iodata.solver.driven.min_f, iodata.solver.driven.max_f,
                            iodata.solver.driven.delta_f);
   int step0 = (iodata.solver.driven.rst > 0) ? iodata.solver.driven.rst - 1 : 0;
@@ -52,53 +56,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // computing things like S-parameters in postprocessing.
   PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
 
-  {
-    Mpi::Print("\nComputing {}frequency response for:\n", adaptive ? "adaptive fast " : "");
-    bool first = true;
-    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
-    {
-      if (data.excitation)
-      {
-        if (first)
-        {
-          Mpi::Print(" Lumped port excitation specified on port{}",
-                     (space_op.GetLumpedPortOp().Size() > 1) ? "s" : "");
-          first = false;
-        }
-        Mpi::Print(" {:d}", idx);
-      }
-    }
-    int excitations = first;
-    first = true;
-    for (const auto &[idx, data] : space_op.GetWavePortOp())
-    {
-      if (data.excitation)
-      {
-        if (first)
-        {
-          Mpi::Print(" Wave port excitation specified on port{}",
-                     (space_op.GetWavePortOp().Size() > 1) ? "s" : "");
-          first = false;
-        }
-        Mpi::Print(" {:d}", idx);
-      }
-    }
-    excitations += first;
-    first = true;
-    for (const auto &[idx, data] : space_op.GetSurfaceCurrentOp())
-    {
-      if (first)
-      {
-        Mpi::Print(" Surface current excitation specified on port{}",
-                   (space_op.GetSurfaceCurrentOp().Size() > 1) ? "s" : "");
-        first = false;
-      }
-      Mpi::Print(" {:d}", idx);
-    }
-    excitations += first;
-    MFEM_VERIFY(excitations > 0, "No excitation specified for driven simulation!");
-  }
-  Mpi::Print("\n");
+  Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
+             excitation_helper.FmtLog());
 
   // Main frequency sweep loop.
   return {adaptive ? SweepAdaptive(space_op, post_op, n_step, step0, omega0, delta_omega)
