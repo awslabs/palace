@@ -485,7 +485,6 @@ void RomOperator::UpdateMRI(ExcitationIdx excitation_idx, double omega,
 
 void RomOperator::SolvePROM(ExcitationIdx excitation_idx, double omega, ComplexVector &u)
 {
-  auto comm = space_op.GetComm();
   if (excitation_idx_cache != excitation_idx)
   {
     SetExcitationIndex(excitation_idx);
