@@ -23,12 +23,22 @@ class PostOperatorCSV
   PostOperator<solver_t> *post_op = nullptr;
   int nr_expected_measurement_rows = 1;
 
-  // Cache Index for printing of primary "index" column.
-  double current_idx_value_dimensionful;
-  // Cache current row index being written.
-  int current_idx_row;
-  // Cache column block (for future multi-excitation).
-  int current_column_block;
+  // Alias for code clarity
+  auto m_cache() const { return post_op->measurement_cache; }
+
+  // Current measurement step index being written.
+  int m_idx_row;
+
+  // Current measurement index valus for printing of primary "index" column; assumed
+  // dimensionful like all measurements.
+  double m_idx_value;
+
+  // List of all excitations (column blocks). Single "0" default for solvers that don't
+  // support excitations.
+  std::vector<ExcitationIdx> excitation_idx_all = {ExcitationIdx(0)};
+  bool single_col_block() const { return excitation_idx_all.size() == 1; }
+  // Current measurement excitation index.
+  ExcitationIdx m_ex_idx = ExcitationIdx(0);
 
   // These are all std::optional since: (a) should only be instantiated on the root mpi
   // process, (b) they should only be written if the data is non-empty.
@@ -132,7 +142,8 @@ public:
   void InitializeCSVDataCollection();
 
   // Print all data from post_op->measurement_cache.
-  void PrintAllCSVData(double idx_value_dimensionful, int step, int column_block = 0);
+  void PrintAllCSVData(double idx_value_dimensionful, int step,
+                       std::optional<ExcitationIdx> ex_idx = std::nullopt);
 
   // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);

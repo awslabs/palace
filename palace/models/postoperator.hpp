@@ -148,8 +148,18 @@ private:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-  void InitializeParaviewDataCollection();
+public:
+  // Public functions to switch paraview output to a different sub_folder and reinitialize
+  // data collection. Needed in driven solver for multi-excitations and prom output.
+  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 
+  // Secondary overload for the driven solver only, that takes in an excitation index and
+  // sets the correct sub_folder_name path for the primary function above.
+  template <config::ProblemData::Type U = solver_t>
+  auto InitializeParaviewDataCollection(ExcitationIdx ex_idx)
+      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>;
+
+private:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
   // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
@@ -233,6 +243,8 @@ private:
   {
     // "Pseudo-measurements": input required during measurement or data which is stored here
     // in order to pass it along to the printers.
+
+    ExcitationIdx ex_idx = ExcitationIdx(0);  // driven
 
     std::complex<double> freq = {0.0, 0.0};  // driven || eigenvalue.
 
@@ -387,10 +399,6 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
                         int nr_expected_measurement_rows = 1);
 
-  // Make new paraview output target for multiple excitations / prom
-  // Previous output must be correctly closed / deregistered
-  void SetNewParaviewOutput(const fs::path &paraview_path);
-
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
   // solver type, since each solver has different fields and extra data required. These
   // functions all:
@@ -414,8 +422,8 @@ public:
   // template.
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                          std::complex<double> omega)
+  auto MeasureAndPrintAll(ExcitationIdx ex_idx, int step, const ComplexVector &e,
+                          const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   template <config::ProblemData::Type U = solver_t>
@@ -447,8 +455,9 @@ public:
   //
   // TODO(C++20): SFINAE to requires.
   template <config::ProblemData::Type U = solver_t>
-  auto MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b,
-                                    bool exchange_face_nbr_data = true)
+  auto MeasureDomainFieldEnergyOnly(
+      const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data = true,
+      std::optional<std::pair<int, double>> debug_print_paraview_opt = std::nullopt)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The

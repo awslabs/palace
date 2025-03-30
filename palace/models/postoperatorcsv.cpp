@@ -50,6 +50,25 @@ std::string LabelIndexCol(const config::ProblemData::Type solver_t)
   }
 }
 
+// Index checking when adding to a new excitation block: When adding data to data_col with
+// index idx, checks that idx matches what is already written in the corresponding row of
+// idx_col. Adds a new idx row to idx_col if needed.
+void check_append_index(Column &idx_col, double idx_value, size_t m_idx_row)
+{
+  if (m_idx_row == idx_col.n_rows())
+  {
+    idx_col << idx_value;
+  }
+  else
+  {
+    auto current_idx = idx_col.data.at(m_idx_row);
+    MFEM_VERIFY(idx_value == current_idx,
+                fmt::format("Writing data table at incorrect index. Data has index {} "
+                            "while table is at {}",
+                            idx_value, current_idx));
+  }
+}
+
 }  // namespace
 
 template <config::ProblemData::Type solver_t>
@@ -57,21 +76,31 @@ void PostOperatorCSV<solver_t>::InitializeDomainE()
 {
   using fmt::format;
   domain_E = TableWithCSVFile(post_op->post_dir / "domain-E.csv");
-  domain_E->table.reserve(nr_expected_measurement_rows,
-                          4 * (1 + post_op->dom_post_op.M_i.size()));
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * 4 * (1 + post_op->dom_post_op.M_i.size());
+  domain_E->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   domain_E->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
 
-  domain_E->table.insert("Ee", "E_elec (J)");
-  domain_E->table.insert("Em", "E_mag (J)");
-  domain_E->table.insert("Ec", "E_cap (J)");
-  domain_E->table.insert("Ei", "E_ind (J)");
-
-  for (const auto &[idx, data] : post_op->dom_post_op.M_i)
+  for (const auto ex_idx : excitation_idx_all)
   {
-    domain_E->table.insert(format("Ee{}", idx), format("E_elec[{}] (J)", idx));
-    domain_E->table.insert(format("pe{}", idx), format("p_elec[{}]", idx));
-    domain_E->table.insert(format("Em{}", idx), format("E_mag[{}] (J)", idx));
-    domain_E->table.insert(format("pm{}", idx), format("p_mag[{}]", idx));
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+
+    domain_E->table.insert(format("Ee_{}", ex_idx), format("E_elec{} (J)", ex_label));
+    domain_E->table.insert(format("Em_{}", ex_idx), format("E_mag{} (J)", ex_label));
+    domain_E->table.insert(format("Ec_{}", ex_idx), format("E_cap{} (J)", ex_label));
+    domain_E->table.insert(format("Ei_{}", ex_idx), format("E_ind{} (J)", ex_label));
+
+    for (const auto &[idx, data] : post_op->dom_post_op.M_i)
+    {
+      domain_E->table.insert(format("Ee_{}_{}", idx, ex_idx),
+                             format("E_elec[{}]{} (J)", idx, ex_label));
+      domain_E->table.insert(format("pe_{}_{}", idx, ex_idx),
+                             format("p_elec[{}]{}", idx, ex_label));
+      domain_E->table.insert(format("Em_{}_{}", idx, ex_idx),
+                             format("E_mag[{}]{} (J)", idx, ex_label));
+      domain_E->table.insert(format("pm_{}_{}", idx, ex_idx),
+                             format("p_mag[{}]{}", idx, ex_label));
+    }
   }
   domain_E->WriteFullTableTrunc();
 }
@@ -84,20 +113,20 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
     return;
   }
   using fmt::format;
-  domain_E->table["idx"] << current_idx_value_dimensionful;
-  domain_E->table["Ee"] << post_op->measurement_cache.domain_E_field_energy_all;
-  domain_E->table["Em"] << post_op->measurement_cache.domain_H_field_energy_all;
-  domain_E->table["Ec"] << post_op->measurement_cache.lumped_port_capacitor_energy;
-  domain_E->table["Ei"] << post_op->measurement_cache.lumped_port_inductor_energy;
-  for (const auto &data : post_op->measurement_cache.domain_E_field_energy_i)
+  check_append_index(domain_E->table["idx"], m_idx_value, m_idx_row);
+  domain_E->table[format("Ee_{}", m_ex_idx)] << m_cache().domain_E_field_energy_all;
+  domain_E->table[format("Em_{}", m_ex_idx)] << m_cache().domain_H_field_energy_all;
+  domain_E->table[format("Ec_{}", m_ex_idx)] << m_cache().lumped_port_capacitor_energy;
+  domain_E->table[format("Ei_{}", m_ex_idx)] << m_cache().lumped_port_inductor_energy;
+  for (const auto &data : m_cache().domain_E_field_energy_i)
   {
-    domain_E->table[format("Ee{}", data.idx)] << data.energy;
-    domain_E->table[format("pe{}", data.idx)] << data.participation_ratio;
+    domain_E->table[format("Ee_{}_{}", data.idx, m_ex_idx)] << data.energy;
+    domain_E->table[format("pe_{}_{}", data.idx, m_ex_idx)] << data.participation_ratio;
   }
-  for (const auto &data : post_op->measurement_cache.domain_H_field_energy_i)
+  for (const auto &data : m_cache().domain_H_field_energy_i)
   {
-    domain_E->table[format("Em{}", data.idx)] << data.energy;
-    domain_E->table[format("pm{}", data.idx)] << data.participation_ratio;
+    domain_E->table[format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy;
+    domain_E->table[format("pm_{}_{}", data.idx, m_ex_idx)] << data.participation_ratio;
   }
   domain_E->WriteFullTableTrunc();
 }
@@ -111,43 +140,51 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
   }
   using fmt::format;
   surface_F = TableWithCSVFile(post_op->post_dir / "surface-F.csv");
-  surface_F->table.reserve(nr_expected_measurement_rows,
-                           1 + (HasComplexGridFunction<solver_t>() ? 2 : 1) *
-                                   post_op->surf_post_op.flux_surfs.size());
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * (HasComplexGridFunction<solver_t>() ? 2 : 1) *
+              post_op->surf_post_op.flux_surfs.size();
+  surface_F->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   surface_F->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-  for (const auto &[idx, data] : post_op->surf_post_op.flux_surfs)
+  for (const auto ex_idx : excitation_idx_all)
   {
-    switch (data.type)
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+    for (const auto &[idx, data] : post_op->surf_post_op.flux_surfs)
     {
-      case SurfaceFluxType::ELECTRIC:
-        if (HasComplexGridFunction<solver_t>())
-        {
-          surface_F->table.insert(format("F_{}_re", idx),
-                                  format("Re{{Φ_elec[{}]}} (C)", idx));
-          surface_F->table.insert(format("F_{}_im", idx),
-                                  format("Im{{Φ_elec[{}]}} (C)", idx));
-        }
-        else
-        {
-          surface_F->table.insert(format("F_{}_re", idx), format("Φ_elec[{}] (C)", idx));
-        }
-        break;
-      case SurfaceFluxType::MAGNETIC:
-        if (HasComplexGridFunction<solver_t>())
-        {
-          surface_F->table.insert(format("F_{}_re", idx),
-                                  format("Re{{Φ_mag[{}]}} (Wb)", idx));
-          surface_F->table.insert(format("F_{}_im", idx),
-                                  format("Im{{Φ_mag[{}]}} (Wb)", idx));
-        }
-        else
-        {
-          surface_F->table.insert(format("F_{}_re", idx), format("Φ_mag[{}] (Wb)", idx));
-        }
-        break;
-      case SurfaceFluxType::POWER:
-        surface_F->table.insert(format("F_{}_re", idx), format("Φ_pow[{}] (W)", idx));
-        break;
+      switch (data.type)
+      {
+        case SurfaceFluxType::ELECTRIC:
+          if (HasComplexGridFunction<solver_t>())
+          {
+            surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
+                                    format("Re{{Φ_elec[{}]{}}} (C)", idx, ex_label));
+            surface_F->table.insert(format("F_{}_{}_im", idx, ex_idx),
+                                    format("Im{{Φ_elec[{}]{}}} (C)", idx, ex_label));
+          }
+          else
+          {
+            surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
+                                    format("Φ_elec[{}]{} (C)", idx, ex_label));
+          }
+          break;
+        case SurfaceFluxType::MAGNETIC:
+          if (HasComplexGridFunction<solver_t>())
+          {
+            surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
+                                    format("Re{{Φ_mag[{}]{}}} (Wb)", idx, ex_label));
+            surface_F->table.insert(format("F_{}_{}_im", idx, ex_idx),
+                                    format("Im{{Φ_mag[{}]{}}} (Wb)", idx, ex_label));
+          }
+          else
+          {
+            surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
+                                    format("Φ_mag[{}]{} (Wb)", idx, ex_label));
+          }
+          break;
+        case SurfaceFluxType::POWER:
+          surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
+                                  format("Φ_pow[{}]{} (W)", idx, ex_label));
+          break;
+      }
     }
   }
   surface_F->WriteFullTableTrunc();
@@ -161,15 +198,14 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
     return;
   }
   using fmt::format;
-  surface_F->table["idx"] << current_idx_value_dimensionful;
-  for (const auto &flux_data : post_op->measurement_cache.surface_flux_i)
+  check_append_index(surface_F->table["idx"], m_idx_value, m_idx_row);
+  for (const auto &data : m_cache().surface_flux_i)
   {
-    surface_F->table[format("F_{}_re", flux_data.idx)] << flux_data.Phi.real();
+    surface_F->table[format("F_{}_{}_re", data.idx, m_ex_idx)] << data.Phi.real();
     if (HasComplexGridFunction<solver_t>() &&
-        (flux_data.type == SurfaceFluxType::ELECTRIC ||
-         flux_data.type == SurfaceFluxType::MAGNETIC))
+        (data.type == SurfaceFluxType::ELECTRIC || data.type == SurfaceFluxType::MAGNETIC))
     {
-      surface_F->table[format("F_{}_im", flux_data.idx)] << flux_data.Phi.imag();
+      surface_F->table[format("F_{}_{}_im", data.idx, m_ex_idx)] << data.Phi.imag();
     }
   }
   surface_F->WriteFullTableTrunc();
@@ -184,15 +220,22 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ()
   }
   using fmt::format;
   surface_Q = TableWithCSVFile(post_op->post_dir / "surface-Q.csv");
-  surface_Q->table.reserve(nr_expected_measurement_rows,
-                           1 + 2 * post_op->surf_post_op.eps_surfs.size());
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * (2 * post_op->surf_post_op.eps_surfs.size());
+  surface_Q->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   surface_Q->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-
-  for (const auto &[idx, data] : post_op->surf_post_op.eps_surfs)
+  for (const auto ex_idx : excitation_idx_all)
   {
-    surface_Q->table.insert(format("p_{}", idx), format("p_surf[{}]", idx));
-    surface_Q->table.insert(format("Q_{}", idx), format("Q_surf[{}]", idx));
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+    for (const auto &[idx, data] : post_op->surf_post_op.eps_surfs)
+    {
+      surface_Q->table.insert(format("p_{}_{}", idx, ex_idx),
+                              format("p_surf[{}]{}", idx, ex_label));
+      surface_Q->table.insert(format("Q_{}_{}", idx, ex_idx),
+                              format("Q_surf[{}]{}", idx, ex_label));
+    }
   }
+  surface_Q->WriteFullTableTrunc();
 }
 
 template <config::ProblemData::Type solver_t>
@@ -203,11 +246,12 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
     return;
   }
   using fmt::format;
-  surface_Q->table["idx"] << current_idx_value_dimensionful;
-  for (const auto &eps_data : post_op->measurement_cache.interface_eps_i)
+  check_append_index(surface_Q->table["idx"], m_idx_value, m_idx_row);
+
+  for (const auto &data : m_cache().interface_eps_i)
   {
-    surface_Q->table[format("p_{}", eps_data.idx)] << eps_data.energy_participation;
-    surface_Q->table[format("Q_{}", eps_data.idx)] << eps_data.quality_factor;
+    surface_Q->table[format("p_{}_{}", data.idx, m_ex_idx)] << data.energy_participation;
+    surface_Q->table[format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
   }
   surface_Q->WriteFullTableTrunc();
 }
@@ -223,26 +267,31 @@ void PostOperatorCSV<solver_t>::InitializeProbeE()
   probe_E = TableWithCSVFile(post_op->post_dir / "probe-E.csv");
   auto v_dim = post_op->interp_op.GetVDim();
   int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-
-  probe_E->table.reserve(nr_expected_measurement_rows,
-                         scale_col * post_op->interp_op.GetProbes().size());
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * scale_col * post_op->interp_op.GetProbes().size();
+  probe_E->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   probe_E->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-
-  for (const auto &idx : post_op->interp_op.GetProbes())
+  for (const auto ex_idx : excitation_idx_all)
   {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+    for (const auto &idx : post_op->interp_op.GetProbes())
     {
-      if constexpr (HasComplexGridFunction<solver_t>())
+      for (int i_dim = 0; i_dim < v_dim; i_dim++)
       {
-        probe_E->table.insert(format("E{}_{}_re", idx, i_dim),
-                              format("Re{{E_{}[{}]}} (V/m)", DimLabel(i_dim), idx));
-        probe_E->table.insert(format("E{}_{}_im", idx, i_dim),
-                              format("Im{{E_{}[{}]}} (V/m)", DimLabel(i_dim), idx));
-      }
-      else
-      {
-        probe_E->table.insert(format("E{}_{}_re", idx, i_dim),
-                              format("E_{}[{}] (V/m)", DimLabel(i_dim), idx));
+        if constexpr (HasComplexGridFunction<solver_t>())
+        {
+          probe_E->table.insert(
+              format("E{}_{}_{}_re", i_dim, idx, ex_idx),
+              format("Re{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label));
+          probe_E->table.insert(
+              format("E{}_{}_{}_im", i_dim, idx, ex_idx),
+              format("Im{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label));
+        }
+        else
+        {
+          probe_E->table.insert(format("E{}_{}_{}_re", i_dim, idx, ex_idx),
+                                format("E_{}[{}]{} (V/m)", DimLabel(i_dim), idx, ex_label));
+        }
       }
     }
   }
@@ -258,23 +307,24 @@ void PostOperatorCSV<solver_t>::PrintProbeE()
   }
   using fmt::format;
   auto v_dim = post_op->interp_op.GetVDim();
-  auto probe_field = post_op->measurement_cache.probe_E_field;
+  auto probe_field = m_cache().probe_E_field;
   MFEM_VERIFY(probe_field.size() == v_dim * post_op->interp_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op->interp_op.GetProbes().size(),
                      v_dim * post_op->interp_op.GetProbes().size(), probe_field.size()))
 
-  probe_E->table["idx"] << current_idx_value_dimensionful;
+  check_append_index(probe_E->table["idx"], m_idx_value, m_idx_row);
+
   size_t i = 0;
   for (const auto &idx : post_op->interp_op.GetProbes())
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
       auto val = probe_field[i * v_dim + i_dim];
-      probe_E->table[format("E{}_{}_re", idx, i_dim)] << val.real();
+      probe_E->table[format("E{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
       if (HasComplexGridFunction<solver_t>())
       {
-        probe_E->table[format("E{}_{}_im", idx, i_dim)] << val.imag();
+        probe_E->table[format("E{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
       }
     }
     i++;
@@ -293,26 +343,32 @@ void PostOperatorCSV<solver_t>::InitializeProbeB()
   probe_B = TableWithCSVFile(post_op->post_dir / "probe-B.csv");
   auto v_dim = post_op->interp_op.GetVDim();
   int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-
-  probe_B->table.reserve(nr_expected_measurement_rows,
-                         scale_col * post_op->interp_op.GetProbes().size());
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * scale_col * post_op->interp_op.GetProbes().size();
+  probe_B->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   probe_B->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-
-  for (const auto &idx : post_op->interp_op.GetProbes())
+  for (const auto ex_idx : excitation_idx_all)
   {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+    for (const auto &idx : post_op->interp_op.GetProbes())
     {
-      if (HasComplexGridFunction<solver_t>())
+      for (int i_dim = 0; i_dim < v_dim; i_dim++)
       {
-        probe_B->table.insert(format("B{}_{}_re", idx, i_dim),
-                              format("Re{{B_{}[{}]}} (Wb/m²)", DimLabel(i_dim), idx));
-        probe_B->table.insert(format("B{}_{}_im", idx, i_dim),
-                              format("Im{{B_{}[{}]}} (Wb/m²)", DimLabel(i_dim), idx));
-      }
-      else
-      {
-        probe_B->table.insert(format("B{}_{}_re", idx, i_dim),
-                              format("B_{}[{}] (Wb/m²)", DimLabel(i_dim), idx));
+        if (HasComplexGridFunction<solver_t>())
+        {
+          probe_B->table.insert(
+              format("B{}_{}_{}_re", i_dim, idx, ex_idx),
+              format("Re{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label));
+          probe_B->table.insert(
+              format("B{}_{}_{}_im", i_dim, idx, ex_idx),
+              format("Im{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label));
+        }
+        else
+        {
+          probe_B->table.insert(
+              format("B{}_{}_{}_re", i_dim, idx, ex_idx),
+              format("B_{}[{}]{} (Wb/m²)", DimLabel(i_dim), idx, ex_label));
+        }
       }
     }
   }
@@ -329,23 +385,24 @@ void PostOperatorCSV<solver_t>::PrintProbeB()
   using fmt::format;
 
   auto v_dim = post_op->interp_op.GetVDim();
-  auto probe_field = post_op->measurement_cache.probe_B_field;
+  auto probe_field = m_cache().probe_B_field;
   MFEM_VERIFY(probe_field.size() == v_dim * post_op->interp_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op->interp_op.GetProbes().size(),
                      v_dim * post_op->interp_op.GetProbes().size(), probe_field.size()))
 
-  probe_B->table["idx"] << current_idx_value_dimensionful;
+  check_append_index(probe_B->table["idx"], m_idx_value, m_idx_row);
+
   size_t i = 0;
   for (const auto &idx : post_op->interp_op.GetProbes())
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
       auto val = probe_field[i * v_dim + i_dim];
-      probe_B->table[format("B{}_{}_re", idx, i_dim)] << val.real();
+      probe_B->table[format("B{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
       if (HasComplexGridFunction<solver_t>())
       {
-        probe_B->table[format("B{}_{}_im", idx, i_dim)] << val.imag();
+        probe_B->table[format("B{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
       }
     }
     i++;
@@ -367,11 +424,17 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
   using fmt::format;
   surface_I = TableWithCSVFile(post_op->post_dir / "surface-I.csv");
   const auto &surf_j_op = post_op->fem_op->GetSurfaceCurrentOp();
-  surface_I->table.reserve(nr_expected_measurement_rows, surf_j_op.Size());
+  size_t nr_expected_measurement_cols = 1 + excitation_idx_all.size() * surf_j_op.Size();
+  surface_I->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   surface_I->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-  for (const auto &[idx, data] : surf_j_op)
+  for (const auto ex_idx : excitation_idx_all)
   {
-    surface_I->table.insert(format("I_{}", idx), format("I_inc[{}] (A)", idx));
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+    for (const auto &[idx, data] : surf_j_op)
+    {
+      surface_I->table.insert(format("I_{}_{}", idx, ex_idx),
+                              format("I_inc[{}]{} (A)", idx, ex_label));
+    }
   }
   surface_I->WriteFullTableTrunc();
 }
@@ -388,14 +451,13 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI()
     return;
   }
   using fmt::format;
-  surface_I->table["idx"] << current_idx_value_dimensionful;
+  check_append_index(surface_I->table["idx"], m_idx_value, m_idx_row);
   for (const auto &[idx, data] : post_op->fem_op->GetSurfaceCurrentOp())
   {
-    auto I_inc_raw =
-        data.GetExcitationCurrent() * post_op->measurement_cache.Jcoeff_excitation;
+    auto I_inc_raw = data.GetExcitationCurrent() * m_cache().Jcoeff_excitation;
     auto I_inc =
         post_op->units.template Dimensionalize<Units::ValueType::CURRENT>(I_inc_raw);
-    surface_I->table[format("I_{}", idx)] << I_inc;
+    surface_I->table[format("I_{}_{}", idx, m_ex_idx)] << I_inc;
   }
   surface_I->WriteFullTableTrunc();
 }
@@ -418,36 +480,50 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
   port_V = TableWithCSVFile(post_op->post_dir / "port-V.csv");
   port_I = TableWithCSVFile(post_op->post_dir / "port-I.csv");
 
-  port_V->table.reserve(nr_expected_measurement_rows, 1 + lumped_port_op.Size());
-  port_I->table.reserve(nr_expected_measurement_rows, 1 + lumped_port_op.Size());
+  size_t nr_expected_measurement_cols =
+      1 + excitation_idx_all.size() * lumped_port_op.Size();
+  port_V->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
+  port_I->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
 
   port_V->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
   port_I->table.insert(Column("idx", LabelIndexCol(solver_t), 0, {}, {}, ""));
-
-  for (const auto &[idx, data] : lumped_port_op)
+  for (const auto ex_idx : excitation_idx_all)
   {
+    std::string ex_label = single_col_block() ? "" : format("[{}]", ex_idx);
+
+    // Print incident signal, if solver supports excitation on ports.
     if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
                   solver_t == config::ProblemData::Type::TRANSIENT)
     {
-      if (data.excitation)
+      auto ex_spec = post_op->fem_op->GetPortExcitationHelper().excitations.at(ex_idx);
+      for (const auto &idx : ex_spec.lumped_port)
       {
-        // Incident voltage is currently always real
-        port_V->table.insert(format("inc{}", idx), format("V_inc[{}] (V)", idx));
-        port_I->table.insert(format("inc{}", idx), format("I_inc[{}] (A)", idx));
+        port_V->table.insert(format("inc{}_{}", idx, ex_idx),
+                             format("V_inc[{}]{} (V)", idx, ex_label));
+        port_I->table.insert(format("inc{}_{}", idx, ex_idx),
+                             format("I_inc[{}]{} (A)", idx, ex_label));
       }
     }
-    if constexpr (HasComplexGridFunction<solver_t>())
+    for (const auto &[idx, data] : lumped_port_op)
     {
-      port_V->table.insert(format("re{}", idx), format("Re{{V[{}]}} (V)", idx));
-      port_V->table.insert(format("im{}", idx), format("Im{{V[{}]}} (V)", idx));
-
-      port_I->table.insert(format("re{}", idx), format("Re{{I[{}]}} (A)", idx));
-      port_I->table.insert(format("im{}", idx), format("Im{{I[{}]}} (A)", idx));
-    }
-    else
-    {
-      port_V->table.insert(format("re{}", idx), format("V[{}] (V)", idx));
-      port_I->table.insert(format("re{}", idx), format("I[{}] (A)", idx));
+      if constexpr (HasComplexGridFunction<solver_t>())
+      {
+        port_V->table.insert(format("re{}_{}", idx, ex_idx),
+                             format("Re{{V[{}]{}}} (V)", idx, ex_label));
+        port_V->table.insert(format("im{}_{}", idx, ex_idx),
+                             format("Im{{V[{}]{}}} (V)", idx, ex_label));
+        port_I->table.insert(format("re{}_{}", idx, ex_idx),
+                             format("Re{{I[{}]{}}} (A)", idx, ex_label));
+        port_I->table.insert(format("im{}_{}", idx, ex_idx),
+                             format("Im{{I[{}]{}}} (A)", idx, ex_label));
+      }
+      else
+      {
+        port_V->table.insert(format("re{}_{}", idx, ex_idx),
+                             format("V[{}]{} (V)", idx, ex_label));
+        port_I->table.insert(format("re{}_{}", idx, ex_idx),
+                             format("I[{}]{} (A)", idx, ex_label));
+      }
     }
   }
   port_V->WriteFullTableTrunc();
@@ -472,8 +548,8 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
   // = sqrt(2) * RMS).
 
-  port_V->table["idx"] << current_idx_value_dimensionful;
-  port_I->table["idx"] << current_idx_value_dimensionful;
+  check_append_index(port_V->table["idx"], m_idx_value, m_idx_row);
+  check_append_index(port_I->table["idx"], m_idx_value, m_idx_row);
 
   auto unit_V = post_op->units.template GetScaleFactor<Units::ValueType::VOLTAGE>();
   auto unit_A = post_op->units.template GetScaleFactor<Units::ValueType::CURRENT>();
@@ -483,29 +559,29 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
   {
     for (const auto &[idx, data] : lumped_port_op)
     {
-      if (data.excitation)
+      if (data.excitation == m_ex_idx)
       {
-        auto Jcoeff = post_op->measurement_cache.Jcoeff_excitation;
+        auto Jcoeff = m_cache().Jcoeff_excitation;
         double V_inc = data.GetExcitationVoltage() * Jcoeff;
         double I_inc = (std::abs(V_inc) > 0.0)
                            ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
                            : 0.0;
 
-        port_V->table[format("inc{}", idx)] << V_inc * unit_V;
-        port_I->table[format("inc{}", idx)] << I_inc * unit_A;
+        port_V->table[format("inc{}_{}", idx, m_ex_idx)] << V_inc * unit_V;
+        port_I->table[format("inc{}_{}", idx, m_ex_idx)] << I_inc * unit_A;
       }
     }
   }
 
-  for (const auto &[idx, data] : post_op->measurement_cache.lumped_port_vi)
+  for (const auto &[idx, data] : m_cache().lumped_port_vi)
   {
-    port_V->table[fmt::format("re{}", idx)] << data.V.real() * unit_V;
-    port_I->table[fmt::format("re{}", idx)] << data.I.real() * unit_A;
+    port_V->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.V.real() * unit_V;
+    port_I->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I.real() * unit_A;
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      port_V->table[fmt::format("im{}", idx)] << data.V.imag() * unit_V;
-      port_I->table[fmt::format("im{}", idx)] << data.I.imag() * unit_A;
+      port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag() * unit_V;
+      port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag() * unit_A;
     }
   }
   port_V->WriteFullTableTrunc();
@@ -517,55 +593,38 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializePortS()
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
 {
-  if (!((post_op->fem_op->GetLumpedPortOp().Size() > 0) xor
+  if (!post_op->fem_op->GetPortExcitationHelper().IsMultipleSimple() ||
+      !((post_op->fem_op->GetLumpedPortOp().Size() > 0) xor
         (post_op->fem_op->GetWavePortOp().Size() > 0)))
-  {
-    return;
-  }
-  // Get source index of single excitation from space_op
-  driven_source_index = -1;
-  // Get excitation index as is currently done: if -1 then no excitation
-  // Already ensured that one of lumped or wave ports are empty
-  for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
-  {
-    if (data.excitation)
-    {
-      driven_source_index = idx;
-    }
-  }
-  for (const auto &[idx, data] : post_op->fem_op->GetWavePortOp())
-  {
-    if (data.excitation)
-    {
-      driven_source_index = idx;
-    }
-  }
-  if (!(driven_source_index > 0))
   {
     return;
   }
   using fmt::format;
   port_S = TableWithCSVFile(post_op->post_dir / "port-S.csv");
+  auto nr_ports =
+      post_op->fem_op->GetLumpedPortOp().Size() + post_op->fem_op->GetWavePortOp().Size();
 
-  auto nr_ports = std::max(post_op->fem_op->GetLumpedPortOp().Size(),
-                           post_op->fem_op->GetWavePortOp().Size());
-  port_S->table.reserve(nr_expected_measurement_rows, nr_ports);
+  size_t nr_expected_measurement_cols = 1 + excitation_idx_all.size() * nr_ports;
+  port_S->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   port_S->table.insert(Column("idx", "f (GHz)", 0, {}, {}, ""));
 
-  // Already ensured that one of lumped or wave ports are empty
-  for (const auto &[o_idx, data] : post_op->fem_op->GetLumpedPortOp())
+  for (const auto ex_idx : excitation_idx_all)
   {
-    port_S->table.insert(format("abs_{}_{}", o_idx, driven_source_index),
-                         format("|S[{}][{}]| (dB)", o_idx, driven_source_index));
-    port_S->table.insert(format("arg_{}_{}", o_idx, driven_source_index),
-                         format("arg(S[{}][{}]) (deg.)", o_idx, driven_source_index));
-  }
-  for (const auto &[o_idx, data] : post_op->fem_op->GetWavePortOp())
-  {
-    port_S->table.insert(format("abs_{}_{}", o_idx, driven_source_index),
-                         format("|S[{}][{}]| (dB)", o_idx, driven_source_index));
-    port_S->table.insert(format("arg_{}_{}", o_idx, driven_source_index),
-                         format("arg(S[{}][{}]) (deg.)", o_idx, driven_source_index));
+    // TODO(C++20): Combine identical loops with ranges + projection.
+    for (const auto &[o_idx, data] : post_op->fem_op->GetLumpedPortOp())
+    {
+      port_S->table.insert(format("abs_{}_{}", o_idx, ex_idx),
+                           format("|S[{}][{}]| (dB)", o_idx, ex_idx));
+      port_S->table.insert(format("arg_{}_{}", o_idx, ex_idx),
+                           format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx));
+    }
+    for (const auto &[o_idx, data] : post_op->fem_op->GetWavePortOp())
+    {
+      port_S->table.insert(format("abs_{}_{}", o_idx, ex_idx),
+                           format("|S[{}][{}]| (dB)", o_idx, ex_idx));
+      port_S->table.insert(format("arg_{}_{}", o_idx, ex_idx),
+                           format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx));
+    }
   }
   port_S->WriteFullTableTrunc();
 }
@@ -580,16 +639,16 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
     return;
   }
   using fmt::format;
-  port_S->table["idx"] << current_idx_value_dimensionful;
-  for (const auto &[idx, data] : post_op->measurement_cache.lumped_port_vi)
+  check_append_index(port_S->table["idx"], m_idx_value, m_idx_row);
+  for (const auto &[idx, data] : m_cache().lumped_port_vi)
   {
-    port_S->table[format("abs_{}_{}", idx, driven_source_index)] << data.abs_S_ij;
-    port_S->table[format("arg_{}_{}", idx, driven_source_index)] << data.arg_S_ij;
+    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
+    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
   }
-  for (const auto &[idx, data] : post_op->measurement_cache.wave_port_vi)
+  for (const auto &[idx, data] : m_cache().wave_port_vi)
   {
-    port_S->table[format("abs_{}_{}", idx, driven_source_index)] << data.abs_S_ij;
-    port_S->table[format("arg_{}_{}", idx, driven_source_index)] << data.arg_S_ij;
+    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
+    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
   }
   port_S->WriteFullTableTrunc();
 }
@@ -620,12 +679,12 @@ auto PostOperatorCSV<solver_t>::PrintEig()
   {
     return;
   }
-  eig->table["idx"] << current_idx_value_dimensionful;
-  eig->table["f_re"] << post_op->measurement_cache.freq.real();
-  eig->table["f_im"] << post_op->measurement_cache.freq.imag();
-  eig->table["q"] << post_op->measurement_cache.eigenmode_Q;
-  eig->table["err_back"] << post_op->measurement_cache.error_bkwd;
-  eig->table["err_abs"] << post_op->measurement_cache.error_abs;
+  eig->table["idx"] << m_idx_value;
+  eig->table["f_re"] << m_cache().freq.real();
+  eig->table["f_im"] << m_cache().freq.imag();
+  eig->table["q"] << m_cache().eigenmode_Q;
+  eig->table["err_back"] << m_cache().error_bkwd;
+  eig->table["err_abs"] << m_cache().error_abs;
   eig->WriteFullTableTrunc();
 }
 
@@ -667,10 +726,10 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
     return;
   }
   using fmt::format;
-  port_EPR->table["idx"] << current_idx_value_dimensionful;
+  port_EPR->table["idx"] << m_idx_value;
   for (const auto idx : ports_with_L)
   {
-    auto vi = post_op->measurement_cache.lumped_port_vi.at(idx);
+    auto vi = m_cache().lumped_port_vi.at(idx);
     port_EPR->table[format("p_{}", idx)] << vi.inductive_energy_participation;
   }
   port_EPR->WriteFullTableTrunc();
@@ -715,10 +774,10 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
     return;
   }
   using fmt::format;
-  port_Q->table["idx"] << current_idx_value_dimensionful;
+  port_Q->table["idx"] << m_idx_value;
   for (const auto idx : ports_with_R)
   {
-    auto vi = post_op->measurement_cache.lumped_port_vi.at(idx);
+    auto vi = m_cache().lumped_port_vi.at(idx);
     port_Q->table[format("Ql_{}", idx)] << vi.quality_factor;
     port_Q->table[format("Kl_{}", idx)] << vi.mode_port_kappa;
   }
@@ -748,6 +807,21 @@ void PostOperatorCSV<solver_t>::PrintErrorIndicator(
 template <config::ProblemData::Type solver_t>
 void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
 {
+  // Initialize multi-excitation column block index. Only driven or transient support
+  // excitations; for other solvers this is default to a single idx=0.
+  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
+                solver_t == config::ProblemData::Type::TRANSIENT)
+  {
+    auto excitation_helper = post_op->fem_op->GetPortExcitationHelper();
+    excitation_idx_all.clear();
+    excitation_idx_all.reserve(excitation_helper.Size());
+    std::transform(excitation_helper.begin(), excitation_helper.end(),
+                   std::back_inserter(excitation_idx_all),
+                   [](const auto &pair) { return pair.first; });
+    // Default to the first excitation.
+    m_ex_idx = excitation_idx_all.front();
+  }
+
   if (!Mpi::Root(post_op->fem_op->GetComm()))
   {
     return;
@@ -784,15 +858,18 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
 
 template <config::ProblemData::Type solver_t>
 void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, int step,
-                                                int column_block)
+                                                std::optional<ExcitationIdx> ex_idx)
 {
   if (!Mpi::Root(post_op->fem_op->GetComm()))
   {
     return;
   }
-  current_idx_value_dimensionful = idx_value_dimensionful;
-  current_idx_row = step;
-  current_column_block = column_block;
+  m_idx_value = idx_value_dimensionful;
+  m_idx_row = step;
+  if (ex_idx.has_value())
+  {
+    m_ex_idx = *ex_idx;
+  }
 
   PrintDomainE();
   PrintSurfaceF();
