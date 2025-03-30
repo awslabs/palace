@@ -313,7 +313,8 @@ std::vector<double> MinimalRationInterpolation::FindMaxError(int N) const
   return vals;
 }
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size)
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
+                         int max_size_per_excitation)
   : space_op(space_op)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -336,11 +337,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
+  auto excitation_helper = space_op.BuildPortExcitationHelper();
+
   // The initial PROM basis is empty. The provided maximum dimension is the number of sample
   // points (2 basis vectors per point). Basis orthogonalization method is configured using
   // GMRES/FGMRES settings.
-  MFEM_VERIFY(max_size > 0, "Reduced order basis storage must have > 0 columns!");
-  V.resize(2 * max_size, Vector());
+  MFEM_VERIFY(max_size_per_excitation * excitation_helper.Size() > 0,
+              "Reduced order basis storage must have > 0 columns!");
+  V.resize(2 * max_size_per_excitation * excitation_helper.Size(), Vector());
   switch (iodata.solver.linear.gs_orthog_type)
   {
     case config::LinearSolverData::OrthogType::MGS:
@@ -354,10 +358,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_
       break;
   }
   // Set up MRI
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
   for (const auto &[excitation_idx, data] : excitation_helper)
   {
-    mri.emplace(excitation_idx, MinimalRationInterpolation(max_size));
+    mri.emplace(excitation_idx, MinimalRationInterpolation(max_size_per_excitation));
   }
 }
 
