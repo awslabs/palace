@@ -49,7 +49,6 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                      int nr_expected_measurement_rows)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
     post_op_csv(this, nr_expected_measurement_rows),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
@@ -70,6 +69,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -554,11 +554,11 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy
-  if constexpr (HasEGridFunction<solver_t>() & !HasBGridFunction<solver_t>())
+  if constexpr (HasEGridFunction<solver_t>() && !HasBGridFunction<solver_t>())
   {
     Mpi::Print(" Field energy E = {:.3e} J\n", measurement_cache.domain_E_field_energy_all);
   }
-  else if constexpr (!HasEGridFunction<solver_t>() & HasBGridFunction<solver_t>())
+  else if constexpr (!HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
   }
@@ -754,7 +754,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     }
 
     // Currently S-Parameters are not calculated for mixed lumped & wave ports,
-    // so can treat them separatley.
+    // so can treat them separately.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       // Get previously computed data: should never fail as defined by MeasureLumpedPorts.

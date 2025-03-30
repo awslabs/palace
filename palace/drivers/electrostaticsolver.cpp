@@ -181,12 +181,10 @@ void ElectrostaticSolver::PostprocessTerminals(
     TableWithCSVFile terminal_V(post_dir / "terminal-V.csv");
     terminal_V.table.insert(Column("i", "i", 0, {}, {}, ""));
     terminal_V.table.insert("Vinc", "V_inc[i] (V)");
-    int i = 0;
     for (const auto &[idx, data] : terminal_sources)
     {
       terminal_V.table["i"] << double(idx);
       terminal_V.table["Vinc"] << iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
-      i++;
     }
     terminal_V.WriteFullTableTrunc();
   }
