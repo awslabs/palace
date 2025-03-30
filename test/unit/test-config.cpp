@@ -90,4 +90,37 @@ TEST_CASE("Config Boundary Ports", "[config]")
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
   }
+  // Mark single excitation index
+  {
+    config::BoundaryData boundary_data;
+    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 2);
+    CHECK(boundary_data.waveport.at(4).excitation == 0);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_2")));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 1);
+    CHECK(boundary_data.waveport.at(4).excitation == 0);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_3")));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 0);
+    CHECK(boundary_data.waveport.at(4).excitation == 4);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_4")));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 1);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 0);
+    CHECK(boundary_data.waveport.at(4).excitation == 1);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
+  }
 }

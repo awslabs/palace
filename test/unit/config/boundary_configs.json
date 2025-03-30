@@ -119,5 +119,41 @@
       "LumpedPort": [ { "Attributes": [5], "Index":  1, "R": 50, "Direction": "+Y" } ],
       "WavePort"  : [ { "Attributes": [6], "Index": -1                             } ]
     }
+  },
+  "boundaries_upgrade_excitation_idx_1": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y"                     },
+        { "Attributes": [16], "Index": 2, "R": 50, "Direction": "-Y", "Excitation": true }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 4 }, { "Attributes": [17], "Index": 5 } ]
+    }
+  },
+  "boundaries_upgrade_excitation_idx_2": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y"                  },
+        { "Attributes": [16], "Index": 2, "R": 50, "Direction": "-Y", "Excitation": 1 }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 4 }, { "Attributes": [17], "Index": 5 } ]
+    }
+  },
+  "boundaries_upgrade_excitation_idx_3": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y" },
+        { "Attributes": [16], "Index": 2, "R": 50, "Direction": "-Y" }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 4, "Excitation": true }, { "Attributes": [17], "Index": 5 } ]
+    }
+  },
+  "boundaries_upgrade_excitation_idx_4": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [ 5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": true },
+        { "Attributes": [16], "Index": 2, "R": 50, "Direction": "-Y"                     }
+      ],
+      "WavePort": [ { "Attributes": [6], "Index": 4, "Excitation": true }, { "Attributes": [17], "Index": 5 } ]
+    }
   }
 }
