@@ -30,7 +30,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
 
   MFEM_VERIFY(!excitation_helper.Empty(),
               "No excitation specified for transient simulation!");

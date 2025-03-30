@@ -61,6 +61,8 @@ private:
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
 
+  PortExcitationHelper port_excitation_helper;
+
   mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
@@ -119,10 +121,7 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
-  PortExcitationHelper BuildPortExcitationHelper() const
-  {
-    return {GetLumpedPortOp(), GetWavePortOp(), GetSurfaceCurrentOp()};
-  }
+  const auto &GetPortExcitationHelper() const { return port_excitation_helper; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }

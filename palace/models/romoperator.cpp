@@ -337,7 +337,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
 
   // The initial PROM basis is empty. The provided maximum dimension is the number of sample
   // points (2 basis vectors per point). Basis orthogonalization method is configured using

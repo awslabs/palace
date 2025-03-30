@@ -35,7 +35,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
   SpaceOperator space_op(iodata, mesh);
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
   MFEM_VERIFY(!excitation_helper.Empty(), "No excitation specified for driven simulation!");
   SaveMetadata(excitation_helper);
 
@@ -68,7 +68,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed if multiple excitations.
   PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
 
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -202,7 +202,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   // Initialize postprocessing for measurement and printers.
   // Set paraview file for PROM and print PROM solutions separatley.
   PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
-  auto excitation_helper = space_op.BuildPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitationHelper();
 
   // Paraview times are printed as excitation * padding + freq with padding gives enough
   // space for f_max + 1, e.g. if f_max = 102 GHz, then we get time n0fff where n is the
