@@ -10,6 +10,7 @@ using namespace palace;
 TEST_CASE("TableCSV", "[tablecsv]")
 {
   Table table{};
+  table.col_options.float_precision = 9;
   table.reserve(5, 2);
 
   // Quick defaults.
