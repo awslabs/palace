@@ -299,8 +299,9 @@ vector, the options are `"Cartesian"` and `"Cylindrical"`. If a keyword argument
 for `"Direction"` this value is ignored, and the appropriate coordinate system is used
 instead.
 
-`"Excitation" [false]` :  Turns on or off port excitation for this lumped port boundary for
-driven or transient simulation types.
+`"Excitation" [false/0]` :  Turns on or off port excitation for this lumped port boundary for driven
+or transient simulation types. Can be specified either as a bool or as a non-negative integer — see
+[Boundary Conditions](../guide/boundaries.md#Lumped-and-wave-port-excitation).
 
 `"Active" [true]` :  Turns on or off damping boundary condition for this lumped port
 boundary for driven or transient simulation types.
@@ -373,8 +374,9 @@ with
 `"Attributes" [None]` :  Integer array of mesh boundary attributes for this wave port
 boundary.
 
-`"Excitation" [false]` :  Turns on or off port excitation for this wave port boundary for
-driven simulation types.
+`"Excitation" [false/0]` :  Turns on or off port excitation for this wave port boundary for driven
+simulation types. Can be specified either as a bool or as a non-negative integer — see [Boundary
+Conditions](../guide/boundaries.md#Lumped-and-wave-port-excitation).
 
 `"Active" [true]` :  Turns on or off damping boundary condition for this wave port boundary
 for driven simulation types.

@@ -189,8 +189,9 @@ reliability of the reduced-order model relative to the full-order one in the fre
 of interest.
 
 `"AdaptiveMaxSamples" [20]` :  Maximum number of frequency samples used to construct the
-reduced-order model for adaptive fast frequency sweep, if the specified tolerance
-(`"AdaptiveTol"`) is not met first.
+reduced-order model for adaptive fast frequency sweep, if the specified tolerance (`"AdaptiveTol"`)
+is not met first. In simulations with multiple excitations, this is the maximum number of samples
+per excitation.
 
 `"AdaptiveConvergenceMemory" [2]` :  Memory used for assessing convergence of the adaptive
 sampling algorithm for constructing the reduced-order model for adaptive fast frequency
