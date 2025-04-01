@@ -137,7 +137,7 @@ choice must be consistent across all ports in the configuration file.
     positive integer `i`, marks that port as being excited during the excitation `i`. The value `0`
     corresponds to no excitation. If multiple ports share an excitation index `i`, they will be
     excited at the same time.
-
+    
     For frequency domain driven simulations, it is possible to specify multiple excitations in the
     same simulation using different positive integers ("multi-excitation"). These excitations are
     simulated consecutively during the Palace run. The results are printed to shared csv files. When
