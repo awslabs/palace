@@ -1,0 +1,20 @@
+{
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "options": [
+      "--secret=id=.secrets,src=.secrets",
+      "--progress=plain"
+    ]
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "github.vscode-github-actions"
+      ]
+    }
+  },
+  "workspaceFolder": "/home/app/",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/home/app/,type=bind,consistency=cached"
+}

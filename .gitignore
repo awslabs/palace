@@ -10,3 +10,4 @@ test/examples/ref/**/*.json
 Manifest.toml
 .vscode/
 .secrets
+.devcontainer/.spack-env
