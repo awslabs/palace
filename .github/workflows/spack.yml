@@ -12,13 +12,14 @@ concurrency:
 
 env:
   SPACK_COLOR: always
+  # Note that each spack version needs it's own registry
   REGISTRY: ghcr.io/awslabs/palace
   SPACK_ROOT: /opt/spack
   SPACK_CACHE: /opt/spack-cache
   tempdir: /opt/spack-cache
   TMP: /opt/spack-cache
   TMPDIR: /opt/spack-cache
-  SPACK_ENV: ./spack-env
+  SPACK_ENV: ./spack-env # This var might be unused
   USERNAME: palace_bot
 
 jobs:
@@ -26,26 +27,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: # Include GPU build tests
-          - compiler: gcc
-            mpi: openmpi
-            gpu: none
-            blas: intel-oneapi-mkl
-
-          # - compiler: gcc
-          #   mpi: mpich
-          #   gpu: cuda
-
-          # - compiler: gcc
-          #   mpi: mpich
-          #   gpu: rocm
+        compiler: [gcc, llvm, intel]
+        gpu: [none, cuda, rocm]
+        blas: [openblas, intel-oneapi-mkl]
+        spack_version: [develop, v0.23.1]
+        mpi: [openmpi, mvapich]
+        exclude:
+          # Would a spack-installed compiler be easier?
+          - compiler: llvm
+          - compiler: intel
+          # GPU builds currently fail
+          - gpu: cuda
+          - gpu: rocm
+          # intel-oneapi-mkl must be re-built each time
+          # We could have a private-only cache of this, but public caches are
+          # easier to use, and blas is easy to swap
+          - blas: intel-oneapi-mkl
+          # Since MPI is ABI compatible, only need to build against one MPI
+          - mpi: mvapich
+          # In future, maybe we test against many spack versions
+          - spack_version: v0.23.1
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure Clang compiler
-        if: matrix.compiler == 'clang'
+        if: matrix.compiler == 'llvm'
         run: sudo apt-get install -y clang lld
 
       - name: Configure Intel oneAPI compiler
@@ -57,7 +65,7 @@ jobs:
       - name: Setup Spack
         run: |
           # We need to pin this version to get effective re-use of our local cache
-          git clone -c feature.manyFiles=true --depth=2 --branch v1.0.0-alpha.4 https://github.com/spack/spack.git ${SPACK_ROOT}
+          git clone -c feature.manyFiles=true --depth=2 --branch ${{ matrix.spack_version }} https://github.com/spack/spack.git ${SPACK_ROOT}
           echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
           # Clean up Android SDK install (confuses Spack MKL link line?)
@@ -74,23 +82,29 @@ jobs:
             GPU_VARIANT=""
           fi
 
+          # Develop requires ^compiler, not %compiler
+          if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
+            PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+          else
+            PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+          fi
+
+
           mkdir -p ${SPACK_ENV}
           # I don't know why spack struggles so much with the environment creation...
           cd ${SPACK_ENV}
           # We could configure settings here, but that's done through CLI later
           # We at least want our core spec to be here or else env looks empty...
-          cat << EOF> spack.yaml
+          cat << EOF > spack.yaml
           spack:
-            specs: 
-              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+            specs:
+              - ${PALACE_SPEC}
+              - local.gslib+shared
+              - local.libceed
             view: false
             concretizer:
               reuse: false
               unify: true
-              splice:
-                automatic: false
-              duplicates:
-                strategy: none
               targets:
                 granularity: generic
             config:
@@ -100,39 +114,48 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
+              rocblas:
+                require: ~tensile
           EOF
-
           cd -
 
-          # Set up Spack to use external packages (MPI, etc.) and local Palace package
-          # recipe
+          # Need to get the actual local palace build here
           spack -e ${SPACK_ENV} repo add spack/local
 
           # Using `spack develop` in order to have an in-source build
-          spack -e ${SPACK_ENV} develop --path=$(pwd) \
-            local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
-            $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+          spack -e ${SPACK_ENV} develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
-      - name: Configure Binary Mirrors / External Packages
+      - name: Configure External Packages
         run: |
-          # Find all externals to reduce build times
-          # OpenSSL and Python are particularly annoying
-          # Curl seems unecessary...
+          # These seem to cause build issues.
+          # TODO: re-visit these once builds are working
           spack -e ${SPACK_ENV} external find --all \
             --exclude openssl \
+            --exclude openssh \
             --exclude python \
             --exclude ncurses \
+            --exclude bzip2 \
+            --exclude xz \
             --exclude curl
+
+      - name: Configure Compilers
+        run: spack -e ${SPACK_ENV} compiler find && spack -e ${SPACK_ENV} compiler list
+
+      - name: Configure Binary Mirrors
+        run: |
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
-          spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
+          # TODO: maybe `--autopush` would be easiest to manage here
+          spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}-${{ matrix.spack_version }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # Install using the public buildcache as well
-          # Normally we want to install everything ourself the first time anyway
-          # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          # DON'T USE THE DEVELOP PUBLIC CACHE - If having issues, comment this out
+          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ matrix.spack_version }}
           # If we cached these, that would be faster and safer
-          # spack -e ${SPACK_ENV} buildcache keys --install --trust
+          spack -e ${SPACK_ENV} buildcache keys --install --trust
+
+      - name: Bootstrap
+        run: spack -e ${SPACK_ENV} bootstrap now && spack spec zlib
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
@@ -140,49 +163,27 @@ jobs:
         run: spack -e ${SPACK_ENV} concretize -f
 
       - name: Build Dependencies
-        run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
-
-      - name: Push Dependencies
-        # Sometimes a dependency will fail to build
-        # We should still push any new dependencies we built successfully
-        if: "!cancelled()"
-        # We should sign our pushes here if we want to make these publically accessible
-        run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
+        run: |
+          spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Build Palace
         # Build palace from source using this current directory
         run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
-      - name: Run Unit Tests
-        # Since we ran `spack develop` here, we have the build dir ready to run tests in
-        run: |
-          # Need to load the MPI built by spack
-          spack -e ${SPACK_ENV} --sh load ${{ matrix.mpi }} > env.txt
-          source env.txt
-          cd $(spack -e ${SPACK_ENV} location --build-dir local.palace@develop)
-          ls -al
-          cd ./test/unit
-          mpirun -np 2 ./unit-tests --skip-benchmarks
-          cd -
-
+      # Should we run unit tests as well here?
       - name: Run Integration Tests
         if: matrix.gpu == 'none' # Skip tests for GPU builds
         env:
           NUM_PROC_TEST_MAX: "8"
         run: |
-          # Configure environment
-          export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
-            NUM_PROC_TEST=$NUM_PROC_TEST_MAX
-          fi
-
-          spack load palace
-
+          eval $(spack -e ${SPACK_ENV} load --sh palace)
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
-      - name: Push Palace
-        # Should also sign here...
-        # --force here since we want the latest version in the buildcache...
-        run: spack -e ${SPACK_ENV} buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
+      - name: Update Cache
+        # Sometimes a dependency will fail to build
+        # We should still push any new dependencies we built successfully
+        if: "!cancelled()"
+        # We should sign our pushes here if we want to make these publically accessible
+        run: spack -e ${SPACK_ENV} buildcache push --with-build-dependencies --unsigned --update-index local-buildcache

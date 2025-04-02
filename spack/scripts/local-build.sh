@@ -83,12 +83,6 @@ fi
 
 echo $SPACK_ENV
 
-# Can easily change compiler / MPI / blas spec
-# NOTES:
-#   - intel-oneapi-mkl only works on Linux / x86_64
-# PALACE_SPEC="local.palace@develop ^intel-oneapi-mkl ^openmpi"
-PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
-
 FRESH_INSTALL=false
 
 while [[ $# -gt 0 ]]; do
@@ -98,6 +92,17 @@ while [[ $# -gt 0 ]]; do
     FRESH_INSTALL=true
     shift
     ;;
+  -ff)
+    echo "-ff set. Running additional spack clean"
+    FRESH_INSTALL=true
+    FORCE_FRESH_INSTALL=true
+    shift
+    ;;
+  -cuda)
+    echo "-cuda set. Running with cuda build"
+    CUDA=true
+    shift
+    ;;
   *)
     echo "Error: invalid option: $1"
     return 1
@@ -105,15 +110,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Can easily change compiler / MPI / blas spec
+# NOTES:
+#   - intel-oneapi-mkl only works on Linux / x86_64
+BLAS_SPEC="openblas"
+
+if [ ${CUDA} = "true" ]; then
+  GPU="+cuda cuda_arch=89"
+else
+  GPU=""
+fi
+PALACE_SPEC="local.palace@develop${GPU} ^${BLAS_SPEC} ^openmpi"
+
 # Prevents loading ~/.spack
 export SPACK_DISABLE_LOCAL_CONFIG=1
-
-# Configured temporary directories for building
-# Will use `/dev/shm` for now, but might need more space...
-export TMP=/tmp/spack-tmp
-export TMPDIR=${TMP}
-export tempdir=${TMP}
-mkdir -p $TMP
 
 # Should do a fresh install if no spack.yaml in env
 if [ ! -f ${PWD}/${GARCH}/spack.yaml ]; then
@@ -121,15 +131,14 @@ if [ ! -f ${PWD}/${GARCH}/spack.yaml ]; then
 fi
 
 if [ ${FRESH_INSTALL} = "true" ]; then
-
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     if [ -d ${SPACK_ENV} ]; then
       rm -rfd ${SPACK_ENV}
     fi
     mkdir -p ${SPACK_ENV}
-    export TMP_SPACK_ENV=${SPACK_ENV}
+    TMP_SPACK_ENV=${SPACK_ENV}
   else
-    export TMP_SPACK_ENV=${PWD}/${GARCH}
+    TMP_SPACK_ENV=${PWD}/${GARCH}
     if [ -d ${TMP_SPACK_ENV} ]; then
       rm -rfd ${TMP_SPACK_ENV}
     fi
@@ -139,10 +148,13 @@ if [ ${FRESH_INSTALL} = "true" ]; then
   # To enable / disable using a build cache aggressively, toggle:
   #   - reuse: true
   #   - splce: automatic: true
+  # TODO: What versions of Palace support corresponding MFEM versions?
   cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
   spack:
     specs: 
       - ${PALACE_SPEC}
+      - local.gslib+shared
+      - local.libceed
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -159,44 +171,45 @@ if [ ${FRESH_INSTALL} = "true" ]; then
         strategy: none
       targets:
         granularity: generic
-    config:
-      source_cache: ${TMP}
-      misc_cache: ${TMP}
-      build_stage: ${TMP}
     packages:
       petsc:
         require: ~hdf5
+      rocblas:
+        require: ~tensile
+      openmpi:
+        require: ~cuda
     mirrors:
         develop: https://binaries.spack.io/develop
 EOF
 
-  # We don't need to clean every time, but might as well to avoid issues...
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -m
-  # *** The next one removes everything spack has installed ***
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
+  if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
+    ${SPACK_COMMAND} clean -abm
+    rm -rfd ~/.spack
+  fi
 
-  # Configure externals / compiler
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
+
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
-    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
-    PACKAGES=(
-      "openblas"
-      "curl"
-    )
-    for PKG in "${PACKAGES[@]}"; do
-      PKG_PATH=$(brew --prefix ${PKG})
-      ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
-      # We could also add specification of virtual providers here...
-      ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
-    done
-  else
-    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl
+    if command -v brew 2>&1 >/dev/null; then
+      PACKAGES=(
+        "openblas"
+        "curl"
+      )
+      for PKG in "${PACKAGES[@]}"; do
+        PKG_PATH=$(brew --prefix ${PKG})
+        ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
+        # We could also add specification of virtual providers here...
+        ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
+      done
+    fi
   fi
 
   # Add public mirror to help with build times
-  ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+  if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
+    ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+  fi
 
   # TODO: FIX
   # if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
@@ -216,13 +229,15 @@ EOF
   echo "NOTE: Even though it doesn't say palace.local, it's using that version."
   echo "If you are happy with this concretization, press Enter to continue..."
   read -r
-  echo "Installing..."
-  echo ""
 fi
 
-${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete
+echo
+echo "Installing Palace..."
+echo
 
-DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
+${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --only dependencies --show-log-on-error
+${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
+DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) location --build-dir ${PALACE_SPEC})
 
 echo
 echo "Installation done / cancelled / failed. Feel free to re-run build with:"
@@ -237,3 +252,5 @@ echo "NOTE: The path in the cd command is also in ./build-$(${SPACK_COMMAND} arc
 echo "      which is symlinked to the one output above."
 echo
 echo "NOTE: Just re-run the script if you are using the container script"
+
+${SPACK_COMMAND} -e ${SPACK_ENV} gc -byE
