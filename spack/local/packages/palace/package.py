@@ -60,16 +60,18 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build with GSLIB library for high-order field interpolation",
     )
 
-    # Palace always builds its own internal MFEM, libCEED, and GSLIB
+    # TODO: Apply patches for all packages...
     # TODO: We should actually use these as externals...
-    # conflicts("mfem")
-    # conflicts("libceed")
-    # conflicts("gslib")
-    depends_on("mfem")
-    depends_on("libceed")
-    depends_on("gslib")
 
-    # Dependencies
+    # These are our hard Dependencies
+    depends_on("mfem@git.v4.8-rc0=develop")
+    depends_on("mfem+metis+zlib~fms")
+    depends_on("metis@5:")
+    depends_on("hypre~complex")
+    depends_on("libxsmm@=main")
+    depends_on("gslib+mpi")
+    depends_on("libceed@git.v0.13.0-rc.1=develop")
+    depends_on("libceed+libxsmm")
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
@@ -77,6 +79,23 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("nlohmann-json")
     depends_on("fmt")
     depends_on("eigen")
+
+    # Conditional base dependencies
+    depends_on("slepc", when="+slepc")
+    depends_on("strumpack+butterflypack+zfp+parmetis", when="+strumpack")
+    depends_on("mumps+metis+parmetis", when="+mumps")
+    depends_on("petsc+mpi+double+complex", when="+slepc")
+    depends_on("arpack-ng+mpi+icb@develop", when="+arpack")
+
+    # Further propagate variants.
+    for pkg in ["mumps", "strumpack", "superlu-dist", "gslib"]:
+        depends_on(f"mfem+{pkg}", when=f"+{pkg}")
+
+    with when("build_type=Debug"):
+        depends_on("mfem+libunwind")
+
+    for pkg in ["magma"]:
+        depends_on(f"libceed+{pkg}", when=f"+{pkg}")
 
     # Magma is our GPU backend, so we need it when gpus are enabled
     conflicts("~magma", when="+cuda")
@@ -99,23 +118,21 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     conflicts("^slepc+arpack", msg="Palace requires SLEPc without ARPACK")
 
-    # Slepc is a simpler dependency
-    depends_on("slepc", when="+slepc")
-
     # Propogate important variants
     # First element is what we depend on
     # Second is when we depend on it. If no val, always depend on it / no variant controls it
     for pkg in [
-        ("metis@5:", ""),
-        ("hypre~complex", ""),
+        ("metis", ""),
+        ("hypre", ""),
         ("superlu-dist", "+superlu-dist"),
-        ("strumpack+butterflypack+zfp+parmetis", "+strumpack"),
+        ("strumpack", "+strumpack"),
         ("sundials", "+sundials"),
-        ("mumps+metis+parmetis", "+mumps"),
-        ("petsc+mpi+double+complex", "+slepc"),  # Need PETSc when we use slepc
-        ("arpack-ng+mpi+icb@develop", "+arpack"),
-        ("libxsmm@=main", ""),  # LIBXSMM has a older main-DATE version
+        ("mumps", "+mumps"),
+        ("petsc", "+slepc"),  # Need PETSc when we use slepc
+        ("arpack-ng", "+arpack"),
+        ("libxsmm", ""),  # LIBXSMM has a older main-DATE version
         ("magma", "+magma"),
+        ("mfem", ""),
     ]:
         depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
         depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
@@ -129,12 +146,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"{pkg[0]}+mixedint", when=f"{pkg[1]}+int64")
             depends_on(f"{pkg[0]}~mixedint", when=f"{pkg[1]}~int64")
         if pkg[0] in [
-            "hypre~complex",
+            "hypre",
             "suprelu-dist",
-            "strumpack+butterflypack+zfp+parmetis",
+            "strumpack",
             "sundials",
-            "mumps+metis+parmetis",
-            "petsc+mpi+double+complex",
+            "mumps",
+            "petsc",
+            "mfem",
         ]:
             depends_on(f"{pkg[0]}+openmp", when=f"{pkg[1]}+openmp")
             depends_on(f"{pkg[0]}~openmp", when=f"{pkg[1]}~openmp")
@@ -154,13 +172,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # Magma is at the core of our GPU backend, so that's our ~/+gpu variant...
     with when("+magma"):
         for gpu_pkg in [
-            ("hypre~complex", ""),
+            ("hypre", ""),
             ("superlu-dist", "+superlu-dist"),
-            ("strumpack+butterflypack+zfp+parmetis", "+strumpack"),
+            ("strumpack", "+strumpack"),
             ("sundials", "+sundials"),
             ("slepc", "+slepc"),
-            ("petsc+mpi+double+complex", "+slepc"),  # Need PETSc when we use slepc
+            ("petsc", "+slepc"),  # Need PETSc when we use slepc
             ("magma", "+magma"),
+            ("mfem", ""),
+            ("libceed", ""),
         ]:
             with when("+cuda"):
                 for arch in CudaPackage.cuda_arch_values:
