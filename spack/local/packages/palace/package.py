@@ -103,7 +103,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # First element is what we depend on
     # Second is when we depend on it. If no val, always depend on it / no variant controls it
     for pkg in [
-        ("metis@5:+metis+parmetis", ""),
+        ("metis@5:", ""),
         ("hypre~complex", ""),
         ("superlu-dist", "+superlu-dist"),
         ("strumpack+butterflypack+zfp+parmetis", "+strumpack"),
