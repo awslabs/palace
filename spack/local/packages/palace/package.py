@@ -208,7 +208,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
-            self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
+            self.define("PALACE_WITH_LIBXSMM", True),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
