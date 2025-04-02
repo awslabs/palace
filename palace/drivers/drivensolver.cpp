@@ -466,7 +466,8 @@ void DrivenSolver::PrintPROMMatrices(const RomOperator &prom_op)
     return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
   };
 
-  // De-normalize port voltages.
+  // De-normalize port voltages. Define so that 1.0 on port i corresponds to full
+  // (un-normalized solution).
   Eigen::VectorXd v_conc(prom_size);
   for (long j = 0; j < prom_size; j++)
   {
