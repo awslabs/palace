@@ -166,13 +166,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 for arch in CudaPackage.cuda_arch_values:
                     cuda_variant = f"+cuda cuda_arch={arch}"
                     depends_on(
-                        f"{gpu_pkg[0]}{cuda_variant}", when=f"{gpu_pkg[0]}{gpu_pkg[1]}"
+                        f"{gpu_pkg[0]}{cuda_variant}",
+                        when=f"{gpu_pkg[1]}{cuda_variant}",
                     )
             with when("+rocm"):
                 for arch in ROCmPackage.amdgpu_targets:
                     rocm_variant = f"+rocm amdgpu_target={arch}"
                     depends_on(
-                        f"{gpu_pkg[0]}{rocm_variant}", when=f"{gpu_pkg[0]}{gpu_pkg[1]}"
+                        f"{gpu_pkg[0]}{rocm_variant}",
+                        when=f"{gpu_pkg[0]}{rocm_variant}",
                     )
 
     def cmake_args(self):
