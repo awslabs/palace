@@ -34,7 +34,7 @@ private:
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
-  void PrintPROMMatrices(const RomOperator &prom_op);
+  void PrintPROMMatrices(const RomOperator &prom_op) const;
 
 public:
   using BaseSolver::BaseSolver;
