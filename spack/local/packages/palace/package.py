@@ -99,6 +99,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     conflicts("^slepc+arpack", msg="Palace requires SLEPc without ARPACK")
 
+    # Slepc is a simpler dependency
+    depends_on("slepc", when="+slepc")
+
     # Propogate important variants
     # First element is what we depend on
     # Second is when we depend on it. If no val, always depend on it / no variant controls it
@@ -109,7 +112,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("strumpack+butterflypack+zfp+parmetis", "+strumpack"),
         ("sundials", "+sundials"),
         ("mumps+metis+parmetis", "+mumps"),
-        ("slepc", "+slepc"),
         ("petsc+mpi+double+complex", "+slepc"),  # Need PETSc when we use slepc
         ("arpack-ng+mpi+icb@develop", "+arpack"),
         ("libxsmm@=main", ""),  # LIBXSMM has a older main-DATE version
