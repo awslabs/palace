@@ -82,9 +82,10 @@ jobs:
           cat << EOF> spack.yaml
           spack:
             specs:
-              - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+              - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
               - libceed@git.v0.13.0-rc.1=develop
               - mfem@git.v4.8-rc0=develop 
+              - libxsmm@git.main=main
             view: false
             concretizer:
               reuse: false
