@@ -81,8 +81,10 @@ jobs:
           # We at least want our core spec to be here or else env looks empty...
           cat << EOF> spack.yaml
           spack:
-            specs: 
+            specs:
               - local.palace@develop $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+              - libceed@git.v0.13.0-rc.1=develop
+              - mfem@git.v4.8-rc0=develop 
             view: false
             concretizer:
               reuse: false

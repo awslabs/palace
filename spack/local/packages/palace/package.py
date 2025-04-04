@@ -139,7 +139,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("petsc", "+slepc"),  # Need PETSc when we use slepc
         ("arpack-ng", "+arpack"),
         ("magma", "+magma"),
-        # ("mfem", ""),
+        ("mfem", ""),
     ]:
         depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
         depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
@@ -186,8 +186,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ("slepc", "+slepc"),
             ("petsc", "+slepc"),  # Need PETSc when we use slepc
             ("magma", "+magma"),
-            # ("mfem", ""),
-            # ("libceed", ""),
+            ("mfem", ""),
+            ("libceed", ""),
         ]:
             with when("+cuda"):
                 for arch in CudaPackage.cuda_arch_values:
