@@ -13,6 +13,7 @@ concurrency:
 env:
   SPACK_VERSION: v0.23.1
   SPACK_COLOR: always
+  # Note that each spack version needs it's own registry
   REGISTRY: ghcr.io/awslabs/palace
   SPACK_ROOT: /opt/spack
   SPACK_CACHE: /opt/spack-cache
@@ -63,6 +64,8 @@ jobs:
 
           # Clean up Android SDK install (confuses Spack MKL link line?)
           sudo rm -rf $ANDROID_HOME
+
+          spack --debug bootstrap now
 
       - name: Setup Environment
         run: |
@@ -128,7 +131,7 @@ jobs:
             --exclude curl
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
-          spack -e ${{ env.SPACK_ENV }} mirror add local-buildcache oci://${{ env.REGISTRY }}
+          spack -e ${{ env.SPACK_ENV }} mirror add local-buildcache oci://${{ env.REGISTRY }}-${{ env.SPACK_VERSION }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${{ env.SPACK_ENV }} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # Install using the public buildcache as well
