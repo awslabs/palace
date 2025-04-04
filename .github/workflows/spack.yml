@@ -83,7 +83,10 @@ jobs:
           cat << EOF> spack.yaml
           spack:
             specs:
-              - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+          # FOR NEWEST SPACK, NEED ^COMPILER
+          # - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
+          # FOR OLDER SPACK, NEED %COMPILER
+              - local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}
               - libceed@6b50d2be0e7f583c08aab912c64a7bf4147ef2ad=develop
               - mfem@c87ded944ff903f7ebcb0511c86883a989a18bb0=develop
               - libxsmm@main
@@ -91,10 +94,6 @@ jobs:
             concretizer:
               reuse: false
               unify: true
-              splice:
-                automatic: false
-              duplicates:
-                strategy: none
               targets:
                 granularity: generic
             config:
