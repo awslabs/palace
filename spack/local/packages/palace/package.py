@@ -64,14 +64,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # TODO: We should actually use these as externals...
 
     # These are our hard Dependencies
+    # TODO: Need to specify @git.v4.8-rc0=develop (maybe only in spack.yaml)
     # depends_on("mfem@git.v4.8-rc0=develop")
-    # depends_on("mfem+metis+zlib~fms")
+    depends_on("mfem@develop+metis+zlib~fms")
     depends_on("metis@5:")
     depends_on("hypre~complex")
-    depends_on("libxsmm@=main")
     depends_on("gslib+mpi")
-    # depends_on("libceed@git.v0.13.0-rc.1=develop")
-    # depends_on("libceed+libxsmm")
+
+    # LibCEED is a core dep
+    # TODO: We need to specify @git.v0.13.0-rc.1=develop (maybe only in spack.yaml)
+    depends_on("libceed@develop")
+    # Spack says that libxsmm isn't available on Darwin...
+    depends_on("libceed~libxsmm", when="platform=darwin")
+    depends_on("libceed+libxsmm", when="platform=linux")
+    depends_on("libxsmm@main", when="platform=linux")
+    # Are there other operating systems that we can add support to (windows)?
+
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
@@ -88,14 +96,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("arpack-ng+mpi+icb@develop", when="+arpack")
 
     # Further propagate variants.
-    # for pkg in ["mumps", "strumpack", "superlu-dist", "gslib"]:
-    #     depends_on(f"mfem+{pkg}", when=f"+{pkg}")
+    for pkg in ["mumps", "strumpack", "superlu-dist", "gslib"]:
+        depends_on(f"mfem+{pkg}", when=f"+{pkg}")
 
-    # with when("build_type=Debug"):
-    #     depends_on("mfem+libunwind")
+    with when("build_type=Debug"):
+        depends_on("mfem+libunwind")
 
-    # for pkg in ["magma"]:
-    #     depends_on(f"libceed+{pkg}", when=f"+{pkg}")
+    for pkg in ["magma"]:
+        depends_on(f"libceed+{pkg}", when=f"+{pkg}")
 
     # Magma is our GPU backend, so we need it when gpus are enabled
     conflicts("~magma", when="+cuda")
@@ -130,7 +138,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("mumps", "+mumps"),
         ("petsc", "+slepc"),  # Need PETSc when we use slepc
         ("arpack-ng", "+arpack"),
-        ("libxsmm", ""),  # LIBXSMM has a older main-DATE version
         ("magma", "+magma"),
         # ("mfem", ""),
     ]:
@@ -138,7 +145,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
 
         # For complex
-        if pkg[0] in ["metis", "superlu-dist", "petsc+mpi+double+complex"]:
+        if pkg[0] in ["metis", "superlu-dist", "petsc"]:
             depends_on(f"{pkg[0]}+int64", when=f"{pkg[1]}+int64")
             depends_on(f"{pkg[0]}~int64", when=f"{pkg[1]}~int64")
         # Hypre is special
