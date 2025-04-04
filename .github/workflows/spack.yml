@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  SPACK_VERSION: v0.23.1
   SPACK_COLOR: always
   REGISTRY: ghcr.io/awslabs/palace
   SPACK_ROOT: /opt/spack
@@ -57,7 +58,7 @@ jobs:
       - name: Setup Spack
         run: |
           # We need to pin this version to get effective re-use of our local cache
-          git clone -c feature.manyFiles=true --depth=2 --branch v1.0.0-alpha.4 https://github.com/spack/spack.git ${SPACK_ROOT}
+          git clone -c feature.manyFiles=true --depth=2 --branch ${{ env.SPACK_VERSION }} https://github.com/spack/spack.git ${SPACK_ROOT}
           echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
 
           # Clean up Android SDK install (confuses Spack MKL link line?)
@@ -74,9 +75,9 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          mkdir -p ${SPACK_ENV}
+          mkdir -p ${{ env.SPACK_ENV }}
           # I don't know why spack struggles so much with the environment creation...
-          cd ${SPACK_ENV}
+          cd ${{ env.SPACK_ENV }}
           # We could configure settings here, but that's done through CLI later
           # We at least want our core spec to be here or else env looks empty...
           cat << EOF> spack.yaml
@@ -85,7 +86,7 @@ jobs:
               - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
               - libceed@6b50d2be0e7f583c08aab912c64a7bf4147ef2ad=develop
               - mfem@c87ded944ff903f7ebcb0511c86883a989a18bb0=develop
-              - libxsmm@6ea2c101ee6774a240ae6b4fcd8728d4a608e3cc=main
+              - libxsmm@main
             view: false
             concretizer:
               reuse: false
@@ -109,10 +110,10 @@ jobs:
 
           # Set up Spack to use external packages (MPI, etc.) and local Palace package
           # recipe
-          spack -e ${SPACK_ENV} repo add spack/local
+          spack -e ${{ env.SPACK_ENV }} repo add spack/local
 
           # Using `spack develop` in order to have an in-source build
-          spack -e ${SPACK_ENV} develop --path=$(pwd) \
+          spack -e ${{ env.SPACK_ENV }} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
             $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
 
@@ -121,48 +122,48 @@ jobs:
           # Find all externals to reduce build times
           # OpenSSL and Python are particularly annoying
           # Curl seems unecessary...
-          spack -e ${SPACK_ENV} external find --all \
+          spack -e ${{ env.SPACK_ENV }} external find --all \
             --exclude openssl \
             --exclude python \
             --exclude ncurses \
             --exclude curl
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
-          spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}
+          spack -e ${{ env.SPACK_ENV }} mirror add local-buildcache oci://${{ env.REGISTRY }}
           # Secrets are auto-configured by GitHub pipelines / permissions
-          spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
+          spack -e ${{ env.SPACK_ENV }} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # Install using the public buildcache as well
           # Normally we want to install everything ourself the first time anyway
-          # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          # spack -e ${{ env.SPACK_ENV }} mirror add spack https://binaries.spack.io/develop
           # If we cached these, that would be faster and safer
-          # spack -e ${SPACK_ENV} buildcache keys --install --trust
+          # spack -e ${{ env.SPACK_ENV }} buildcache keys --install --trust
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
         # Unfortunately it then becomes difficult to know when to re-concretize.
-        run: spack -e ${SPACK_ENV} concretize -f
+        run: spack -e ${{ env.SPACK_ENV }} concretize -f
 
       - name: Build Dependencies
-        run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+        run: spack -e ${{ env.SPACK_ENV }} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Push Dependencies
         # Sometimes a dependency will fail to build
         # We should still push any new dependencies we built successfully
         if: "!cancelled()"
         # We should sign our pushes here if we want to make these publically accessible
-        run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
+        run: spack -e ${{ env.SPACK_ENV }} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
 
       - name: Build Palace
         # Build palace from source using this current directory
-        run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
+        run: spack -e ${{ env.SPACK_ENV }} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
         run: |
           # Need to load the MPI built by spack
-          spack -e ${SPACK_ENV} --sh load ${{ matrix.mpi }} > env.txt
+          spack -e ${{ env.SPACK_ENV }} --sh load ${{ matrix.mpi }} > env.txt
           source env.txt
-          cd $(spack -e ${SPACK_ENV} location --build-dir local.palace@develop)
+          cd $(spack -e ${{ env.SPACK_ENV }} location --build-dir local.palace@develop)
           ls -al
           cd ./test/unit
           mpirun -np 2 ./unit-tests --skip-benchmarks
@@ -188,4 +189,4 @@ jobs:
       - name: Push Palace
         # Should also sign here...
         # --force here since we want the latest version in the buildcache...
-        run: spack -e ${SPACK_ENV} buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
+        run: spack -e ${{ env.SPACK_ENV }} buildcache push --force --only package --with-build-dependencies --unsigned --update-index local-buildcache
