@@ -65,10 +65,11 @@ jobs:
           # Clean up Android SDK install (confuses Spack MKL link line?)
           sudo rm -rf $ANDROID_HOME
 
-          spack --debug bootstrap now
-
       - name: Setup Environment
         run: |
+
+          spack --debug bootstrap now
+
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
             GPU_VARIANT="+cuda cuda_arch=70"
