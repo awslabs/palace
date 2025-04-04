@@ -83,9 +83,9 @@ jobs:
           spack:
             specs:
               - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
-              - libceed@git.v0.13.0-rc.1=develop
-              - mfem@git.v4.8-rc0=develop 
-              - libxsmm@git.main=main
+              - libceed@6b50d2be0e7f583c08aab912c64a7bf4147ef2ad=develop
+              - mfem@c87ded944ff903f7ebcb0511c86883a989a18bb0=develop
+              - libxsmm@6ea2c101ee6774a240ae6b4fcd8728d4a608e3cc=main
             view: false
             concretizer:
               reuse: false
