@@ -88,8 +88,8 @@ jobs:
           # - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
           # FOR OLDER SPACK, NEED %COMPILER
               - local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}
-              - libceed@6b50d2be0e7f583c08aab912c64a7bf4147ef2ad=develop
-              - mfem@c87ded944ff903f7ebcb0511c86883a989a18bb0=develop
+              - libceed@develop
+              - mfem@develop
               - libxsmm@main
             view: false
             concretizer:
