@@ -90,7 +90,7 @@ jobs:
               - local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}
               - libceed@develop
               - mfem@develop
-              - libxsmm@main
+              - libxsmm@git.main=main
             view: false
             concretizer:
               reuse: false
