@@ -13,3 +13,4 @@ darwin*
 linux*
 .secrets
 config.yaml
+.devcontainer

@@ -132,11 +132,14 @@ jobs:
           spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}-${{ env.SPACK_VERSION }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # Install using the public buildcache as well
-          # Normally we want to install everything ourself the first time anyway
+          # Install using the public buildcache as well - don't use develop buildcache
           # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ env.SPACK_VERSION }}
           # If we cached these, that would be faster and safer
-          # spack -e ${SPACK_ENV} buildcache keys --install --trust
+          spack -e ${SPACK_ENV} buildcache keys --install --trust
+
+      - name: Bootstrap
+        run: spack --debug -e ${SPACK_ENV} bootstrap now
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
