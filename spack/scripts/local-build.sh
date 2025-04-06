@@ -147,6 +147,7 @@ if [ ${FRESH_INSTALL} = "true" ]; then
       - libceed@develop
       - mfem@develop
       - libxsmm@git.main=main
+      - local.gslib+shared
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -181,8 +182,8 @@ EOF
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Configure externals / compiler
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl --exclude openblas --exclude openssh
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
-    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
     if command -v brew 2>&1 >/dev/null; then
@@ -197,8 +198,6 @@ EOF
         ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
       done
     fi
-  else
-    ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl
   fi
 
   # Add public mirror to help with build times

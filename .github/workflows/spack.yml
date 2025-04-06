@@ -87,10 +87,12 @@ jobs:
           # FOR NEWEST SPACK, NEED ^COMPILER
           # - local.palace@develop ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}
           # FOR OLDER SPACK, NEED %COMPILER
+          # For any local.* packages, we should upstream fixes as needed
               - local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}
               - libceed@develop
               - mfem@develop
               - libxsmm@git.main=main
+              - local.gslib+shared
             view: false
             concretizer:
               reuse: false
@@ -121,6 +123,7 @@ jobs:
         run: |
           spack -e ${SPACK_ENV} external find --all \
             --exclude openssl \
+            --exclude openssh \
             --exclude python \
             --exclude ncurses \
             --exclude curl

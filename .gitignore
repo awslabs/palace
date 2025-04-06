@@ -14,3 +14,4 @@ linux*
 .secrets
 config.yaml
 .devcontainer
+*__pycache__*

@@ -140,6 +140,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("arpack-ng", "+arpack"),
         ("magma", "+magma"),
         ("mfem", ""),
+        ("gslib", ""),
     ]:
         depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
         depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
