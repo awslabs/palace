@@ -152,16 +152,14 @@ jobs:
       - name: Build Blas
         run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error ${{ matrix.blas }}
 
-      - name: Load Blas
-        run: eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.blas }}) 
-
       - name: Build Dependencies
-        run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+        run: |
+          eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.blas }})
+          spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Build Palace
         # Build palace from source using this current directory
         run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
-
       - name: Run Unit Tests
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
         run: |
