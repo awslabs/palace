@@ -118,11 +118,12 @@ jobs:
             %${{ matrix.compiler }} $GPU_VARIANT ^${{ matrix.mpi }} ^${{ matrix.blas }}
 
       - name: Configure External Packages
-        run: spack -e ${SPACK_ENV} external find --all \
-          --exclude openssl \
-          --exclude python \
-          --exclude ncurses \
-          --exclude curl
+        run: |
+          spack -e ${SPACK_ENV} external find --all \
+            --exclude openssl \
+            --exclude python \
+            --exclude ncurses \
+            --exclude curl
 
       - name: Configure Compilers
         run: spack -e ${SPACK_ENV} compiler find && spack -e ${SPACK_ENV} compiler list
