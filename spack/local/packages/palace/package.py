@@ -66,7 +66,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # These are our hard Dependencies
     # TODO: Need to specify @git.v4.8-rc0=develop (maybe only in spack.yaml)
     # depends_on("mfem@git.v4.8-rc0=develop")
-    depends_on("mfem@develop+metis+zlib~fms")
+    depends_on("mfem@develop+metis+zlib~fms~libceed")
     depends_on("metis@5:")
     depends_on("hypre~complex")
     depends_on("gslib+mpi")
@@ -74,11 +74,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # LibCEED is a core dep
     # TODO: We need to specify @git.v0.13.0-rc.1=develop (maybe only in spack.yaml)
     depends_on("libceed@develop")
+    depends_on("libceed+magma", when="+magma")
     # Spack says that libxsmm isn't available on Darwin...
+    # Are there other operating systems that we can add support to (windows)?
     depends_on("libceed~libxsmm", when="platform=darwin")
     depends_on("libceed+libxsmm", when="platform=linux")
     depends_on("libxsmm@main", when="platform=linux")
-    # Are there other operating systems that we can add support to (windows)?
 
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
@@ -96,14 +97,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("arpack-ng+mpi+icb@develop", when="+arpack")
 
     # Further propagate variants.
-    for pkg in ["mumps", "strumpack", "superlu-dist", "gslib"]:
+    for pkg in ["mumps", "strumpack", "superlu-dist", "gslib", "sundials"]:
         depends_on(f"mfem+{pkg}", when=f"+{pkg}")
 
     with when("build_type=Debug"):
         depends_on("mfem+libunwind")
-
-    for pkg in ["magma"]:
-        depends_on(f"libceed+{pkg}", when=f"+{pkg}")
 
     # Magma is our GPU backend, so we need it when gpus are enabled
     conflicts("~magma", when="+cuda")
@@ -142,10 +140,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("mfem", ""),
         ("gslib", ""),
     ]:
-        depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
-        depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
+        # Everything except libceed builds shared / static
+        if pkg[0] != "libceed":
+            depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
+            depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
 
-        # For complex
+        # For complex / int64
         if pkg[0] in ["metis", "superlu-dist", "petsc"]:
             depends_on(f"{pkg[0]}+int64", when=f"{pkg[1]}+int64")
             depends_on(f"{pkg[0]}~int64", when=f"{pkg[1]}~int64")
@@ -153,6 +153,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         elif pkg[0] == "hypre~complex":
             depends_on(f"{pkg[0]}+mixedint", when=f"{pkg[1]}+int64")
             depends_on(f"{pkg[0]}~mixedint", when=f"{pkg[1]}~int64")
+
+        # OpenMP
         if pkg[0] in [
             "hypre",
             "suprelu-dist",
@@ -219,9 +221,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_WITH_LIBXSMM", True),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
+            self.define("libCEED_DIR", self.spec["libceed"].prefix),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
+            # This is an experimental flag while we transition our meta-build
+            self.define("PALACE_WITH_SPACK", True),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -264,7 +269,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 self.define("MUMPS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran")
             )
 
-        # Allow internal libCEED build to find LIBXSMM, MAGMA
+        # Configure libCEED build
         if "+libxsmm" in self.spec:
             args.append(self.define("LIBXSMM_DIR", self.spec["libxsmm"].prefix))  # type: ignore
         if "+magma" in self.spec:

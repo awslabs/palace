@@ -229,6 +229,7 @@ ${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.
 # TODO: Configure for container build (probably best in another script...)
 eval $(${SPACK_COMMAND} -e ${SPACK_ENV} load --sh intel-oneapi-mkl)
 # Can't install Palace in parallel due to CMake race condition
+${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --show-log-on-error --only dependencies
 ${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
 
 DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
