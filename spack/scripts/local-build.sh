@@ -86,8 +86,9 @@ echo $SPACK_ENV
 # Can easily change compiler / MPI / blas spec
 # NOTES:
 #   - intel-oneapi-mkl only works on Linux / x86_64
-# PALACE_SPEC="local.palace@develop ^intel-oneapi-mkl ^openmpi"
-PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
+BLAS_SPEC="intel-oneapi-mkl"
+PALACE_SPEC="local.palace@develop ^${BLAS_SPEC} ^openmpi"
+# PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
 
 FRESH_INSTALL=false
 
@@ -143,6 +144,9 @@ if [ ${FRESH_INSTALL} = "true" ]; then
   spack:
     specs: 
       - ${PALACE_SPEC}
+      - libceed@develop
+      - mfem@develop
+      - libxsmm@git.main=main
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -181,16 +185,18 @@ EOF
     ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
-    PACKAGES=(
-      "openblas"
-      "curl"
-    )
-    for PKG in "${PACKAGES[@]}"; do
-      PKG_PATH=$(brew --prefix ${PKG})
-      ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
-      # We could also add specification of virtual providers here...
-      ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
-    done
+    if command -v brew 2>&1 >/dev/null; then
+      PACKAGES=(
+        "openblas"
+        "curl"
+      )
+      for PKG in "${PACKAGES[@]}"; do
+        PKG_PATH=$(brew --prefix ${PKG})
+        ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
+        # We could also add specification of virtual providers here...
+        ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
+      done
+    fi
   else
     ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl
   fi
@@ -220,6 +226,9 @@ EOF
   echo ""
 fi
 
+${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete ${BLAS_SPEC}
+# TODO: Configure for container build (probably best in another script...)
+eval $(${SPACK_COMMAND} -e ${SPACK_ENV} load --sh intel-oneapi-mkl)
 ${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete
 
 DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})

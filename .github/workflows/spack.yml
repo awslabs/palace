@@ -159,6 +159,9 @@ jobs:
         # We should sign our pushes here if we want to make these publically accessible
         run: spack -e ${SPACK_ENV} buildcache push --only dependencies --with-build-dependencies --unsigned --update-index local-buildcache
 
+      - name: Load Blas
+        run: eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.blas }}) 
+
       - name: Build Palace
         # Build palace from source using this current directory
         run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
