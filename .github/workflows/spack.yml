@@ -167,8 +167,7 @@ jobs:
         # Since we ran `spack develop` here, we have the build dir ready to run tests in
         run: |
           # Need to load the MPI built by spack
-          spack -e ${SPACK_ENV} --sh load ${{ matrix.mpi }} > env.txt
-          source env.txt
+          eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.mpi }})
           cd $(spack -e ${SPACK_ENV} location --build-dir local.palace@develop)
           ls -al
           cd ./test/unit
