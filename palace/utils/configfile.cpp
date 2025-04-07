@@ -10,7 +10,6 @@
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
-#include "models/portexcitationhelper.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
 // value corresponding to the string cannot be found. Also adds an overload for stream
@@ -921,9 +920,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-ExcitationIdx ParsePortExcitation(json::iterator &port_it,
-                                  TriBool &excitation_used_bool_input,
-                                  ExcitationIdx default_excitation = ExcitationIdx(0))
+int ParsePortExcitation(json::iterator &port_it, int default_excitation)
 {
   auto it_excitation = port_it->find("Excitation");
   if (it_excitation == port_it->end())
@@ -931,79 +928,54 @@ ExcitationIdx ParsePortExcitation(json::iterator &port_it,
     // Keep default; don't set input flag.
     return default_excitation;
   }
-  // For error printing.
-  int port_idx = port_it->at("Index");
-
-  if (it_excitation->is_boolean())
+  else if (it_excitation->is_boolean())
   {
-    if (excitation_used_bool_input == TriBool::Uninitialized)
-    {
-      excitation_used_bool_input = TriBool::True;
-    }
-    MFEM_VERIFY(excitation_used_bool_input == TriBool::True,
-                fmt::format("\"Excitation\" on port index {:d} specified with a bool after "
-                            "using integers; consistently use either one or the other!",
-                            port_idx));
-    return ExcitationIdx(it_excitation->get<bool>());  // 0 false; 1 true
+    return int(it_excitation->get<bool>());  // 0 false; 1 true
   }
   else if (it_excitation->is_number_unsigned())
   {
-    if (excitation_used_bool_input == TriBool::Uninitialized)
-    {
-      excitation_used_bool_input = TriBool::False;
-    }
-    MFEM_VERIFY(
-        excitation_used_bool_input == TriBool::False,
-        fmt::format("\"Excitation\" on port index {:d} specified with an "
-                    "integer after using bools; consistently use either one or the other!",
-                    port_idx));
-    return it_excitation->get<ExcitationIdx>();
+    return it_excitation->get<int>();
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
                            "as a bool or unsigned (non-negative) integer; got {}",
-                           port_idx, it_excitation->dump(2)));
+                           int(port_it->at("Index")), it_excitation->dump(2)));
   }
 }
 
-LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boundaries)
+void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
-  SetUpReturnInfo out = {};
   auto port = boundaries.find("LumpedPort");
   auto terminal = boundaries.find("Terminal");
   if (port == boundaries.end() && terminal == boundaries.end())
   {
-    return out;
+    return;
   }
 
   if (port == boundaries.end())
   {
     port = terminal;
-    out.has_terminal_spec = TriBool::True;
   }
   else if (terminal == boundaries.end())  // Do nothing
   {
-    out.has_terminal_spec = TriBool::False;
   }
   else
   {
     MFEM_ABORT("Configuration file should not specify both \"LumpedPort\" and \"Terminal\" "
                "boundaries!");
   }
-  std::string err_label =
-      (out.has_terminal_spec == TriBool::True) ? "\"Terminal\"" : "\"LumpedPort\"";
-  std::string err_label_b = fmt::format("{} boundary", err_label);
-  MFEM_VERIFY(
-      port->is_array(),
-      fmt::format("{} should specify an array in the configuration file!", err_label));
+
+  std::string label = (terminal != boundaries.end()) ? "\"Terminal\"" : "\"LumpedPort\"";
+  MFEM_VERIFY(port->is_array(),
+              label << " should specify an array in the configuration file!");
   for (auto it = port->begin(); it != port->end(); ++it)
   {
-    auto index = AtIndex(it, err_label);
+    auto index = AtIndex(it, label);
     auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
     MFEM_VERIFY(ret.second, fmt::format("Repeated \"Index\" found when processing {} "
                                         "boundaries in the configuration file!",
-                                        err_label));
+                                        label));
     auto &data = ret.first->second;
     data.R = it->value("R", data.R);
     data.L = it->value("L", data.L);
@@ -1012,10 +984,8 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
 
-    data.excitation =
-        ParsePortExcitation(it, out.excitation_input_is_bool, data.excitation);
+    data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
-
     if (it->find("Attributes") != it->end())
     {
       MFEM_VERIFY(
@@ -1023,7 +993,7 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
           fmt::format(
               "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
               "{} in the configuration file!",
-              err_label_b));
+              label));
       auto &elem = data.elements.emplace_back();
       ParseElementData(*it, "Direction", terminal == boundaries.end(), elem);
     }
@@ -1033,13 +1003,13 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
       MFEM_VERIFY(elements != it->end(),
                   fmt::format("Missing top-level \"Attributes\" list or \"Elements\" for "
                               "{} in the configuration file!",
-                              err_label_b));
+                              label));
       for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     fmt::format("Missing \"Attributes\" list for {} element in "
                                 "the configuration file!",
-                                err_label_b));
+                                label));
         auto &elem = data.elements.emplace_back();
         ParseElementData(*elem_it, "Direction", terminal == boundaries.end(), elem);
 
@@ -1049,7 +1019,7 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
         elem_it->erase("CoordinateSystem");
         MFEM_VERIFY(elem_it->empty(), fmt::format("Found an unsupported configuration file "
                                                   "keyword under {} element!\n{}",
-                                                  err_label_b, elem_it->dump(2)));
+                                                  label, elem_it->dump(2)));
       }
     }
 
@@ -1069,7 +1039,7 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
     it->erase("Elements");
     MFEM_VERIFY(it->empty(),
                 fmt::format("Found an unsupported configuration file keyword under {}!\n{}",
-                            err_label, it->dump(2)));
+                            label, it->dump(2)));
 
     // Debug
     if constexpr (JSON_DEBUG)
@@ -1081,7 +1051,7 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
       std::cout << "Rs: " << data.Rs << '\n';
       std::cout << "Ls: " << data.Ls << '\n';
       std::cout << "Cs: " << data.Cs << '\n';
-      std::cout << fmt::format("Excitation: {}\n", data.excitation);
+      std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
       for (const auto &elem : data.elements)
       {
@@ -1091,7 +1061,6 @@ LumpedPortBoundaryData::SetUpReturnInfo LumpedPortBoundaryData::SetUp(json &boun
       }
     }
   }
-  return out;
 }
 
 void FloquetData::SetUp(json &boundaries)
@@ -1191,16 +1160,16 @@ PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
                             {WavePortData::EigenSolverType::SLEPC, "SLEPc"},
                             {WavePortData::EigenSolverType::ARPACK, "ARPACK"}})
 
-WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundaries)
+void WavePortBoundaryData::SetUp(json &boundaries)
 {
-  SetUpReturnInfo out{};
   auto port = boundaries.find("WavePort");
   if (port == boundaries.end())
   {
-    return out;
+    return;
   }
   MFEM_VERIFY(port->is_array(),
               "\"WavePort\" should specify an array in the configuration file!");
+
   for (auto it = port->begin(); it != port->end(); ++it)
   {
     MFEM_VERIFY(
@@ -1219,8 +1188,7 @@ WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundari
     data.d_offset = it->value("Offset", data.d_offset);
     data.eigen_type = it->value("SolverType", data.eigen_type);
 
-    data.excitation =
-        ParsePortExcitation(it, out.excitation_input_is_bool, data.excitation);
+    data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
@@ -1251,7 +1219,7 @@ WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundari
       std::cout << "Mode: " << data.mode_idx << '\n';
       std::cout << "Offset: " << data.d_offset << '\n';
       std::cout << "SolverType: " << data.eigen_type << '\n';
-      std::cout << fmt::format("Excitation: {}\n", data.excitation);
+      std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
       std::cout << "KSPTol: " << data.ksp_tol << '\n';
@@ -1259,7 +1227,6 @@ WavePortBoundaryData::SetUpReturnInfo WavePortBoundaryData::SetUp(json &boundari
       std::cout << "Verbose: " << data.verbose << '\n';
     }
   }
-  return out;
 }
 
 void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
@@ -1496,93 +1463,62 @@ void BoundaryData::SetUp(json &config)
   farfield.SetUp(*boundaries);
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
-  auto lumpedport_setup_info = lumpedport.SetUp(*boundaries);
+  lumpedport.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
   floquet.SetUp(*boundaries);
-  auto waveport_setup_info = waveport.SetUp(*boundaries);
+  waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
 
-  // Ensure consistent excitation specifier.
-  MFEM_VERIFY((lumpedport_setup_info.excitation_input_is_bool == TriBool::Uninitialized ||
-               waveport_setup_info.excitation_input_is_bool == TriBool::Uninitialized ||
-               lumpedport_setup_info.excitation_input_is_bool ==
-                   waveport_setup_info.excitation_input_is_bool),
-              "\"Excitation\" on lumped and wave ports should be specified using "
-              "either integers or using bools, but not both.")
-
   // Ensure unique indexing of lumpedport, waveport, current.
   {
-    std::vector<std::pair<int, std::string_view>> index_map;
-    std::string lumpedport_str = (lumpedport_setup_info.has_terminal_spec == TriBool::True)
-                                     ? "Terminal"
-                                     : "LumpedPort";
-    std::string waveport_str = "WavePort";
-    std::string current_str = "SurfaceCurrent";
+    std::map<int, std::string> index_map;
+    std::map<int, std::vector<int>> excitation_map;
+    const std::string lumpedport_str = "\"LumpedPort\"";
+    const std::string waveport_str = "WavePort";
+    const std::string current_str = "SurfaceCurrent";
 
     for (const auto &data : lumpedport)
     {
-      index_map.emplace_back(data.first, std::string_view(lumpedport_str));
+      auto result = index_map.insert({data.first, lumpedport_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+      excitation_map[data.second.excitation].emplace_back(data.first);
     }
     for (const auto &data : waveport)
     {
-      index_map.emplace_back(data.first, std::string_view(waveport_str));
+      auto result = index_map.insert({data.first, waveport_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+      excitation_map[data.second.excitation].emplace_back(data.first);
     }
     for (const auto &data : current)
     {
-      index_map.emplace_back(data.first, std::string_view(current_str));
+      auto result = index_map.insert({data.first, current_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
     }
-    if (!index_map.empty())
+    // Typical usecase: If each excitation is simple, S-parameters will be calculated.
+    //    If there were multiple excitations specified, check their indices match the
+    //    port indices. If there was only one, assign it.
+    bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
+                                     [](const auto &x) { return x.second.size() == 1; });
+    if (calc_s_params)
     {
-      std::sort(index_map.begin(), index_map.end(),
-                [](auto &a, auto &b) { return a.first < b.first; });
-
-      // Check all duplicates / triplicates for pretty-printing warning: Two lag iterator
-      // Future: Can make this cleaner with C++20 std::views::chunk_by and filter.
-      fmt::memory_buffer buf{};
-      auto to = [&buf](auto f, auto &&...a)  // mini-lambda for cleaner code
-      { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
-
-      for (auto it = index_map.begin(); it != index_map.end(); it++)
+      MFEM_VERIFY(excitation_map.size() == 1 ||
+                      std::all_of(excitation_map.begin(), excitation_map.end(),
+                                  [](const auto &x) { return x.first == x.second[0]; }),
+                  "If using multi-excitation for individual ports "
+                  "\"Excitation\" must match \"Index\" to avoid ambiguity!");
+      for (auto &[port_idx, lp] : lumpedport)
       {
-        auto it_1 = it;
-        while ((++it_1 != index_map.end()) && (it_1->first == it->first))
-        {
-        }
-        if (std::distance(it, it_1) > 1)
-        {
-          to(" Index {:d} specified multiple times:", it->first);
-          for (; std::distance(it, it_1) >= 1; it++)
-          {
-            to(" {},", it->second);
-          }
-          buf.resize(buf.size() - 1);  // remove trailing ","
-          to("\n");
-        }
+        if (lp.excitation != 0)
+          lp.excitation = port_idx;
       }
-      MFEM_VERIFY(buf.size() == 0,
-                  fmt::format("Port index must be unique between \"LumpedPort\"s, "
-                              "\"Terminal\"s, \"WavePort\"s, \"SurfaceCurrent\"s:\n{}",
-                              fmt::to_string(buf)));
-    }
-  }
-
-  // Typical usecase: If the excitation is specified as a bool and there is only a single
-  // excited port (lumped or wave) then set excitation index to be the port index, not 1.
-  if (lumpedport_setup_info.excitation_input_is_bool == TriBool::True ||
-      waveport_setup_info.excitation_input_is_bool == TriBool::True)
-  {
-    PortExcitationHelper excitation_view(lumpedport, waveport, current);
-    auto [is_simple, ex_idx, port_type, port_idx] = excitation_view.IsSingleSimple();
-    if (is_simple)
-    {
-      if (port_type == PortType::LumpedPort)
+      for (auto &[port_idx, wp] : waveport)
       {
-        lumpedport.at(port_idx).excitation = ExcitationIdx(port_idx);
-      }
-      else if (port_type == PortType::WavePort)
-      {
-        waveport.at(port_idx).excitation = ExcitationIdx(port_idx);
+        if (wp.excitation != 0)
+          wp.excitation = port_idx;
       }
     }
   }

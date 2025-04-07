@@ -1291,8 +1291,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   }
 }
 
-void WavePortOperator::AddExcitationBdrCoefficients(ExcitationIdx excitation_idx,
-                                                    double omega, SumVectorCoefficient &fbr,
+void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,
+                                                    SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by

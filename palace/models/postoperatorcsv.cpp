@@ -495,7 +495,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
     if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
                   solver_t == config::ProblemData::Type::TRANSIENT)
     {
-      auto ex_spec = post_op->fem_op->GetPortExcitationHelper().excitations.at(ex_idx);
+      auto ex_spec = post_op->fem_op->GetPortExcitations().excitations.at(ex_idx);
       for (const auto &idx : ex_spec.lumped_port)
       {
         port_V->table.insert(format("inc{}_{}", idx, ex_idx),
@@ -593,7 +593,7 @@ template <config::ProblemData::Type U>
 auto PostOperatorCSV<solver_t>::InitializePortS()
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
 {
-  if (!post_op->fem_op->GetPortExcitationHelper().IsMultipleSimple() ||
+  if (!post_op->fem_op->GetPortExcitations().IsMultipleSimple() ||
       !((post_op->fem_op->GetLumpedPortOp().Size() > 0) xor
         (post_op->fem_op->GetWavePortOp().Size() > 0)))
   {
@@ -812,7 +812,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
   if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
                 solver_t == config::ProblemData::Type::TRANSIENT)
   {
-    auto excitation_helper = post_op->fem_op->GetPortExcitationHelper();
+    auto excitation_helper = post_op->fem_op->GetPortExcitations();
     excitation_idx_all.clear();
     excitation_idx_all.reserve(excitation_helper.Size());
     std::transform(excitation_helper.begin(), excitation_helper.end(),
@@ -858,7 +858,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
 
 template <config::ProblemData::Type solver_t>
 void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, int step,
-                                                std::optional<ExcitationIdx> ex_idx)
+                                                std::optional<int> ex_idx)
 {
   if (!Mpi::Root(post_op->fem_op->GetComm()))
   {

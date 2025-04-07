@@ -9,7 +9,6 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
-#include "utils/strongtype.hpp"
 
 namespace palace::config
 {
@@ -19,14 +18,6 @@ using json = nlohmann::json;
 //
 // Data structures for storing configuration file data.
 //
-
-enum class TriBool : std::uint8_t
-{
-  False = 0,
-  True = 1,
-  Uninitialized = 2
-};
-
 namespace internal
 {
 
@@ -470,7 +461,7 @@ public:
   // Input excitation for driven & transient solver:
   // - Wave/Lumped ports with same index are excited together.
   // - 1-based index if excited; 0 if not excited.
-  ExcitationIdx excitation = ExcitationIdx(0);
+  int excitation = 0;
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -483,13 +474,7 @@ public:
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
 {
 public:
-  struct SetUpReturnInfo
-  {
-    TriBool excitation_input_is_bool = TriBool::Uninitialized;
-    TriBool has_terminal_spec = TriBool::Uninitialized;
-  };
-
-  SetUpReturnInfo SetUp(json &boundaries);
+  void SetUp(json &boundaries);
 };
 
 struct PeriodicData
@@ -545,7 +530,7 @@ public:
   // Input excitation for driven & transient solver:
   // - Wave/Lumped ports with same index are excited together.
   // - 1-based index if excited; 0 if not excited.
-  ExcitationIdx excitation = ExcitationIdx(0);
+  int excitation = 0;
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -569,12 +554,7 @@ public:
 struct WavePortBoundaryData : public internal::DataMap<WavePortData>
 {
 public:
-  struct SetUpReturnInfo
-  {
-    TriBool excitation_input_is_bool = TriBool::Uninitialized;
-  };
-
-  SetUpReturnInfo SetUp(json &boundaries);
+  void SetUp(json &boundaries);
 };
 
 struct SurfaceCurrentData

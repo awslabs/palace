@@ -27,10 +27,10 @@ TEST_CASE("Config Boundary Ports", "[config]")
     // Check simple parsing & defaults:
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
     CHECK(boundary_ex_bool.lumpedport.at(3).active == false);
-    CHECK(boundary_ex_bool.lumpedport.at(1).excitation != ExcitationIdx(0));
-    CHECK(boundary_ex_bool.lumpedport.at(3).excitation == ExcitationIdx(0));
-    CHECK(boundary_ex_bool.waveport.at(5).excitation == ExcitationIdx(0));
-    CHECK(boundary_ex_bool.waveport.at(6).excitation == ExcitationIdx(0));
+    CHECK(boundary_ex_bool.lumpedport.at(1).excitation != 0);
+    CHECK(boundary_ex_bool.lumpedport.at(3).excitation == 0);
+    CHECK(boundary_ex_bool.waveport.at(5).excitation == 0);
+    CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);
 
     // Equivalent config with int excitation.
     config::BoundaryData boundary_ex_int;
@@ -58,21 +58,6 @@ TEST_CASE("Config Boundary Ports", "[config]")
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_2")));
   }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(
-        boundary_data.SetUp(*config.find("boundaries_excitation_no_mix_int_bool_1")));
-  }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(
-        boundary_data.SetUp(*config.find("boundaries_excitation_no_mix_int_bool_2")));
-  }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(
-        boundary_data.SetUp(*config.find("boundaries_excitation_no_mix_int_bool_3")));
-  }
   // Index Specification.
   {
     config::BoundaryData boundary_data;
@@ -98,33 +83,33 @@ TEST_CASE("Config Boundary Ports", "[config]")
   {
     config::BoundaryData boundary_data;
     CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));
-    CHECK(boundary_data.lumpedport.at(1).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.lumpedport.at(2).excitation == ExcitationIdx(2));
-    CHECK(boundary_data.waveport.at(4).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.waveport.at(5).excitation == ExcitationIdx(0));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 2);
+    CHECK(boundary_data.waveport.at(4).excitation == 0);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
     config::BoundaryData boundary_data;
     CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_2")));
-    CHECK(boundary_data.lumpedport.at(1).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.lumpedport.at(2).excitation == ExcitationIdx(1));
-    CHECK(boundary_data.waveport.at(4).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.waveport.at(5).excitation == ExcitationIdx(0));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 2);
+    CHECK(boundary_data.waveport.at(4).excitation == 0);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
     config::BoundaryData boundary_data;
     CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_3")));
-    CHECK(boundary_data.lumpedport.at(1).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.lumpedport.at(2).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.waveport.at(4).excitation == ExcitationIdx(4));
-    CHECK(boundary_data.waveport.at(5).excitation == ExcitationIdx(0));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 0);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 0);
+    CHECK(boundary_data.waveport.at(4).excitation == 4);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
     config::BoundaryData boundary_data;
     CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_4")));
-    CHECK(boundary_data.lumpedport.at(1).excitation == ExcitationIdx(1));
-    CHECK(boundary_data.lumpedport.at(2).excitation == ExcitationIdx(0));
-    CHECK(boundary_data.waveport.at(4).excitation == ExcitationIdx(1));
-    CHECK(boundary_data.waveport.at(5).excitation == ExcitationIdx(0));
+    CHECK(boundary_data.lumpedport.at(1).excitation == 1);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 0);
+    CHECK(boundary_data.waveport.at(4).excitation == 1);
+    CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
 }

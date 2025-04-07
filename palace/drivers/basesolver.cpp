@@ -14,7 +14,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
-#include "models/portexcitationhelper.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
@@ -287,7 +287,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   }
 }
 
-void BaseSolver::SaveMetadata(const PortExcitationHelper &excitation_helper) const
+void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 {
   if (root)
   {
