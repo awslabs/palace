@@ -1,5 +1,5 @@
 diff --git a/fem/datacollection.cpp b/fem/datacollection.cpp
-index 1313d2a1e..e84e6d9fb 100644
+index 6b59727487..7213e70025 100644
 --- a/fem/datacollection.cpp
 +++ b/fem/datacollection.cpp
 @@ -210,6 +210,11 @@ void DataCollection::Save()
@@ -282,7 +282,7 @@ index 1313d2a1e..e84e6d9fb 100644
  {
     restart_mode = restart_mode_;
 diff --git a/fem/datacollection.hpp b/fem/datacollection.hpp
-index e4d41a1b6..5306c94f7 100644
+index a897682f96..05891490ef 100644
 --- a/fem/datacollection.hpp
 +++ b/fem/datacollection.hpp
 @@ -133,6 +133,10 @@ private:
@@ -470,10 +470,10 @@ index e4d41a1b6..5306c94f7 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index c06994ced..61b7c75d3 100644
+index 0cc2cd9aca..3e41fe39f4 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -11973,7 +11973,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -11987,7 +11987,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -482,7 +482,7 @@ index c06994ced..61b7c75d3 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -11987,7 +11987,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -12001,7 +12001,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -492,7 +492,7 @@ index c06994ced..61b7c75d3 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 3062a5a67..f302724b5 100644
+index 0f70bd6c61..d2374049d2 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -2466,7 +2466,7 @@ public:
@@ -505,7 +505,7 @@ index 3062a5a67..f302724b5 100644
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 600ba485a..8770ed7c7 100644
+index 4f1b041cb2..fa7ac2092d 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -6398,7 +6398,7 @@ void ParMesh::PrintVTU(std::string pathname,
@@ -528,10 +528,10 @@ index 600ba485a..8770ed7c7 100644
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 3f052fa84..bdca0d816 100644
+index bad6aafbe7..913d4d5894 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
-@@ -786,7 +786,7 @@ public:
+@@ -787,7 +787,7 @@ public:
                   VTKFormat format=VTKFormat::ASCII,
                   bool high_order_output=false,
                   int compression_level=0,

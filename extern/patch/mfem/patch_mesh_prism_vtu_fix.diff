@@ -1,8 +1,8 @@
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 61b7c75d3..f35b51504 100644
+index 3e41fe39f4..732a3e2b04 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -12122,7 +12122,7 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
+@@ -12136,7 +12136,7 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
              const int *p = VTKGeometry::VertexPermutation[geom];
              for (int k = 0; k < nv; k++, j++)
              {
