@@ -24,6 +24,10 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y clang-format-19
 
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
       - name: Check style
         run: |
           ./scripts/format-source --clang-format clang-format-19
