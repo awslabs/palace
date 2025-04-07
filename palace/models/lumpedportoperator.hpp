@@ -10,7 +10,6 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
-#include "utils/strongtype.hpp"
 
 namespace palace
 {
@@ -43,7 +42,7 @@ public:
 
   // Lumped port properties.
   double R, L, C;
-  ExcitationIdx excitation;
+  int excitation;
   bool active;
 
 private:
@@ -61,10 +60,7 @@ public:
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
 
-  [[nodiscard]] constexpr bool HasExcitation() const
-  {
-    return excitation != ExcitationIdx(0);
-  }
+  [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
 
   enum class Branch
   {
@@ -126,7 +122,7 @@ public:
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
-  void AddExcitationBdrCoefficients(ExcitationIdx excitation_idx, SumVectorCoefficient &fb);
+  void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

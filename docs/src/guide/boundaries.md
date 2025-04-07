@@ -137,13 +137,22 @@ choice must be consistent across all ports in the configuration file.
     positive integer `i`, marks that port as being excited during the excitation `i`. The value `0`
     corresponds to no excitation. If multiple ports share an excitation index `i`, they will be
     excited at the same time.
+
+For frequency domain driven simulations, it is possible to specify multiple excitations in the
+same simulation using different positive integers ("multi-excitation"). These excitations are
+simulated consecutively during the Palace run. The results are printed to shared csv files. When
+there are multiple excitations, the columns of the csv files are post-indexed by the excitation
+index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
+port can only be part of a one excitation.
+
+!!! warning "Indexing"
     
-    For frequency domain driven simulations, it is possible to specify multiple excitations in the
-    same simulation using different positive integers ("multi-excitation"). These excitations are
-    simulated consecutively during the Palace run. The results are printed to shared csv files. When
-    there are multiple excitations, the columns of the csv files are post-indexed by the excitation
-    index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
-    port can only be part of a single excitation.
+    Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
+    [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
+    [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or
+    [`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
+    different boundary conditions types (e.g. you can not have an lumped port and wave port both with
+    `Index: 5`).
 
 ## Surface current excitation
 
@@ -154,10 +163,3 @@ This is the excitation used for magnetostatic simulation types as well. This opt
 prescribes a unit source surface current excitation on the given boundary in order to
 excite the model. It does does not prescribe any boundary condition to the model and only
 affects the source term on the right hand side.
-
-Note: Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
-[`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
-[`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), and
-[`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
-different boundary conditions types (e.g. you can not have an lumped port and wave port both with
-`Index: 5`).

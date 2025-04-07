@@ -13,7 +13,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
-#include "models/portexcitationhelper.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -35,8 +35,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
   SpaceOperator space_op(iodata, mesh);
-  auto excitation_helper = space_op.GetPortExcitationHelper();
-  MFEM_VERIFY(!excitation_helper.Empty(), "No excitation specified for driven simulation!");
+  auto excitation_helper = space_op.GetPortExcitations();
   SaveMetadata(excitation_helper);
 
   // Frequencies will be sampled uniformly in the frequency domain.
@@ -68,7 +67,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed if multiple excitations.
   PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
-  auto excitation_helper = space_op.GetPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitations();
 
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -123,9 +122,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
   auto print_counter_excitation = 0;  // 1 based indexing; will increment at start
   for (const auto &[excitation_idx, spec] : excitation_helper.excitations)
   {
-    print_counter_excitation++;
-    Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
-               print_counter_excitation, excitation_helper.Size());
+    if (excitation_helper.Size() > 1)
+    {
+      Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
+                 ++print_counter_excitation, excitation_helper.Size());
+    }
 
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);
@@ -194,7 +195,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
 {
   // Initialize postprocessing for measurement and printers.
   PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
-  auto excitation_helper = space_op.GetPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitations();
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -260,7 +261,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM = [&](ExcitationIdx excitation_idx, double omega)
+  auto UpdatePROM = [&](int excitation_idx, double omega)
   {
     // Add the HDM solution to the PROM reduced basis.
     prom_op.UpdatePROM(E);
@@ -304,10 +305,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   auto print_counter_excitation_prom = 0;  // 1 based indexing; will increment at start
   for (const auto &[excitation_idx, spec] : excitation_helper.excitations)
   {
-    print_counter_excitation_prom++;
-    Mpi::Print("\nAdding Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
-               print_counter_excitation_prom, excitation_helper.Size());
-
+    if (excitation_helper.Size() > 1)
+    {
+      Mpi::Print("\nAdding excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
+                 ++print_counter_excitation_prom, excitation_helper.Size());
+    }
     prom_op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
 
     prom_op.SolveHDM(excitation_idx, omega0, E);
@@ -380,10 +382,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   auto print_counter_excitation_online = 0;  // 1 based indexing; will increment at start
   for (const auto &[excitation_idx, spec] : excitation_helper.excitations)
   {
-    print_counter_excitation_online++;
-    Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
-               print_counter_excitation_online, excitation_helper.Size());
-
+    if (excitation_helper.Size() > 1)
+    {
+      Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
+                 ++print_counter_excitation_online, excitation_helper.Size());
+    }
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);
 

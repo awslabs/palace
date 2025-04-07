@@ -602,7 +602,7 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddExcitationBdrCoefficients(ExcitationIdx excitation_idx,
+void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
                                                       SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =

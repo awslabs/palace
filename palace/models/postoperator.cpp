@@ -134,12 +134,12 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::InitializeParaviewDataCollection(ExcitationIdx ex_idx)
+auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
 {
   fs::path sub_folder_name = "";
-  auto nr_excitations = fem_op->GetPortExcitationHelper().Size();
-  if ((nr_excitations > 1) && (ex_idx > ExcitationIdx(0)))
+  auto nr_excitations = fem_op->GetPortExcitations().Size();
+  if ((nr_excitations > 1) && (ex_idx > 0))
   {
     int spacing = 1 + int(std::log10(nr_excitations));
     sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
@@ -752,16 +752,16 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
     // don't support mixing wave and lumped ports, because we need to fix consistent
     // conventions / de-embedding.
-    if (!fem_op->GetPortExcitationHelper().IsMultipleSimple() ||
+    if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
         !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
     {
       return;
     }
 
     // Get single port index corresponding to current excitation.
-    auto drive_port_idx = *fem_op->GetPortExcitationHelper()
+    auto drive_port_idx = *fem_op->GetPortExcitations()
                                .excitations.at(measurement_cache.ex_idx)
-                               .flatten_port_indices()
+                               .FlatternPortIndices()
                                .begin();
 
     // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
@@ -918,7 +918,7 @@ using fmt::format;
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(ExcitationIdx ex_idx, int step,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
                                                 const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega)
@@ -1132,9 +1132,9 @@ template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
-    config::ProblemData::Type::DRIVEN>(ExcitationIdx ex_idx, int step,
-                                       const ComplexVector &e, const ComplexVector &b,
-                                       std::complex<double> omega) -> double;
+    config::ProblemData::Type::DRIVEN>(int ex_idx, int step, const ComplexVector &e,
+                                       const ComplexVector &b, std::complex<double> omega)
+    -> double;
 
 template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasureAndPrintAll<
     config::ProblemData::Type::EIGENMODE>(int step, const ComplexVector &e,
@@ -1162,6 +1162,6 @@ template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFiel
 
 template auto
 PostOperator<config::ProblemData::Type::DRIVEN>::InitializeParaviewDataCollection(
-    ExcitationIdx ex_idx) -> void;
+    int ex_idx) -> void;
 
 }  // namespace palace

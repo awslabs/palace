@@ -337,7 +337,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
-  auto excitation_helper = space_op.GetPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitations();
 
   // The initial PROM basis is empty. The provided maximum dimension is the number of sample
   // points (2 basis vectors per point). Basis orthogonalization method is configured using
@@ -364,7 +364,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   }
 }
 
-void RomOperator::SetExcitationIndex(ExcitationIdx excitation_idx)
+void RomOperator::SetExcitationIndex(int excitation_idx)
 {
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
@@ -386,7 +386,7 @@ void RomOperator::SetExcitationIndex(ExcitationIdx excitation_idx)
   }
 }
 
-void RomOperator::SolveHDM(ExcitationIdx excitation_idx, double omega, ComplexVector &u)
+void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
   if (excitation_idx_cache != excitation_idx)
   {
@@ -476,14 +476,13 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   RHSr.resize(dim_V);
 }
 
-void RomOperator::UpdateMRI(ExcitationIdx excitation_idx, double omega,
-                            const ComplexVector &u)
+void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
 }
 
-void RomOperator::SolvePROM(ExcitationIdx excitation_idx, double omega, ComplexVector &u)
+void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
   if (excitation_idx_cache != excitation_idx)
   {

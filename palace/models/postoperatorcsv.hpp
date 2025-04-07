@@ -34,10 +34,10 @@ class PostOperatorCSV
 
   // List of all excitations (column blocks). Single "0" default for solvers that don't
   // support excitations.
-  std::vector<ExcitationIdx> excitation_idx_all = {ExcitationIdx(0)};
+  std::vector<int> excitation_idx_all = {int(0)};
   bool single_col_block() const { return excitation_idx_all.size() == 1; }
   // Current measurement excitation index.
-  ExcitationIdx m_ex_idx = ExcitationIdx(0);
+  int m_ex_idx = 0;
 
   // These are all std::optional since: (a) should only be instantiated on the root mpi
   // process, (b) they should only be written if the data is non-empty.
@@ -142,7 +142,7 @@ public:
 
   // Print all data from post_op->measurement_cache.
   void PrintAllCSVData(double idx_value_dimensionful, int step,
-                       std::optional<ExcitationIdx> ex_idx = std::nullopt);
+                       std::optional<int> ex_idx = std::nullopt);
 
   // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);

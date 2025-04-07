@@ -21,7 +21,6 @@
 #include "models/surfacepostoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/strongtype.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -156,7 +155,7 @@ public:
   // Secondary overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
   template <config::ProblemData::Type U = solver_t>
-  auto InitializeParaviewDataCollection(ExcitationIdx ex_idx)
+  auto InitializeParaviewDataCollection(int ex_idx)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>;
 
 private:
@@ -244,7 +243,7 @@ private:
     // "Pseudo-measurements": input required during measurement or data which is stored here
     // in order to pass it along to the printers.
 
-    ExcitationIdx ex_idx = ExcitationIdx(0);  // driven
+    int ex_idx = 0;  // driven
 
     std::complex<double> freq = {0.0, 0.0};  // driven || eigenvalue.
 
@@ -422,7 +421,7 @@ public:
   // template.
 
   template <config::ProblemData::Type U = solver_t>
-  auto MeasureAndPrintAll(ExcitationIdx ex_idx, int step, const ComplexVector &e,
+  auto MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
                           const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 

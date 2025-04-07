@@ -9,7 +9,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
-#include "models/portexcitationhelper.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -30,10 +30,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
-  auto excitation_helper = space_op.GetPortExcitationHelper();
+  auto excitation_helper = space_op.GetPortExcitations();
 
-  MFEM_VERIFY(!excitation_helper.Empty(),
-              "No excitation specified for transient simulation!");
   MFEM_VERIFY(
       excitation_helper.Size() == 1,
       "Transient solver currently only supports a single excitation per simulation!");
