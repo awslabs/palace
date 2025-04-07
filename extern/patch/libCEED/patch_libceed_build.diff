@@ -1,0 +1,15 @@
+diff --git a/Makefile b/Makefile
+index 483c57f2..88f1911f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -107,8 +107,9 @@ V ?= $(VERBOSE)
+ AFLAGS ?= -fsanitize=address #-fsanitize=undefined -fno-omit-frame-pointer
+ 
+ # Note: Intel oneAPI C/C++ compiler is now icx/icpx
+-CC_VENDOR := $(firstword $(filter gcc (GCC) clang icc icc_orig oneAPI XL emcc,$(subst -, ,$(shell $(CC) --version))))
++CC_VENDOR := $(firstword $(filter gcc (GCC) clang cc icc icc_orig oneAPI XL emcc,$(subst -, ,$(shell $(CC) --version))))
+ CC_VENDOR := $(subst (GCC),gcc,$(subst icc_orig,icc,$(CC_VENDOR)))
++CC_VENDOR := $(if $(filter cc,$(CC_VENDOR)),gcc,$(CC_VENDOR))
+ FC_VENDOR := $(if $(FC),$(firstword $(filter GNU ifort ifx XL,$(shell $(FC) --version 2>&1 || $(FC) -qversion))))
+ 
+ # Default extra flags by vendor
