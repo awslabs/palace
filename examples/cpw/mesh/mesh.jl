@@ -42,19 +42,19 @@ Generate a mesh for the coplanar waveguide with wave ports using Gmsh
 """
 function generate_cpw_wave_mesh(;
     filename::AbstractString,
-    refinement::Integer       = 0,
-    order::Integer            = 1,
+    refinement::Integer        = 0,
+    order::Integer             = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
     ground_width_μm::Real     = 800.0,
     substrate_height_μm::Real = 500.0,
     metal_height_μm::Real     = 0.0,
-    remove_metal_vol::Bool    = true,
+    remove_metal_vol::Bool     = true,
     length_μm::Real           = 4000.0,
-    coax_ports::Bool          = false,
-    verbose::Integer          = 5,
-    gui::Bool                 = false
+    coax_ports::Bool           = false,
+    verbose::Integer           = 5,
+    gui::Bool                  = false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -224,14 +224,13 @@ function generate_cpw_wave_mesh(;
     kernel.synchronize()
 
     # Add physical groups
-    metal_domains =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(x -> x[1] == 3 && x[2] in metal, geom_dimtags)]
-                )
+    metal_domains = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 3 && x[2] in metal, geom_dimtags)]
             )
         )
+    )
 
     si_domain = last.(geom_map[findfirst(x -> x == (3, substrate), geom_dimtags)])
     @assert length(si_domain) == 1
@@ -244,8 +243,7 @@ function generate_cpw_wave_mesh(;
 
     if length(metal_domains) > 0 && remove_metal_vol
         remove_dimtags = [(3, x) for x in metal_domains]
-        for tag in
-            last.(
+        for tag in last.(
             filter(
                 x -> x[1] == 2,
                 gmsh.model.getBoundary(
@@ -289,17 +287,13 @@ function generate_cpw_wave_mesh(;
     end1_group = gmsh.model.addPhysicalGroup(2, end1, -1, "end1")
     end2_group = gmsh.model.addPhysicalGroup(2, end2, -1, "end2")
 
-    farfield =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in domain_boundary,
-                        geom_dimtags
-                    )]
-                )
+    farfield = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in domain_boundary, geom_dimtags)]
             )
         )
+    )
     filter!(
         x -> !(
             x in port1 || x in port2 || x in port3 || x in port4 || x in end1 || x in end2
@@ -309,43 +303,34 @@ function generate_cpw_wave_mesh(;
 
     farfield_group = gmsh.model.addPhysicalGroup(2, farfield, -1, "farfield")
 
-    trace =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in metal_boundary,
-                        geom_dimtags
-                    )]
-                )
+    trace = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in metal_boundary, geom_dimtags)]
             )
         )
-    gap =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in [n1, n2, n3, n4],
-                        geom_dimtags
-                    )]
-                )
+    )
+    gap = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in [n1, n2, n3, n4], geom_dimtags)]
             )
         )
+    )
 
     trace_group = gmsh.model.addPhysicalGroup(2, trace, -1, "trace")
     gap_group = gmsh.model.addPhysicalGroup(2, gap, -1, "gap")
 
-    trace_top =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in metal_boundary_top,
-                        geom_dimtags
-                    )]
-                )
+    trace_top = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(
+                    x -> x[1] == 2 && x[2] in metal_boundary_top,
+                    geom_dimtags
+                )]
             )
         )
+    )
     filter!(
         x -> !(
             x in port1 || x in port2 || x in port3 || x in port4 || x in end1 || x in end2
@@ -362,20 +347,18 @@ function generate_cpw_wave_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
 
-    gap_points =
-        last.(
-            filter(
-                x -> x[1] == 0,
-                gmsh.model.getBoundary([(2, z) for z in gap], false, true, true)
-            )
+    gap_points = last.(
+        filter(
+            x -> x[1] == 0,
+            gmsh.model.getBoundary([(2, z) for z in gap], false, true, true)
         )
-    gap_curves =
-        last.(
-            filter(
-                x -> x[1] == 1,
-                gmsh.model.getBoundary([(2, z) for z in gap], false, false, false)
-            )
+    )
+    gap_curves = last.(
+        filter(
+            x -> x[1] == 1,
+            gmsh.model.getBoundary([(2, z) for z in gap], false, false, false)
         )
+    )
 
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "PointsList", gap_points)
@@ -478,18 +461,18 @@ Generate a mesh for the coplanar waveguide with lumped ports using Gmsh
 """
 function generate_cpw_lumped_mesh(;
     filename::AbstractString,
-    refinement::Integer       = 0,
-    order::Integer            = 1,
+    refinement::Integer        = 0,
+    order::Integer             = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
     ground_width_μm::Real     = 800.0,
     substrate_height_μm::Real = 500.0,
     metal_height_μm::Real     = 0.0,
-    remove_metal_vol::Bool    = true,
+    remove_metal_vol::Bool     = true,
     length_μm::Real           = 4000.0,
-    verbose::Integer          = 5,
-    gui::Bool                 = false
+    verbose::Integer           = 5,
+    gui::Bool                  = false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -594,14 +577,13 @@ function generate_cpw_lumped_mesh(;
     kernel.synchronize()
 
     # Add physical groups
-    metal_domains =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(x -> x[1] == 3 && x[2] in metal, geom_dimtags)]
-                )
+    metal_domains = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 3 && x[2] in metal, geom_dimtags)]
             )
         )
+    )
 
     si_domain = last.(geom_map[findfirst(x -> x == (3, substrate), geom_dimtags)])
     @assert length(si_domain) == 1
@@ -614,8 +596,7 @@ function generate_cpw_lumped_mesh(;
 
     if length(metal_domains) > 0 && remove_metal_vol
         remove_dimtags = [(3, x) for x in metal_domains]
-        for tag in
-            last.(
+        for tag in last.(
             filter(
                 x -> x[1] == 2,
                 gmsh.model.getBoundary(
@@ -641,17 +622,13 @@ function generate_cpw_lumped_mesh(;
     si_domain_group = gmsh.model.addPhysicalGroup(3, [si_domain], -1, "si")
     metal_domain_group = gmsh.model.addPhysicalGroup(3, metal_domains, -1, "metal")
 
-    farfield =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in domain_boundary,
-                        geom_dimtags
-                    )]
-                )
+    farfield = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in domain_boundary, geom_dimtags)]
             )
         )
+    )
 
     farfield_group = gmsh.model.addPhysicalGroup(2, farfield, -1, "farfield")
 
@@ -673,28 +650,20 @@ function generate_cpw_lumped_mesh(;
     port3b_group = gmsh.model.addPhysicalGroup(2, port3b, -1, "port3b")
     port4b_group = gmsh.model.addPhysicalGroup(2, port4b, -1, "port4b")
 
-    trace =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in metal_boundary,
-                        geom_dimtags
-                    )]
-                )
+    trace = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in metal_boundary, geom_dimtags)]
             )
         )
-    gap =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in [n1, n2, n3, n4],
-                        geom_dimtags
-                    )]
-                )
+    )
+    gap = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(x -> x[1] == 2 && x[2] in [n1, n2, n3, n4], geom_dimtags)]
             )
         )
+    )
     filter!(
         x -> !(
             x in port1a ||
@@ -712,17 +681,16 @@ function generate_cpw_lumped_mesh(;
     trace_group = gmsh.model.addPhysicalGroup(2, trace, -1, "trace")
     gap_group = gmsh.model.addPhysicalGroup(2, gap, -1, "gap")
 
-    trace_top =
-        last.(
-            collect(
-                Iterators.flatten(
-                    geom_map[findall(
-                        x -> x[1] == 2 && x[2] in metal_boundary_top,
-                        geom_dimtags
-                    )]
-                )
+    trace_top = last.(
+        collect(
+            Iterators.flatten(
+                geom_map[findall(
+                    x -> x[1] == 2 && x[2] in metal_boundary_top,
+                    geom_dimtags
+                )]
             )
         )
+    )
 
     trace_top_group = gmsh.model.addPhysicalGroup(2, trace_top, -1, "trace2")
 
@@ -733,20 +701,18 @@ function generate_cpw_lumped_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
 
-    gap_points =
-        last.(
-            filter(
-                x -> x[1] == 0,
-                gmsh.model.getBoundary([(2, z) for z in gap], false, true, true)
-            )
+    gap_points = last.(
+        filter(
+            x -> x[1] == 0,
+            gmsh.model.getBoundary([(2, z) for z in gap], false, true, true)
         )
-    gap_curves =
-        last.(
-            filter(
-                x -> x[1] == 1,
-                gmsh.model.getBoundary([(2, z) for z in gap], false, false, false)
-            )
+    )
+    gap_curves = last.(
+        filter(
+            x -> x[1] == 1,
+            gmsh.model.getBoundary([(2, z) for z in gap], false, false, false)
         )
+    )
 
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "PointsList", gap_points)
