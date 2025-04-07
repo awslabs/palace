@@ -82,7 +82,7 @@ jobs:
           fi
 
           # Build and install
-          PALACE_SPEC="local.palace@develop%${{ matrix.compiler }}$GPU_VARIANT ^${{ matrix.mpi }}"
+          PALACE_SPEC="local.palace@develop$GPU_VARIANT ^${{ matrix.mpi }} %${{ matrix.compiler }}"
           PALACE_SPEC="$PALACE_SPEC ^petsc~hdf5 ^intel-oneapi-mkl"
           spack spec $PALACE_SPEC
           spack dev-build $PALACE_SPEC
