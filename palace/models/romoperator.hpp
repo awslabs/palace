@@ -19,9 +19,9 @@ class IoData;
 class SpaceOperator;
 
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
-// as an error indicator and to efficiently selecting next frequency sample points in PROM
+// as an error indicator and for selecting the next frequency sample points in PROM
 // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
-class MinimalRationInterpolation
+class MinimalRationalInterpolation
 {
 private:
   // (Complex-valued) upper-trianglar matrix R from orthogonalization of the HDM samples.
@@ -34,7 +34,7 @@ private:
   std::vector<double> z;
 
 public:
-  MinimalRationInterpolation(int max_size);
+  MinimalRationalInterpolation(int max_size);
   void AddSolutionSample(double omega, const ComplexVector &u,
                          const SpaceOperator &space_op,
                          GmresSolverBase::OrthogType orthog_type);
@@ -78,7 +78,7 @@ private:
   GmresSolverBase::OrthogType orthog_type;
 
   // MRIs: one for each excitation index.
-  std::map<int, MinimalRationInterpolation> mri;
+  std::map<int, MinimalRationalInterpolation> mri;
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);

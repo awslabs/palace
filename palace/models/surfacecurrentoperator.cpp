@@ -3,7 +3,6 @@
 
 #include "surfacecurrentoperator.hpp"
 
-#include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

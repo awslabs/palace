@@ -186,12 +186,12 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-MinimalRationInterpolation::MinimalRationInterpolation(int max_size)
+MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
 {
   Q.resize(max_size, ComplexVector());
 }
 
-void MinimalRationInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
+void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
                                                    const SpaceOperator &space_op,
                                                    GmresSolverBase::OrthogType orthog_type)
 {
@@ -215,16 +215,14 @@ void MinimalRationInterpolation::AddSolutionSample(double omega, const ComplexVe
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
   ComputeMRI(R, q);
-  // if (Mpi::Root(comm))
-  // {
-  //   std::cout << "MRI (S = " << dim_Q << "):\n"
-  //   std::cout << "R =\n" << R << "\n";
-  //   std::cout << "q =\n" << q << "\n";
-  // }
+  if constexpr (false)
+  {
+    Mpi::Print("MRI (S = {}):\nR = {}\nq = {}", dim_Q, R, q);
+  }
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationInterpolation::FindMaxError(int N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -360,7 +358,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // Set up MRI.
   for (const auto &[excitation_idx, data] : excitation_helper)
   {
-    mri.emplace(excitation_idx, MinimalRationInterpolation(max_size_per_excitation));
+    mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
   }
 }
 
