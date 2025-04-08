@@ -1501,6 +1501,7 @@ void BoundaryData::SetUp(json &config)
     // Typical usecase: If each excitation is simple, S-parameters will be calculated.
     //    If there were multiple excitations specified, check their indices match the
     //    port indices. If there was only one, assign it.
+    excitation_map.erase(0); // zeroth index is unexcited.
     bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
                                      [](const auto &x) { return x.second.size() == 1; });
     if (calc_s_params)
@@ -1513,12 +1514,16 @@ void BoundaryData::SetUp(json &config)
       for (auto &[port_idx, lp] : lumpedport)
       {
         if (lp.excitation != 0)
+        {
           lp.excitation = port_idx;
+        }
       }
       for (auto &[port_idx, wp] : waveport)
       {
         if (wp.excitation != 0)
+        {
           wp.excitation = port_idx;
+        }
       }
     }
   }

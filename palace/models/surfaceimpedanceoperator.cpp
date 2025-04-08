@@ -4,7 +4,6 @@
 #include "surfaceimpedanceoperator.hpp"
 
 #include <set>
-#include <fmt/ranges.h>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

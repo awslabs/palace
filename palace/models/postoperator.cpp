@@ -758,11 +758,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       return;
     }
 
-    // Get single port index corresponding to current excitation.
-    auto drive_port_idx = *fem_op->GetPortExcitations()
-                               .excitations.at(measurement_cache.ex_idx)
-                               .FlatternPortIndices()
-                               .begin();
+    // Assumes that for single driving port the excitation index is equal to the port index.
+    auto drive_port_idx = measurement_cache.ex_idx;
 
     // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
     // combine output iterators.
@@ -1097,21 +1094,13 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(
-    const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data,
-    std::optional<std::pair<int, double>> debug_print_paraview_opt)
+    const ComplexVector &e, const ComplexVector &b)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
-  SetEGridFunction(e, exchange_face_nbr_data);
-  SetBGridFunction(b, exchange_face_nbr_data);
+  SetEGridFunction(e);
+  SetBGridFunction(b);
   MeasureDomainFieldEnergy();
   Mpi::Barrier(fem_op->GetComm());
-
-  // Debug print prom fields.
-  if (debug_print_paraview_opt.has_value())
-  {
-    WriteFields(debug_print_paraview_opt->first, debug_print_paraview_opt->second);
-    Mpi::Barrier(fem_op->GetComm());
-  }
 
   // Return total domain energy for normalizing error indicator.
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
@@ -1156,8 +1145,7 @@ template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrin
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
     config::ProblemData::Type::DRIVEN>(
-    const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data = true,
-    std::optional<std::pair<int, double>> debug_print_paraview_opt = std::nullopt)
+    const ComplexVector &e, const ComplexVector &b)
     -> double;
 
 template auto

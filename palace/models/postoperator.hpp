@@ -118,8 +118,8 @@ private:
   // ParaView Measure & Print.
 
   // Option to write ParaView fields at all and rate / number of iterations printed.
-  size_t paraview_delta_post = 0;  // printing rate for ParaView (DRIVEN & TRANSIENT)
-  size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
+  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (DRIVEN & TRANSIENT)
+  std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
   bool write_paraview_fields() const
   {
     return (paraview_delta_post > 0) || (paraview_n_post > 0);
@@ -147,12 +147,10 @@ private:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-public:
-  // Public functions to switch paraview output to a different sub_folder and reinitialize
-  // data collection. Needed in driven solver for multi-excitations and prom output.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  public:
 
-  // Secondary overload for the driven solver only, that takes in an excitation index and
+  // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
   template <config::ProblemData::Type U = solver_t>
   auto InitializeParaviewDataCollection(int ex_idx)
@@ -455,8 +453,7 @@ public:
   // TODO(C++20): SFINAE to requires.
   template <config::ProblemData::Type U = solver_t>
   auto MeasureDomainFieldEnergyOnly(
-      const ComplexVector &e, const ComplexVector &b, bool exchange_face_nbr_data = true,
-      std::optional<std::pair<int, double>> debug_print_paraview_opt = std::nullopt)
+      const ComplexVector &e, const ComplexVector &b)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The

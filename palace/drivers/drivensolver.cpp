@@ -77,20 +77,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
-  bool first_iter_set = true;  // Don't reconstruct these matrices for first solve.
 
-  // Set up the linear solver and set operators for the first frequency step. The
-  // preconditioner for the complex linear system is constructed from a real approximation
-  // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega0,
-                                    std::complex<double>(-omega0 * omega0, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
-                                                             omega0);
+  // Set up the linear solver.
+  // The operators are constructed for each frequency step and used to initialize the ksp.
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
-  ksp.SetOperators(*A, *P);
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
@@ -140,19 +131,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega),
                  Timer::Duration(Timer::Now() - t0).count());
 
-      // Assemble matrices: skip if already done (first excitation & first freq point).
-      if (!first_iter_set)
-      {
-        // Update frequency-dependent excitation and operators.
-        A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-        A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                     std::complex<double>(-omega * omega, 0.0), K.get(),
-                                     C.get(), M.get(), A2.get());
-        P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
-                                                              omega);
-        ksp.SetOperators(*A, *P);
-      }
-      first_iter_set = false;
+      // Assemble frequency dependent matrices and initialize operators in linear solver.
+      auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+      auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                        std::complex<double>(-omega * omega, 0.0), K.get(),
+                                        C.get(), M.get(), A2.get());
+      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
+                                                                omega);
+      ksp.SetOperators(*A, *P);
+
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
       Mpi::Print("\n");
@@ -250,13 +237,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   space_op.GetWavePortOp().SetSuppressOutput(
       true);  // Suppress wave port output for offline
 
-  constexpr bool debug_prom_paraview = false;
-  int debug_prom_paraview_step = 0;
-  if constexpr (debug_prom_paraview)
-  {
-    post_op.InitializeParaviewDataCollection("prom_samples");
-  }
-
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
@@ -279,25 +259,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
       // B = -1/(iω) ∇ x E + 1/ω kp x E
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
-    // Debug option to print prom samples fields to paraview file.
-    std::optional<std::pair<int, double>> debug_print_paraview_opt = {};
-    if constexpr (debug_prom_paraview)
-    {
-      // Paraview times are printed as excitation * padding + freq with padding gives enough
-      // space for f_max + 1, e.g. if f_max = 102 GHz, then we get time n0fff where n is the
-      // excitation index and fff is the frequency.
-      double excitation_padding =
-          std::pow(10.0, 3.0 + static_cast<int>(std::log10(iodata.solver.driven.max_f)));
-      auto freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
-      debug_print_paraview_opt = {debug_prom_paraview_step,
-                                  std::size_t(excitation_idx) * excitation_padding + freq};
-      debug_prom_paraview_step++;
-    }
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(
-        E, B, debug_prom_paraview, debug_print_paraview_opt);
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 

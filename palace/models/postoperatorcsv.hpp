@@ -23,7 +23,8 @@ class PostOperatorCSV
   PostOperator<solver_t> *post_op = nullptr;
   int nr_expected_measurement_rows = 1;
 
-  auto m_cache() const { return post_op->measurement_cache; }  // Alias for code clarity
+  // Alias for code clarity
+  auto MCache() const { return post_op->measurement_cache; }
 
   // Current measurement step index being written.
   int m_idx_row;
@@ -35,7 +36,8 @@ class PostOperatorCSV
   // List of all excitations (column blocks). Single "0" default for solvers that don't
   // support excitations.
   std::vector<int> excitation_idx_all = {int(0)};
-  bool single_col_block() const { return excitation_idx_all.size() == 1; }
+  bool SingleColBlock() const { return excitation_idx_all.size() == 1; }
+
   // Current measurement excitation index.
   int m_ex_idx = 0;
 
@@ -141,8 +143,16 @@ public:
   void InitializeCSVDataCollection();
 
   // Print all data from post_op->measurement_cache.
-  void PrintAllCSVData(double idx_value_dimensionful, int step,
-                       std::optional<int> ex_idx = std::nullopt);
+  void PrintAllCSVData(double idx_value_dimensionful, int step);
+
+  // Driven specific overload for specifying excitation index
+  template <config::ProblemData::Type U = solver_t>
+  auto PrintAllCSVData(double idx_value_dimensionful, int step, int ex_idx)
+    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+  {
+    m_ex_idx = ex_idx;
+    PrintAllCSVData(idx_value_dimensionful, step);
+  }
 
   // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);

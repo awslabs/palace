@@ -124,19 +124,21 @@ surface.
 The presence of an incident excitation at a port is controlled by the settings
 [`config["Boundaries"]["LumpedPort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D)
 and [`config["WavePort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D).
-The `Excitation` settings can either be specified as non-negative integers or booleans, but the
-choice must be consistent across all ports in the configuration file.
+The `Excitation` settings can either be specified as non-negative integers or booleans.
 
   - *Boolean setting*: `true`/`false` indicates the presence / absence of an incident excitation.
     Usually, only a single port will be marked as excited, in which case the index labelling the
-    excitation is the same as the `Index` of the excited port. If multiple ports are marked as
-    excited, the incident signals will be added with coefficient 1 for a single Palace simulation.
-    In the case of multiple excited ports, the excitation index is 1.
+    excitation is the same as the `Index` of the excited port. An excitation of `true` is
+    equivalent to setting `"Excitation"` equal to the port index.
 
   - *Integer setting*: Here the user manually assigns excitation indices to ports. Specifying a
     positive integer `i`, marks that port as being excited during the excitation `i`. The value `0`
     corresponds to no excitation. If multiple ports share an excitation index `i`, they will be
     excited at the same time.
+
+If there are multiple excitations each with of a single port, the *excitation index must be
+equal to the port index*. This is necessary to avoid ambiguity in the specification of the
+scattering matrix.
 
 For frequency domain driven simulations, it is possible to specify multiple excitations in the
 same simulation using different positive integers ("multi-excitation"). These excitations are
