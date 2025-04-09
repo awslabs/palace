@@ -59,7 +59,7 @@ int PrecIndexCol(const config::ProblemData::Type solver_t)
     case config::ProblemData::Type::EIGENMODE:
     case config::ProblemData::Type::ELECTROSTATIC:
     case config::ProblemData::Type::MAGNETOSTATIC:
-      return 0;
+      return 2;
     default:
       return 8;
   }

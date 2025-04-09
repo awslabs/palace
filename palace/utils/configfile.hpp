@@ -696,7 +696,7 @@ public:
   double adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
-  int adaptive_max_size = 0;
+  int adaptive_max_size = 20;
 
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;

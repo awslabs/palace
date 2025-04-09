@@ -16,7 +16,7 @@ namespace palace
 struct ColumnOptions
 {
   std::size_t min_left_padding = 8;
-  std::size_t float_precision = 17;  // Full-double precision by default
+  std::size_t float_precision = 12;  // Full-double precision by default
   std::string empty_cell_val = {"NULL"};
   std::string fmt_sign = {"+"};
 };

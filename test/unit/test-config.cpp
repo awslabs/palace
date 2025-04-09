@@ -79,6 +79,14 @@ TEST_CASE("Config Boundary Ports", "[config]")
     config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
   }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_1")));
+  }
+  {
+    config::BoundaryData boundary_data;
+    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_2")));
+  }
   // Mark single excitation index.
   {
     config::BoundaryData boundary_data;
