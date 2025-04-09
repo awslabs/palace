@@ -1504,23 +1504,25 @@ void BoundaryData::SetUp(json &config)
     excitation_map.erase(0); // zeroth index is unexcited.
     bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
                                      [](const auto &x) { return x.second.size() == 1; });
-    if (calc_s_params)
+    if (calc_s_params && !excitation_map.empty())
     {
-      MFEM_VERIFY(excitation_map.size() == 1 ||
-                      std::all_of(excitation_map.begin(), excitation_map.end(),
+      // If there's one excitation, needs to be 1 (set with bool) or the port index.
+      const auto &ext1 = *excitation_map.begin();
+      MFEM_VERIFY((excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first))
+          || std::all_of(excitation_map.begin(), excitation_map.end(),
                                   [](const auto &x) { return x.first == x.second[0]; }),
-                  "If using multi-excitation for individual ports "
-                  "\"Excitation\" must match \"Index\" to avoid ambiguity!");
+                  "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
+
       for (auto &[port_idx, lp] : lumpedport)
       {
-        if (lp.excitation != 0)
+        if (lp.excitation == 1)
         {
           lp.excitation = port_idx;
         }
       }
       for (auto &[port_idx, wp] : waveport)
       {
-        if (wp.excitation != 0)
+        if (wp.excitation == 1)
         {
           wp.excitation = port_idx;
         }

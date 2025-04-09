@@ -190,10 +190,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   int max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
   MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation > 2,
               "Adaptive frequency sweep must sample at least two frequency points!");
-  if (max_size_per_excitation <= 0)
-  {
-    max_size_per_excitation = 20;  // Default value
-  }
   // Maximum size — no more than nr steps needed.
   max_size_per_excitation = std::min(max_size_per_excitation, (n_step - step0));
 

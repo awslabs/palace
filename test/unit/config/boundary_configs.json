@@ -127,5 +127,17 @@
       ],
       "WavePort": [ { "Attributes": [6], "Index": 4, "Excitation": true }, { "Attributes": [17], "Index": 5 } ]
     }
-  }
+  },
+  "boundaries_mislabeled_index_1": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": 2 } ],
+      "WavePort"  : [ { "Attributes": [6], "Index": 2,                             "Excitation": 1 } ]
+    }
+  },
+  "boundaries_mislabeled_index_2": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": 2 } ],
+      "WavePort"  : [ { "Attributes": [6], "Index": 2,                             "Excitation": 0 } ]
+    }
+  },
 }
