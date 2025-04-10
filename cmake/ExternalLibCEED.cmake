@@ -7,6 +7,7 @@
 
 if(PALACE_WITH_SPACK)
   # Do nothing! It's already on CMAKE_PREFIX_PATH
+  message(STATUS "libCEED built with spack...")
 else()
   # Force build order
   set(LIBCEED_DEPENDENCIES)
