@@ -182,7 +182,7 @@ EOF
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Configure externals / compiler
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude openssl --exclude curl --exclude openblas --exclude openssh
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl --exclude openblas
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
