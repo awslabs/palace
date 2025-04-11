@@ -146,11 +146,11 @@ jobs:
         run: |
           # Add access to our GitHub Container Registry cache
           # Order of being added determines order in which spack looks to reuse.
+          # TODO: maybe `--autopush` would be easiest to manage here
           spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}-${{ matrix.spack_version }}
           # Secrets are auto-configured by GitHub pipelines / permissions
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # DON'T USE THE DEVELOP PUBLIC CACHE
-          # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
+          # DON'T USE THE DEVELOP PUBLIC CACHE - If having issues, comment this out
           spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ matrix.spack_version }}
           # If we cached these, that would be faster and safer
           spack -e ${SPACK_ENV} buildcache keys --install --trust
@@ -210,4 +210,7 @@ jobs:
         # We should still push any new dependencies we built successfully
         if: "!cancelled()"
         # We should sign our pushes here if we want to make these publically accessible
-        run: spack -e ${SPACK_ENV} buildcache push --with-build-dependencies --unsigned --update-index local-buildcache
+        # NOTE: WE USE `--private` HERE
+        # THIS PUSHSES INTEL-ONEAPI PACKAGES
+        # DELETE + RE-GENERATE CACHE WITHOUT `--private` BEFORE MAKING PUBLIC
+        run: spack -e ${SPACK_ENV} buildcache push --private --with-build-dependencies --unsigned --update-index local-buildcache
