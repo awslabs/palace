@@ -123,6 +123,7 @@ set(LIBCEED_TEST_DEPS)
 if(PALACE_WITH_OPENMP)
   list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
 endif()
+# TODO: ADD LIBXSMM DEPS
 find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
 if("${LIBCEED_TARGET}" STREQUAL "")
   message(FATAL_ERROR "libCEED could not be found, be sure to set LIBCEED_DIR")
