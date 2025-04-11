@@ -31,12 +31,14 @@ jobs:
         gpu: [none, cuda, rocm]
         blas: [openblas, intel-oneapi-mkl]
         spack_version: [develop, v0.23.1]
+        mpi: [openpmi, mvapich]
         exclude:
           - compiler: llvm
           - compiler: intel
           - gpu: cuda
           - gpu: rocm
           - blas: openblas
+          - mpi: mvapich
           # - spack_version: v0.23.1
 
     runs-on: palace_ubuntu-latest_16-core
