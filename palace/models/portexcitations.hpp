@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_PORT_EXCITATION_MANAGER_HPP
 #define PALACE_MODELS_PORT_EXCITATION_MANAGER_HPP
 
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
