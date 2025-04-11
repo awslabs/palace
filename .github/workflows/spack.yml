@@ -136,7 +136,7 @@ jobs:
           spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
           # DON'T USE THE DEVELOP PUBLIC CACHE
           # spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/develop
-r         spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ matrix.spack_version }}
+          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ matrix.spack_version }}
           # If we cached these, that would be faster and safer
           spack -e ${SPACK_ENV} buildcache keys --install --trust
 
