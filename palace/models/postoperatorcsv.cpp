@@ -94,7 +94,8 @@ void PostOperatorCSV<solver_t>::InitializeDomainE()
   auto nr_expected_measurement_cols =
       1 + excitation_idx_all.size() * 4 * (1 + post_op->dom_post_op.M_i.size());
   domain_E->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  domain_E->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  domain_E->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
 
   for (const auto ex_idx : excitation_idx_all)
   {
@@ -155,11 +156,12 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
   }
   using fmt::format;
   surface_F = TableWithCSVFile(post_op->post_dir / "surface-F.csv");
-  auto nr_expected_measurement_cols =
-      1 + excitation_idx_all.size() * (HasComplexGridFunction<solver_t>() ? 2 : 1) *
-              post_op->surf_post_op.flux_surfs.size();
+  auto nr_expected_measurement_cols = 1 + excitation_idx_all.size() *
+                                              (HasComplexGridFunction<solver_t>() ? 2 : 1) *
+                                              post_op->surf_post_op.flux_surfs.size();
   surface_F->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  surface_F->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  surface_F->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -238,7 +240,8 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ()
   auto nr_expected_measurement_cols =
       1 + excitation_idx_all.size() * (2 * post_op->surf_post_op.eps_surfs.size());
   surface_Q->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  surface_Q->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  surface_Q->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -285,7 +288,8 @@ void PostOperatorCSV<solver_t>::InitializeProbeE()
   auto nr_expected_measurement_cols =
       1 + excitation_idx_all.size() * scale_col * post_op->interp_op.GetProbes().size();
   probe_E->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  probe_E->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  probe_E->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -361,7 +365,8 @@ void PostOperatorCSV<solver_t>::InitializeProbeB()
   auto nr_expected_measurement_cols =
       1 + excitation_idx_all.size() * scale_col * post_op->interp_op.GetProbes().size();
   probe_B->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  probe_B->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  probe_B->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -441,7 +446,8 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
   const auto &surf_j_op = post_op->fem_op->GetSurfaceCurrentOp();
   auto nr_expected_measurement_cols = 1 + excitation_idx_all.size() * surf_j_op.Size();
   surface_I->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  surface_I->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  surface_I->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -495,13 +501,14 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
   port_V = TableWithCSVFile(post_op->post_dir / "port-V.csv");
   port_I = TableWithCSVFile(post_op->post_dir / "port-I.csv");
 
-  auto nr_expected_measurement_cols =
-      1 + excitation_idx_all.size() * lumped_port_op.Size();
+  auto nr_expected_measurement_cols = 1 + excitation_idx_all.size() * lumped_port_op.Size();
   port_V->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   port_I->table.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
 
-  port_V->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
-  port_I->table.insert(Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  port_V->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
+  port_I->table.insert(
+      Column("idx", LabelIndexCol(solver_t), 0, PrecIndexCol(solver_t), {}, ""));
   for (const auto ex_idx : excitation_idx_all)
   {
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
@@ -870,7 +877,6 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
     InitializeEigPortQ();
   }
 }
-
 
 template <config::ProblemData::Type solver_t>
 void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, int step)

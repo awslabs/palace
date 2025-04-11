@@ -1093,8 +1093,8 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(
-    const ComplexVector &e, const ComplexVector &b)
+auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                          const ComplexVector &b)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
   SetEGridFunction(e);
@@ -1144,8 +1144,7 @@ template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrin
                                           double t, double J_coef) -> double;
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
-    config::ProblemData::Type::DRIVEN>(
-    const ComplexVector &e, const ComplexVector &b)
+    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b)
     -> double;
 
 template auto

@@ -148,7 +148,7 @@ public:
   // Driven specific overload for specifying excitation index
   template <config::ProblemData::Type U = solver_t>
   auto PrintAllCSVData(double idx_value_dimensionful, int step, int ex_idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
   {
     m_ex_idx = ex_idx;
     PrintAllCSVData(idx_value_dimensionful, step);
