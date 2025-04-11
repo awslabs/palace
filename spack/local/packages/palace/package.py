@@ -72,7 +72,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("gslib+mpi")
 
     # superlu-dist isn't a hard dep, but some variants are
-    depends_on("suprelu-dist+parmetis~openmp~cuda~rocm", when="+superlu-dist")
+    depends_on("superlu-dist+parmetis~openmp~cuda~rocm", when="+superlu-dist")
 
     # LibCEED is a core dep
     # TODO: We need to specify @git.v0.13.0-rc.1=develop (maybe only in spack.yaml)
