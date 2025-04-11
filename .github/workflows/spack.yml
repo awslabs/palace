@@ -136,6 +136,7 @@ jobs:
             --exclude openssh \
             --exclude python \
             --exclude ncurses \
+            --exclude bzip2 \
             --exclude curl
 
       - name: Configure Compilers
