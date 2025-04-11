@@ -38,7 +38,7 @@ function generate_ring_mesh(;
     outer_radius                       = 100.0,
     rot_center::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
     rot_axis::AbstractVector{<:Real}   = [0.0, 0.0, 1.0],
-    rot_θ::Real                        = π / 6,
+    rot_θ::Real                       = π / 6,
     verbose::Integer                   = 5,
     gui::Bool                          = false
 )
@@ -194,15 +194,14 @@ function generate_ring_mesh(;
     gmsh.model.mesh.field.setNumber(1, "DistMax", 6.0 * outer_radius)
     gmsh.model.mesh.field.setNumber(1, "SizeMax", l_farfield)
 
-    mesh_curves =
-        last.(
-            gmsh.model.getBoundary(
-                [(2, x) for x in [inner_ring, outer_ring, inner_terminal, outer_terminal]],
-                true,
-                false,
-                false
-            )
+    mesh_curves = last.(
+        gmsh.model.getBoundary(
+            [(2, x) for x in [inner_ring, outer_ring, inner_terminal, outer_terminal]],
+            true,
+            false,
+            false
         )
+    )
 
     gmsh.model.mesh.field.add("Distance", 2)
     gmsh.model.mesh.field.setNumbers(2, "CurvesList", mesh_curves)
