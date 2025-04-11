@@ -62,7 +62,7 @@ jobs:
           # Clean up Android SDK install (confuses Spack MKL link line?)
           sudo rm -rf $ANDROID_HOME
 
-      - name: Setup Environment
+      - name: Setup develop Spack Environment
         run: |
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
@@ -107,9 +107,21 @@ jobs:
               packages:
                 petsc:
                   require: ~hdf5
-            EOF
-            
-          elif [[ "${{ matrix.spack_version}}" == 'develop' ]]; then
+              EOF
+          fi
+
+      - name: Setup v0.23.1 Spack Environment
+        run: |
+          # Configure GPU variant
+          if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
+            GPU_VARIANT="+cuda cuda_arch=70"
+          elif [[ "${{ matrix.gpu }}" == 'rocm' ]]; then
+            GPU_VARIANT="+rocm amdgpu_target=gfx900"
+          else
+            GPU_VARIANT=""
+          fi
+          cd ${SPACK_ENV}
+          if [[ "${{ matrix.spack_version}}" == 'develop' ]]; then
             cat << EOF> spack.yaml
             spack:
               specs:
@@ -138,12 +150,10 @@ jobs:
             EOF
           fi
 
-          cd -
-
-          # Set up Spack to use external packages (MPI, etc.) and local Palace package
-          # recipe
+      - name: Run Spack Develop
+        # Set up Spack to use external packages (MPI, etc.) and local Palace package 
+        run: |
           spack -e ${SPACK_ENV} repo add spack/local
-
           # Using `spack develop` in order to have an in-source build
           spack -e ${SPACK_ENV} develop --path=$(pwd) \
             local.palace@git."${{ github.head_ref || github.ref_name }}"=develop \
