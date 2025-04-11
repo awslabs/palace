@@ -33,13 +33,20 @@ jobs:
         spack_version: [develop, v0.23.1]
         mpi: [openmpi, mvapich]
         exclude:
+          # Would a spack-installed compiler be easier?
           - compiler: llvm
           - compiler: intel
-          - gpu: cuda
-          - gpu: rocm
+          # No GPU testing for now
+          # - gpu: cuda
+          # - gpu: rocm
+          # intel-oneapi-mkl must be re-built each time
+          # We could have a private-only cache of this, but public caches are
+          # easier to use...
           - blas: openblas
+          # Since MPI is ABI compatible, only need to build against one MPI
           - mpi: mvapich
-          # - spack_version: v0.23.1
+          # In future, maybe we test against many spack versions
+          - spack_version: v0.23.1
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
