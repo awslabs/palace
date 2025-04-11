@@ -71,6 +71,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~complex")
     depends_on("gslib+mpi")
 
+    # superlu-dist isn't a hard dep, but some variants are
+    depends_on("suprelu-dist+parmetis~openmp~cuda~rocm", when="+superlu-dist")
+
     # LibCEED is a core dep
     # TODO: We need to specify @git.v0.13.0-rc.1=develop (maybe only in spack.yaml)
     depends_on("libceed@develop")
@@ -130,8 +133,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     for pkg in [
         ("metis", ""),
         ("hypre", ""),
-        ("superlu-dist", "+superlu-dist"),
         ("strumpack", "+strumpack"),
+        ("superlu-dist", "+superlu-dist"),
         ("sundials", "+sundials"),
         ("mumps", "+mumps"),
         ("petsc", "+slepc"),  # Need PETSc when we use slepc
@@ -157,7 +160,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # OpenMP
         if pkg[0] in [
             "hypre",
-            "suprelu-dist",
             "strumpack",
             "sundials",
             "mumps",
@@ -183,7 +185,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+magma"):
         for gpu_pkg in [
             ("hypre", ""),
-            ("superlu-dist", "+superlu-dist"),
             ("strumpack", "+strumpack"),
             ("sundials", "+sundials"),
             ("slepc", "+slepc"),
@@ -253,7 +254,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         )
 
         # MPI compiler wrappers are not required, but MFEM test builds need to know to link
-        # against MPI libraries
+        # against MPI libraries.
+        # Eventually these will all be external spack based dependencies.
         if "+superlu-dist" in self.spec:
             args.append(self.define("SuperLUDist_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
         if "+sundials" in self.spec:
