@@ -1,10 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using CSV
-using DataFrames
-using Measures
-using Plots
+using CSV, DataFrames, Measures, Plots
 using PyPlot: matplotlib
 
 """
@@ -16,14 +13,16 @@ Generate the data for the coplanar waveguide example
 
   - num_processors - number of processors to use for the simulation
 """
-function generate_cpw_data(; num_processors::Integer=1)
+function generate_cpw_data(; num_processors::Integer=0, figsuffix=4)
     # Call the solver, discarding the terminal output
     cpw_dir = @__DIR__
-    for sim ∈ ["lumped", "wave"]
-        for mode ∈ ["adaptive", "uniform"]
-            call_command =
-                Cmd(`palace -np $num_processors cpw_$sim\_$mode.json`, dir=cpw_dir)
-            run(call_command)
+    if num_processors > 0
+        for sim ∈ ["lumped", "wave"]
+            for mode ∈ ["adaptive", "uniform"]
+                call_command =
+                    Cmd(`palace -np $num_processors cpw_$sim\_$mode.json`, dir=cpw_dir)
+                run(call_command)
+            end
         end
     end
 
@@ -133,8 +132,8 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p1a, ylims=(first(ylims(p1a)) - 20, 0))
-    savefig(p1a, joinpath(cpw_dir, "postpro", "figure1a.png"))
-    display(p1a)
+
+    savefig(p1a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)a.png"))
 
     # Phase
     ylbl = string("Reflection: arg(\$S_{11}\$)  (deg.)")
@@ -157,7 +156,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p1b, ylims=(first(ylims(p1b)) - 100, last(ylims(p1b)) + 0))
-    savefig(p1b, joinpath(cpw_dir, "postpro", "figure1b.png"))
+    savefig(p1b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)a.png"))
     display(p1b)
 
     ## Transmission
@@ -184,7 +183,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p2a, ylims=(first(ylims(p2a)) - 20, 2))
-    savefig(p2a, joinpath(cpw_dir, "postpro", "figure2a.png"))
+    savefig(p2a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)b.png"))
     display(p2a)
 
     # Phase
@@ -208,7 +207,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p2b, ylims=(first(ylims(p2b)) - 60, last(ylims(p2b)) + 0))
-    savefig(p2b, joinpath(cpw_dir, "postpro", "figure2b.png"))
+    savefig(p2b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)b.png"))
     display(p2b)
 
     ## NEXT
@@ -235,7 +234,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p3a, ylims=(first(ylims(p3a)) - 30, 0))
-    savefig(p3a, joinpath(cpw_dir, "postpro", "figure3a.png"))
+    savefig(p3a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)c.png"))
     display(p3a)
 
     # Phase
@@ -259,7 +258,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p3b, ylims=(first(ylims(p3b)) - 100, last(ylims(p3b)) + 0))
-    savefig(p3b, joinpath(cpw_dir, "postpro", "figure3b.png"))
+    savefig(p3b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)c.png"))
     display(p3b)
 
     ## FEXT
@@ -286,7 +285,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p4a, ylims=(first(ylims(p4a)) - 40, 0))
-    savefig(p4a, joinpath(cpw_dir, "postpro", "figure4a.png"))
+    savefig(p4a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)d.png"))
     display(p4a)
 
     # Phase
@@ -310,7 +309,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p4b, ylims=(first(ylims(p4b)) - 120, last(ylims(p4b)) + 0))
-    savefig(p4b, joinpath(cpw_dir, "postpro", "figure4b.png"))
+    savefig(p4b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)d.png"))
     display(p4b)
 
     return
