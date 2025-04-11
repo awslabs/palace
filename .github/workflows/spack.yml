@@ -75,7 +75,7 @@ jobs:
           fi
 
           # Develop requires ^compiler, not %compiler
-          # PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }"
+          # PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
 
 
