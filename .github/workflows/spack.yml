@@ -129,6 +129,8 @@ jobs:
 
       - name: Configure External Packages
         run: |
+          # These seem to cause build issues.
+          # TODO: re-visit these once builds are working
           spack -e ${SPACK_ENV} external find --all \
             --exclude openssl \
             --exclude openssh \
