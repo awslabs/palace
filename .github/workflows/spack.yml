@@ -82,10 +82,10 @@ jobs:
 
           mkdir -p ${SPACK_ENV}
           # I don't know why spack struggles so much with the environment creation...
-          cd ${SPACK_ENV}
+          pushd ${SPACK_ENV}
           # We could configure settings here, but that's done through CLI later
           # We at least want our core spec to be here or else env looks empty...
-          cat << EOF> spack.yaml
+          cat << EOF > spack.yaml
           spack:
             specs:
               - ${PALACE_SPEC}
@@ -108,7 +108,7 @@ jobs:
                 require: ~hdf5
           EOF
 
-          cd -
+          popd
 
           spack -e ${SPACK_ENV} repo add spack/local
 
