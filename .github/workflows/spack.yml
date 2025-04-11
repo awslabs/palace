@@ -31,7 +31,7 @@ jobs:
         gpu: [none, cuda, rocm]
         blas: [openblas, intel-oneapi-mkl]
         spack_version: [develop, v0.23.1]
-        mpi: [openpmi, mvapich]
+        mpi: [openmpi, mvapich]
         exclude:
           - compiler: llvm
           - compiler: intel
