@@ -82,7 +82,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # Are there other operating systems that we can add support to (windows)?
     depends_on("libceed~libxsmm", when="platform=darwin")
     depends_on("libceed+libxsmm", when="platform=linux")
-    depends_on("libxsmm@main", when="platform=linux")
+    depends_on("libxsmm@main~shared blas=0", when="platform=linux")
 
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
@@ -105,6 +105,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("build_type=Debug"):
         depends_on("mfem+libunwind")
+        depends_on("libxsmm+debug")
 
     # Magma is our GPU backend, so we need it when gpus are enabled
     conflicts("~magma", when="+cuda")
@@ -143,10 +144,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ("mfem", ""),
         ("gslib", ""),
     ]:
-        # Everything except libceed builds shared / static
-        if pkg[0] != "libceed":
-            depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
-            depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
+        depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
+        depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
 
         # For complex / int64
         if pkg[0] in ["metis", "superlu-dist", "petsc"]:
