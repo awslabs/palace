@@ -62,7 +62,8 @@ jobs:
           # Clean up Android SDK install (confuses Spack MKL link line?)
           sudo rm -rf $ANDROID_HOME
 
-      - name: Setup Environment
+      - name: Setup Environment (spack@v0.23.1)
+        if: matrix.spack_version == 'v0.23.1'
         run: |
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
@@ -73,16 +74,14 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          if [[ "${{ matrix.spack_version }}" == 'develop' ]]; then
-            PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }"
-          elif [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
-          fi
-          
+          # Develop requires ^compiler, not %compiler
+          # PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }"
+          PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+
 
           mkdir -p ${SPACK_ENV}
           # I don't know why spack struggles so much with the environment creation...
-          pushd ${SPACK_ENV}
+          cd ${SPACK_ENV}
           # We could configure settings here, but that's done through CLI later
           # We at least want our core spec to be here or else env looks empty...
           cat << EOF > spack.yaml
@@ -107,12 +106,64 @@ jobs:
               petsc:
                 require: ~hdf5
           EOF
+          cd -
 
-          popd
-
+          # Need to get the actual local palace build here
           spack -e ${SPACK_ENV} repo add spack/local
 
           # Using `spack develop` in order to have an in-source build
+          spack -e ${SPACK_ENV} develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+
+      - name: Setup Environment (spack@develop)
+        if: matrix.spack_version == 'develop'
+        run: |
+          # Configure GPU variant
+          if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
+            GPU_VARIANT="+cuda cuda_arch=70"
+          elif [[ "${{ matrix.gpu }}" == 'rocm' ]]; then
+            GPU_VARIANT="+rocm amdgpu_target=gfx900"
+          else
+            GPU_VARIANT=""
+          fi
+
+          # Develop requires ^compiler, not %compiler
+          PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }"
+          # PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+
+
+          mkdir -p ${SPACK_ENV}
+          # I don't know why spack struggles so much with the environment creation...
+          cd ${SPACK_ENV}
+          # We could configure settings here, but that's done through CLI later
+          # We at least want our core spec to be here or else env looks empty...
+          cat << EOFILE > spack.yaml
+          spack:
+            specs:
+              - ${PALACE_SPEC}
+              - libceed@develop
+              - mfem@develop
+              - libxsmm@git.main=main
+              - local.gslib+shared
+            view: false
+            concretizer:
+              reuse: false
+              unify: true
+              targets:
+                granularity: generic
+            config:
+              source_cache: ${SPACK_CACHE}
+              misc_cache: ${SPACK_CACHE}
+              build_stage: ${SPACK_CACHE}
+            packages:
+              petsc:
+                require: ~hdf5
+          EOFILE
+          cd -
+
+          # Have to get the local spack package
+          spack -e ${SPACK_ENV} repo add spack/local
+
+          # Using `spack develop` in order to have an up-to-date source build
           spack -e ${SPACK_ENV} develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Configure External Packages
