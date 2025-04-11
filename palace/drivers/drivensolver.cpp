@@ -137,7 +137,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
                                         std::complex<double>(-omega * omega, 0.0), K.get(),
                                         C.get(), M.get(), A2.get());
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
-                                                                omega);
+                                                                 omega);
       ksp.SetOperators(*A, *P);
 
       // Solve linear system.

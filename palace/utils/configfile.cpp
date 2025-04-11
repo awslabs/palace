@@ -1501,17 +1501,19 @@ void BoundaryData::SetUp(json &config)
     // Typical usecase: If each excitation is simple, S-parameters will be calculated.
     //    If there were multiple excitations specified, check their indices match the
     //    port indices. If there was only one, assign it.
-    excitation_map.erase(0); // zeroth index is unexcited.
+    excitation_map.erase(0);  // zeroth index is unexcited.
     bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
                                      [](const auto &x) { return x.second.size() == 1; });
     if (calc_s_params && !excitation_map.empty())
     {
       // If there's one excitation, needs to be 1 (set with bool) or the port index.
       const auto &ext1 = *excitation_map.begin();
-      MFEM_VERIFY((excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first))
-          || std::all_of(excitation_map.begin(), excitation_map.end(),
-                                  [](const auto &x) { return x.first == x.second[0]; }),
-                  "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
+      MFEM_VERIFY(
+          (excitation_map.size() == 1 &&
+           (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+              std::all_of(excitation_map.begin(), excitation_map.end(),
+                          [](const auto &x) { return x.first == x.second[0]; }),
+          "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
 
       for (auto &[port_idx, lp] : lumpedport)
       {

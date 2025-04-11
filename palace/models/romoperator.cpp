@@ -191,9 +191,9 @@ MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
   Q.resize(max_size, ComplexVector());
 }
 
-void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                   const SpaceOperator &space_op,
-                                                   GmresSolverBase::OrthogType orthog_type)
+void MinimalRationalInterpolation::AddSolutionSample(
+    double omega, const ComplexVector &u, const SpaceOperator &space_op,
+    GmresSolverBase::OrthogType orthog_type)
 {
   MPI_Comm comm = space_op.GetComm();
 

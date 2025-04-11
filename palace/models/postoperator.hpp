@@ -148,8 +148,8 @@ private:
   std::map<int, WavePortFieldData> port_E0;
 
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
-  public:
 
+public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
   template <config::ProblemData::Type U = solver_t>
@@ -452,8 +452,7 @@ public:
   //
   // TODO(C++20): SFINAE to requires.
   template <config::ProblemData::Type U = solver_t>
-  auto MeasureDomainFieldEnergyOnly(
-      const ComplexVector &e, const ComplexVector &b)
+  auto MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b)
       -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The
