@@ -101,7 +101,6 @@ jobs:
               - ${PALACE_SPEC}
               - libceed@develop
               - mfem@develop
-              - libxsmm@git.main=main
               - local.gslib+shared
             view: false
             concretizer:
