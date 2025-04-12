@@ -36,13 +36,10 @@ jobs:
           # Would a spack-installed compiler be easier?
           - compiler: llvm
           - compiler: intel
-          # No GPU testing for now
-          - gpu: cuda
-          - gpu: rocm
           # intel-oneapi-mkl must be re-built each time
           # We could have a private-only cache of this, but public caches are
-          # easier to use...
-          - blas: openblas
+          # easier to use, and blas is easy to swap
+          - blas: intel-oneapi-mkl
           # Since MPI is ABI compatible, only need to build against one MPI
           - mpi: mvapich
           # In future, maybe we test against many spack versions
@@ -170,42 +167,20 @@ jobs:
         # Build palace from source using this current directory
         run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
-      # Not running testing for now, but this will be helpful in future.
-      #
-      # - name: Run Unit Tests
-      #   # Since we ran `spack develop` here, we have the build dir ready to run tests in
-      #   run: |
-      #     # Need to load the MPI built by spack
-      #     eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.mpi }})
-      #     cd $(spack -e ${SPACK_ENV} location --build-dir local.palace@develop)
-      #     ls -al
-      #     cd ./test/unit
-      #     mpirun -np 2 ./unit-tests --skip-benchmarks
-      #     cd -
-
-      # - name: Run Integration Tests
-      #   if: matrix.gpu == 'none' # Skip tests for GPU builds
-      #   env:
-      #     NUM_PROC_TEST_MAX: "8"
-      #   run: |
-      #     # Configure environment
-      #     export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-      #     if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
-      #       NUM_PROC_TEST=$NUM_PROC_TEST_MAX
-      #     fi
-
-      #     spack load palace
-
-      #     # Run tests
-      #     julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-      #     julia --project=test/examples --color=yes test/examples/runtests.jl
+      # Should we run unit tests as well here?
+      - name: Run Integration Tests
+        if: matrix.gpu == 'none' # Skip tests for GPU builds
+        env:
+          NUM_PROC_TEST_MAX: "8"
+        run: |
+          eval $(spack -e ${SPACK_ENV} load --sh palace)
+          # Run tests
+          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test/examples --color=yes test/examples/runtests.jl
 
       - name: Update Cache
         # Sometimes a dependency will fail to build
         # We should still push any new dependencies we built successfully
         if: "!cancelled()"
         # We should sign our pushes here if we want to make these publically accessible
-        # NOTE: WE USE `--private` HERE
-        # THIS PUSHSES INTEL-ONEAPI PACKAGES
-        # DELETE + RE-GENERATE CACHE WITHOUT `--private` BEFORE MAKING PUBLIC
-        run: spack -e ${SPACK_ENV} buildcache push --private --with-build-dependencies --unsigned --update-index local-buildcache
+        run: spack -e ${SPACK_ENV} buildcache push --with-build-dependencies --unsigned --update-index local-buildcache
