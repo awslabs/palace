@@ -37,8 +37,8 @@ jobs:
           - compiler: llvm
           - compiler: intel
           # No GPU testing for now
-          # - gpu: cuda
-          # - gpu: rocm
+          - gpu: cuda
+          - gpu: rocm
           # intel-oneapi-mkl must be re-built each time
           # We could have a private-only cache of this, but public caches are
           # easier to use...
