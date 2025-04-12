@@ -83,13 +83,6 @@ fi
 
 echo $SPACK_ENV
 
-# Can easily change compiler / MPI / blas spec
-# NOTES:
-#   - intel-oneapi-mkl only works on Linux / x86_64
-BLAS_SPEC="openblas"
-PALACE_SPEC="local.palace@develop ^${BLAS_SPEC} ^openmpi"
-# PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
-
 FRESH_INSTALL=false
 
 while [[ $# -gt 0 ]]; do
@@ -105,12 +98,29 @@ while [[ $# -gt 0 ]]; do
     FORCE_FRESH_INSTALL=true
     shift
     ;;
+  -cuda)
+    echo "-cuda set. Running with cuda build"
+    CUDA=true
+    shift
+    ;;
   *)
     echo "Error: invalid option: $1"
     return 1
     ;;
   esac
 done
+
+# Can easily change compiler / MPI / blas spec
+# NOTES:
+#   - intel-oneapi-mkl only works on Linux / x86_64
+BLAS_SPEC="openblas"
+
+if [ ${CUDA} = "true" ]; then
+  GPU="+cuda cuda_arch=89"
+else
+  GPU=""
+fi
+PALACE_SPEC="local.palace@develop${GPU} ^${BLAS_SPEC} ^openmpi"
 
 # Prevents loading ~/.spack
 export SPACK_DISABLE_LOCAL_CONFIG=1
@@ -126,9 +136,9 @@ if [ ${FRESH_INSTALL} = "true" ]; then
       rm -rfd ${SPACK_ENV}
     fi
     mkdir -p ${SPACK_ENV}
-    export TMP_SPACK_ENV=${SPACK_ENV}
+    TMP_SPACK_ENV=${SPACK_ENV}
   else
-    export TMP_SPACK_ENV=${PWD}/${GARCH}
+    TMP_SPACK_ENV=${PWD}/${GARCH}
     if [ -d ${TMP_SPACK_ENV} ]; then
       rm -rfd ${TMP_SPACK_ENV}
     fi
@@ -166,12 +176,15 @@ if [ ${FRESH_INSTALL} = "true" ]; then
         require: ~hdf5
       rocblas:
         require: ~tensile
+      openmpi:
+        require: ~cuda
     mirrors:
         develop: https://binaries.spack.io/develop
 EOF
 
   if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
     ${SPACK_COMMAND} clean -abm
+    rm -rfd ~/.spack*
   fi
 
   # We don't need to clean every time, but might as well to avoid issues...
@@ -181,7 +194,17 @@ EOF
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Configure externals / compiler
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all \
+    --exclude openssl \
+    --exclude openssh \
+    --exclude python \
+    --exclude ncurses \
+    --exclude bzip2 \
+    --exclude xz \
+    --exclude curl
+
+  # MAC OS(?)
+  # ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
@@ -200,7 +223,9 @@ EOF
   fi
 
   # Add public mirror to help with build times
-  ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+  if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
+    ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
+  fi
 
   # TODO: FIX
   # if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
@@ -220,8 +245,6 @@ EOF
   echo "NOTE: Even though it doesn't say palace.local, it's using that version."
   echo "If you are happy with this concretization, press Enter to continue..."
   read -r
-  echo "Installing dependencies..."
-  echo ""
 fi
 
 echo
