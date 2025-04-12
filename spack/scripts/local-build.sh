@@ -184,27 +184,11 @@ EOF
 
   if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
     ${SPACK_COMMAND} clean -abm
-    rm -rfd ~/.spack*
+    rm -rfd ~/.spack
   fi
 
-  # We don't need to clean every time, but might as well to avoid issues...
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -m
-  # *** The next one removes everything spack has installed ***
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
 
-  # Configure externals / compiler
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all \
-    --exclude openssl \
-    --exclude openssh \
-    --exclude python \
-    --exclude ncurses \
-    --exclude bzip2 \
-    --exclude xz \
-    --exclude curl
-
-  # MAC OS(?)
-  # ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
