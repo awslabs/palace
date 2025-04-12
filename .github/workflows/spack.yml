@@ -99,9 +99,8 @@ jobs:
           spack:
             specs:
               - ${PALACE_SPEC}
-              - libceed@develop
-              - mfem@develop
               - local.gslib+shared
+              - local.libceed
             view: false
             concretizer:
               reuse: false
@@ -163,13 +162,8 @@ jobs:
         # Unfortunately it then becomes difficult to know when to re-concretize.
         run: spack -e ${SPACK_ENV} concretize -f
 
-        # TODO: We shouldn't have to build / load blas like this
-      - name: Build Blas
-        run: spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error ${{ matrix.blas }}
-
       - name: Build Dependencies
         run: |
-          eval $(spack -e ${SPACK_ENV} load --sh ${{ matrix.blas }})
           spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Build Palace

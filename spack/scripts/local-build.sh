@@ -86,7 +86,7 @@ echo $SPACK_ENV
 # Can easily change compiler / MPI / blas spec
 # NOTES:
 #   - intel-oneapi-mkl only works on Linux / x86_64
-BLAS_SPEC="intel-oneapi-mkl"
+BLAS_SPEC="openblas"
 PALACE_SPEC="local.palace@develop ^${BLAS_SPEC} ^openmpi"
 # PALACE_SPEC="local.palace@develop ^openblas ^openmpi"
 
@@ -99,6 +99,12 @@ while [[ $# -gt 0 ]]; do
     FRESH_INSTALL=true
     shift
     ;;
+  -ff)
+    echo "-ff set. Running additional spack clean"
+    FRESH_INSTALL=true
+    FORCE_FRESH_INSTALL=true
+    shift
+    ;;
   *)
     echo "Error: invalid option: $1"
     return 1
@@ -109,20 +115,12 @@ done
 # Prevents loading ~/.spack
 export SPACK_DISABLE_LOCAL_CONFIG=1
 
-# Configured temporary directories for building
-# Will use `/dev/shm` for now, but might need more space...
-export TMP=/tmp/spack-tmp
-export TMPDIR=${TMP}
-export tempdir=${TMP}
-mkdir -p $TMP
-
 # Should do a fresh install if no spack.yaml in env
 if [ ! -f ${PWD}/${GARCH}/spack.yaml ]; then
   FRESH_INSTALL=true
 fi
 
 if [ ${FRESH_INSTALL} = "true" ]; then
-
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     if [ -d ${SPACK_ENV} ]; then
       rm -rfd ${SPACK_ENV}
@@ -140,14 +138,13 @@ if [ ${FRESH_INSTALL} = "true" ]; then
   # To enable / disable using a build cache aggressively, toggle:
   #   - reuse: true
   #   - splce: automatic: true
+  # TODO: What versions of Palace support corresponding MFEM versions?
   cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
   spack:
     specs: 
       - ${PALACE_SPEC}
-      - libceed@develop
-      - mfem@develop
-      - libxsmm@git.main=main
       - local.gslib+shared
+      - local.libceed
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -164,16 +161,18 @@ if [ ${FRESH_INSTALL} = "true" ]; then
         strategy: none
       targets:
         granularity: generic
-    config:
-      source_cache: ${TMP}
-      misc_cache: ${TMP}
-      build_stage: ${TMP}
     packages:
       petsc:
         require: ~hdf5
+      rocblas:
+        require: ~tensile
     mirrors:
         develop: https://binaries.spack.io/develop
 EOF
+
+  if [[ ${FORCE_FRESH_INSTALL} = "true" ]]; then
+    ${SPACK_COMMAND} clean -abm
+  fi
 
   # We don't need to clean every time, but might as well to avoid issues...
   # ${SPACK_COMMAND} -e ${SPACK_ENV} clean -abm
@@ -182,7 +181,7 @@ EOF
   # ${SPACK_COMMAND} -e ${SPACK_ENV} gc -by
 
   # Configure externals / compiler
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl --exclude openblas
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude curl
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
     # Install with brew if you would like to use this
@@ -221,18 +220,17 @@ EOF
   echo "NOTE: Even though it doesn't say palace.local, it's using that version."
   echo "If you are happy with this concretization, press Enter to continue..."
   read -r
-  echo "Installing..."
+  echo "Installing dependencies..."
   echo ""
 fi
 
-${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete ${BLAS_SPEC}
-# TODO: Configure for container build (probably best in another script...)
-eval $(${SPACK_COMMAND} -e ${SPACK_ENV} load --sh intel-oneapi-mkl)
-# Can't install Palace in parallel due to CMake race condition
-${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --show-log-on-error --only dependencies
-${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
+echo
+echo "Installing Palace..."
+echo
 
-DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
+${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --only dependencies --show-log-on-error
+${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
+DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) location --build-dir ${PALACE_SPEC})
 
 echo
 echo "Installation done / cancelled / failed. Feel free to re-run build with:"
@@ -247,3 +245,5 @@ echo "NOTE: The path in the cd command is also in ./build-$(${SPACK_COMMAND} arc
 echo "      which is symlinked to the one output above."
 echo
 echo "NOTE: Just re-run the script if you are using the container script"
+
+${SPACK_COMMAND} -e ${SPACK_ENV} gc -byE
