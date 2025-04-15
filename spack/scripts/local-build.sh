@@ -83,7 +83,9 @@ fi
 
 echo $SPACK_ENV
 
+FORCE_FRESH_INSTALL=false
 FRESH_INSTALL=false
+CUDA=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -152,9 +154,10 @@ if [ ${FRESH_INSTALL} = "true" ]; then
   cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
   spack:
     specs: 
-      - ${PALACE_SPEC}
-      - local.gslib+shared
-      - local.libceed
+      - ${PALACE_SPEC} \
+      ^ local.gslib+shared \
+      ^ local.libceed \
+      ^ local.mfem
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -187,7 +190,7 @@ EOF
     rm -rfd ~/.spack
   fi
 
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4 cmake
 
   if [[ "${SPACK_COMMAND}" == "spack" ]]; then
     # Assumes that you have an openblas / openmpi installation you want to use
