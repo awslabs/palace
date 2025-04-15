@@ -83,7 +83,9 @@ fi
 
 echo $SPACK_ENV
 
+FORCE_FRESH_INSTALL=false
 FRESH_INSTALL=false
+CUDA=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -155,6 +157,7 @@ if [ ${FRESH_INSTALL} = "true" ]; then
       - ${PALACE_SPEC}
       - local.gslib+shared
       - local.libceed
+      - local.mfem
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:

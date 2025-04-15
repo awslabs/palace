@@ -101,6 +101,7 @@ jobs:
               - ${PALACE_SPEC}
               - local.gslib+shared
               - local.libceed
+              - local.mfem
             view: false
             concretizer:
               reuse: false
