@@ -51,6 +51,30 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     surf_j_op(iodata, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op)
 {
+  // Check Excitations.
+  if (iodata.problem.type == config::ProblemData::Type::DRIVEN)
+  {
+    MFEM_VERIFY(!port_excitation_helper.Empty(),
+                "Driven problems must specify at least one excitation!");
+  }
+  else if (iodata.problem.type == config::ProblemData::Type::EIGENMODE)
+  {
+    MFEM_VERIFY(port_excitation_helper.Empty(),
+                "Eigenmode problems must not specify any excitation!");
+  }
+  else if (iodata.problem.type == config::ProblemData::Type::TRANSIENT)
+  {
+    MFEM_VERIFY(
+        port_excitation_helper.Size() == 1,
+        "Transient problems currently only support a single excitation per simulation!");
+  }
+  else
+  {
+    MFEM_ABORT(
+        fmt::format("Internal Error: Solver type {} incompatible with SpaceOperator.",
+                    iodata.problem.type));
+  }
+
   // Finalize setup.
   CheckBoundaryProperties();
 

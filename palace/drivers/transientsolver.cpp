@@ -30,12 +30,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator space_op(iodata, mesh);
-  auto excitation_helper = space_op.GetPortExcitations();
-
-  MFEM_VERIFY(
-      excitation_helper.Size() == 1,
-      "Transient solver currently only supports a single excitation per simulation!");
-
   TimeOperator time_op(iodata, space_op, dJdt_coef);
 
   double delta_t = iodata.solver.transient.delta_t;
@@ -46,7 +40,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // port voltages and currents in postprocessing.
   PostOperator<config::ProblemData::Type::TRANSIENT> post_op(iodata, space_op);
 
-  Mpi::Print("\nComputing transient response for:\n{}", excitation_helper.FmtLog());
+  // Transient solver only supports a single excitation, this is check in SpaceOperator.
+  Mpi::Print("\nComputing transient response for:\n{}",
+             space_op.GetPortExcitations().FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
   TimeDependentFluxErrorEstimator<Vector> estimator(

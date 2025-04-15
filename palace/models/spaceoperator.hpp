@@ -120,11 +120,7 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
-  const auto &GetPortExcitations() const
-  {
-    MFEM_VERIFY(!port_excitation_helper.Empty(), "No excitation specified!");
-    return port_excitation_helper;
-  }
+  const auto &GetPortExcitations() const { return port_excitation_helper; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
