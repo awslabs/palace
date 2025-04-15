@@ -80,10 +80,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("libceed+magma", when="+magma")
     # Spack says that libxsmm isn't available on Darwin...
     # Are there other operating systems that we can add support to (windows)?
-    depends_on("libceed~libxsmm", when="platform=darwin")
-    depends_on("libceed+libxsmm", when="platform=linux")
+    # depends_on("libceed~libxsmm", when="platform=darwin")
+    # depends_on("libceed+libxsmm", when="platform=linux")
     # NOTE: @=main != @main since libxsmm has a version main-2023-22
-    depends_on("libxsmm@=main~shared blas=0", when="platform=linux")
+    # depends_on("libxsmm@=main~shared blas=0", when="platform=linux")
+    # depends_on("libxsmm@=main~shared blas=0")
 
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
