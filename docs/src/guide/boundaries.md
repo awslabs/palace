@@ -127,25 +127,21 @@ and [`config["WavePort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B
 The `Excitation` settings can either be specified as non-negative integers or booleans.
 
   - *Boolean setting*: `true`/`false` indicates the presence / absence of an incident excitation.
-    Usually, only a single port will be marked as excited, in which case the index labelling the
-    excitation is the same as the `Index` of the excited port. An excitation of `true` is
-    equivalent to setting `"Excitation"` equal to the port index.
+    Usually, only a single port will be marked as excited. In that case, the `"Excitation"` will promoted to the port `"Index"`. If there are multiple excited ports, the `"Excitation"` is `1`.
 
-  - *Integer setting*: Here the user manually assigns excitation indices to ports. Specifying a
-    positive integer `i`, marks that port as being excited during the excitation `i`. The value `0`
-    corresponds to no excitation. If multiple ports share an excitation index `i`, they will be
-    excited at the same time.
+  - *Integer setting*: Here the user manually assigns excitation indices to ports. The value `0`
+    corresponds to no excitation. A positive integer `i` means that port is excited during
+    excitation `i`. If multiple ports share an excitation index `i`, they will be excited at the
+    same time. In the special, but common, case that each excitation consists of only a single port,
+    the port index and excitation index must be equal. This avoids ambiguity in the scattering
+    matrix.
 
-If there are multiple excitations each with of a single port, the *excitation index must be
-equal to the port index*. This is necessary to avoid ambiguity in the specification of the
-scattering matrix.
-
-For frequency domain driven simulations, it is possible to specify multiple excitations in the
+For frequency domain driven simulations only, it is possible to specify multiple excitations in the
 same simulation using different positive integers ("multi-excitation"). These excitations are
 simulated consecutively during the Palace run. The results are printed to shared csv files. When
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
 index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
-port can only be part of a one excitation.
+port can only be part of one excitation.
 
 !!! warning "Indexing"
     

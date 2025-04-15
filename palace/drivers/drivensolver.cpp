@@ -115,7 +115,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op, int n_step, i
   {
     if (excitation_helper.Size() > 1)
     {
-      Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
+      Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  ++print_counter_excitation, excitation_helper.Size());
     }
 
@@ -345,7 +345,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   {
     if (excitation_helper.Size() > 1)
     {
-      Mpi::Print("\nSweeping Excitation Index {:d} ({:d}/{:d}):\n", excitation_idx,
+      Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  ++print_counter_excitation_online, excitation_helper.Size());
     }
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.

@@ -37,7 +37,7 @@ public:
     std::vector<int> current_port = {};
 
     // TODO: C++20 to replace this with iterator over joined range.
-    auto FlatternPortIndices() const
+    auto FlattenPortIndices() const
     {
       std::vector<int> out;
       out.insert(out.end(), lumped_port.cbegin(), lumped_port.cend());
