@@ -20,7 +20,7 @@ substrate (parallel to C-axis: ``\varepsilon_r = 11.5``,
 ``\tan\delta = 8.6\times 10^{-5}``, perpendicular to C-axis: ``\varepsilon_r = 9.3``,
 ``\tan\delta = 3.0\times 10^{-5}``) of ``500\text{ μm}`` thickness with the
 C-axis in the z-direction. This yields a characteristic impedance
-``Z_0 = 56.02\text{ }\Omega`` for each of the lines [[1]](#references). The center-to-center
+``Z_0 = 56.02\text{ }\Omega`` for each of the lines [[1]](#References). The center-to-center
 separating distance between the transmission lines on the substrate is ``266\text{ μm}``,
 which means there is exactly ``200\text{ μm}`` of ground plane between them.
 
