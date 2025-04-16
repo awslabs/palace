@@ -19,7 +19,7 @@ class Units
   double L0_m;
 
   // Characteristic reference length [m] and time [ns] for (non)dimensionalization.
-  // Note: In input, config["Model"]["Lc"] is measured in units of L0; here Lc_m is in [m]
+  // Note: In input, config["Model"]["Lc"] is measured in units of L0; here Lc_m is in [m].
   double Lc_m;   // [m]
   double tc_ns;  // [ns]
 

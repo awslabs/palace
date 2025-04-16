@@ -4,6 +4,9 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <iterator>
+#include <string_view>
+#include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -65,6 +68,17 @@ PALACE_JSON_SERIALIZE_ENUM(ElementData::CoordinateSystem,
 
 namespace
 {
+
+int AtIndex(json::iterator &port_it, std::string_view errmsg_parent)
+{
+  MFEM_VERIFY(
+      port_it->find("Index") != port_it->end(),
+      fmt::format("Missing {} \"Index\" in the configuration file!", errmsg_parent));
+  auto index = port_it->at("Index").get<int>();
+  MFEM_VERIFY(index > 0, fmt::format("The {} \"Index\" should be an integer > 0; got {}",
+                                     errmsg_parent, index));
+  return index;
+}
 
 template <std::size_t N>
 void ParseSymmetricMatrixData(json &mat, const std::string &name,
@@ -559,12 +573,11 @@ void DomainEnergyPostData::SetUp(json &postpro)
               "\"Energy\" should specify an array in the configuration file!");
   for (auto it = energy->begin(); it != energy->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Energy\" domain \"Index\" in the configuration file!");
+    auto index = AtIndex(it, "\"Energy\" domain");
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Energy\" domain in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainEnergyData()));
+    auto ret = mapdata.insert(std::make_pair(index, DomainEnergyData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
                             "in the configuration file!");
     auto &data = ret.first->second;
@@ -598,13 +611,12 @@ void ProbePostData::SetUp(json &postpro)
               "\"Probe\" should specify an array in the configuration file!");
   for (auto it = probe->begin(); it != probe->end(); ++it)
   {
+    auto index = AtIndex(it, "\"Probe\" point");
     auto ctr = it->find("Center");
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Probe\" point \"Index\" in the configuration file!");
     MFEM_VERIFY(ctr != it->end() && ctr->is_array(),
                 "Missing \"Probe\" point \"Center\" or \"Center\" should specify an array "
                 "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), ProbeData()));
+    auto ret = mapdata.insert(std::make_pair(index, ProbeData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Probe\" points in "
                             "the configuration file!");
     auto &data = ret.first->second;
@@ -908,6 +920,30 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
+int ParsePortExcitation(json::iterator &port_it, int default_excitation)
+{
+  auto it_excitation = port_it->find("Excitation");
+  if (it_excitation == port_it->end())
+  {
+    // Keep default; don't set input flag.
+    return default_excitation;
+  }
+  else if (it_excitation->is_boolean())
+  {
+    return int(it_excitation->get<bool>());  // 0 false; 1 true
+  }
+  else if (it_excitation->is_number_unsigned())
+  {
+    return it_excitation->get<int>();
+  }
+  else
+  {
+    MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
+                           "as a bool or unsigned (non-negative) integer; got {}",
+                           int(port_it->at("Index")), it_excitation->dump(2)));
+  }
+}
+
 void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
@@ -916,6 +952,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   {
     return;
   }
+
   if (port == boundaries.end())
   {
     port = terminal;
@@ -928,17 +965,17 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     MFEM_ABORT("Configuration file should not specify both \"LumpedPort\" and \"Terminal\" "
                "boundaries!");
   }
-  MFEM_VERIFY(
-      port->is_array(),
-      "\"LumpedPort\" and \"Terminal\" should specify an array in the configuration file!");
+
+  std::string label = (terminal != boundaries.end()) ? "\"Terminal\"" : "\"LumpedPort\"";
+  MFEM_VERIFY(port->is_array(),
+              label << " should specify an array in the configuration file!");
   for (auto it = port->begin(); it != port->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"LumpedPort\" or \"Terminal\" boundary \"Index\" in the "
-                "configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), LumpedPortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" or "
-                            "\"Terminal\" boundaries in the configuration file!");
+    auto index = AtIndex(it, label);
+    auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
+    MFEM_VERIFY(ret.second, fmt::format("Repeated \"Index\" found when processing {} "
+                                        "boundaries in the configuration file!",
+                                        label));
     auto &data = ret.first->second;
     data.R = it->value("R", data.R);
     data.L = it->value("L", data.L);
@@ -946,13 +983,17 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     data.Rs = it->value("Rs", data.Rs);
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
-    data.excitation = it->value("Excitation", data.excitation);
+
+    data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
     if (it->find("Attributes") != it->end())
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"LumpedPort\" or \"Terminal\" boundary in the configuration file!");
+      MFEM_VERIFY(
+          it->find("Elements") == it->end(),
+          fmt::format(
+              "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+              "{} in the configuration file!",
+              label));
       auto &elem = data.elements.emplace_back();
       ParseElementData(*it, "Direction", terminal == boundaries.end(), elem);
     }
@@ -960,13 +1001,15 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     {
       auto elements = it->find("Elements");
       MFEM_VERIFY(elements != it->end(),
-                  "Missing top-level \"Attributes\" list or \"Elements\" for "
-                  "\"LumpedPort\" or \"Terminal\" boundary in the configuration file!");
+                  fmt::format("Missing top-level \"Attributes\" list or \"Elements\" for "
+                              "{} in the configuration file!",
+                              label));
       for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
-                    "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
-                    "boundary element in the configuration file!");
+                    fmt::format("Missing \"Attributes\" list for {} element in "
+                                "the configuration file!",
+                                label));
         auto &elem = data.elements.emplace_back();
         ParseElementData(*elem_it, "Direction", terminal == boundaries.end(), elem);
 
@@ -974,10 +1017,9 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
         elem_it->erase("Attributes");
         elem_it->erase("Direction");
         elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(),
-                    "Found an unsupported configuration file keyword under \"LumpedPort\" "
-                    "or \"Terminal\" boundary element!\n"
-                        << elem_it->dump(2));
+        MFEM_VERIFY(elem_it->empty(), fmt::format("Found an unsupported configuration file "
+                                                  "keyword under {} element!\n{}",
+                                                  label, elem_it->dump(2)));
       }
     }
 
@@ -995,9 +1037,9 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     it->erase("Direction");
     it->erase("CoordinateSystem");
     it->erase("Elements");
-    MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                             "\"LumpedPort\" or \"Terminal\"!\n"
-                                 << it->dump(2));
+    MFEM_VERIFY(it->empty(),
+                fmt::format("Found an unsupported configuration file keyword under {}!\n{}",
+                            label, it->dump(2)));
 
     // Debug
     if constexpr (JSON_DEBUG)
@@ -1127,14 +1169,14 @@ void WavePortBoundaryData::SetUp(json &boundaries)
   }
   MFEM_VERIFY(port->is_array(),
               "\"WavePort\" should specify an array in the configuration file!");
+
   for (auto it = port->begin(); it != port->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"WavePort\" boundary \"Index\" in the configuration file!");
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"WavePort\" boundary in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), WavePortData()));
+    auto index = AtIndex(it, "\"WavePort\" boundary");
+    auto ret = mapdata.insert(std::make_pair(index, WavePortData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"WavePort\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
@@ -1145,7 +1187,8 @@ void WavePortBoundaryData::SetUp(json &boundaries)
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
     data.eigen_type = it->value("SolverType", data.eigen_type);
-    data.excitation = it->value("Excitation", data.excitation);
+
+    data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
@@ -1197,9 +1240,8 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
               "\"SurfaceCurrent\" should specify an array in the configuration file!");
   for (auto it = source->begin(); it != source->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"SurfaceCurrent\" source \"Index\" in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceCurrentData()));
+    auto index = AtIndex(it, "\"SurfaceCurrent\" source");
+    auto ret = mapdata.insert(std::make_pair(index, SurfaceCurrentData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
@@ -1279,12 +1321,11 @@ void SurfaceFluxPostData::SetUp(json &postpro)
               "\"SurfaceFlux\" should specify an array in the configuration file!");
   for (auto it = flux->begin(); it != flux->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"SurfaceFlux\" boundary \"Index\" in the configuration file!");
+    auto index = AtIndex(it, "\"SurfaceFlux\" boundary");
     MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Type") != it->end(),
                 "Missing \"Attributes\" list or \"Type\" for \"SurfaceFlux\" boundary "
                 "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceFluxData()));
+    auto ret = mapdata.insert(std::make_pair(index, SurfaceFluxData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceFlux\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
@@ -1341,13 +1382,12 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
               "\"Dielectric\" should specify an array in the configuration file!");
   for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Dielectric\" boundary \"Index\" in the configuration file!");
+    auto index = AtIndex(it, "\"Dielectric\" boundary");
     MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Thickness") != it->end() &&
                     it->find("Permittivity") != it->end(),
                 "Missing \"Dielectric\" boundary \"Attributes\" list, \"Thickness\", or "
                 "\"Permittivity\" in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), InterfaceDielectricData()));
+    auto ret = mapdata.insert(std::make_pair(index, InterfaceDielectricData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
@@ -1429,6 +1469,68 @@ void BoundaryData::SetUp(json &config)
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
+
+  // Ensure unique indexing of lumpedport, waveport, current.
+  {
+    std::map<int, std::string> index_map;
+    std::map<int, std::vector<int>> excitation_map;
+    const std::string lumpedport_str = "\"LumpedPort\"";
+    const std::string waveport_str = "WavePort";
+    const std::string current_str = "SurfaceCurrent";
+
+    for (const auto &data : lumpedport)
+    {
+      auto result = index_map.insert({data.first, lumpedport_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+      excitation_map[data.second.excitation].emplace_back(data.first);
+    }
+    for (const auto &data : waveport)
+    {
+      auto result = index_map.insert({data.first, waveport_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+      excitation_map[data.second.excitation].emplace_back(data.first);
+    }
+    for (const auto &data : current)
+    {
+      auto result = index_map.insert({data.first, current_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+    }
+    // Typical usecase: If each excitation is simple, S-parameters will be calculated.
+    //    If there were multiple excitations specified, check their indices match the
+    //    port indices. If there was only one, assign it.
+    excitation_map.erase(0);  // zeroth index is unexcited.
+    bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
+                                     [](const auto &x) { return x.second.size() == 1; });
+    if (calc_s_params && !excitation_map.empty())
+    {
+      // If there's one excitation, needs to be 1 (set with bool) or the port index.
+      const auto &ext1 = *excitation_map.begin();
+      MFEM_VERIFY(
+          (excitation_map.size() == 1 &&
+           (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+              std::all_of(excitation_map.begin(), excitation_map.end(),
+                          [](const auto &x) { return x.first == x.second[0]; }),
+          "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
+
+      for (auto &[port_idx, lp] : lumpedport)
+      {
+        if (lp.excitation == 1)
+        {
+          lp.excitation = port_idx;
+        }
+      }
+      for (auto &[port_idx, wp] : waveport)
+      {
+        if (wp.excitation == 1)
+        {
+          wp.excitation = port_idx;
+        }
+      }
+    }
+  }
 
   // Store all unique boundary attributes.
   attributes.insert(attributes.end(), pec.attributes.begin(), pec.attributes.end());

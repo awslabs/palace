@@ -18,7 +18,6 @@ using json = nlohmann::json;
 //
 // Data structures for storing configuration file data.
 //
-
 namespace internal
 {
 
@@ -88,6 +87,8 @@ struct ElementData
 };
 
 }  // namespace internal
+
+// Problem & Model Config.
 
 struct ProblemData
 {
@@ -250,6 +251,8 @@ public:
   void SetUp(json &config);
 };
 
+// Domain Config.
+
 // Store symmetric matrix data as set of outer products: Σᵢ sᵢ * vᵢ *  vᵢᵀ.
 template <std::size_t N>
 struct SymmetricMatrixData
@@ -350,6 +353,8 @@ public:
   void SetUp(json &config);
 };
 
+// Boundary Configuration.
+
 struct PecBoundaryData
 {
 public:
@@ -389,7 +394,7 @@ public:
   // Approximation order for farfield ABC.
   int order = 1;
 
-  // List of boundary attributes with farfield absortbing boundary conditions.
+  // List of boundary attributes with farfield absorbing boundary conditions.
   std::vector<int> attributes = {};
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
@@ -453,8 +458,10 @@ public:
   double Ls = 0.0;
   double Cs = 0.0;
 
-  // Flag for source term in driven and transient simulations.
-  bool excitation = false;
+  // Input excitation for driven & transient solver:
+  // - Wave/Lumped ports with same index are excited together.
+  // - 1-based index if excited; 0 if not excited.
+  int excitation = 0;
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -520,8 +527,10 @@ public:
   };
   EigenSolverType eigen_type = EigenSolverType::DEFAULT;
 
-  // Flag for source term in driven and transient simulations.
-  bool excitation = false;
+  // Input excitation for driven & transient solver:
+  // - Wave/Lumped ports with same index are excited together.
+  // - 1-based index if excited; 0 if not excited.
+  int excitation = 0;
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -663,6 +672,8 @@ public:
   void SetUp(json &config);
 };
 
+// Solver Configuration.
+
 struct DrivenSolverData
 {
 public:
@@ -685,7 +696,7 @@ public:
   double adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
-  int adaptive_max_size = 0;
+  int adaptive_max_size = 20;
 
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;

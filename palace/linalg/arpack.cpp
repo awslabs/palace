@@ -157,7 +157,7 @@ void CheckInfoEUPD(a_int info)
 namespace palace::arpack
 {
 
-// Base class methods
+// Base class methods.
 
 ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
   : comm(comm), print(print)
@@ -485,7 +485,7 @@ void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
   }
 }
 
-// EPS specific methods
+// EPS specific methods.
 
 ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)
@@ -637,7 +637,7 @@ double ArpackEPSSolver::GetBackwardScaling(std::complex<double> l) const
   return normK + std::abs(l) * normM;
 }
 
-// PEP specific methods
+// PEP specific methods.
 
 ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   : ArpackEigenvalueSolver(comm, print)

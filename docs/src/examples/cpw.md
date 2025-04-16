@@ -78,7 +78,7 @@ and
 [`cpw_wave_adaptive.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_wave_adaptive.json).
 
 The frequency response is computed for the band ``f\in[2.0,30.0]\text{ GHz}``. For the
-uniform sweep, a step size of ``\Delta f=2.0\text{ GHz}`` is used, while the adaptive sweep
+uniform sweep, a step size of ``\Delta f=4.0\text{ GHz}`` is used, while the adaptive sweep
 employs a much finer step size ``\Delta f=0.1\text{ GHz}``. The adaptive fast frequency
 sweep algorithm is given a tolerance of ``1\times10^{-3}`` for choosing the sampling
 points; the simulation with uniform ports uses ``9`` frequency samples and that with wave
@@ -108,7 +108,9 @@ ports, namely the lumped port excitation exhibits much higher reflection than fo
 ports. This is expected when using a lumped port to approximate the termination of a CPW,
 and refining the mesh or increasing the order of the solution approximation leads to less
 reflection. See below for the results with again ``p = 2`` for the order of the solution
-space but with a single level of mesh refinement as well.
+space but with a single level of mesh refinement as well. For the adaptive solver in these
+plots, we have actually increased the adaptive tolerance to ``1\times10^{-5}`` due
+to the small value of ``|S_{41}|``.
 
 ```@raw html
 <br/><p align="center">
@@ -118,6 +120,12 @@ space but with a single level of mesh refinement as well.
   <img src="../../assets/examples/cpw-5d.png" width="70%" />
 </p><br/>
 ```
+
+!!! note
+    
+    The examples files for uniform sampling in `examples/cpw` actually specify excitations
+    on two ports ("multi-excitation"). The two excitation are run in sequence during a
+    single palace simulation.
 
 ## References
 

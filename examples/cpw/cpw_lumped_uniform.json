@@ -67,7 +67,7 @@
       {
         "Index": 1,
         "R": 56.02,  // Ω, 2-element uniform
-        "Excitation": true,
+        "Excitation": 1,
         "Elements":
         [
           {
@@ -83,6 +83,7 @@
       {
         "Index": 2,
         "R": 56.02,
+        "Excitation": 2,
         "Elements":
         [
           {
@@ -179,7 +180,7 @@
     {
       "MinFreq": 2.0,  // GHz
       "MaxFreq": 30.0,  // GHz
-      "FreqStep": 2.0,  // GHz
+      "FreqStep": 4.0,  // GHz
       "SaveStep": 2
     },
     "Linear":

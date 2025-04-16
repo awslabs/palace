@@ -329,7 +329,7 @@ protected:
   // SLEPc eigensolver object.
   PEP pep;
 
-  // Shell matrices for the quadratic polynomial eigenvalue problem
+  // Shell matrices for the quadratic polynomial eigenvalue problem.
   Mat A0, A1, A2;
 
   void Customize() override;

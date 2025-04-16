@@ -17,6 +17,7 @@ class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
 class Timer;
+class PortExcitations;
 
 //
 // Base driver class for all simulation types.
@@ -51,6 +52,7 @@ public:
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;
+  void SaveMetadata(const PortExcitations &excitation_helper) const;
 };
 
 }  // namespace palace

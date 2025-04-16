@@ -32,7 +32,7 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
   // Assemble the real and imaginary parts, then add.
-  // XX TODO: Test complex matrix assembly if coarse solve supports it
+  // XX TODO: Test complex matrix assembly if coarse solve supports it.
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
   const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;

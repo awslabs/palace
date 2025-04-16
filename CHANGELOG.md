@@ -71,6 +71,19 @@ The format of this changelog is based on
     class. Other helper classes include a small `Table` class (for data storage and formatting)
     and a light wrapper `TableWithCSVFile` (with file interaction).
   - Changed unit conversion interface: this was moved out of `IOData` into a separate `Units` class.
+  - Changed csv output to print more digits.
+  - Changed boundary indexing to enforce that the value of `Index` is unique between `LumpedPort`,
+    `WavePort`, `SurfaceCurrent` and `Terminal`. This is a breaking change — e.g. currently a lumped
+    port and a wave port could share an index.
+  - Added multi-excitation support. `Excitation` in `LumpedPort` and `WavePort` boundary conditions
+    can now be specified either as bools or excitation integers. Allow driven simulations to have
+    multiple excitations indices in same configuration file to be simulated consecutively during the
+    same Palace run. The measurement output of multiple excitations is printed to the same csv files
+    with distinguish columns being post-indexed by the excitation index.
+  - Changed `RomOperator` to split out rational interpolation component into the separate
+    `MinimalRationalInterpolation` class to support multiple excitations. The MRI is unique to each
+    excitation, but the PROM is shared between excitations.
+  - Added `PortExcitations` to manage excitation pattern and print it to json metadata.
 
 ## [0.13.0] - 2024-05-20
 

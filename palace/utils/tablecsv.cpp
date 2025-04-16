@@ -15,7 +15,7 @@ namespace palace
 
 [[nodiscard]] size_t Column::col_width() const
 {
-  // Quickfix to specify full column width in integer case to match current formatting
+  // Quickfix to specify full column width in integer case to match current formatting.
   if (print_as_int)
   {
     return std::max(min_left_padding.value_or(defaults->min_left_padding),
@@ -40,7 +40,7 @@ namespace palace
 [[nodiscard]] auto Column::format_row(size_t i, const std::optional<size_t> &width) const
 {
   auto width_ = width.value_or(col_width());
-  // If data available format double
+  // If data available format double.
   if ((i >= 0) && (i < data.size()))
   {
     auto val = data[i];
@@ -94,7 +94,7 @@ void Table::reserve(size_t n_rows, size_t n_cols)
   }
 }
 
-// Insert columns: map like interface
+// Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
   auto it = std::find_if(cols.begin(), cols.end(),
@@ -123,7 +123,7 @@ Column &Table::operator[](std::string_view name)
   return *it;
 }
 
-// TODO: Improve all the functions below with ranges in C++20
+// TODO: Improve all the functions below with ranges in C++20.
 template <typename T>
 void Table::append_header(T &buf) const
 {
@@ -183,14 +183,14 @@ void Table::append_row(T &buf, size_t row_j) const
   return {buf.data(), buf.size()};
 }
 
-// explicit instantiation to avoid fmt inclusion
+// explicit instantiation to avoid fmt inclusion.
 template void Table::append_header(fmt::memory_buffer &) const;
 template void Table::append_row(fmt::memory_buffer &, size_t) const;
 
 TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath)
   : csv_file_fullpath_{std::move(csv_file_fullpath)}
 {
-  // Validate
+  // Validate.
   auto file_buf = fmt::output_file(
       csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
 }

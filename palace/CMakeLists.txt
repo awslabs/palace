@@ -76,6 +76,15 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   )
 endif()
 
+# Centralize Error handling
+add_library(common_warnings INTERFACE)
+target_compile_options(
+  common_warnings
+  INTERFACE -Wall
+            -Wpedantic
+            -Wno-deprecated-declarations
+)
+
 # Add extra CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -298,6 +307,7 @@ target_link_libraries(${LIB_TARGET_NAME}
   PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
+target_link_libraries(${LIB_TARGET_NAME} PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>)
 
 # Install target and helper scripts
 install(

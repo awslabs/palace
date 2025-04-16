@@ -9,6 +9,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -39,38 +40,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // port voltages and currents in postprocessing.
   PostOperator<config::ProblemData::Type::TRANSIENT> post_op(iodata, space_op);
 
-  {
-    Mpi::Print("\nComputing transient response for:\n");
-    bool first = true;
-    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
-    {
-      if (data.excitation)
-      {
-        if (first)
-        {
-          Mpi::Print(" Lumped port excitation specified on port{}",
-                     (space_op.GetLumpedPortOp().Size() > 1) ? "s" : "");
-          first = false;
-        }
-        Mpi::Print(" {:d}", idx);
-      }
-    }
-    int excitations = first;
-    first = true;
-    for (const auto &[idx, data] : space_op.GetSurfaceCurrentOp())
-    {
-      if (first)
-      {
-        Mpi::Print(" Surface current excitation specified on port{}",
-                   (space_op.GetSurfaceCurrentOp().Size() > 1) ? "s" : "");
-        first = false;
-      }
-      Mpi::Print(" {:d}", idx);
-    }
-    excitations += first;
-    MFEM_VERIFY(excitations > 0, "No excitation specified for transient simulation!");
-  }
-  Mpi::Print("\n");
+  // Transient solver only supports a single excitation, this is check in SpaceOperator.
+  Mpi::Print("\nComputing transient response for:\n{}",
+             space_op.GetPortExcitations().FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
   TimeDependentFluxErrorEstimator<Vector> estimator(
@@ -115,7 +87,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   }
-  // Final postprocessing & printing
+  // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);
   time_op.PrintStats();
   SaveMetadata(time_op.GetLinearSolver());

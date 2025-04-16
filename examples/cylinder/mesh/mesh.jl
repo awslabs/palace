@@ -106,42 +106,39 @@ function generate_cylindrical_mesh(;
     # Add physical groups
     cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
 
-    @show top =
-        last.(
-            gmsh.model.getEntitiesInBoundingBox(
-                -1.1 * radius,
-                -1.1 * radius,
-                0.5 * height,
-                1.1 * radius,
-                1.1 * radius,
-                1.1 * height,
-                2
-            )
+    @show top = last.(
+        gmsh.model.getEntitiesInBoundingBox(
+            -1.1 * radius,
+            -1.1 * radius,
+            0.5 * height,
+            1.1 * radius,
+            1.1 * radius,
+            1.1 * height,
+            2
         )
-    @show bottom =
-        last.(
-            gmsh.model.getEntitiesInBoundingBox(
-                -1.1 * radius,
-                -1.1 * radius,
-                -0.1 * height,
-                1.1 * radius,
-                1.1 * radius,
-                0.5 * height,
-                2
-            )
+    )
+    @show bottom = last.(
+        gmsh.model.getEntitiesInBoundingBox(
+            -1.1 * radius,
+            -1.1 * radius,
+            -0.1 * height,
+            1.1 * radius,
+            1.1 * radius,
+            0.5 * height,
+            2
         )
-    @show symmetry =
-        last.(
-            gmsh.model.getEntitiesInBoundingBox(
-                -1.1 * radius,
-                -0.1 * radius,
-                -0.1 * height,
-                1.1 * radius,
-                0.1 * radius,
-                1.1 * height,
-                2
-            )
+    )
+    @show symmetry = last.(
+        gmsh.model.getEntitiesInBoundingBox(
+            -1.1 * radius,
+            -0.1 * radius,
+            -0.1 * height,
+            1.1 * radius,
+            0.1 * radius,
+            1.1 * height,
+            2
         )
+    )
     exterior = []
     for domain in cylinder
         _, domain_boundaries = gmsh.model.getAdjacencies(3, domain)
@@ -174,18 +171,17 @@ function generate_cylindrical_mesh(;
     gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
     if (mesh_type == 2)
-        base_boundaries =
-            last.(
-                gmsh.model.getEntitiesInBoundingBox(
-                    -1.1 * radius,
-                    -1.1 * radius,
-                    -0.1 * height,
-                    1.1 * radius,
-                    1.1 * radius,
-                    0.1 * height,
-                    2
-                )
+        base_boundaries = last.(
+            gmsh.model.getEntitiesInBoundingBox(
+                -1.1 * radius,
+                -1.1 * radius,
+                -0.1 * height,
+                1.1 * radius,
+                1.1 * radius,
+                0.1 * height,
+                2
             )
+        )
         for boundary in base_boundaries
             gmsh.model.mesh.setRecombine(2, boundary)
         end

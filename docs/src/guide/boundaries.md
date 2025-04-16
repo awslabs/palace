@@ -118,12 +118,39 @@ incorporating periodicity as part of the meshing process.
     
     Wave ports are not currently compatible with nonconformal mesh refinement.
 
-The incident field excitation at a lumped or wave port is controlled by setting
-[`config["Boundaries"]["LumpedPort"][]["Excitation"]: true`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D)
-or
-[`config["WavePort"][]["Excitation"]: true`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D)
-for that port. The excitation for each port is defined to have unit incident power over the
-port boundary surface.
+For each port, the excitation is normalized to have unit incident power over the port boundary
+surface.
+
+The presence of an incident excitation at a port is controlled by the settings
+[`config["Boundaries"]["LumpedPort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D)
+and [`config["WavePort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D).
+The `Excitation` settings can either be specified as non-negative integers or booleans.
+
+  - *Boolean setting*: `true`/`false` indicates the presence / absence of an incident excitation.
+    Usually, only a single port will be marked as excited. In that case, the `"Excitation"` will promoted to the port `"Index"`. If there are multiple excited ports, the `"Excitation"` is `1`.
+
+  - *Integer setting*: Here the user manually assigns excitation indices to ports. The value `0`
+    corresponds to no excitation. A positive integer `i` means that port is excited during
+    excitation `i`. If multiple ports share an excitation index `i`, they will be excited at the
+    same time. In the special, but common, case that each excitation consists of only a single port,
+    the port index and excitation index must be equal. This avoids ambiguity in the scattering
+    matrix.
+
+For frequency domain driven simulations only, it is possible to specify multiple excitations in the
+same simulation using different positive integers ("multi-excitation"). These excitations are
+simulated consecutively during the Palace run. The results are printed to shared csv files. When
+there are multiple excitations, the columns of the csv files are post-indexed by the excitation
+index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
+port can only be part of one excitation.
+
+!!! warning "Indexing"
+    
+    Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
+    [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
+    [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or
+    [`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
+    different boundary conditions types (e.g. you can not have an lumped port and wave port both with
+    `Index: 5`).
 
 ## Surface current excitation
 

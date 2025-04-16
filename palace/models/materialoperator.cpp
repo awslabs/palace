@@ -342,7 +342,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
               "Quasi-periodic Floquet periodic boundary conditions are only available "
               " in 3D!");
 
-  // Get mesh dimensions in x/y/z coordinates
+  // Get mesh dimensions in x/y/z coordinates.
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   bbmax -= bbmin;

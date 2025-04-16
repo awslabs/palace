@@ -91,7 +91,7 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                                const mfem::FiniteElement &test_fe, CeedInt trial_num_comp,
                                CeedInt test_num_comp, Ceed ceed, CeedBasis *basis)
 {
-  // Basis projection operator using libCEED
+  // Basis projection operator using libCEED.
   CeedBasis trial_basis, test_basis;
   const int P = std::max(trial_fe.GetDof(), test_fe.GetDof()), ir_order_max = 100;
   int ir_order = std::max(trial_fe.GetOrder(), test_fe.GetOrder());
@@ -128,25 +128,25 @@ void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   dummy.SetIdentityTransformation(trial_fe.GetGeomType());
   if (trial_fe.GetMapType() == test_fe.GetMapType())
   {
-    // Prolongation
+    // Prolongation.
     test_fe.GetTransferMatrix(trial_fe, dummy, Bt);
   }
   else if (trial_fe.GetMapType() == mfem::FiniteElement::VALUE &&
            test_fe.GetMapType() == mfem::FiniteElement::H_CURL)
   {
-    // Discrete gradient interpolator
+    // Discrete gradient interpolator.
     test_fe.ProjectGrad(trial_fe, dummy, Bt);
   }
   else if (trial_fe.GetMapType() == mfem::FiniteElement::H_CURL &&
            test_fe.GetMapType() == mfem::FiniteElement::H_DIV)
   {
-    // Discrete curl interpolator
+    // Discrete curl interpolator.
     test_fe.ProjectCurl(trial_fe, dummy, Bt);
   }
   else if (trial_fe.GetMapType() == mfem::FiniteElement::H_DIV &&
            test_fe.GetMapType() == mfem::FiniteElement::INTEGRAL)
   {
-    // Discrete divergence interpolator
+    // Discrete divergence interpolator.
     test_fe.ProjectDiv(trial_fe, dummy, Bt);
   }
   else

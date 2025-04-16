@@ -3,6 +3,7 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -18,7 +19,7 @@ using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
   // for the port boundary.
@@ -30,9 +31,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   MFEM_VERIFY(!(has_circ && has_surf),
               "Lumped port boundary has both R/L/C and Rs/Ls/Cs defined, "
               "should only use one!");
-  excitation = data.excitation;
-  active = data.active;
-  if (excitation)
+
+  if (HasExcitation())
   {
     if (has_circ)
     {
@@ -135,13 +135,13 @@ double LumpedPortData::GetExcitationPower() const
 {
   // The lumped port excitation is normalized such that the power integrated over the port
   // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1.
-  return excitation ? 1.0 : 0.0;
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 double LumpedPortData::GetExcitationVoltage() const
 {
   // Incident voltage should be the same across all elements of an excited lumped port.
-  if (excitation)
+  if (HasExcitation())
   {
     double V_inc = 0.0;
     for (const auto &elem : elems)
@@ -430,7 +430,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   // Print some information for excited lumped ports.
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (!data.HasExcitation())
     {
       continue;
     }
@@ -602,7 +602,8 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
-void LumpedPortOperator::AddExcitationBdrCoefficients(SumVectorCoefficient &fb)
+void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
+                                                      SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
   // +2 iω/Z_s E_inc for a port boundary with an incident field E_inc. The chosen incident
@@ -612,7 +613,7 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(SumVectorCoefficient &fb)
   // works for time domain simulations requiring RHS -U_inc(t).
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation != excitation_idx)
     {
       continue;
     }

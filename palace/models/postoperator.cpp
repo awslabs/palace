@@ -49,7 +49,6 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                      int nr_expected_measurement_rows)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
     post_op_csv(this, nr_expected_measurement_rows),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
@@ -70,6 +69,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -133,18 +133,39 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 }
 
 template <config::ProblemData::Type solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection()
+template <config::ProblemData::Type U>
+auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+{
+  fs::path sub_folder_name = "";
+  auto nr_excitations = fem_op->GetPortExcitations().Size();
+  if ((nr_excitations > 1) && (ex_idx > 0))
+  {
+    int spacing = 1 + int(std::log10(nr_excitations));
+    sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
+  }
+  InitializeParaviewDataCollection(sub_folder_name);
+}
+
+template <config::ProblemData::Type solver_t>
+void PostOperator<solver_t>::InitializeParaviewDataCollection(
+    const fs::path &sub_folder_name)
 {
   if (!write_paraview_fields())
   {
     return;
   }
+  fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
+  fs::path paraview_dir_b =
+      post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
+  if (!sub_folder_name.empty())
+  {
+    paraview_dir_v /= sub_folder_name;
+    paraview_dir_b /= sub_folder_name;
+  }
   // Set up postprocessing for output to disk.
-  paraview = {post_dir / "paraview" / ParaviewFoldername(solver_t),
-              &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {post_dir / "paraview" /
-                      fmt::format("{}_boundary", ParaviewFoldername(solver_t)),
-                  &fem_op->GetNDSpace().GetParMesh()};
+  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
+  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -487,7 +508,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
   Mpi::Barrier(fem_op->GetComm());
 }
 
-// Measurements
+// Measurements.
 
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
@@ -518,7 +539,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
   else
   {
-    // Magnetic field only
+    // Magnetic field only.
     measurement_cache.domain_E_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -545,7 +566,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
   else
   {
-    // Electric field only
+    // Electric field only.
     measurement_cache.domain_H_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -553,12 +574,12 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     }
   }
 
-  // Log Domain Energy
-  if constexpr (HasEGridFunction<solver_t>() & !HasBGridFunction<solver_t>())
+  // Log Domain Energy.
+  if constexpr (HasEGridFunction<solver_t>() && !HasBGridFunction<solver_t>())
   {
     Mpi::Print(" Field energy E = {:.3e} J\n", measurement_cache.domain_E_field_energy_all);
   }
-  else if constexpr (!HasEGridFunction<solver_t>() & HasBGridFunction<solver_t>())
+  else if constexpr (!HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
   }
@@ -593,7 +614,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       {
         // Compute current from the port impedance, separate contributions for R, L, C
         // branches.
-        // Get value and make real: Matches current behaviour (even for eigensolver!)
+        // Get value and make real: Matches current behaviour (even for eigensolver!).
         auto omega_re =
             units.NonDimensionalize<Units::ValueType::FREQUENCY>(measurement_cache.freq)
                 .real();
@@ -647,7 +668,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureLumpedPortsEig() const
 {
-  // Depends on MeasureLumpedPorts
+  // Depends on MeasureLumpedPorts.
   if constexpr (solver_t == config::ProblemData::Type::EIGENMODE)
   {
     auto freq_re = measurement_cache.freq.real();
@@ -706,7 +727,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
   {
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get value and make real: Matches current behaviour
+      // Get value and make real: Matches current behaviour.
       auto freq_re = measurement_cache.freq.real();  // TODO: Fix
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
@@ -722,51 +743,34 @@ void PostOperator<solver_t>::MeasureWavePorts() const
 template <config::ProblemData::Type solver_t>
 void PostOperator<solver_t>::MeasureSParameter() const
 {
-  // Depends on LumpedPorts, WavePorts
+  // Depends on LumpedPorts, WavePorts.
   if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
   {
     using fmt::format;
     using std::complex_literals::operator""i;
 
-    // TODO: The excitation index logic will be improved in the the multi-excitation MR;
-    // don't fix this for now.
-    // Get source index of single excitation from space_op
-    int driven_source_index = -1;
-    // Get excitation index as is currently done: if -1 then no excitation
-    // Already ensured that one of lumped or wave ports are empty
-    for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
-    {
-      if (data.excitation)
-      {
-        driven_source_index = idx;
-      }
-    }
-    for (const auto &[idx, data] : fem_op->GetWavePortOp())
-    {
-      if (data.excitation)
-      {
-        driven_source_index = idx;
-      }
-    }
-    if (!(driven_source_index > 0))
+    // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
+    // don't support mixing wave and lumped ports, because we need to fix consistent
+    // conventions / de-embedding.
+    if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
+        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
     {
       return;
     }
 
-    // Currently S-Parameters are not calculated for mixed lumped & wave ports,
-    // so can treat them separatley.
+    // Assumes that for single driving port the excitation index is equal to the port index.
+    auto drive_port_idx = measurement_cache.ex_idx;
+
+    // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
+    // combine output iterators.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
 
-      const LumpedPortData &src_data =
-          fem_op->GetLumpedPortOp().GetPort(driven_source_index);
-      MFEM_VERIFY(src_data.excitation, "Lumped port index "
-                                           << driven_source_index
-                                           << " is not marked for excitation!");
+      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
       std::complex<double> S_ij = vi.S;
-      if (idx == driven_source_index)
+      if (idx == drive_port_idx)
       {
         S_ij.real(S_ij.real() - 1.0);
       }
@@ -781,7 +785,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, driven_source_index), S_ij.real(), S_ij.imag(),
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
                  vi.abs_S_ij, vi.arg_S_ij);
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
@@ -791,12 +795,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
 
       // Wave port modes are not normalized to a characteristic impedance so no generalized
       // S-parameters are available.
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(driven_source_index);
-      MFEM_VERIFY(src_data.excitation, "Wave port index "
-                                           << driven_source_index
-                                           << " is not marked for excitation!");
+      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
       std::complex<double> S_ij = vi.S;
-      if (idx == driven_source_index)
+      if (idx == drive_port_idx)
       {
         S_ij.real(S_ij.real() - 1.0);
       }
@@ -810,7 +811,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, driven_source_index), S_ij.real(), S_ij.imag(),
+                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
                  vi.abs_S_ij, vi.arg_S_ij);
     }
   }
@@ -914,7 +915,8 @@ using fmt::format;
 
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
+                                                const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
@@ -926,10 +928,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   measurement_cache = {};
   measurement_cache.freq = freq;
+  measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
   auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(freq_re, step);
+  post_op_csv.PrintAllCSVData(freq_re, step, ex_idx);
   if (write_paraview_fields() && (step % paraview_delta_post == 0))
   {
     Mpi::Print("\n");
@@ -1091,21 +1094,22 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 template <config::ProblemData::Type solver_t>
 template <config::ProblemData::Type U>
 auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
-                                                          const ComplexVector &b,
-                                                          bool exchange_face_nbr_data)
+                                                          const ComplexVector &b)
     -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
 {
-  SetEGridFunction(e, exchange_face_nbr_data);
-  SetBGridFunction(b, exchange_face_nbr_data);
+  SetEGridFunction(e);
+  SetBGridFunction(b);
   MeasureDomainFieldEnergy();
-  // Return total domain energy for normalizing error indicator
+  Mpi::Barrier(fem_op->GetComm());
+
+  // Return total domain energy for normalizing error indicator.
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all +
       measurement_cache.domain_H_field_energy_all);
   return total_energy;
 }
 
-// Explict template instantiation
+// Explict template instantiation.
 
 template class PostOperator<config::ProblemData::Type::DRIVEN>;
 template class PostOperator<config::ProblemData::Type::EIGENMODE>;
@@ -1114,10 +1118,10 @@ template class PostOperator<config::ProblemData::Type::MAGNETOSTATIC>;
 template class PostOperator<config::ProblemData::Type::TRANSIENT>;
 
 // Function explict instantiation.
-// TODO(C++20): with requires, we won't need a second template
+// TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
-    config::ProblemData::Type::DRIVEN>(int step, const ComplexVector &e,
+    config::ProblemData::Type::DRIVEN>(int ex_idx, int step, const ComplexVector &e,
                                        const ComplexVector &b, std::complex<double> omega)
     -> double;
 
@@ -1140,7 +1144,11 @@ template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrin
                                           double t, double J_coef) -> double;
 
 template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
-    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b,
-                                       bool exchange_face_nbr_data = true) -> double;
+    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b)
+    -> double;
+
+template auto
+PostOperator<config::ProblemData::Type::DRIVEN>::InitializeParaviewDataCollection(
+    int ex_idx) -> void;
 
 }  // namespace palace

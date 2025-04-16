@@ -33,7 +33,7 @@ class BdrGridFunctionCoefficient
 {
 protected:
   // XX TODO: For thread-safety (multiple threads evaluating a coefficient simultaneously),
-  //          the FET, FET.Elem1, and FET.Elem2 objects cannot be shared
+  //          the FET, FET.Elem1, and FET.Elem2 objects cannot be shared.
   const mfem::ParMesh &mesh;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;

@@ -4,6 +4,7 @@
 #include "waveportoperator.hpp"
 
 #include <tuple>
+#include <fmt/ranges.h>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -521,12 +522,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
-  excitation = data.excitation;
-  active = data.active;
   kn0 = 0.0;
   omega0 = 0.0;
 
@@ -982,7 +981,7 @@ double WavePortData::GetExcitationPower() const
 {
   // The computed port modes are normalized such that the power integrated over the port is
   // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
-  return excitation ? 1.0 : 0.0;
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
@@ -1192,7 +1191,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   // Print some information for excited wave ports.
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (!data.HasExcitation())
     {
       continue;
     }
@@ -1292,7 +1291,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   }
 }
 
-void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
+void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,
+                                                    SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
   // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by
@@ -1300,7 +1300,7 @@ void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoeff
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
-    if (!data.excitation)
+    if (data.excitation != excitation_idx)
     {
       continue;
     }

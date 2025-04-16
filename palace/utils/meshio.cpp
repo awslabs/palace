@@ -299,7 +299,7 @@ inline void WriteNode(std::ostream &buffer, const int tag, const double *coord)
 #if defined(GMSH_BIN)
   buffer.write(reinterpret_cast<const char *>(&tag), sizeof(int));
   buffer.write(reinterpret_cast<const char *>(coord), 3 * sizeof(double));
-  // No newline for binary data
+  // No newline for binary data.
 #else
   // Always 3D coordinates (user sets floating point format/precision on buffer).
   buffer << tag << ' ' << coord[0] << ' ' << coord[1] << ' ' << coord[2] << '\n';
@@ -314,7 +314,7 @@ inline void WriteElement(std::ostream &buffer, const int tag, const int type,
   buffer.write(reinterpret_cast<const char *>(data), 3 * sizeof(int));
   buffer.write(reinterpret_cast<const char *>(nodes),
                (std::streamsize)(ElemNumNodes[type - 1] * sizeof(int)));
-  // No newline for binary data
+  // No newline for binary data.
 #else
   buffer << tag << ' ' << type << " 2 " << geom << ' ' << geom;
   for (int i = 0; i < ElemNumNodes[type - 1]; i++)
@@ -397,7 +397,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
       const int num_elem = (int)nodes.size() / (num_elem_nodes + 1);
 #if defined(GMSH_BIN)
       // For binary output, write the element header for each type. Always have 2 tags
-      // (physical + geometry)
+      // (physical + geometry).
       const int header[3] = {elem_type_w, num_elem, 2};
       buffer.write(reinterpret_cast<const char *>(header), 3 * sizeof(int));
 #endif
