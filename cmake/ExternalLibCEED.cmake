@@ -118,8 +118,9 @@ if(PALACE_WITH_MAGMA)
   endif()
 endif()
 
-string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
-message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
+# stringify to avoid STATIC=; parsing issue in libCEED
+string(JOIN " " LIBCEED_OPTIONS ${LIBCEED_OPTIONS})
+message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS}")
 
 include(ExternalProject)
 ExternalProject_Add(libCEED

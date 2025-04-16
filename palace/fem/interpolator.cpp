@@ -20,41 +20,10 @@ constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
 }  // namespace
 
-namespace
-{
-
-// Statically determine vector sizes associated with FiniteElementSpace before individual
-// elements are constructed. Remove once mfem 4.8 is release. See
-// https://github.com/mfem/mfem/pull/4598.
-//
-
-int MFEM_GridFunction_VectorDim(const mfem::FiniteElementSpace *fes)
-{
-  using namespace mfem;
-  const FiniteElement *fe;
-  if (!fes->GetNE())
-  {
-    static const Geometry::Type geoms[3] = {Geometry::SEGMENT, Geometry::TRIANGLE,
-                                            Geometry::TETRAHEDRON};
-    fe = fes->FEColl()->FiniteElementForGeometry(geoms[fes->GetMesh()->Dimension() - 1]);
-  }
-  else
-  {
-    fe = fes->GetFE(0);
-  }
-  if (!fe || fe->GetRangeType() == FiniteElement::SCALAR)
-  {
-    return fes->GetVDim();
-  }
-  return fes->GetVDim() * std::max(fes->GetMesh()->SpaceDimension(), fe->GetRangeDim());
-}
-}  // namespace
-
 #if defined(MFEM_USE_GSLIB)
 InterpolationOperator::InterpolationOperator(const IoData &iodata,
                                              FiniteElementSpace &nd_space)
-  : op(nd_space.GetParMesh().GetComm()),
-    v_dim_fes(MFEM_GridFunction_VectorDim(&nd_space.Get()))
+  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
 #else
 InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh)
 #endif
