@@ -1609,6 +1609,8 @@ void DrivenSolverData::SetUp(json &solver)
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
+  adaptive_circuit_synthesis =
+      driven->value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
 
   // Cleanup
   driven->erase("MinFreq");
@@ -1619,6 +1621,7 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("AdaptiveTol");
   driven->erase("AdaptiveMaxSamples");
   driven->erase("AdaptiveConvergenceMemory");
+  driven->erase("AdaptiveCircuitSynthesis");
   MFEM_VERIFY(driven->empty(),
               "Found an unsupported configuration file keyword under \"Driven\"!\n"
                   << driven->dump(2));
