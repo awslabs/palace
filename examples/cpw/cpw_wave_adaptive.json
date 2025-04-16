@@ -9,7 +9,9 @@
   {
     "Mesh": "mesh/cpw_wave_0.msh",
     "L0": 1.0e-6,  // μm
-    "Refinement": {}
+    "Refinement": {
+      "UniformLevels":1
+    }
   },
   "Domains":
   {
@@ -157,7 +159,7 @@
       "MaxFreq": 30.0,  // GHz
       "FreqStep": 0.1,  // GHz
       "SaveStep": 40,
-      "AdaptiveTol": 1.0e-3
+      "AdaptiveTol": 1.0e-5
     },
     "Linear":
     {
