@@ -70,9 +70,7 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   }
   else
   {
-    MFEM_ABORT(
-        fmt::format("Internal Error: Solver type {} incompatible with SpaceOperator.",
-                    iodata.problem.type));
+    MFEM_ABORT("Internal Error: Solver type incompatible with SpaceOperator.");
   }
 
   // Finalize setup.
