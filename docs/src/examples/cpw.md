@@ -109,7 +109,7 @@ ports. This is expected when using a lumped port to approximate the termination 
 and refining the mesh or increasing the order of the solution approximation leads to less
 reflection. See below for the results with again ``p = 2`` for the order of the solution
 space but with a single level of mesh refinement as well. For the adaptive solver in these
-plots, we have actually increased the adaptive tolerance to ``1\times10^{-4}`` due
+plots, we have actually increased the adaptive tolerance to ``1\times10^{-5}`` due
 to the small value of ``|S_{41}|``.
 
 ```@raw html
