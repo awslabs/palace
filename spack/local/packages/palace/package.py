@@ -235,6 +235,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_WITH_LIBXSMM", True),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
+            self.define("GSLIB_DIR", self.spec["gslib"].prefix),  # type: ignore
             self.define("libCEED_DIR", self.spec["libceed"].prefix),  # type: ignore
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),

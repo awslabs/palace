@@ -225,7 +225,9 @@ echo "Installing Palace..."
 echo
 
 ${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete --keep-stage --only dependencies --show-log-on-error
-${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
+${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error &&
+  ${SPACK_COMMAND} -e ${SPACK_ENV} gc -yE
+
 DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
 
 echo
@@ -241,5 +243,3 @@ echo "NOTE: The path in the cd command is also in ./build-$(${SPACK_COMMAND} arc
 echo "      which is symlinked to the one output above."
 echo
 echo "NOTE: Just re-run the script if you are using the container script"
-
-${SPACK_COMMAND} -e ${SPACK_ENV} gc -byE
