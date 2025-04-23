@@ -197,10 +197,6 @@ if(PALACE_WITH_GSLIB)
   include(ExternalGSLIB)
 endif()
 
-# Add libCEED (always built as part of Palace)
-message(STATUS "==================== Configuring libCEED dependency ====================")
-include(ExternalLibCEED)
-
 # Add MFEM (always built as part of Palace)
 message(STATUS "====================== Configuring MFEM dependency =====================")
 include(ExternalMFEM)
