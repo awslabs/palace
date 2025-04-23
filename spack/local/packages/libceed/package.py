@@ -61,13 +61,13 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
 
     depends_on("magma", when="+magma")
 
-    patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
-    patch("pkgconfig-version-0.4.diff", when="@0.4")
+    # patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
+    # patch("pkgconfig-version-0.4.diff", when="@0.4")
 
     # occa: do not occaFree kernels
     # Repeated creation and freeing of kernels appears to expose a caching
     # bug in Occa.
-    patch("occaFree-0.2.diff", when="@0.2")
+    # patch("occaFree-0.2.diff", when="@0.2")
 
     @property
     def common_make_opts(self):
