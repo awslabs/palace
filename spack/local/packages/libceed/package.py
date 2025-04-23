@@ -57,18 +57,17 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
         depends_on("occa~cuda", when="~cuda")
 
     depends_on("libxsmm", when="+libxsmm")
+    depends_on("blas", when="+libxsmm", type="link")
 
     depends_on("magma", when="+magma")
 
-    # patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
-    # patch("pkgconfig-version-0.4.diff", when="@0.4")
-
-    depends_on("blas", type="link")
+    patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
+    patch("pkgconfig-version-0.4.diff", when="@0.4")
 
     # occa: do not occaFree kernels
     # Repeated creation and freeing of kernels appears to expose a caching
     # bug in Occa.
-    # patch("occaFree-0.2.diff", when="@0.2")
+    patch("occaFree-0.2.diff", when="@0.2")
 
     @property
     def common_make_opts(self):
@@ -140,11 +139,10 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
 
             if spec.satisfies("+libxsmm"):
                 makeopts += ["XSMM_DIR=%s" % spec["libxsmm"].prefix]
+                makeopts += ["BLAS_LIB=%s" % spec["blas"].libs]
 
             if spec.satisfies("+magma"):
                 makeopts += ["MAGMA_DIR=%s" % spec["magma"].prefix]
-
-            makeopts += ["BLAS_LIB=%s" % spec["blas"].libs]
 
         return makeopts
 
