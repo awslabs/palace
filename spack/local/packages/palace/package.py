@@ -13,6 +13,7 @@ from spack.package import (
     depends_on,
     when,
     conflicts,
+    patch,
 )
 
 
@@ -62,10 +63,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # TODO: Apply patches for all packages...
     # TODO: We should actually use these as externals...
+    # NOTE: We can't depend on git tagged versions here
+    #       https://github.com/spack/spack/issues/50171
+    #       Instead, version in environment / spec
 
     # These are our hard Dependencies
-    # TODO: Need to specify @git.v4.8-rc0=develop (maybe only in spack.yaml)
-    # depends_on("mfem@git.v4.8-rc0=develop")
     depends_on("mfem@develop+metis+zlib~fms~libceed")
     depends_on("metis@5:")
     depends_on("hypre~complex")
@@ -75,15 +77,26 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("superlu-dist+parmetis~openmp~cuda~rocm", when="+superlu-dist")
 
     # LibCEED is a core dep
-    # TODO: We need to specify @git.v0.13.0-rc.1=develop (maybe only in spack.yaml)
-    depends_on("libceed@develop")
+    depends_on("libceed@develop+libxsmm")
     depends_on("libceed+magma", when="+magma")
-    # Spack says that libxsmm isn't available on Darwin...
-    # Are there other operating systems that we can add support to (windows)?
-    depends_on("libceed~libxsmm", when="platform=darwin")
-    depends_on("libceed+libxsmm", when="platform=linux")
+    # See https://github.com/CEED/libCEED/issues/1808
+    depends_on(
+        "libceed",
+        patches=[patch("libCEED-mac-makefile.patch")],
+        when="platform=darwin",
+    )
+    conflicts(
+        "^libceed+libxsmm ^apple-clang platform=darwin",
+        msg="Only gcc is supported for MacOS builds",
+    )
+
+    # Spack says that libxsmm isn't available on Darwin... This is a bug.
+    # To work around this, have all the packages in your env:
+    #   - palace
+    #   - libceed+libxsmm
+    #   - libxsmm@=main
     # NOTE: @=main != @main since libxsmm has a version main-2023-22
-    depends_on("libxsmm@=main~shared blas=0", when="platform=linux")
+    depends_on("libxsmm@=main~shared blas=0")
 
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
@@ -222,12 +235,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_WITH_LIBXSMM", True),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
-            self.define("libCEED_DIR", self.spec["libceed"].prefix),
+            self.define("libCEED_DIR", self.spec["libceed"].prefix),  # type: ignore
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
-            # This is an experimental flag while we transition our meta-build
-            self.define("PALACE_WITH_SPACK", True),
         ]
 
         # We guarantee that there are arch specs with conflicts above

@@ -18,9 +18,6 @@ endif()
 # Initialize the project
 project(palace-superbuild LANGUAGES CXX C VERSION 0.13.0)
 
-# Working on moving from CMake to Spack for some package builds
-set(PALACE_WITH_SPACK OFF CACHE BOOL "Build using spack for specific externals")
-
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
 set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (experimental, not recommended)")

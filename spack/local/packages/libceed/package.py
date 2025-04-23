@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
+
+# NOTE: THIS IS JUST A COPY OF THE ORIGINAL PACKAGE
+# https://github.com/spack/spack/issues/34961
+
 from spack.package import *
 
 

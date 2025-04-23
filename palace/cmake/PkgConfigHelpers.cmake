@@ -51,7 +51,6 @@ int main()
   return 0;
 }
 ")
-  message(STATUS "USING _libceed_target == ${_libceed_target}")
   try_compile(
     LIBCEED_TEST_COMPILED
     ${LIBCEED_LIB_TEST_DIR}
@@ -59,8 +58,9 @@ int main()
     LINK_LIBRARIES ${_libceed_target}
     OUTPUT_VARIABLE LIBCEED_TEST_COMPILE_OUTPUT
   )
+  # message(STATUS "LIBCEED_TEST_COMPILE_OUTPUT: ${LIBCEED_TEST_COMPILE_OUTPUT}")
   if(LIBCEED_TEST_COMPILED)
-    message(STATUS "libCEED test program - Successful")
+    # message(STATUS "libCEED test program - Successful")
     set(${_libceed_test_success} TRUE PARENT_SCOPE)
   else()
     message(STATUS "libCEED test program - Failed")

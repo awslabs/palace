@@ -6,17 +6,10 @@
 #
 
 # Force build order
-if(PALACE_WITH_SPACK)
-  # We want our external libCEED
-  # TODO: Add support for external mfem
-  # - https://github.com/mfem/mfem/issues/4792
-  # - Need to add patches
-  # - Need to support shared / static or both
-  set(PALACE_DEPENDENCIES mfem)
-else()
-  set(PALACE_DEPENDENCIES mfem libCEED)
-endif()
+set(PALACE_DEPENDENCIES mfem)
+
 if(PALACE_BUILD_EXTERNAL_DEPS)
+  list(APPEND PALACE_DEPENDENCIES libceed)
   list(APPEND PALACE_DEPENDENCIES json fmt eigen)
   if(PALACE_WITH_SLEPC)
     list(APPEND PALACE_DEPENDENCIES slepc)

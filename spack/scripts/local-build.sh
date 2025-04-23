@@ -2,13 +2,9 @@
 
 set -e
 
-if [[ ! -z $SPACK_COMMAND ]]; then
-  echo "..."
-  echo
-else
-  # SPACK_COMMAND="spack --debug"
-  SPACK_COMMAND=spack
-fi
+# If you want debugging in spack commands, uncomment this
+# SPACK_COMMAND="spack --debug"
+SPACK_COMMAND=spack
 
 if [[ ! -f ${PWD}/spack/scripts/$(basename $0) ]]; then
   echo "Please run this script from the palace root dir."
@@ -28,8 +24,7 @@ if [ ! -f ${SPACK_ROOT}/share/spack/setup-env.sh ]; then
   git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_ROOT
 fi
 
-# Add optional bootstrap of Python if using ubuntu (in a container...)
-# This is made irrelevant by running with ubuntu/python instead...
+# Add optional bootstrap of Python if using Ubuntu (in a container...)
 python3 --version >/dev/null 2>&1
 if [ ! $? -eq 0 ]; then
   echo "Python not found!"
@@ -46,7 +41,7 @@ if [ ! $? -eq 0 ]; then
   fi
 fi
 
-# Add this optional bootstrap of gcc if using Ubuntu (in a container...)
+# Add optional bootstrap of gcc if using Ubuntu (in a container...)
 gcc --version >/dev/null 2>&1
 if [ ! $? -eq 0 ]; then
   echo "GCC not found!"
@@ -64,22 +59,16 @@ if [ ! $? -eq 0 ]; then
 
 fi
 
-if [[ $SPACK_COMMAND == "spack" ]]; then
-  SPACK_PYTHON=$(which python3)
-  source ${SPACK_ROOT}/share/spack/setup-env.sh
-fi
+SPACK_PYTHON=$(which python3)
+source ${SPACK_ROOT}/share/spack/setup-env.sh
 
 # A quick check to make sure spack is working...
-# echo Using spack@$(${SPACK_COMMAND} --version) || exit 1
+$SPACK_COMMAND debug report
 
 # Maybe this could be a one-liner...
 GARCH_STR="${SPACK_COMMAND} arch --generic"
 GARCH="$(${GARCH_STR})"
-if [[ $SPACK_COMMAND == "spack" ]]; then
-  export SPACK_ENV=${PWD}/${GARCH}
-else
-  export SPACK_ENV=${CONTAINER_ROOT}/${GARCH}
-fi
+SPACK_ENV=${PWD}/${GARCH}
 
 echo $SPACK_ENV
 
@@ -113,14 +102,17 @@ done
 # Can easily change compiler / MPI / blas spec
 # NOTES:
 #   - intel-oneapi-mkl only works on Linux / x86_64
-BLAS_SPEC="openblas"
 
-if [ ${CUDA} = "true" ]; then
+if [ "${CUDA}" = "true" ]; then
   GPU="+cuda cuda_arch=89"
 else
   GPU=""
 fi
-PALACE_SPEC="local.palace@develop${GPU} ^${BLAS_SPEC} ^openmpi"
+
+COMPILER="gcc"
+BLAS="openblas"
+MPI="openmpi"
+PALACE_SPEC="local.palace@develop${GPU} ^${BLAS} ^${MPI}"
 
 # Prevents loading ~/.spack
 export SPACK_DISABLE_LOCAL_CONFIG=1
@@ -131,30 +123,23 @@ if [ ! -f ${PWD}/${GARCH}/spack.yaml ]; then
 fi
 
 if [ ${FRESH_INSTALL} = "true" ]; then
-  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
-    if [ -d ${SPACK_ENV} ]; then
-      rm -rfd ${SPACK_ENV}
-    fi
-    mkdir -p ${SPACK_ENV}
-    TMP_SPACK_ENV=${SPACK_ENV}
-  else
-    TMP_SPACK_ENV=${PWD}/${GARCH}
-    if [ -d ${TMP_SPACK_ENV} ]; then
-      rm -rfd ${TMP_SPACK_ENV}
-    fi
-    mkdir -p ${TMP_SPACK_ENV}
+  if [ -d ${SPACK_ENV} ]; then
+    rm -rfd ${SPACK_ENV}
   fi
+  mkdir -p ${SPACK_ENV}
 
   # To enable / disable using a build cache aggressively, toggle:
   #   - reuse: true
   #   - splce: automatic: true
-  # TODO: What versions of Palace support corresponding MFEM versions?
-  cat <<EOF >${TMP_SPACK_ENV}/spack.yaml
+  # TODO: libxsmm with libceed fails to concretize on MacOS unless in env.
+  #       This is apparently a concretizer bug, and will be fixed soon.
+  #       https://github.com/spack/spack/issues/50167
+  cat <<EOF >${SPACK_ENV}/spack.yaml
   spack:
-    specs: 
+    specs:
       - ${PALACE_SPEC}
-      - local.gslib+shared
-      - local.libceed
+      - libceed+libxsmm
+      - libxsmm@=main
     repos:
     - ${SPACK_ENV}/../spack/local
     develop:
@@ -172,6 +157,14 @@ if [ ${FRESH_INSTALL} = "true" ]; then
       targets:
         granularity: generic
     packages:
+      mpi:
+        require: ${MPI}
+      blas:
+        require: ${BLAS}
+      c:
+        prefer: [${COMPILER}]
+      cxx:
+        prefer: [${COMPILER}]
       petsc:
         require: ~hdf5
       rocblas:
@@ -187,23 +180,23 @@ EOF
     rm -rfd ~/.spack
   fi
 
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
+  # TODO: Make this more platform agnostic
+  # ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all
 
-  if [[ "${SPACK_COMMAND}" == "spack" ]]; then
-    # Assumes that you have an openblas / openmpi installation you want to use
-    # Install with brew if you would like to use this
-    if command -v brew 2>&1 >/dev/null; then
-      PACKAGES=(
-        "openblas"
-        "curl"
-      )
-      for PKG in "${PACKAGES[@]}"; do
-        PKG_PATH=$(brew --prefix ${PKG})
-        ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
-        # We could also add specification of virtual providers here...
-        ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
-      done
-    fi
+  # Assumes that you have an openblas / openmpi installation you want to use
+  # Install with brew if you would like to use this
+  if command -v brew 2>&1 >/dev/null; then
+    PACKAGES=(
+      "openblas"
+      "curl"
+    )
+    for PKG in "${PACKAGES[@]}"; do
+      PKG_PATH=$(brew --prefix ${PKG})
+      ${SPACK_COMMAND} -e ${SPACK_ENV} external find --path ${PKG_PATH} ${PKG}
+      # We could also add specification of virtual providers here...
+      ${SPACK_COMMAND} -e ${SPACK_ENV} config add packages:${PKG}:buildable:false
+    done
   fi
 
   # Add public mirror to help with build times
@@ -211,17 +204,13 @@ EOF
     ${SPACK_COMMAND} -e ${SPACK_ENV} buildcache keys --install --trust
   fi
 
-  # TODO: FIX
+  # TODO: We should support GHCR cache pulling for all builds in future
   # if [[ ! "${SPACK_COMMAND}" == "spack" ]]; then
   #   # ${SPACK_COMMAND} -e ${SPACK_ENV} mirror add \
   #   #   --oci-password-variable GITHUB_PAT \
   #   #   --oci-username cameronrutherford \
   #   #   github oci://ghcr.io/awslabs/palace
   # fi
-
-  # TODO: Add config to add GitHub cache
-  # TODO: Configure secrets in a secure way...
-  # TODO: We will have many caches...
 
   # Verify concretization is correct before installing
   ${SPACK_COMMAND} -e ${SPACK_ENV} concretize -f || exit 1
@@ -235,9 +224,9 @@ echo
 echo "Installing Palace..."
 echo
 
-${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --only dependencies --show-log-on-error
-${SPACK_COMMAND} -e ${SPACK_ENV} install --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
-DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) location --build-dir ${PALACE_SPEC})
+${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete --keep-stage --only dependencies --show-log-on-error
+${SPACK_COMMAND} -e ${SPACK_ENV} install -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) --fail-fast --only-concrete --keep-stage --verbose --show-log-on-error
+DEV_PATH=$(${SPACK_COMMAND} -e ${SPACK_ENV} location --build-dir ${PALACE_SPEC})
 
 echo
 echo "Installation done / cancelled / failed. Feel free to re-run build with:"

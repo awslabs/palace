@@ -99,8 +99,6 @@ jobs:
           spack:
             specs:
               - ${PALACE_SPEC}
-              - local.gslib+shared
-              - local.libceed
             view: false
             concretizer:
               reuse: false
