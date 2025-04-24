@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 06e689f..19db918 100644
+index 4e0bb93..19db918 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -12,7 +12,7 @@ endif()
@@ -36,7 +36,7 @@ index 06e689f..19db918 100644
      find_package(OpenMP COMPONENTS C Fortran REQUIRED)
      list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
    endif()
-@@ -99,15 +96,6 @@ endif()
+@@ -99,14 +96,6 @@ endif()
  
  list(APPEND ORDERING_LIBS pord)
  
@@ -45,7 +45,6 @@ index 06e689f..19db918 100644
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindSCALAPACK.cmake
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindMETIS.cmake
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindScotch.cmake
--${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindMUMPS.cmake
 -DESTINATION cmake
 -)
 -
