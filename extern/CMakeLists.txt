@@ -78,3 +78,12 @@ if(PALACE_WITH_SUNDIALS)
   message(STATUS "===================== Configuring SUNDIALS dependency =====================")
   include(ExternalSUNDIALS)
 endif()
+
+# Add GSLIB (always built as part of Palace)
+message(STATUS "===================== Configuring GSLIB dependency =====================")
+include(ExternalGSLIB)
+
+# Add libCEED (always built as part of Palace)
+message(STATUS "==================== Configuring libCEED dependency ====================")
+include(ExternalLibCEED)
+

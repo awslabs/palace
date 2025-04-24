@@ -56,48 +56,71 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
     variant("magma", default=True, description="Build with MAGMA backend for libCEED")
     variant(
+        "libxsmm", default=True, description="Build with libxsmm backend for libCEED"
+    )
+    variant(
         "gslib",
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
     )
 
-    # TODO: Apply patches for all packages...
-    # TODO: We should actually use these as externals...
+    ## -- Sparse Direct Solvers --
+    conflicts(
+        "~superlu-dist~strumpack~mumps",
+        msg="Need at least one sparse direct solver",
+    )
+
+    ## -- MUMPS --
+    conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
+    with when("+mumps"):
+        depends_on("mumps+metis+parmetis")
+        depends_on("mumps+shared", when="+shared")
+        depends_on("mumps~shared", when="~shared")
+        depends_on("mumps+openmp", when="+openmp")
+        depends_on("mumps~openmp", when="~openmp")
+
+    ## -- SuperLU-Dist --
+    with when("+superlu-dist"):
+        depends_on("superlu-dist+parmetis~openmp~cuda~rocm")
+        depends_on("superlu-dist+shared", when="+shared")
+        depends_on("superlu-dist~shared", when="~shared")
+        depends_on("superlu-dist+int64", when="+int64")
+        depends_on("superlu-dist~int64", when="~int64")
+        depends_on("superlu-dist+openmp", when="+openmp")
+        depends_on("superlu-dist~openmp", when="~openmp")
+
+    ## -- Strumpack --
+    with when("+strumpack"):
+        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack+shared", when="+shared")
+        depends_on("strumpack~shared", when="~shared")
+        depends_on("strumpack+openmp", when="+openmp")
+        depends_on("strumpack~openmp", when="~openmp")
+
+    ## -- Eigenvalue Solvers --
+    conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
+
+    ## -- SLEPc --
+    with when("+slepc"):
+        depends_on("slepc~arpack")
+        depends_on("petsc+mpi+double+complex")
+        depends_on("petsc+shared", when="+shared")
+        depends_on("petsc~shared", when="~shared")
+        depends_on("petsc+int64", when="+int64")
+        depends_on("petsc~int64", when="~int64")
+        depends_on("petsc+openmp", when="+openmp")
+        depends_on("petsc~openmp", when="~openmp")
+
+    ## -- Arpack --
+    with when("+arpack"):
+        depends_on("arpack-ng+mpi+icb@develop")
+        depends_on("arpack-ng+shared", when="+shared")
+        depends_on("arpack-ng~shared", when="~shared")
+
+    ## -- Core Dependencies --
     # NOTE: We can't depend on git tagged versions here
     #       https://github.com/spack/spack/issues/50171
     #       Instead, version in environment / spec
-
-    # These are our hard Dependencies
-    depends_on("mfem@develop+metis+zlib~fms~libceed")
-    depends_on("metis@5:")
-    depends_on("hypre~complex")
-    depends_on("gslib+mpi")
-
-    # superlu-dist isn't a hard dep, but some variants are
-    depends_on("superlu-dist+parmetis~openmp~cuda~rocm", when="+superlu-dist")
-
-    # LibCEED is a core dep
-    depends_on("libceed@develop+libxsmm")
-    depends_on("libceed+magma", when="+magma")
-    # See https://github.com/CEED/libCEED/issues/1808
-    depends_on(
-        "libceed",
-        patches=[patch("libCEED-mac-makefile.patch")],
-        when="platform=darwin",
-    )
-    conflicts(
-        "^libceed+libxsmm ^apple-clang platform=darwin",
-        msg="Only gcc is supported for MacOS builds",
-    )
-
-    # Spack says that libxsmm isn't available on Darwin... This is a bug.
-    # To work around this, have all the packages in your env:
-    #   - palace
-    #   - libceed+libxsmm
-    #   - libxsmm@=main
-    # NOTE: @=main != @main since libxsmm has a version main-2023-22
-    depends_on("libxsmm@=main~shared blas=0")
-
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
@@ -106,83 +129,74 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("fmt")
     depends_on("eigen")
 
-    # Conditional base dependencies
-    depends_on("slepc", when="+slepc")
-    depends_on("strumpack+butterflypack+zfp+parmetis", when="+strumpack")
-    depends_on("mumps+metis+parmetis", when="+mumps")
-    depends_on("petsc+mpi+double+complex", when="+slepc")
-    depends_on("arpack-ng+mpi+icb@develop", when="+arpack")
+    ## -- mfem --
+    # NOTE: We currently don't build mfem through spack
+    # depends_on("mfem@develop+metis+zlib~fms~libceed")
 
-    # Further propagate variants.
-    for pkg in ["mumps", "strumpack", "superlu-dist", "gslib", "sundials"]:
-        depends_on(f"mfem+{pkg}", when=f"+{pkg}")
+    ## -- gslib --
+    with when("+gslib"):
+        depends_on("gslib+mpi")
+        depends_on("gslib+shared", when="+shared")
+        depends_on("gslib~shared", when="~shared")
 
-    with when("build_type=Debug"):
-        depends_on("mfem+libunwind")
-        depends_on("libxsmm+debug")
+    ## -- METIS --
+    depends_on("metis@5:")
+    depends_on("metis+shared", when="+shared")
+    depends_on("metis~shared", when="~shared")
+    depends_on("metis+int64", when="+int64")
+    depends_on("metis~int64", when="~int64")
 
-    # Magma is our GPU backend, so we need it when gpus are enabled
-    conflicts("~magma", when="+cuda")
-    conflicts("~magma", when="+rocm")
-    conflicts(
-        "+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP"
-    )
-
-    # Basic constraints of the package
-    conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
-    conflicts(
-        "~superlu-dist~strumpack~sundials~mumps",
-        msg="Need at least one sparse direct solver",
-    )
-
-    # More dependency variant conflicts
+    ## -- HYPRE --
     conflicts(
         "^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers"
     )
-    conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
-    conflicts("^slepc+arpack", msg="Palace requires SLEPc without ARPACK")
+    depends_on("hypre~complex")
+    depends_on("hypre+shared", when="+shared")
+    depends_on("hypre~shared", when="~shared")
+    depends_on("hypre+mixedint", when="+int64")
+    depends_on("hypre~mixedint", when="~int64")
+    depends_on("hypre+openmp", when="+openmp")
+    depends_on("hypre~openmp", when="~openmp")
 
-    # Propogate important variants
-    # First element is what we depend on
-    # Second is when we depend on it. If no val, always depend on it / no variant controls it
-    for pkg in [
-        ("metis", ""),
-        ("hypre", ""),
-        ("strumpack", "+strumpack"),
-        ("superlu-dist", "+superlu-dist"),
-        ("sundials", "+sundials"),
-        ("mumps", "+mumps"),
-        ("petsc", "+slepc"),  # Need PETSc when we use slepc
-        ("arpack-ng", "+arpack"),
-        ("magma", "+magma"),
-        ("mfem", ""),
-        ("gslib", ""),
-    ]:
-        depends_on(f"{pkg[0]}+shared", when=f"{pkg[1]}+shared")
-        depends_on(f"{pkg[0]}~shared", when=f"{pkg[1]}~shared")
+    ## -- libxsmm --
+    # Note that concretizing libxsmm is sometimes tricky
+    #   https://github.com/spack/spack/issues/50167
+    with when("+libxsmm"):
+        conflicts(
+            "^apple-clang platform=darwin",
+            msg="Only gcc is supported for MacOS libxsmm builds - https://github.com/libxsmm/libxsmm/issues/921",
+        )
+        # NOTE: @=main != @main since libxsmm has a version main-2023-22
+        depends_on("libxsmm@=main~shared blas=0")
+        depends_on("libxsmm+debug", when="build_type=Debug")
 
-        # For complex / int64
-        if pkg[0] in ["metis", "superlu-dist", "petsc"]:
-            depends_on(f"{pkg[0]}+int64", when=f"{pkg[1]}+int64")
-            depends_on(f"{pkg[0]}~int64", when=f"{pkg[1]}~int64")
-        # Hypre is special
-        elif pkg[0] == "hypre~complex":
-            depends_on(f"{pkg[0]}+mixedint", when=f"{pkg[1]}+int64")
-            depends_on(f"{pkg[0]}~mixedint", when=f"{pkg[1]}~int64")
+    ## -- libCEED --
+    depends_on("libceed@develop+libxsmm")
+    # See https://github.com/CEED/libCEED/issues/1808
+    depends_on(
+        "libceed",
+        patches=[patch("libCEED-mac-makefile.patch")],
+        when="platform=darwin",
+    )
 
-        # OpenMP
-        if pkg[0] in [
-            "hypre",
-            "strumpack",
-            "sundials",
-            "mumps",
-            "petsc",
-            "mfem",
-        ]:
-            depends_on(f"{pkg[0]}+openmp", when=f"{pkg[1]}+openmp")
-            depends_on(f"{pkg[0]}~openmp", when=f"{pkg[1]}~openmp")
+    ## -- Sundials --
+    with when("+sundials"):
+        depends_on("sundials")
+        depends_on("sundials+shared", when="+shared")
+        depends_on("sundials~shared", when="~shared")
+        depends_on("sundials+openmp", when="+openmp")
+        depends_on("sundials~openmp", when="~openmp")
 
-    # Now for GPU targets
+    ## -- arpack --
+    with when("+arpack"):
+        depends_on("arpack-ng+mpi+icb@develop")
+        depends_on("arpack-ng+shared", when="+shared")
+        depends_on("arpack-ng~shared", when="~shared")
+
+    ## -- GPU Backend --
+    conflicts(
+        "+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP"
+    )
     conflicts(
         "cuda_arch=none",
         when="+cuda",
@@ -194,32 +208,39 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         msg="palace: Please specify an AMD GPU target / targets",
     )
 
-    # Magma is at the core of our GPU backend, so that's our ~/+gpu variant...
+    ## -- Magma --
+    # Magma is our GPU backend, so we need it when gpus are enabled
+    conflicts("~magma", when="+cuda")
+    conflicts("~magma", when="+rocm")
     with when("+magma"):
-        for gpu_pkg in [
-            ("hypre", ""),
-            ("strumpack", "+strumpack"),
-            ("sundials", "+sundials"),
-            ("slepc", "+slepc"),
-            ("petsc", "+slepc"),  # Need PETSc when we use slepc
-            ("magma", "+magma"),
-            ("mfem", ""),
-            ("libceed", ""),
-        ]:
-            with when("+cuda"):
-                for arch in CudaPackage.cuda_arch_values:
-                    cuda_variant = f"+cuda cuda_arch={arch}"
-                    depends_on(
-                        f"{gpu_pkg[0]}{cuda_variant}",
-                        when=f"{gpu_pkg[1]}{cuda_variant}",
-                    )
-            with when("+rocm"):
-                for arch in ROCmPackage.amdgpu_targets:
-                    rocm_variant = f"+rocm amdgpu_target={arch}"
-                    depends_on(
-                        f"{gpu_pkg[0]}{rocm_variant}",
-                        when=f"{gpu_pkg[1]}{rocm_variant}",
-                    )
+        depends_on("magma")
+        depends_on("magma+shared", when="+shared")
+        depends_on("magma~shared", when="~shared")
+        depends_on("libceed+magma")
+
+    # -- CUDA --
+    with when("+cuda"):
+        for arch in CudaPackage.cuda_arch_values:
+            cuda_variant = f"+cuda cuda_arch={arch}"
+            depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
+            depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant}")
+            depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
+            depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
+            depends_on(f"magma{cuda_variant}", when=f"+magma{cuda_variant}")
+
+    # -- ROCm --
+    with when("+rocm"):
+        for arch in ROCmPackage.amdgpu_targets:
+            rocm_variant = f"+rocm amdgpu_target={arch}"
+            depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
+            depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant}")
+            depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
+            depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
+            depends_on(f"magma{rocm_variant}", when=f"+magma{rocm_variant}")
 
     def cmake_args(self):
         args = [
@@ -232,7 +253,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
-            self.define("PALACE_WITH_LIBXSMM", True),
+            self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define("GSLIB_DIR", self.spec["gslib"].prefix),  # type: ignore
@@ -260,14 +281,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         args.extend(
             [
                 self.define("HYPRE_REQUIRED_PACKAGES", "LAPACK;BLAS"),
-                self.define("BLAS_LIBRARIES", self.spec["blas"].libs),  # type: ignore
-                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs),  # type: ignore
+                self.define("BLAS_LIBRARIES", self.spec["blas"].libs),
+                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs),
             ]
         )
 
         # MPI compiler wrappers are not required, but MFEM test builds need to know to link
         # against MPI libraries.
-        # Eventually these will all be external spack based dependencies.
         if "+superlu-dist" in self.spec:
             args.append(self.define("SuperLUDist_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
         if "+sundials" in self.spec:

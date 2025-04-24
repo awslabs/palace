@@ -32,8 +32,6 @@ jobs:
             echo 'Run '\`'./scripts/format-source'\`' in the source root directory'
             echo 'Summary of required changes:'
             echo "`git diff --stat`"
-            echo 'Suggested diff:'
-            echo "`git diff .`"
             echo 'Repository status:'
             echo "`git status`"
             exit 1

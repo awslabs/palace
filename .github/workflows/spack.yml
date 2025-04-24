@@ -31,7 +31,7 @@ jobs:
         gpu: [none, cuda, rocm]
         blas: [openblas, intel-oneapi-mkl]
         spack_version: [develop, v0.23.1]
-        mpi: [openmpi, mvapich]
+        mpi: [openmpi, mpich, mvapich]
         exclude:
           # Would a spack-installed compiler be easier?
           - compiler: llvm
@@ -45,6 +45,7 @@ jobs:
           - blas: intel-oneapi-mkl
           # Since MPI is ABI compatible, only need to build against one MPI
           - mpi: mvapich
+          - mpi: mpich
           # In future, maybe we test against many spack versions
           - spack_version: v0.23.1
 
@@ -125,8 +126,10 @@ jobs:
 
       - name: Configure External Packages
         run: |
-          # These seem to cause build issues.
-          # TODO: re-visit these once builds are working
+          # These cause build issues if built as externals
+          #   - python : often distributed python isn't feature complete / not all dependencies get detected
+          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
+          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
           spack -e ${SPACK_ENV} external find --all \
             --exclude openssl \
             --exclude openssh \

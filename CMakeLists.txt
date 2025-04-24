@@ -189,13 +189,6 @@ endif()
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
-  # Add GSLIB (always built as part of Palace)
-  message(STATUS "===================== Configuring GSLIB dependency =====================")
-  include(ExternalGSLIB)
-
-  # Add libCEED (always built as part of Palace)
-  message(STATUS "==================== Configuring libCEED dependency ====================")
-  include(ExternalLibCEED)
 endif()
 
 # Add MFEM (always built as part of Palace)
