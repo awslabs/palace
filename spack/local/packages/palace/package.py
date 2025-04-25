@@ -223,6 +223,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
             depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(
+                f"superlu-dist{cuda_variant}", when=f"+superlu-dist{cuda_variant}"
+            )
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant}")
@@ -235,6 +238,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(
+                f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}"
+            )
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant}")
