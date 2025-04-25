@@ -261,6 +261,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
+            self.define("MPI_C_COMPILER", self.spec["mpi"].mpicc),  # type: ignore
+            self.define("MPI_CXX_COMPILER", self.spec["mpi"].mpicxx),  # type: ignore
+            self.define("CMAKE_C_COMPILER", self.spec["mpi"].mpicc),  # type: ignore
+            self.define("CMAKE_CXX_COMPILER", self.spec["mpi"].mpicxx),  # type: ignore
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -281,8 +285,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         args.extend(
             [
                 self.define("HYPRE_REQUIRED_PACKAGES", "LAPACK;BLAS"),
-                self.define("BLAS_LIBRARIES", self.spec["blas"].libs),
-                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs),
+                self.define("BLAS_LIBRARIES", self.spec["blas"].libs),  # type: ignore
+                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs),  # type: ignore
             ]
         )
 
