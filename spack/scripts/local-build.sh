@@ -182,7 +182,8 @@ EOF
 
   # TODO: Make this more platform agnostic
   # ${SPACK_COMMAND} -e ${SPACK_ENV} external find gmake autoconf pkgconf m4
-  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude mpi
+  # We should let spack build MPI
+  ${SPACK_COMMAND} -e ${SPACK_ENV} external find --all --exclude ${MPI}
 
   # Assumes that you have an openblas / openmpi installation you want to use
   # Install with brew if you would like to use this
