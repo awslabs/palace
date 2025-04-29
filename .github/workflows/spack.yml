@@ -25,36 +25,20 @@ env:
 jobs:
   build-and-test-spack:
     strategy:
-      fail-fast: false
+      fail-fast: false # don't have one build stop others from finishing
       matrix:
-        compiler: [gcc, llvm, intel]
-        gpu: [none, cuda, rocm]
-        blas: [openblas, intel-oneapi-mkl]
-        spack_version: [develop, v0.23.1]
-        mpi: [openmpi, mpich, mvapich]
-        exclude:
-          # Would a spack-installed compiler be easier?
-          - compiler: llvm
-          - compiler: intel
-          # GPU builds currently fail
-          - gpu: cuda
-          - gpu: rocm
-          # intel-oneapi-mkl must be re-built each time
-          # We could have a private-only cache of this, but public caches are
-          # easier to use, and blas is easy to swap
-          - blas: intel-oneapi-mkl
-          # Since MPI is ABI compatible, only need to build against one MPI
-          - mpi: mvapich
-          - mpi: mpich
-          # In future, maybe we test against many spack versions
-          - spack_version: v0.23.1
+        compiler: [gcc] #, clang, intel]
+        gpu: [none] #, cuda, rocm]
+        blas: [openblas] # ,intel-oneapi-mkl]
+        spack_version: [develop] # ,v0.23.1]
+        mpi: [openmpi] #, mpich, mvapich]
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure Clang compiler
-        if: matrix.compiler == 'llvm'
+        if: matrix.compiler == 'clang'
         run: sudo apt-get install -y clang lld
 
       - name: Configure Intel oneAPI compiler

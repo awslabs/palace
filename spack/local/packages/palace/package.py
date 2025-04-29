@@ -159,25 +159,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~openmp", when="~openmp")
 
     ## -- libxsmm --
-    # Note that concretizing libxsmm is sometimes tricky
-    #   https://github.com/spack/spack/issues/50167
     with when("+libxsmm"):
-        conflicts(
-            "^apple-clang platform=darwin",
-            msg="Only gcc is supported for MacOS libxsmm builds - https://github.com/libxsmm/libxsmm/issues/921",
-        )
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
         depends_on("libxsmm@=main~shared blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
+        depends_on("libceed+libxsmm")
 
     ## -- libCEED --
-    depends_on("libceed@develop+libxsmm")
-    # See https://github.com/CEED/libCEED/issues/1808
-    depends_on(
-        "libceed",
-        patches=[patch("libCEED-mac-makefile.patch")],
-        when="platform=darwin",
-    )
+    depends_on("libceed@develop")
 
     ## -- Sundials --
     with when("+sundials"):
@@ -262,15 +251,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
-            self.define("GSLIB_DIR", self.spec["gslib"].prefix),  # type: ignore
-            self.define("libCEED_DIR", self.spec["libceed"].prefix),  # type: ignore
+            self.define("GSLIB_DIR", self.spec["gslib"].prefix),
+            self.define("libCEED_DIR", self.spec["libceed"].prefix),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
-            self.define("MPI_C_COMPILER", self.spec["mpi"].mpicc),  # type: ignore
-            self.define("MPI_CXX_COMPILER", self.spec["mpi"].mpicxx),  # type: ignore
-            self.define("CMAKE_C_COMPILER", self.spec["mpi"].mpicc),  # type: ignore
-            self.define("CMAKE_CXX_COMPILER", self.spec["mpi"].mpicxx),  # type: ignore
+            self.define("MPI_C_COMPILER", self.spec["mpi"].mpicc),
+            self.define("MPI_CXX_COMPILER", self.spec["mpi"].mpicxx),
+            self.define("CMAKE_C_COMPILER", self.spec["mpi"].mpicc),
+            self.define("CMAKE_CXX_COMPILER", self.spec["mpi"].mpicxx),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -291,8 +280,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         args.extend(
             [
                 self.define("HYPRE_REQUIRED_PACKAGES", "LAPACK;BLAS"),
-                self.define("BLAS_LIBRARIES", self.spec["blas"].libs),  # type: ignore
-                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs),  # type: ignore
+                self.define("BLAS_LIBRARIES", self.spec["blas"].libs.joined(";")),
+                self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs.joined(";")),
             ]
         )
 
