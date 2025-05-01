@@ -11,16 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SPACK_COLOR: always
   # Note that each spack version needs it's own registry
+  SPACK_VERSION: develop
   REGISTRY: ghcr.io/awslabs/palace
-  SPACK_ROOT: /opt/spack
-  SPACK_CACHE: /opt/spack-cache
-  tempdir: /opt/spack-cache
-  TMP: /opt/spack-cache
-  TMPDIR: /opt/spack-cache
-  SPACK_ENV: ./spack-env # This var might be unused
-  USERNAME: palace_bot
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   build-and-test-spack:
@@ -48,13 +43,14 @@ jobs:
           intel-oneapi-compiler-fortran=2024.2.1-1079
 
       - name: Setup Spack
-        run: |
-          # We need to pin this version to get effective re-use of our local cache
-          git clone -c feature.manyFiles=true --depth=2 --branch ${{ matrix.spack_version }} https://github.com/spack/spack.git ${SPACK_ROOT}
-          echo "${SPACK_ROOT}/bin" >> "$GITHUB_PATH"
-
-          # Clean up Android SDK install (confuses Spack MKL link line?)
-          sudo rm -rf $ANDROID_HOME
+        uses: spack/setup-spack@v2
+        with:
+          ref: develop
+          buildcache: true
+          color: true
+          # This seems unecessary, but otherwise we clone into ./spack
+          # This then would override the spack local repo dir, and break CI
+          path: spack-path
 
       - name: Setup Environment
         run: |
@@ -74,39 +70,41 @@ jobs:
             PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           fi
 
-
-          mkdir -p ${SPACK_ENV}
-          # I don't know why spack struggles so much with the environment creation...
-          cd ${SPACK_ENV}
-          # We could configure settings here, but that's done through CLI later
-          # We at least want our core spec to be here or else env looks empty...
+          # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
           spack:
             specs:
               - ${PALACE_SPEC}
             view: false
+            config:
+              install_tree:
+                root: /opt/spack
+                padded_length: False
             concretizer:
               reuse: false
               unify: true
               targets:
                 granularity: generic
-            config:
-              source_cache: ${SPACK_CACHE}
-              misc_cache: ${SPACK_CACHE}
-              build_stage: ${SPACK_CACHE}
             packages:
               petsc:
                 require: ~hdf5
               rocblas:
                 require: ~tensile
+            repos:
+            - spack/local
+            mirrors:
+              spack:
+                binary: true
+                url: https://binaries.spack.io/${SPACK_VERSION}
+              local-buildcache:
+                binary: true
+                autopush: true
+                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
           EOF
-          cd -
-
-          # Need to get the actual local palace build here
-          spack -e ${SPACK_ENV} repo add spack/local
-
-          # Using `spack develop` in order to have an in-source build
-          spack -e ${SPACK_ENV} develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Configure External Packages
         run: |
@@ -114,7 +112,7 @@ jobs:
           #   - python : often distributed python isn't feature complete / not all dependencies get detected
           #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
           #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
-          spack -e ${SPACK_ENV} external find --all \
+          spack -e . external find --all \
             --exclude openssl \
             --exclude openssh \
             --exclude python \
@@ -124,36 +122,32 @@ jobs:
             --exclude curl
 
       - name: Configure Compilers
-        run: spack -e ${SPACK_ENV} compiler find && spack -e ${SPACK_ENV} compiler list
+        run: spack -e . compiler find && spack -e . compiler list
 
-      - name: Configure Binary Mirrors
+      - name: Configure Binary Mirror Keys
         run: |
-          # Add access to our GitHub Container Registry cache
-          # Order of being added determines order in which spack looks to reuse.
-          # TODO: maybe `--autopush` would be easiest to manage here
-          spack -e ${SPACK_ENV} mirror add local-buildcache oci://${{ env.REGISTRY }}-${{ matrix.spack_version }}
-          # Secrets are auto-configured by GitHub pipelines / permissions
-          spack -e ${SPACK_ENV} mirror set --oci-username ${{ env.USERNAME }} --oci-password ${{ secrets.GITHUB_TOKEN }} local-buildcache
-          # DON'T USE THE DEVELOP PUBLIC CACHE - If having issues, comment this out
-          spack -e ${SPACK_ENV} mirror add spack https://binaries.spack.io/${{ matrix.spack_version }}
           # If we cached these, that would be faster and safer
-          spack -e ${SPACK_ENV} buildcache keys --install --trust
+          spack -e . buildcache keys --install --trust
 
       - name: Bootstrap
-        run: spack -e ${SPACK_ENV} bootstrap now && spack spec zlib
+        run: spack -e . bootstrap now
 
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
         # Unfortunately it then becomes difficult to know when to re-concretize.
-        run: spack -e ${SPACK_ENV} concretize -f
+        run: |
+          # Using `spack develop` in order to have an in-source build
+          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . concretize -f
 
       - name: Build Dependencies
         run: |
-          spack -e ${SPACK_ENV} install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Build Palace
         # Build palace from source using this current directory
-        run: spack -e ${SPACK_ENV} install --verbose --only-concrete --keep-stage --show-log-on-error --only package --no-cache
+        # We use `--no-cache` in order to force a rebuild
+        run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
       # Should we run unit tests as well here?
       - name: Run Integration Tests
@@ -161,14 +155,7 @@ jobs:
         env:
           NUM_PROC_TEST_MAX: "8"
         run: |
-          eval $(spack -e ${SPACK_ENV} load --sh palace)
+          eval $(spack -e . load --sh palace)
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
-
-      - name: Update Cache
-        # Sometimes a dependency will fail to build
-        # We should still push any new dependencies we built successfully
-        if: "!cancelled()"
-        # We should sign our pushes here if we want to make these publically accessible
-        run: spack -e ${SPACK_ENV} buildcache push --with-build-dependencies --unsigned --update-index local-buildcache
