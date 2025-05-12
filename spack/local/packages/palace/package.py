@@ -167,7 +167,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed+libxsmm")
         # NOTE: libxsmm builds on MacOS have linker issues
         # https://github.com/libxsmm/libxsmm/issues/883
-        depends_on("libxsmm~shared")
+        depends_on("libxsmm+shared")
 
     ## -- libCEED --
     depends_on("libceed@develop")
