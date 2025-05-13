@@ -86,6 +86,8 @@ jobs:
               targets:
                 granularity: generic
             packages:
+              palace:
+                require: +strumpack+mumps+arpack+openmp+int64
               petsc:
                 require: ~hdf5
               rocblas:
