@@ -80,8 +80,10 @@ if(PALACE_WITH_SUNDIALS)
 endif()
 
 # Add GSLIB
-message(STATUS "===================== Configuring GSLIB dependency =====================")
-include(ExternalGSLIB)
+if(PALACE_WITH_GSLIB)
+  message(STATUS "===================== Configuring GSLIB dependency =====================")
+  include(ExternalGSLIB)
+endif()
 
 # Add libCEED
 message(STATUS "==================== Configuring libCEED dependency ====================")
