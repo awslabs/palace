@@ -81,7 +81,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     ## -- SuperLU-Dist --
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis~openmp~cuda~rocm")
+        depends_on("superlu-dist+parmetis")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
