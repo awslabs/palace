@@ -54,7 +54,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     variant("mumps", default=False, description="Build with MUMPS sparse direct solver")
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
-    variant("magma", default=True, description="Build with MAGMA backend for libCEED")
     variant(
         "libxsmm", default=True, description="Build with libxsmm backend for libCEED"
     )
@@ -202,10 +201,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     )
 
     ## -- Magma --
-    # Magma is our GPU backend, so we need it when gpus are enabled
-    conflicts("~magma", when="+cuda")
-    conflicts("~magma", when="+rocm")
-    with when("+magma"):
+    with when("+cuda") or when("+rocm"):
         depends_on("magma")
         depends_on("magma+shared", when="+shared")
         depends_on("magma~shared", when="~shared")
@@ -253,7 +249,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
-            self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define("libCEED_DIR", self.spec["libceed"].prefix),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
@@ -267,6 +262,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         if "+gslib" in self.spec:
             args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
+
+        if "+cuda" in self.spec or "+rocm" in self.spec:
+            args.append(self.define("PALACE_WITH_MAGMA", True))
+        else:
+            args.append(self.define("PALACE_WITH_MAGMA", False))
 
         # We guarantee that there are arch specs with conflicts above
         if "+cuda" in self.spec:
