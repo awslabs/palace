@@ -393,6 +393,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ho_make_simplicial_dev.diff"
 )
 
 include(ExternalProject)
