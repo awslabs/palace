@@ -255,7 +255,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MAGMA", "magma"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
-            self.define("GSLIB_DIR", self.spec["gslib"].prefix),
             self.define("libCEED_DIR", self.spec["libceed"].prefix),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
@@ -265,6 +264,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("CMAKE_C_COMPILER", self.spec["mpi"].mpicc),
             self.define("CMAKE_CXX_COMPILER", self.spec["mpi"].mpicxx),
         ]
+
+        if "+gslib" in self.spec:
+            args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         # We guarantee that there are arch specs with conflicts above
         if "+cuda" in self.spec:
