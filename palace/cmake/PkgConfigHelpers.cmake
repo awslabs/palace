@@ -58,7 +58,6 @@ int main()
     LINK_LIBRARIES ${_libceed_target}
     OUTPUT_VARIABLE LIBCEED_TEST_COMPILE_OUTPUT
   )
-  # message(STATUS "LIBCEED_TEST_COMPILE_OUTPUT: ${LIBCEED_TEST_COMPILE_OUTPUT}")
   if(LIBCEED_TEST_COMPILED)
     # message(STATUS "libCEED test program - Successful")
     set(${_libceed_test_success} TRUE PARENT_SCOPE)

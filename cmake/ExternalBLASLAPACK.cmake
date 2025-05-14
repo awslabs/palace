@@ -50,7 +50,6 @@ if(DEFINED ENV{ARMPL_DIR} OR DEFINED ENV{ARMPLROOT} OR DEFINED ENV{ARMPL_ROOT})
   set(BLA_VENDOR "Arm${ARMPL_LIB_SUFFIX}")
   find_package(BLAS REQUIRED)
   find_package(LAPACK REQUIRED)
-  set(LAPACK_LIBRARIES "${LAPACK_LIBRARIES};-lm")
 
   # Locate include directory
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
@@ -186,10 +185,11 @@ else()
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
     NAMES cblas.h
     HINTS ${_BLAS_LAPACK_DIRS}
-    PATH_SUFFIXES include include/openblas
+    PATH_SUFFIXES include include/openblas include/blis
     REQUIRED
   )
 endif()
+set(LAPACK_LIBRARIES "${LAPACK_LIBRARIES};-lm")
 
 # Save variables to cache
 set(_BLAS_LAPACK_LIBRARIES ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})

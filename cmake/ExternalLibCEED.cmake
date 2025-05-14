@@ -7,13 +7,11 @@
 
 # Force build order
 set(LIBCEED_DEPENDENCIES)
-if(PALACE_BUILD_EXTERNAL_DEPS)
-  if(PALACE_WITH_LIBXSMM)
-    list(APPEND LIBCEED_DEPENDENCIES libxsmm)
-  endif()
-  if(PALACE_WITH_MAGMA)
-    list(APPEND LIBCEED_DEPENDENCIES magma)
-  endif()
+if(PALACE_WITH_LIBXSMM)
+  list(APPEND LIBCEED_DEPENDENCIES libxsmm)
+endif()
+if(PALACE_WITH_MAGMA)
+  list(APPEND LIBCEED_DEPENDENCIES magma)
 endif()
 
 # Note on recommended flags for libCEED (from Makefile, Spack):
@@ -67,15 +65,9 @@ endif()
 
 # Configure libCEED backends (nvcc, hipcc flags are configured by libCEED)
 if(PALACE_WITH_LIBXSMM)
-  if(PALACE_BUILD_EXTERNAL_DEPS)
-    list(APPEND LIBCEED_OPTIONS
-      "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
-    )
-  else()
-    list(APPEND LIBCEED_OPTIONS
-      "XSMM_DIR=${LIBXSMM_DIR}"
-    )
-  endif()
+  list(APPEND LIBCEED_OPTIONS
+    "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
+  )
   # LIBXSMM can require linkage with BLAS for fallback
   if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
     string(REPLACE "$<SEMICOLON>" " " LIBCEED_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
@@ -107,15 +99,9 @@ if(PALACE_WITH_HIP)
   endif()
 endif()
 if(PALACE_WITH_MAGMA)
-  if(PALACE_BUILD_EXTERNAL_DEPS)
-    list(APPEND LIBCEED_OPTIONS
-      "MAGMA_DIR=${CMAKE_INSTALL_PREFIX}"
-    )
-  else()
-    list(APPEND LIBCEED_OPTIONS
-      "MAGMA_DIR=${MAGMA_DIR}"
-    )
-  endif()
+  list(APPEND LIBCEED_OPTIONS
+    "MAGMA_DIR=${CMAKE_INSTALL_PREFIX}"
+  )
 endif()
 
 string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
