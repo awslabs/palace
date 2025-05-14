@@ -84,6 +84,8 @@ The format of this changelog is based on
     `MinimalRationalInterpolation` class to support multiple excitations. The MRI is unique to each
     excitation, but the PROM is shared between excitations.
   - Added `PortExcitations` to manage excitation pattern and print it to json metadata.
+  - Update spack configuration to address `0.12` API breakage between libxsmm and libCEED.
+  - Support spack vended libCEED and GSLIB builds.
 
 ## [0.13.0] - 2024-05-20
 
