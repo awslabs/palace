@@ -212,6 +212,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
             depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(
                 f"superlu-dist{cuda_variant}", when=f"+superlu-dist{cuda_variant}"
             )
@@ -220,13 +221,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant}")
             depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
-            depends_on(f"magma{cuda_variant}", when=f"+magma{cuda_variant}")
 
     # -- ROCm --
     with when("+rocm"):
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(
                 f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}"
             )
@@ -235,7 +236,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant}")
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
-            depends_on(f"magma{rocm_variant}", when=f"+magma{rocm_variant}")
 
     def cmake_args(self):
         args = [
