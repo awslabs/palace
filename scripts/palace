@@ -86,7 +86,7 @@ fi
 
 # Try to find the Palace executable
 PALACE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
-PALACE=$(find $PALACE_DIR -type f -name "palace-*.bin" 2> /dev/null)
+PALACE=$(find $PALACE_DIR -type f -name "palace-*.bin" -o -type l -name "palace-*.bin*" 2> /dev/null)
 if [[ -z "$PALACE" ]]; then
     echo "Error: Could not locate Palace executable in \"$PALACE_DIR\""
     exit 1
