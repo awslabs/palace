@@ -47,7 +47,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
-  bool nonlinear = true; //false // SHOULD DETECT BASED ON CONFIG!
+  bool nonlinear = std::getenv("NONLINEAR_SLEPC"); // SHOULD DETECT BASED ON CONFIG!
+  Mpi::Print("nonlinear: {:d}\n", nonlinear);
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
@@ -101,14 +102,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
-      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with
-      // split operators (no callbacks)
-      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing
-      // all Eigs slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires
-      // Jacobian and TARGET_MAGNITUDE
-      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and
-      // TARGET_MAGNITUDE slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI);
-      // //only works with split operators (no callbacks)
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with split operators (no callbacks)
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing all Eigs
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE
+      // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI); //only works with split operators (no callbacks)
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
     }
     else if (C)
@@ -241,7 +239,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C)
+  if (C || nonlinear)
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
@@ -254,9 +252,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-      // eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test
-      // for SLP/RII/NARNOLDI/?
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY); // for linear or NLEIGS
+      //eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII/NARNOLDI/?
     }
   }
   else
@@ -280,9 +277,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get());
+                                    C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
                                                              target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -330,7 +328,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::complex<double> omega = eigen->GetEigenvalue(i);
     double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (!C)
+    if (!C && !nonlinear)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
       omega = std::sqrt(omega);
