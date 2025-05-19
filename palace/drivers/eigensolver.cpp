@@ -95,7 +95,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
     std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (C)
     if (nonlinear)
     {
       Mpi::Print("Using SLEPc NEP solver\n");
