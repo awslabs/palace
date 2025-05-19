@@ -146,6 +146,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear)
   {
     eigen->SetOperators(space_op, *K, *C, *M, scale);
+    // set NLEIGS numdegrees?
   }
   else if (C)
   {
@@ -254,6 +255,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY); // for linear or NLEIGS
       //eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII/NARNOLDI/?
+      // Should we transform the problem so we can search for smallest_imaginary like with ARPACK?
     }
   }
   else
