@@ -234,11 +234,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
                    "conditions!\n");
     }
-    if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
-    {
-      Mpi::Warning(
-          "Eigenmode problem type does not support wave port boundary conditions!\n");
-    }
+    //if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
+    //{
+    //  Mpi::Warning(
+    //      "Eigenmode problem type does not support wave port boundary conditions!\n");
+    //}
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
       Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
