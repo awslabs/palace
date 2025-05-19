@@ -1193,6 +1193,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
     data.eig_tol = it->value("EigenTol", data.eig_tol);
+    data.shift = it->value("Shift", data.shift);
     data.verbose = it->value("Verbose", data.verbose);
 
     // Cleanup
@@ -1206,6 +1207,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("MaxIts");
     it->erase("KSPTol");
     it->erase("EigenTol");
+    it->erase("Shift");
     it->erase("Verbose");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
@@ -1224,6 +1226,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
       std::cout << "KSPTol: " << data.ksp_tol << '\n';
       std::cout << "EigenTol: " << data.eig_tol << '\n';
+      std::cout << "Shift: " << data.shift << '\n';
       std::cout << "Verbose: " << data.verbose << '\n';
     }
   }

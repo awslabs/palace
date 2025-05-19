@@ -148,6 +148,7 @@
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
           "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
+          "Shift": { "type": "boolean" },
           "Verbose": { "type": "integer", "minimum": 0.0 }
         }
       }

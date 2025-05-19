@@ -45,8 +45,7 @@ public:
   // Wave port properties.
   int mode_idx;
   double d_offset;
-  int excitation;
-  bool active;
+  bool excitation, active, shift;
   std::complex<double> kn0;
   double omega0;
   mfem::Vector port_normal;

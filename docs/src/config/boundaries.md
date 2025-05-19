@@ -361,6 +361,7 @@ corresponding coordinate system.
         "MaxIts": <int>,
         "KSPTol": <float>,
         "EigenTol": <float>,
+        "Shift": <bool>,
         "Verbose": <int>
     },
     ...
@@ -397,6 +398,8 @@ solver.
 `"KSPTol" [1e-8]` :  Specifies the tolerance to be used in the linear solver.
 
 `"EigenTol" [1e-6]` :  Specifies the tolerance to be used in the eigenvalue solver.
+
+`"Shift" [true]` :  Solve the shifted eigenvalue problem to avoid evanescent modes.
 
 `"Verbose" [0]` :  Specifies the verbosity level to be used in the linear and eigensolver
 for the wave port problem.
