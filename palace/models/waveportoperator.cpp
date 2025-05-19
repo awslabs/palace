@@ -526,6 +526,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
+  excitation = data.excitation;
+  active = data.active;
+  shift = data.shift;
   kn0 = 0.0;
   omega0 = 0.0;
 
@@ -601,11 +604,17 @@ WavePortData::WavePortData(const config::WavePortData &data,
   const double c_max = mat_op.GetLightSpeedMax().Max();
   MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
-  mu_eps_min = 1.0 / (c_max * c_max) * 0.5;  // Add a safety factor for minimum propagation
-                                             // constant possible
-  // mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
-  //                    // associated with shift
-  std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
+  if (shift)
+  {
+    mu_eps_min = 1.0 / (c_max * c_max) * 0.5;  // Add a safety factor for minimum propagation
+                                               // constant possible
+  }
+  else
+  {
+    mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
+                       // associated with shift
+  }
+  std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace); //SL JUST A TEST
   std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
   std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
   {
@@ -774,7 +783,14 @@ WavePortData::WavePortData(const config::WavePortData &data,
     // We want to ignore evanescent modes (kₙ with large imaginary component). The
     // eigenvalue 1 / (-kₙ² - σ) of the shifted problem will be a large-magnitude negative
     // real number for an eigenvalue kₙ² with real part close to but not below the cutoff σ.
-    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);
+    if (shift)
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);
+    }
+    else
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+    }
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -868,7 +884,16 @@ void WavePortData::Initialize(double omega)
     eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
     eigen->SetInitialSpace(v0);
     int num_conv = eigen->Solve();
-    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+    if (num_conv < mode_idx)
+    {
+      if (shift) // Sometimes SMALLEST_REAL diverges but LARGEST_MAGNITUDE converges
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+        num_conv = eigen->Solve();
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL); // reset
+      }
+      MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+    }
     lambda = eigen->GetEigenvalue(mode_idx - 1);
     // Mpi::Print(port_comm, " ... Wave port eigensolver error = {} (bkwd), {} (abs)\n",
     //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::BACKWARD),

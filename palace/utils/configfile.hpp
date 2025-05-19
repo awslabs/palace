@@ -547,6 +547,9 @@ public:
   // Tolerance for eigenvalue solver.
   double eig_tol = 1e-6;
 
+  // Solve the shifted eigenvalue problem (A - σ B)⁻¹ B e = λ e, if false σ = 0.
+  bool shift = true;
+
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 };
