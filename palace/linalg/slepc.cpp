@@ -655,7 +655,7 @@ void SlepcNEPSolver::SetType(SlepcEigenvalueSolver::Type type)
       // std::cerr << "Default NLEIGS Interpolation settings tol: " << tol << " degree: " <<
       // degree << "\n"; PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 10));//what
       // makes sense?
-      PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 30));  // what makes sense?
+      PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 50));  // what makes sense?
 
       break;
     case Type::KRYLOVSCHUR:
@@ -2227,7 +2227,7 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
-  /*
+  /**/
   if (!ctx->sinvert)
   {
     ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma);
@@ -2236,7 +2236,7 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   {
     ctx->y1 *= 1.0 / ctx->delta;
   }
-    */
+  /**/
   if (ctx->opProj)
   {
     // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
