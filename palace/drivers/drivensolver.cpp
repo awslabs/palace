@@ -4,6 +4,12 @@
 #include "drivensolver.hpp"
 
 #include <complex>
+#include <iostream>
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/src/Core/IO.h>
+#include <fmt/core.h>
+#include <fmt/ostream.h>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -45,8 +51,9 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   double delta_omega = iodata.solver.driven.delta_f;
   double omega0 = iodata.solver.driven.min_f + step0 * delta_omega;
   bool adaptive = (iodata.solver.driven.adaptive_tol > 0.0);
-  if (adaptive && n_step <= 2)
+  if (adaptive && n_step <= 2 && !iodata.solver.driven.adaptive_circuit_synthesis)
   {
+    // If circuit synthesize, it's ok to have <=2 output samples since we resample
     Mpi::Warning("Adaptive frequency sweep requires > 2 total frequency samples!\n"
                  "Reverting to uniform sweep!\n");
     adaptive = false;
@@ -233,14 +240,26 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   space_op.GetWavePortOp().SetSuppressOutput(
       true);  // Suppress wave port output for offline
 
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    auto &lumped_port_op = space_op.GetLumpedPortOp();
+    for (const auto &[port_idx, port_data] : lumped_port_op)
+    {
+      ComplexVector port_excitation_E;
+      port_excitation_E.UseDevice(true);
+      space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
+      prom_op.UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
+    }
+  }
+
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM = [&](int excitation_idx, double omega)
+  auto UpdatePROM = [&](int excitation_idx, double omega, int sample_idx)
   {
     // Add the HDM solution to the PROM reduced basis.
-    prom_op.UpdatePROM(E);
+    prom_op.UpdatePROM(E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
     prom_op.UpdateMRI(excitation_idx, omega, E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -273,18 +292,23 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
     }
     prom_op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
 
+    int it_sample = 1;  // Note: one-based index for printing
+    // Left freq boundary
     prom_op.SolveHDM(excitation_idx, omega0, E);
-    UpdatePROM(excitation_idx, omega0);
+    UpdatePROM(excitation_idx, omega0, it_sample);
+    it_sample++;
+    // Right freq boundary
     prom_op.SolveHDM(excitation_idx, omega0 + (n_step - step0 - 1) * delta_omega, E);
-    UpdatePROM(excitation_idx, omega0 + (n_step - step0 - 1) * delta_omega);
-    int it0 = 2;  // Nr of initial solutions in PROM
+    UpdatePROM(excitation_idx, omega0 + (n_step - step0 - 1) * delta_omega, it_sample);
+    it_sample++;
+    int it0 = it_sample;  // Nr of initial solutions in PROM
 
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints.
     int memory = 0;
-    int it = it0;
     std::vector<double> max_errors = {0.0, 0.0};
-    for (; (it < max_size_per_excitation) && (memory < convergence_memory); it++)
+    for (; (it_sample <= max_size_per_excitation) && (memory < convergence_memory);
+         it_sample++)
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
       // previous samples).
@@ -310,15 +334,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
       Mpi::Print(
           "\nGreedy iteration {:d} (PROM n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
           "{:.3e}, memory = {:d}/{:d}\n",
-          it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz, omega_star,
-          max_errors.back(), memory, convergence_memory);
-      UpdatePROM(excitation_idx, omega_star);
+          it_sample - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
+          omega_star, max_errors.back(), memory, convergence_memory);
+      UpdatePROM(excitation_idx, omega_star, it_sample);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
-               (it == max_size_per_excitation) ? " reached maximum" : " converged with", it,
-               prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
-               convergence_memory);
+               (it_sample == max_size_per_excitation) ? " reached maximum"
+                                                      : " converged with",
+               it_sample - 1, prom_op.GetReducedDimension(), max_errors.back(), offline_tol,
+               memory, convergence_memory);
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
@@ -376,7 +401,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
-  post_op.MeasureFinalize(indicator);
+  post_op.MeasureFinalize(indicator, prom_op);
   return indicator;
 }
 
@@ -395,4 +420,61 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
+void PostprocessPROM(const IoData &iodata, const RomOperator &prom_op)
+{
+  if (!do_measurement_ || !root_)
+  {
+    return;
+  }
+  Mpi::Print("Post-process synthesized circuit");
+  using VT = IoData::ValueType;
+
+  // Don't use structured binding for lambda below: captured structured bindings are C++20
+  const auto &prom_mat = prom_op.GetReducedMatrices();
+  const auto &Kr = std::get<0>(prom_mat);
+  const auto &Mr = std::get<1>(prom_mat);
+  const auto &Cr = std::get<2>(prom_mat);
+  const auto &v_norms = std::get<3>(prom_mat);
+  const auto &v_label = std::get<4>(prom_mat);
+
+  auto prom_size = Kr.rows();
+  MFEM_VERIFY((Mr.rows() == prom_size) && ((Cr.rows() == prom_size) || (Cr.rows() == 0)) &&
+                  (v_norms.rows() == prom_size) && (v_label.size() == prom_size),
+              "Inconsisten PROM size!");
+
+  auto print_table = [&](const Eigen::MatrixXd &mat, std::string_view filename)
+  {
+    auto out = TableWithCSVFile(post_dir_ / filename);
+    out.table.col_options.float_precision = 17;
+    for (int i = 0; i < prom_size; i++)
+    {
+      out.table.insert_column(v_label[i], v_label[i]);
+      for (int j = 0; j < prom_size; j++)
+      {
+        out.table[v_label[i]] << mat(i, j);
+      }
+    }
+    out.WriteFullTableTrunc();
+  };
+
+  // De-normalize all volltages
+  auto v_d = v_norms.asDiagonal();
+
+  // PROM matrices should be real
+  auto unit_H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
+  Eigen::MatrixXd m_Linv = (1.0 / unit_H * v_d) * Kr.real() * v_d;
+  print_table(m_Linv, "prom-Linv.csv");
+
+  auto unit_F = iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
+  Eigen::MatrixXd m_C = (unit_F * v_d) * Mr.real() * v_d;
+  print_table(m_C, "prom-C.csv");
+
+  // In principle, Cr need not exist
+  if (Cr.size() > 0)
+  {
+    auto unit_ohm = iodata.DimensionalizeValue(VT::IMPEDANCE, 1.0);
+    Eigen::MatrixXd m_Rinv = (1.0 / unit_ohm * v_d) * Cr.real() * v_d;
+    print_table(m_Rinv, "prom-Rinv.csv");
+  }
+}
 }  // namespace palace
