@@ -240,6 +240,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   space_op.GetWavePortOp().SetSuppressOutput(
       true);  // Suppress wave port output for offline
 
+
+  // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     auto &lumped_port_op = space_op.GetLumpedPortOp();
@@ -352,6 +354,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Printing PROM Matrices to disk.\n");  // Timing on root
+    PrintPROMMatrices(prom_op);
+  }
+
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
   // in the general case with wave ports, etc.?)
 
@@ -401,7 +410,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op, int n_step, 
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
-  post_op.MeasureFinalize(indicator, prom_op);
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
@@ -420,15 +429,14 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
                    (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void DrivenSolver::PrintPROMMatrices(const RomOperator &prom_op)
+void DrivenSolver::PrintPROMMatrices(const RomOperator &prom_op) const
 {
   if (!root)
   {
     return;
   }
-  Mpi::Print("Post-process synthesized circuit");
-
-  // Don't use structured binding for lambda below: captured structured bindings are C++20.
+  // Don't use structured binding because of lambda below: captured structured bindings are
+  // C++20.
   // TODO(C++20): Simplify with structured bindings.
   const auto &prom_mat = prom_op.GetReducedMatrices();
   const auto &Kr = std::get<0>(prom_mat);
@@ -442,8 +450,7 @@ void DrivenSolver::PrintPROMMatrices(const RomOperator &prom_op)
                   (voltage_norm_H.rows() == prom_size) && (v_label.size() == prom_size),
               "Inconsisten PROM size!");
 
-  auto &post_dir_ = post_dir;
-
+  const auto &post_dir_ = post_dir;  // For lambda capture
   auto print_table = [prom_size, &post_dir_, &v_label](const Eigen::MatrixXd &mat,
                                                        std::string_view filename)
   {
