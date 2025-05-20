@@ -58,12 +58,12 @@ int main()
     LINK_LIBRARIES ${_libceed_target}
     OUTPUT_VARIABLE LIBCEED_TEST_COMPILE_OUTPUT
   )
-  # message(STATUS "LIBCEED_TEST_COMPILE_OUTPUT: ${LIBCEED_TEST_COMPILE_OUTPUT}")
   if(LIBCEED_TEST_COMPILED)
     # message(STATUS "libCEED test program - Successful")
     set(${_libceed_test_success} TRUE PARENT_SCOPE)
   else()
-    # message(STATUS "libCEED test program - Failed")
+    message(STATUS "libCEED test program - Failed")
+    message(STATUS "LIBCEED_TEST_COMPILE_OUTPUT: ${LIBCEED_TEST_COMPILE_OUTPUT}")
     set(${_libceed_test_success} FALSE PARENT_SCOPE)
   endif()
 endfunction()
@@ -127,17 +127,18 @@ int main()
     PETSC_TEST_COMPILED
     ${PETSC_LIB_TEST_DIR}
     ${PETSC_LIB_TEST_CPP}
+    CMAKE_FLAGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     LINK_LIBRARIES ${_petsc_target}
     COMPILE_OUTPUT_VARIABLE PETSC_TEST_COMPILE_OUTPUT
     RUN_OUTPUT_VARIABLE PETSC_TEST_OUTPUT
   )
-  # message(STATUS "PETSC_TEST_COMPILE_OUTPUT: ${PETSC_TEST_COMPILE_OUTPUT}")
-  # message(STATUS "PETSC_TEST_OUTPUT: ${PETSC_TEST_OUTPUT}")
   if(PETSC_TEST_COMPILED AND PETSC_TEST_EXITCODE EQUAL 0)
     # message(STATUS "PETSc test program - Successful")
     set(${_petsc_test_success} TRUE PARENT_SCOPE)
   else()
-    # message(STATUS "PETSc test program - Failed")
+    message(STATUS "PETSc test program - Failed")
+    message(STATUS "PETSC_TEST_COMPILE_OUTPUT: ${PETSC_TEST_COMPILE_OUTPUT}")
+    message(STATUS "PETSC_TEST_OUTPUT: ${PETSC_TEST_OUTPUT}")
     set(${_petsc_test_success} FALSE PARENT_SCOPE)
   endif()
 endfunction()

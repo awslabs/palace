@@ -20,11 +20,11 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   if(PALACE_WITH_SUNDIALS)
     list(APPEND MFEM_DEPENDENCIES sundials)
   endif()
+  if(PALACE_WITH_GSLIB)
+    list(APPEND MFEM_DEPENDENCIES gslib)
+  endif()
 else()
   set(MFEM_DEPENDENCIES)
-endif()
-if(PALACE_WITH_GSLIB)
-  list(APPEND MFEM_DEPENDENCIES gslib)
 endif()
 
 # Silence #pragma omp warnings when not building with OpenMP
@@ -151,10 +151,12 @@ endif()
 
 # MFEM with GSLIB is always built internally
 if(PALACE_WITH_GSLIB)
-  list(APPEND MFEM_OPTIONS
-    "-DMFEM_USE_GSLIB=YES"
-    "-DGSLIB_DIR=${CMAKE_INSTALL_PREFIX}"
-  )
+  list(APPEND MFEM_OPTIONS "-DMFEM_USE_GSLIB=YES")
+  if(PALACE_BUILD_EXTERNAL_DEPS)
+    list(APPEND MFEM_OPTIONS "-DGSLIB_DIR=${CMAKE_INSTALL_PREFIX}")
+  else()
+    list(APPEND MFEM_OPTIONS "-DGSLIB_DIR=${GSLIB_DIR}")
+  endif()
 endif()
 
 # Configure the rest of MFEM's dependencies

@@ -191,16 +191,6 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
 endif()
 
-# Add GSLIB (always built as part of Palace)
-if(PALACE_WITH_GSLIB)
-  message(STATUS "===================== Configuring GSLIB dependency =====================")
-  include(ExternalGSLIB)
-endif()
-
-# Add libCEED (always built as part of Palace)
-message(STATUS "==================== Configuring libCEED dependency ====================")
-include(ExternalLibCEED)
-
 # Add MFEM (always built as part of Palace)
 message(STATUS "====================== Configuring MFEM dependency =====================")
 include(ExternalMFEM)

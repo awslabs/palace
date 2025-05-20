@@ -1,0 +1,37 @@
+diff --git a/cmake/ExternalGitTags.cmake b/cmake/ExternalGitTags.cmake
+index e29c492f..1a211b7a 100644
+--- a/cmake/ExternalGitTags.cmake
++++ b/cmake/ExternalGitTags.cmake
+@@ -90,7 +90,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
+   "Git branch for external libCEED build"
+ )
+ set(EXTERN_LIBCEED_GIT_TAG
+-  "8c7774c6037866e54e1598be234a00f10d984861" CACHE STRING  # main @ 12/18/2023
++  "f7488153ba60dd9aeacf17f1494bdb6a59881ae6" CACHE STRING  # main after https://github.com/CEED/libCEED/pull/1464
+   "Git tag for external libCEED build"
+ )
+ 
+diff --git a/cmake/ExternalLibCEED.cmake b/cmake/ExternalLibCEED.cmake
+index fdffcd9e..14e468ad 100644
+--- a/cmake/ExternalLibCEED.cmake
++++ b/cmake/ExternalLibCEED.cmake
+@@ -119,11 +119,6 @@ endif()
+ string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
+ message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
+ 
+-# Add OpenMP support to libCEED
+-set(LIBCEED_PATCH_FILES
+-  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_gpu_restriction_dev.diff"
+-)
+-
+ include(ExternalProject)
+ ExternalProject_Add(libCEED
+   DEPENDS           ${LIBCEED_DEPENDENCIES}
+@@ -134,7 +129,6 @@ ExternalProject_Add(libCEED
+   PREFIX            ${CMAKE_BINARY_DIR}/extern/libCEED-cmake
+   BUILD_IN_SOURCE   TRUE
+   UPDATE_COMMAND    ""
+-  PATCH_COMMAND     git apply "${LIBCEED_PATCH_FILES}"
+   CONFIGURE_COMMAND ""
+   BUILD_COMMAND     ""
+   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install
