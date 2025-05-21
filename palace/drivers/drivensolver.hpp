@@ -14,9 +14,8 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
-template <config::ProblemData::Type>
-class PostOperator;
 class SpaceOperator;
+class RomOperator;
 
 //
 // Driver class for driven terminal simulations.
@@ -34,6 +33,8 @@ private:
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+
+  void PrintPROMMatrices(const RomOperator &prom_op) const;
 
 public:
   using BaseSolver::BaseSolver;
