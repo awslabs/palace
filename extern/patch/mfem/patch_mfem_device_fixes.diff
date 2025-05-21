@@ -1,5 +1,5 @@
 diff --git a/general/device.cpp b/general/device.cpp
-index e8e822f76..75ceb7891 100644
+index fc0c307b04..5053471554 100644
 --- a/general/device.cpp
 +++ b/general/device.cpp
 @@ -9,6 +9,7 @@
@@ -257,7 +257,7 @@ index e8e822f76..75ceb7891 100644
 -} // mfem
 +} // namespace mfem
 diff --git a/general/device.hpp b/general/device.hpp
-index c54ac2632..1b7509be8 100644
+index 8ceee9866a..b1aa788ca2 100644
 --- a/general/device.hpp
 +++ b/general/device.hpp
 @@ -16,6 +16,8 @@

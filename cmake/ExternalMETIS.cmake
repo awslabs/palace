@@ -53,11 +53,6 @@ endif()
 string(REPLACE ";" "; " METIS_OPTIONS_PRINT "${METIS_OPTIONS}")
 message(STATUS "METIS_OPTIONS: ${METIS_OPTIONS_PRINT}")
 
-# Some build fixes
-set(METIS_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/metis/patch_build.diff"
-)
-
 include(ExternalProject)
 ExternalProject_Add(metis
   DEPENDS           ${METIS_DEPENDENCIES}
@@ -68,7 +63,6 @@ ExternalProject_Add(metis
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/metis-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${METIS_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> ${METIS_OPTIONS}
   TEST_COMMAND      ""
 )
@@ -120,11 +114,6 @@ if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   string(REPLACE ";" "; " PARMETIS_OPTIONS_PRINT "${PARMETIS_OPTIONS}")
   message(STATUS "PARMETIS_OPTIONS: ${PARMETIS_OPTIONS_PRINT}")
 
-  # Some build fixes
-  set(PARMETIS_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/parmetis/patch_build.diff"
-  )
-
   ExternalProject_Add(parmetis
     DEPENDS           ${PARMETIS_DEPENDENCIES}
     GIT_REPOSITORY    ${EXTERN_PARMETIS_URL}
@@ -134,7 +123,6 @@ if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
     INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
     PREFIX            ${CMAKE_BINARY_DIR}/extern/parmetis-cmake
     UPDATE_COMMAND    ""
-    PATCH_COMMAND     git apply "${PARMETIS_PATCH_FILES}"
     CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${PARMETIS_OPTIONS}"
     TEST_COMMAND      ""
   )

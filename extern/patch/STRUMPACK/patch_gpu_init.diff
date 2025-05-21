@@ -1,14 +1,14 @@
 diff --git a/src/dense/CUDAWrapper.cpp b/src/dense/CUDAWrapper.cpp
-index 56405d83..50d1f34c 100644
+index 6236a723..532729f5 100644
 --- a/src/dense/CUDAWrapper.cpp
 +++ b/src/dense/CUDAWrapper.cpp
-@@ -306,19 +306,19 @@ namespace strumpack {
+@@ -317,23 +317,23 @@ namespace strumpack {
      }
  
      void init() {
 -#if defined(STRUMPACK_USE_MPI)
 -      int devs;
--      cudaGetDeviceCount(&devs);
+-      gpu_check(cudaGetDeviceCount(&devs));
 -      if (devs > 1) {
 -        int flag, rank = 0;
 -        MPI_Initialized(&flag);
@@ -16,12 +16,16 @@ index 56405d83..50d1f34c 100644
 -          MPIComm c;
 -          rank = c.rank();
 -        }
--        cudaSetDevice(rank % devs);
+-        gpu_check(cudaSetDevice(rank % devs));
+-#pragma omp parallel
+-        {
+-          gpu_check(cudaSetDevice(rank % devs));
+-        }
 -      }
 -#endif
 +// #if defined(STRUMPACK_USE_MPI)
 +//       int devs;
-+//       cudaGetDeviceCount(&devs);
++//       gpu_check(cudaGetDeviceCount(&devs));
 +//       if (devs > 1) {
 +//         int flag, rank = 0;
 +//         MPI_Initialized(&flag);
@@ -29,17 +33,21 @@ index 56405d83..50d1f34c 100644
 +//           MPIComm c;
 +//           rank = c.rank();
 +//         }
-+//         cudaSetDevice(rank % devs);
++//         gpu_check(cudaSetDevice(rank % devs));
++// #pragma omp parallel
++//         {
++//           gpu_check(cudaSetDevice(rank % devs));
++//         }
 +//       }
 +// #endif
        //       gpu_check(cudaFree(0));
        // #if defined(STRUMPACK_USE_MAGMA)
        //       magma_init();
 diff --git a/src/dense/HIPWrapper.cpp b/src/dense/HIPWrapper.cpp
-index b0f6edf3..0025f9f5 100644
+index c68623cf..6fd8f425 100644
 --- a/src/dense/HIPWrapper.cpp
 +++ b/src/dense/HIPWrapper.cpp
-@@ -280,19 +280,19 @@ namespace strumpack {
+@@ -280,23 +280,23 @@ namespace strumpack {
      }
  
      void init() {
@@ -54,6 +62,10 @@ index b0f6edf3..0025f9f5 100644
 -          rank = c.rank();
 -        }
 -        gpu_check(hipSetDevice(rank % devs));
+-#pragma omp parallel
+-        {
+-          gpu_check(hipSetDevice(rank % devs));
+-        }
 -      }
 -#endif
 +// #if defined(STRUMPACK_USE_MPI)
@@ -67,8 +79,21 @@ index b0f6edf3..0025f9f5 100644
 +//           rank = c.rank();
 +//         }
 +//         gpu_check(hipSetDevice(rank % devs));
++// #pragma omp parallel
++//         {
++//           gpu_check(hipSetDevice(rank % devs));
++//         }
 +//       }
 +// #endif
      }
  
      void device_memset(void* dptr, int value, std::size_t count) {
+@@ -563,7 +563,7 @@ namespace strumpack {
+       STRUMPACK_FLOPS(4*blas::trsm_flops(m, n, alpha, side));
+       STRUMPACK_BYTES(2*8*blas::trsm_moves(m, n));
+       gpu_check(hipblasZtrsm(handle, side, uplo, trans, diag, m, n,
+-                             reinterpret_cast<const hipblasDoubleComplex*>(alpha), 
++                             reinterpret_cast<const hipblasDoubleComplex*>(alpha),
+                              reinterpret_cast<hipblasDoubleComplex*>(A), lda,
+                              reinterpret_cast<hipblasDoubleComplex*>(B), ldb));
+     }

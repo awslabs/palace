@@ -86,6 +86,9 @@ The format of this changelog is based on
   - Added `PortExcitations` to manage excitation pattern and print it to json metadata.
   - Update spack configuration to address `0.12` API breakage between libxsmm and libCEED.
   - Support spack vended libCEED and GSLIB builds.
+  - Fix bug where `MakeSimplex` would fail for higher order meshes.
+  - Fix bug in STRUMPACK build where dependency SCALAPACK library install directory could
+    change based on build environment.
 
 ## [0.13.0] - 2024-05-20
 

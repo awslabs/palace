@@ -452,17 +452,17 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
     paraview->SetTime(
         std::pow(10.0, 2.0 + static_cast<int>(std::log10(paraview->GetTime()))) - 1.0);
   }
-  mfem::DataCollection::FieldMapType field_map(paraview->GetFieldMap());  // Copy
+  auto field_map = paraview->GetFieldMap();  // Copy, so can reregister later
   for (const auto &[name, gf] : field_map)
   {
     paraview->DeregisterField(name);
   }
-  mfem::DataCollection::CoeffFieldMapType coeff_field_map(paraview->GetCoeffFieldMap());
+  auto coeff_field_map = paraview->GetCoeffFieldMap();
   for (const auto &[name, gf] : coeff_field_map)
   {
     paraview->DeregisterCoeffField(name);
   }
-  mfem::DataCollection::VCoeffFieldMapType vcoeff_field_map(paraview->GetVCoeffFieldMap());
+  auto vcoeff_field_map = paraview->GetVCoeffFieldMap();
   for (const auto &[name, gf] : vcoeff_field_map)
   {
     paraview->DeregisterVCoeffField(name);
