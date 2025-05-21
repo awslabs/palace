@@ -50,12 +50,13 @@ ExternalProject_Add(scalapack
   TEST_COMMAND      ""
 )
 
+include(GNUInstallDirs)
 # Save variables to cache
 if(BUILD_SHARED_LIBS)
   set(_SCALAPACK_LIB_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
 else()
   set(_SCALAPACK_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
 endif()
-set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libscalapack${_SCALAPACK_LIB_SUFFIX}
+set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libscalapack${_SCALAPACK_LIB_SUFFIX}
   CACHE STRING "List of library files for ScaLAPACK"
 )
