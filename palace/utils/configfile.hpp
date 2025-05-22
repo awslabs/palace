@@ -686,6 +686,9 @@ public:
   // Step size for frequency sweep [GHz].
   double delta_f = 0.0;
 
+  // Explicit frequency samples [GHz].
+  std::vector<double> sample_f = {};
+
   // Step increment for saving fields to disk.
   int delta_post = 0;
 

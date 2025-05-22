@@ -1604,6 +1604,7 @@ void DrivenSolverData::SetUp(json &solver)
   min_f = driven->at("MinFreq");     // Required
   max_f = driven->at("MaxFreq");     // Required
   delta_f = driven->at("FreqStep");  // Required
+  sample_f = driven->value("FreqSamples", sample_f);
   delta_post = driven->value("SaveStep", delta_post);
   rst = driven->value("Restart", rst);
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
@@ -1629,6 +1630,7 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "MinFreq: " << min_f << '\n';
     std::cout << "MaxFreq: " << max_f << '\n';
     std::cout << "FreqStep: " << delta_f << '\n';
+    std::cout << "FreqSamples: " << sample_f << '\n';
     std::cout << "SaveStep: " << delta_post << '\n';
     std::cout << "Restart: " << rst << '\n';
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';

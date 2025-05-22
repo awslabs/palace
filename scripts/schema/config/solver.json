@@ -47,6 +47,11 @@
         "MinFreq": { "type": "number" },
         "MaxFreq": { "type": "number" },
         "FreqStep": { "type": "number" },
+        "FreqSamples": {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "number"}
+        },
         "SaveStep": { "type": "integer" },
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
