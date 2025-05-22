@@ -91,6 +91,6 @@ ExternalProject_Add(gslib
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
-  INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${GSLIB_OPTIONS} install
+  INSTALL_COMMAND   make ${GSLIB_OPTIONS} install
   TEST_COMMAND      ""
 )
