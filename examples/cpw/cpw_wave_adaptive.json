@@ -154,9 +154,10 @@
     "Driven":
     {
       "MinFreq": 2.0,  // GHz
-      "MaxFreq": 30.0,  // GHz
+      "MaxFreq": 32.0,  // GHz
       "FreqStep": 0.1,  // GHz
-      "SaveStep": 40,
+      "FreqSamples": [17.0], // GHz
+      "SaveStep": 60,
       "AdaptiveTol": 1.0e-3
     },
     "Linear":

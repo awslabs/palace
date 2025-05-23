@@ -157,6 +157,7 @@ number of eigenmodes of the problem. The available options are:
     "MinFreq": <float>,
     "MaxFreq": <float>,
     "FreqStep": <float>,
+    "FreqSamples": [<float array>],
     "SaveStep": <int>,
     "Restart": <int>,
     "AdaptiveTol": <float>,
@@ -172,6 +173,10 @@ with
 `"MaxFreq" [None]` :  Upper bound of frequency sweep interval, GHz.
 
 `"FreqStep" [None]` :  Frequency step size for frequency sweep, GHz.
+
+`"FreqSamples" [None]"` : Frequency values to sample in addition to frequency sweep, GHz.
+For an adaptive frequency sweep these samples are explicitly added to the basis in the
+reduced-order model.
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
 fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
