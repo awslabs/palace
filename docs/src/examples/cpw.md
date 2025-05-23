@@ -77,9 +77,10 @@ the example directory:
 and
 [`cpw_wave_adaptive.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_wave_adaptive.json).
 
-The frequency response is computed for the band ``f\in[2.0,30.0]\text{ GHz}``. For the
-uniform sweep, a step size of ``\Delta f=4.0\text{ GHz}`` is used, while the adaptive sweep
-employs a much finer step size ``\Delta f=0.1\text{ GHz}``. The adaptive fast frequency
+The frequency response is computed for the band ``f\in[2.0,32.0]\text{ GHz}``. For the
+uniform sweep, a step size of ``\Delta f=6.0\text{ GHz}`` is used, while the adaptive sweep
+employs a much finer step size ``\Delta f=0.1\text{ GHz}``. Additionally both sweeps have an
+explicit sample placed at ``17.0\text{ GHz}``. The adaptive fast frequency
 sweep algorithm is given a tolerance of ``1\times10^{-3}`` for choosing the sampling
 points; the simulation with uniform ports uses ``9`` frequency samples and that with wave
 ports uses ``10``. Despite the much finer frequency resolution, the adaptive frequency
