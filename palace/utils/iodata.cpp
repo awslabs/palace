@@ -568,6 +568,8 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   solver.driven.min_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
   solver.driven.max_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
   solver.driven.delta_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  for (auto &f : solver.driven.sample_f)
+    f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
 
   // For transient simulations:
   solver.transient.pulse_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();

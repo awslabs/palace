@@ -1615,6 +1615,7 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("MinFreq");
   driven->erase("MaxFreq");
   driven->erase("FreqStep");
+  driven->erase("FreqSamples");
   driven->erase("SaveStep");
   driven->erase("Restart");
   driven->erase("AdaptiveTol");
