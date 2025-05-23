@@ -1060,6 +1060,7 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+  Mpi::Print("GetSParameter: port_sr: {}, post_si: {}, Sr: {}, Si: {}\n", port_sr, port_si, dot.real(), dot.imag());
   return dot;
 }
 
