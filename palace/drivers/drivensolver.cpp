@@ -50,7 +50,10 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   omega.insert(omega.end(), iodata.solver.driven.sample_f.begin(),
                iodata.solver.driven.sample_f.end());
   std::sort(omega.begin(), omega.end());
-  omega.erase(std::unique(omega.begin(), omega.end()), omega.end());
+  constexpr double tol = 1e-12;
+  omega.erase(std::unique(omega.begin(), omega.end(),
+                          [=](auto x, auto y) { return std::abs(x - y) < tol; }),
+              omega.end());
 
   bool adaptive = (iodata.solver.driven.adaptive_tol > 0.0);
   if (adaptive && n_step <= 2)
