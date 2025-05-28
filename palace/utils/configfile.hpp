@@ -689,6 +689,9 @@ public:
   // Explicit frequency samples [GHz].
   std::vector<double> sample_f = {};
 
+  // Whether to include explicit samples in the PROM.
+  bool explicit_prom_sample = true;
+
   // Step increment for saving fields to disk.
   int delta_post = 0;
 
@@ -1032,6 +1035,11 @@ public:
 
   void SetUp(json &config);
 };
+
+
+// Calculate the number of steps from [start, end) in increments of delta. Will only include
+// end if it is a multiple of delta beyond start.
+int GetNumSteps(double start, double end, double delta);
 
 }  // namespace palace::config
 

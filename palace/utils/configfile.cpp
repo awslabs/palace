@@ -1610,6 +1610,8 @@ void DrivenSolverData::SetUp(json &solver)
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
+  explicit_prom_sample = driven->value("ExplicitPROMSample", explicit_prom_sample);
+  MFEM_VERIFY(delta_f > 0, "\"FreqStep\" must be greater than 0.0!");
 
   // Cleanup
   driven->erase("MinFreq");
@@ -1621,6 +1623,7 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("AdaptiveTol");
   driven->erase("AdaptiveMaxSamples");
   driven->erase("AdaptiveConvergenceMemory");
+  driven->erase("ExplicitPROMSample");
   MFEM_VERIFY(driven->empty(),
               "Found an unsupported configuration file keyword under \"Driven\"!\n"
                   << driven->dump(2));
@@ -1637,6 +1640,7 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
     std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
+    std::cout << "ExplicitPROMSample: " << explicit_prom_sample << '\n';
   }
 }
 
@@ -1783,6 +1787,7 @@ void TransientSolverData::SetUp(json &solver)
   order = transient->value("Order", order);
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
+  MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
 
   if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
   {
@@ -2082,6 +2087,20 @@ void SolverData::SetUp(json &config)
     std::cout << "Device: " << device << '\n';
     std::cout << "Backend: " << ceed_backend << '\n';
   }
+}
+
+int GetNumSteps(double start, double end, double delta)
+{
+  if (end < start)
+  {
+    return 1;
+  }
+  constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
+  double dn = std::abs(end - start) / std::abs(delta);
+  int n_step = 1 + static_cast<int>(dn);
+  double dfinal = start + n_step * delta;
+  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
+                  (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
 }  // namespace palace::config

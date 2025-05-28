@@ -202,7 +202,7 @@ void MinimalRationalInterpolation::AddSolutionSample(
   // stored by its QR decomposition.
   MFEM_VERIFY(dim_Q + 1 <= Q.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
+  R.conservativeResize(dim_Q + 1, dim_Q + 1);
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
     std::vector<std::complex<double>> s = {1.0, 1i * omega};
