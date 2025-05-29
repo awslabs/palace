@@ -6,6 +6,8 @@
 
 #include <complex>
 #include <memory>
+#include <string>
+#include <tuple>
 #include <vector>
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
@@ -71,6 +73,8 @@ private:
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
   Eigen::VectorXcd RHS1r;
   Eigen::VectorXcd RHSr;
+  Eigen::VectorXd voltage_norm_H;
+  std::vector<std::string> v_node_label;
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
@@ -95,6 +99,14 @@ public:
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
+  // Get matrices from PROM construction.
+  std::tuple<const Eigen::MatrixXcd &, const Eigen::MatrixXcd &, const Eigen::MatrixXcd &,
+             const Eigen::VectorXd &, const std::vector<std::string> &>
+  GetReducedMatrices() const
+  {
+    return std::tie(Kr, Mr, Cr, voltage_norm_H, v_node_label);
+  }
+
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
 
@@ -102,7 +114,7 @@ public:
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add field configuration to the reduced-order basis and update the PROM.
-  void UpdatePROM(const ComplexVector &u);
+  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
