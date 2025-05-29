@@ -14,7 +14,7 @@
       "MaxFreq": 1.1,  // GHz
       "FreqStep": 0.1,  // GHz
       "SaveStep": 2,
-      "FreqSamples":[
+      "Samples":[
         {
           "MinFreq": 0.1,  // GHz
           "MaxFreq": 1.1,  // GHz
@@ -26,7 +26,7 @@
   },
   "driven_uniform_nsample": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "MinFreq": 0.0,  // GHz
           "MaxFreq": 1.0,  // GHz
@@ -38,7 +38,7 @@
   },
   "driven_paired_uniform_sample": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "MinFreq": 0.0,  // GHz
           "MaxFreq": 1.0,  // GHz
@@ -56,7 +56,7 @@
   },
   "driven_uniform_with_point": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "MinFreq": 0.0,  // GHz
           "MaxFreq": 1.0,  // GHz
@@ -65,7 +65,7 @@
         },
         {
           "Freq": [0.15, 0.35, 0.55],
-          "Save": true,
+          "SaveStep": 1,
           "AddToPROM": true
         }
       ],
@@ -75,7 +75,7 @@
   },
   "driven_log_with_point": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "Type": "Log",
           "MinFreq": 0.1,  // GHz
@@ -85,7 +85,7 @@
         },
         {
           "Freq": [0.15, 0.35, 0.55],
-          "Save": true,
+          "SaveStep": 1,
           "AddToPROM": true
         }
       ],
@@ -98,7 +98,7 @@
   },
   "driven_mismatch_type_1": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "Type": "Point",
           "MinFreq": 0.0,  // GHz
@@ -111,7 +111,7 @@
   },
   "driven_mismatch_type_2": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "Type": "Log",
           "MinFreq": 0.1,  // GHz
@@ -124,7 +124,7 @@
   },
   "driven_mismatch_type_3": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "Type": "Linear",
           "Freq": [0.11, 0.22, 0.34]
@@ -134,7 +134,7 @@
   },
   "driven_invalid_log_range": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "Type": "Log",
           "MinFreq": 0.0,  // GHz
@@ -147,7 +147,7 @@
   },
   "driven_uniform_with_point_invalid_save": {
     "Driven": {
-      "FreqSamples":[
+      "Samples":[
         {
           "MinFreq": 0.0,  // GHz
           "MaxFreq": 1.0,  // GHz
@@ -156,7 +156,7 @@
         },
         {
           "Freq": [0.15, 0.35, 0.55],
-          "Save": true,
+          "SaveStep": 1,
           "AddToPROM": true
         }
       ],

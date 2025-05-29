@@ -41,18 +41,58 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["MinFreq", "MaxFreq", "FreqStep"],
       "properties":
       {
         "MinFreq": { "type": "number" },
         "MaxFreq": { "type": "number" },
         "FreqStep": { "type": "number" },
-        "FreqSamples": {
-          "type": "array",
-          "additionalItems": false,
-          "items": { "type": "number"}
-        },
         "SaveStep": { "type": "integer" },
+        "Samples": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Type": { "const": "Point" },
+                  "Freq": { "type": "array", "items": { "type": "number" } },
+                  "SaveStep": { "type": "integer" },
+                  "AddToPROM": { "type": "bool" }
+                },
+                "required": ["Freq"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Type": { "const": "Linear" },
+                  "MinFreq": { "type": "number", "minimum": 0.0 },
+                  "MaxFreq": { "type": "number", "minimum": 0.0 },
+                  "FreqStep": { "type": "number", "minimum": 0.0 },
+                  "NSample": { "type": "integer", "minimum": 0 },
+                  "SaveStep": { "type": "integer" },
+                  "AddToPROM": { "type": "bool" }
+                },
+                "required": ["MinFreq", "MaxFreq"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Type": { "const": "Log" },
+                  "MinFreq": { "type": "number", "exclusiveMinimum": 0.0 },
+                  "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
+                  "NSample": { "type": "integer", "minimum": 1 },
+                  "SaveStep": { "type": "integer" },
+                  "AddToPROM": { "type": "bool" }
+                },
+                "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "Save": { "type": "array", "additionalItems": false, "items": { "type": "number" }},
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },

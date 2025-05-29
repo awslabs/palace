@@ -148,7 +148,7 @@ TEST_CASE("Config Driven Solver", "[config]")
       CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
     }
     {
-      // Equivalent to top level from within FreqSamples, deduplicates
+      // Equivalent to top level from within Samples, deduplicates
       config::DrivenSolverData driven_solver;
       REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
 

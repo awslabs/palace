@@ -1680,7 +1680,7 @@ void DrivenSolverData::SetUp(json &solver)
       }
     }
   }
-  if (auto freq_samples = driven->find("FreqSamples"); freq_samples != driven->end())
+  if (auto freq_samples = driven->find("Samples"); freq_samples != driven->end())
   {
     for (auto &r : *freq_samples)
     {
@@ -1728,10 +1728,6 @@ void DrivenSolverData::SetUp(json &solver)
           save_f.emplace_back(f[n - 1]);  // 0-based
         }
       }
-      if (auto save = r.value("Save", false); save)
-      {
-        save_f.insert(save_f.end(), f.begin(), f.end());
-      }
       if (auto prom_sample = r.value("AddToPROM", false); prom_sample)
       {
         if (adaptive_tol == 0)
@@ -1749,7 +1745,6 @@ void DrivenSolverData::SetUp(json &solver)
         std::cout << "FreqStep: " << r.value("FreqStep", 0.0) << '\n';
         std::cout << "NSample: " << r.value("NSample", 0.0) << '\n';
         std::cout << "SaveStep: " << r.value("SaveStep", 0) << '\n';
-        std::cout << "Save: " << r.value("Save", false) << '\n';
         std::cout << "AddToPROM: " << r.value("AddToPROM", false) << '\n';
       }
 
@@ -1760,11 +1755,10 @@ void DrivenSolverData::SetUp(json &solver)
       r.erase("FreqStep");
       r.erase("NSample");
       r.erase("Freq");
-      r.erase("Save");
       r.erase("SaveStep");
       r.erase("AddToPROM");
       MFEM_VERIFY(r.empty(),
-                  "Found an unsupported configuration file keyword in \"FreqSamples\"!\n"
+                  "Found an unsupported configuration file keyword in \"Samples\"!\n"
                       << r.dump(2));
     }
   }
@@ -1843,7 +1837,7 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "FreqStep: " << driven->value("FreqStep", 0) << '\n';
     std::cout << "Save: " << save_f << '\n';
     std::cout << "SaveStep: " << save_step << '\n';
-    std::cout << "FreqSamples: " << sample_f << '\n';
+    std::cout << "Samples: " << sample_f << '\n';
     std::cout << "PromSamples: " << prom_samples << '\n';
     std::cout << "Restart: " << rst << '\n';
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
@@ -1855,7 +1849,7 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("MinFreq");
   driven->erase("MaxFreq");
   driven->erase("FreqStep");
-  driven->erase("FreqSamples");
+  driven->erase("Samples");
   driven->erase("Save");
   driven->erase("SaveStep");
   driven->erase("Restart");
