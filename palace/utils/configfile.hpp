@@ -677,23 +677,23 @@ public:
 struct DrivenSolverData
 {
 public:
-  // Lower bound of frequency sweep [GHz].
-  double min_f = 0.0;
-
-  // Upper bound of frequency sweep [GHz].
-  double max_f = 0.0;
-
-  // Step size for frequency sweep [GHz].
-  double delta_f = 0.0;
+  // Frequency sampling schemes.
+  enum class FrequencySampleType : u_int8_t
+  {
+    LINEAR,
+    LOG,
+    POINT,
+    DEFAULT = LINEAR
+  };
 
   // Explicit frequency samples [GHz].
   std::vector<double> sample_f = {};
 
-  // Whether to include explicit samples in the PROM.
-  bool explicit_prom_sample = true;
+  // Which steps to explicitly add to the PROM.
+  std::vector<std::size_t> prom_samples;
 
-  // Step increment for saving fields to disk.
-  int delta_post = 0;
+  // Steps on which to save fields to disk.
+  std::vector<std::size_t> save_step;
 
   // Restart iteration for a partial sweep.
   int rst = 1;
@@ -1035,7 +1035,6 @@ public:
 
   void SetUp(json &config);
 };
-
 
 // Calculate the number of steps from [start, end) in increments of delta. Will only include
 // end if it is a multiple of delta beyond start.

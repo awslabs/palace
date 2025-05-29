@@ -3,10 +3,12 @@
 #include <sstream>
 #include <string>
 #include <fmt/format.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 
@@ -119,5 +121,105 @@ TEST_CASE("Config Boundary Ports", "[config]")
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 1);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
+  }
+}
+
+TEST_CASE("Config Driven Solver", "[config]")
+{
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
+  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
+  auto config = json::parse(jsonstream);
+
+  using namespace Catch::Matchers;
+
+  constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
+  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
+
+  {
+    auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
+    auto save_step = std::vector<size_t>{2, 4, 6, 8, 10};
+    {
+      // Top level configuration
+      config::DrivenSolverData driven_solver;
+      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_base_uniform_sample")));
+
+      CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+      CHECK(driven_solver.save_step == save_step);
+      CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+    }
+    {
+      // Equivalent to top level from within FreqSamples, deduplicates
+      config::DrivenSolverData driven_solver;
+      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
+
+      CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+      CHECK(driven_solver.save_step == save_step);
+      CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+    }
+  }
+  {
+    // Specification through number of points rather than step size
+    config::DrivenSolverData driven_solver;
+    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_nsample")));
+
+    auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
+    auto save_step = std::vector<size_t>{2, 4, 6, 8};
+
+    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    CHECK(driven_solver.save_step == save_step);
+    CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+  }
+  {
+    // Combining two different linear sample resolutions
+    config::DrivenSolverData driven_solver;
+    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_paired_uniform_sample")));
+
+    auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
+    auto save_step =
+        std::vector<size_t>{1, 2, 4, 6, 7, 8, 9};  // 0.0, 0.25, 0.75, 2.5, 5.0, 7.5, 10.0
+
+    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    CHECK(driven_solver.save_step == save_step);
+    CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+  }
+  {
+    // Combining two different linear sample resolutions
+    config::DrivenSolverData driven_solver;
+    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_with_point")));
+
+    auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
+                                0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
+    // 0.0, 0.125, 0.15, 0.35, 0.375, 0.55, 0.625, 0.875, 1.0
+    auto save_step = std::vector<size_t>{1, 2, 3, 5, 6, 8, 9, 11, 12};
+    auto prom_samples = std::vector<size_t>{1, sample_f.size(), 3, 5, 8};
+
+    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    CHECK(driven_solver.save_step == save_step);
+    CHECK(driven_solver.prom_samples == prom_samples);
+  }
+  {
+    // Combining two different linear sample resolutions
+    config::DrivenSolverData driven_solver;
+    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_log_with_point")));
+
+    auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
+                                0.35, 0.55, 0.5623413251903491, 1.0};
+    auto save_step = std::vector<size_t>{2, 3, 5, 6, 7};
+    auto prom_samples = std::vector<size_t>{1, sample_f.size(), 2, 5, 6};
+
+    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    CHECK(driven_solver.save_step == save_step);
+    CHECK(driven_solver.prom_samples == prom_samples);
+  }
+  std::vector<std::string> invalid_configs = {"driven_empty",
+                                              "driven_mismatch_type_1",
+                                              "driven_mismatch_type_2",
+                                              "driven_mismatch_type_3",
+                                              "driven_invalid_log_range",
+                                              "driven_uniform_with_point_invalid_save"};
+  for (auto c : invalid_configs)
+  {
+    config::DrivenSolverData driven_solver;
+    CHECK_THROWS(config::DrivenSolverData().SetUp(*config.find(c)));
   }
 }

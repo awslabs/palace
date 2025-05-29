@@ -3,6 +3,7 @@
 
 #include "postoperator.hpp"
 
+#include <algorithm>
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
@@ -45,10 +46,9 @@ std::string ParaviewFoldername(const config::ProblemData::Type solver_t)
 }  // namespace
 
 template <config::ProblemData::Type solver_t>
-PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_,
-                                     int nr_expected_measurement_rows)
+PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
-    post_op_csv(this, nr_expected_measurement_rows),
+    post_op_csv(this),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
@@ -108,7 +108,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   // initialize if needed.
   if (solver_t == config::ProblemData::Type::DRIVEN)
   {
-    paraview_delta_post = iodata.solver.driven.delta_post;
+    paraview_save_step = iodata.solver.driven.save_step;
   }
   else if (solver_t == config::ProblemData::Type::EIGENMODE)
   {
@@ -145,6 +145,14 @@ auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
     sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
   }
   InitializeParaviewDataCollection(sub_folder_name);
+}
+
+template <config::ProblemData::Type solver_t>
+bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
+{
+  return (paraview_delta_post > 0 && step % paraview_delta_post == 0) ||
+         (paraview_n_post > 0 && step < paraview_n_post) ||
+         std::binary_search(paraview_save_step.cbegin(), paraview_save_step.cend(), step);
 }
 
 template <config::ProblemData::Type solver_t>
@@ -933,7 +941,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 
   auto freq_re = measurement_cache.freq.real();
   post_op_csv.PrintAllCSVData(freq_re, step, ex_idx);
-  if (write_paraview_fields() && (step % paraview_delta_post == 0))
+  if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(double(step) / paraview_delta_post, freq_re);
@@ -987,7 +995,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int eigen_print_idx = step + 1;
   post_op_csv.PrintAllCSVData(eigen_print_idx, step);
-  if (write_paraview_fields() && step < paraview_n_post)
+  if (write_paraview_fields(step))
   {
     WriteFields(step, eigen_print_idx);
     Mpi::Print(" Wrote mode {:d} to disk\n", eigen_print_idx);
@@ -1013,7 +1021,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 
   int eigen_print_idx = step + 1;
   post_op_csv.PrintAllCSVData(eigen_print_idx, step);
-  if (write_paraview_fields() && step < paraview_n_post)
+  if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
@@ -1039,7 +1047,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 
   int eigen_print_idx = step + 1;
   post_op_csv.PrintAllCSVData(eigen_print_idx, step);
-  if (write_paraview_fields() && step < paraview_n_post)
+  if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
@@ -1067,7 +1075,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   MeasureAllImpl();
 
   post_op_csv.PrintAllCSVData(time, step);
-  if (write_paraview_fields() && (step % paraview_delta_post == 0))
+  if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(double(step) / paraview_delta_post, time);

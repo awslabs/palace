@@ -158,7 +158,7 @@ public:
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);
 
   PostOperatorCSV() = delete;
-  PostOperatorCSV(PostOperator<solver_t> *post_op_, int nr_expected_measurement_rows_)
+  PostOperatorCSV(PostOperator<solver_t> *post_op_, int nr_expected_measurement_rows_ = 1)
     : post_op(post_op_), nr_expected_measurement_rows(nr_expected_measurement_rows_) {};
 };
 
