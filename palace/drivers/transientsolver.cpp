@@ -33,7 +33,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   TimeOperator time_op(iodata, space_op, dJdt_coef);
 
   double delta_t = iodata.solver.transient.delta_t;
-  int n_step = GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);
+  int n_step = config::GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);
   SaveMetadata(space_op.GetNDSpaces());
 
   // Time stepping is uniform in the time domain. Index sets are for computing things like
@@ -187,21 +187,6 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
       break;
   }
   return F{};
-}
-
-int TransientSolver::GetNumSteps(double start, double end, double delta) const
-{
-  if (end < start)
-  {
-    return 1;
-  }
-  MFEM_VERIFY(delta > 0.0, "Zero time step is not allowed!");
-  constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dnfreq = std::abs(end - start) / std::abs(delta);
-  int n_step = 1 + static_cast<int>(dnfreq);
-  double dfinal = start + n_step * delta;
-  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
-                   (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
 }  // namespace palace

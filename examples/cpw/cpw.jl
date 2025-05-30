@@ -1,319 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using CSV, DataFrames, Measures, Plots
-using PyPlot: matplotlib
-
-"""
-    generate_cpw_data(; num_processors::Integer=1)
-
-Generate the data for the coplanar waveguide example
-
-# Arguments
-
-  - num_processors - number of processors to use for the simulation
-"""
-function generate_cpw_data(; num_processors::Integer=0, figsuffix=4)
-    # Call the solver, discarding the terminal output
-    cpw_dir = @__DIR__
-    if num_processors > 0
-        for sim ∈ ["lumped", "wave"]
-            for mode ∈ ["adaptive", "uniform"]
-                call_command =
-                    Cmd(`palace -np $num_processors cpw_$sim\_$mode.json`, dir=cpw_dir)
-                run(call_command)
-            end
-        end
-    end
-
-    """
-        Helper function for generating plots
-    """
-    function plot_helper(
-        pp,
-        f1,
-        data1,
-        lbl1,
-        f2,
-        data2,
-        lbl2,
-        f3,
-        data3,
-        lbl3,
-        f4,
-        data4,
-        lbl4
-    )
-        mkrsz = 8
-        mkr1 = (:circle, mkrsz, stroke(0))
-        mkr2 = (:utriangle, mkrsz, stroke(0))
-        plot!(pp, f1, data1, label=lbl1)
-        plot!(pp, f3, data3, label=lbl3)
-        plot!(pp, f2, data2, label=lbl2, marker=mkr1, linewidth=0)
-        return plot!(pp, f4, data4, label=lbl4, marker=mkr2, linewidth=0)
-    end
-
-    # Parse simulation data
-    file = joinpath(cpw_dir, "postpro", "lumped_adaptive", "port-S.csv")
-    data_lumped_adaptive = CSV.File(file, header=1) |> DataFrame |> Matrix
-    f_adaptive = data_lumped_adaptive[:, 1]
-    data_lumped_adaptive = data_lumped_adaptive[:, 2:end]
-
-    file = joinpath(cpw_dir, "postpro", "wave_adaptive", "port-S.csv")
-    data_wave_adaptive = CSV.File(file, header=1) |> DataFrame |> Matrix
-    data_wave_adaptive = data_wave_adaptive[:, 2:end]
-
-    file = joinpath(cpw_dir, "postpro", "lumped_uniform", "port-S.csv")
-    data_lumped_uniform = CSV.File(file, header=1) |> DataFrame |> Matrix
-    f_uniform = data_lumped_uniform[:, 1]
-    data_lumped_uniform = data_lumped_uniform[:, 2:end]
-
-    file = joinpath(cpw_dir, "postpro", "wave_uniform", "port-S.csv")
-    data_wave_uniform = CSV.File(file, header=1) |> DataFrame |> Matrix
-    data_wave_uniform = data_wave_uniform[:, 2:end]
-
-    # Wrap phases
-    for p = 1:(size(data_lumped_adaptive, 2) ÷ 2)
-        idx = (data_lumped_adaptive[:, 2 * p] .< 0.0)
-        data_lumped_adaptive[idx, 2 * p] = data_lumped_adaptive[idx, 2 * p] .+ 180.0
-
-        idx = (data_wave_adaptive[:, 2 * p] .< 0.0)
-        data_wave_adaptive[idx, 2 * p] = data_wave_adaptive[idx, 2 * p] .+ 180.0
-
-        idx = (data_lumped_uniform[:, 2 * p] .< 0.0)
-        data_lumped_uniform[idx, 2 * p] = data_lumped_uniform[idx, 2 * p] .+ 180.0
-
-        idx = (data_wave_uniform[:, 2 * p] .< 0.0)
-        data_wave_uniform[idx, 2 * p] = data_wave_uniform[idx, 2 * p] .+ 180.0
-    end
-
-    # Plot settings
-    pyplot()
-    rcParams = PyPlot.PyDict(matplotlib["rcParams"])
-    plotsz = (800, 400)
-    fntsz = 12
-    fnt = font(fntsz)
-    rcParams["mathtext.fontset"] = "stix"
-    default(
-        size=plotsz,
-        palette=:Set1_9,
-        dpi=300,
-        tickfont=fnt,
-        guidefont=fnt,
-        legendfontsize=fntsz - 2,
-        margin=10mm
-    )
-
-    # Make plots
-    xlim = (minimum(f_uniform) - 1.0, maximum(f_uniform) + 1.0)
-    xlbl = "Frequency  (GHz)"
-
-    ## Reflection
-    p = 1
-
-    # Magnitude
-    ylbl = string("Reflection: abs(\$S_{11}\$)  (dB)")
-    p1a = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
-
-    plot_helper(
-        p1a,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p - 1],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p - 1],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p - 1],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p - 1],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p1a, ylims=(first(ylims(p1a)) - 20, 0))
-
-    savefig(p1a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)a.png"))
-
-    # Phase
-    ylbl = string("Reflection: arg(\$S_{11}\$)  (deg.)")
-    p1b = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
-
-    plot_helper(
-        p1b,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p1b, ylims=(first(ylims(p1b)) - 100, last(ylims(p1b)) + 0))
-    savefig(p1b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)a.png"))
-    display(p1b)
-
-    ## Transmission
-    p = 2
-
-    # Magnitude
-    ylbl = string("Transmission: abs(\$S_{21}\$)  (dB)")
-    p2a = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomleft)
-
-    plot_helper(
-        p2a,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p - 1],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p - 1],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p - 1],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p - 1],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p2a, ylims=(first(ylims(p2a)) - 20, 2))
-    savefig(p2a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)b.png"))
-    display(p2a)
-
-    # Phase
-    ylbl = string("Transmission: arg(\$S_{21}\$)  (deg.)")
-    p2b = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomleft)
-
-    plot_helper(
-        p2b,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p2b, ylims=(first(ylims(p2b)) - 60, last(ylims(p2b)) + 0))
-    savefig(p2b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)b.png"))
-    display(p2b)
-
-    ## NEXT
-    p = 3
-
-    # Magnitude
-    ylbl = string("NEXT: abs(\$S_{31}\$)  (dB)")
-    p3a = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomleft)
-
-    plot_helper(
-        p3a,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p - 1],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p - 1],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p - 1],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p - 1],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p3a, ylims=(first(ylims(p3a)) - 30, 0))
-    savefig(p3a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)c.png"))
-    display(p3a)
-
-    # Phase
-    ylbl = string("NEXT: arg(\$S_{31}\$)  (deg.)")
-    p3b = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
-
-    plot_helper(
-        p3b,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p3b, ylims=(first(ylims(p3b)) - 100, last(ylims(p3b)) + 0))
-    savefig(p3b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)c.png"))
-    display(p3b)
-
-    ## FEXT
-    p = 4
-
-    # Magnitude
-    ylbl = string("FEXT: abs(\$S_{41}\$)  (dB)")
-    p4a = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
-
-    plot_helper(
-        p4a,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p - 1],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p - 1],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p - 1],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p - 1],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p4a, ylims=(first(ylims(p4a)) - 40, 0))
-    savefig(p4a, joinpath(cpw_dir, "postpro", "cpw-$(figsuffix)d.png"))
-    display(p4a)
-
-    # Phase
-    ylbl = string("FEXT: arg(\$S_{41}\$)  (deg.)")
-    p4b = plot(xlims=xlim, xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
-
-    plot_helper(
-        p4b,
-        f_adaptive,
-        data_lumped_adaptive[:, 2 * p],
-        string("Adaptive, Lumped Port ", string(p)),
-        f_uniform,
-        data_lumped_uniform[:, 2 * p],
-        string("Uniform, Lumped Port ", string(p)),
-        f_adaptive,
-        data_wave_adaptive[:, 2 * p],
-        string("Adaptive, Wave Port ", string(p)),
-        f_uniform,
-        data_wave_uniform[:, 2 * p],
-        string("Uniform, Wave Port ", string(p))
-    )
-
-    plot!(p4b, ylims=(first(ylims(p4b)) - 120, last(ylims(p4b)) + 0))
-    savefig(p4b, joinpath(cpw_dir, "postpro", "cpw-p$(figsuffix)d.png"))
-    display(p4b)
-
-    return
-end
+using CSV, DataFrames, Measures, CairoMakie, ColorSchemes
 
 """
     cpw_impedance(;w,s,h,ϵᵣ)
@@ -356,4 +44,174 @@ function cpw_impedance(; w=30, s=18, h=500, ϵᵣ)
     ϵ_eff = 1 + ((ϵᵣ - 1) / 2) * k₁overk₁′ / koverk′
 
     return Z₀ = 30 * π / (koverk′ * sqrt(ϵ_eff))
+end
+
+"""
+    extract_data(base_path::String, cols::Vector{Int}=[1,2,4,6,8])
+
+Extract data from CSV files located in specific subfolders of `base_path`.
+
+# Arguments
+
+  - `base_path::String`: Path to the parent directory containing the subfolders
+  - `cols::Vector{Int}`: Indices of columns to extract (default: [1,2,4,6,8])
+
+# Returns
+
+A nested dictionary structure where:
+
+  - Outer key: folder name (e.g., "wave_uniform", "lumped_uniform", etc.)
+  - Inner keys: column names from CSV headers
+  - Values: Vector{Float64} of data from each column
+
+# Example
+
+```julia
+data = extract_data("postpro", [1, 2, 3])
+freq = data["lumped_uniform"]["f (GHz)"]
+s11_mag = data["lumped_uniform"]["|S[1][1]| (dB)"]    # Define folder structure
+```
+"""
+function extract_data(base_path::String, cols::Vector{Int}=[1, 2, 4, 6, 8])
+    # Define folder structure
+    folders = ["wave_uniform", "lumped_uniform", "wave_adaptive", "lumped_adaptive"]
+
+    # Initialize result dictionary
+    result = Dict{String, Dict{String, Vector{Float64}}}()
+
+    for folder in folders
+        try
+            # Construct full file path
+            file_path = joinpath(base_path, folder, "port-S.csv")
+
+            # Verify file exists
+            if !isfile(file_path)
+                @warn "File not found: $file_path"
+                continue
+            end
+
+            # Read CSV file
+            df = CSV.read(file_path, DataFrame)
+
+            # Get column names and strip leading whitespace
+            col_names = [lstrip(String(name)) for name in names(df)]
+
+            # Validate column indices
+            valid_cols = filter(c -> c ≤ length(col_names), cols)
+
+            if isempty(valid_cols)
+                @warn "No valid columns found for $folder"
+                continue
+            end
+
+            # Initialize inner dictionary
+            result[folder] = Dict{String, Vector{Float64}}()
+
+            # Extract specified columns
+            for col_idx in valid_cols
+                if col_idx ≤ length(col_names)
+                    col_name = col_names[col_idx]
+                    result[folder][col_name] = Vector{Float64}(df[!, col_idx])
+                end
+            end
+        catch e
+            @error "Error processing $folder" exception=(e, catch_backtrace())
+        end
+    end
+
+    return result
+end
+
+"""
+    plot_s_parameters(path::String, prefix::String="")
+
+Create and save individual S-parameter plots from data in specified path.
+Plots S11, S21, S31, and S41 using Dark2_4 colorscheme, with circles for uniform
+and lines for adaptive solutions.
+
+# Arguments
+
+  - `path::String`: Path containing the data folders and where plots will be saved
+  - `prefix::String`: Optional prefix for saved files (default="")
+
+# Saves
+
+Four PNG files in the specified path:
+
+  - cpw_[prefix_]11.png
+  - cpw_[prefix_]21.png
+  - cpw_[prefix_]31.png
+  - cpw_[prefix_]41.png
+"""
+function plot_s_parameters(path::String, prefix::String="")
+    data = extract_data(path)
+
+    s_params = ["S[1][1]", "S[2][1]", "S[3][1]", "S[4][1]"]
+    unicode_labels = ["|S₁₁| dB", "|S₂₁| dB", "|S₃₁| dB", "|S₄₁| dB"]
+    colors = ColorSchemes.Dark2_4
+
+    for (s_param, label) in zip(s_params, unicode_labels)
+        fig = Figure(size=(600, 400))
+        ax = Axis(fig[1, 1])
+
+        scatter!(
+            ax,
+            data["wave_uniform"]["f (GHz)"],
+            data["wave_uniform"]["|$(s_param)| (dB)"],
+            color=colors[1],
+            markersize=10,
+            label="Wave Uniform"
+        )
+
+        scatter!(
+            ax,
+            data["lumped_uniform"]["f (GHz)"],
+            data["lumped_uniform"]["|$(s_param)| (dB)"],
+            color=colors[2],
+            markersize=10,
+            label="Lumped Uniform"
+        )
+
+        lines!(
+            ax,
+            data["wave_adaptive"]["f (GHz)"],
+            data["wave_adaptive"]["|$(s_param)| (dB)"],
+            color=colors[1],
+            linewidth=2,
+            label="Wave Adaptive"
+        )
+
+        lines!(
+            ax,
+            data["lumped_adaptive"]["f (GHz)"],
+            data["lumped_adaptive"]["|$(s_param)| (dB)"],
+            color=colors[2],
+            linewidth=2,
+            label="Lumped Adaptive"
+        )
+
+        ax.xlabel = "Frequency (GHz)"
+        ax.ylabel = label
+
+        ax.xlabelsize = 18
+        ax.ylabelsize = 18
+        ax.xticklabelsize = 18
+        ax.yticklabelsize = 18
+
+        data_min =
+            minimum(minimum(data[folder]["|$(s_param)| (dB)"]) for folder in keys(data))
+        data_max =
+            maximum(maximum(data[folder]["|$(s_param)| (dB)"]) for folder in keys(data))
+        y_min = floor(data_min / 10) * 10
+        y_max = ceil(data_max / 10) * 10
+        y_max == 0 ? y_max = 1 : y_max = y_max
+        ax.limits = (nothing, (y_min, y_max))
+
+        axislegend(ax, position=:lb, textsize=18)
+
+        suffix = s_param[[3, 6]]
+        filename = isempty(prefix) ? "cpw-$(suffix).png" : "cpw-$(prefix)-$(suffix).png"
+
+        save(joinpath(path, filename), fig)
+    end
 end

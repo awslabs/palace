@@ -118,12 +118,17 @@ private:
   // ParaView Measure & Print.
 
   // Option to write ParaView fields at all and rate / number of iterations printed.
-  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (DRIVEN & TRANSIENT)
+  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (TRANSIENT)
   std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
+  std::vector<std::size_t> paraview_save_step = {};  // explicit steps to save for ParaView
+  // Whether any paraview fields will be written.
   bool write_paraview_fields() const
   {
-    return (paraview_delta_post > 0) || (paraview_n_post > 0);
+    return (paraview_delta_post > 0) || (paraview_n_post > 0) ||
+           !paraview_save_step.empty();
   }
+  // Whether paraview fields should be written for this particular step.
+  bool write_paraview_fields(std::size_t step);
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
@@ -393,8 +398,7 @@ private:
 public:
   // Ctor.
   // - nr_expected_measurement_rows is helper int to reserve space in csv printer tables.
-  explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op,
-                        int nr_expected_measurement_rows = 1);
+  explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
 
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
   // solver type, since each solver has different fields and extra data required. These
