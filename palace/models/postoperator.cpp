@@ -948,7 +948,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     auto ind = 1 + std::distance(paraview_save_indices.begin(),
                                  std::lower_bound(paraview_save_indices.begin(),
                                                   paraview_save_indices.end(), step));
-    WriteFields(ind, freq_re);
+    WriteFields(freq_re, ind);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(
