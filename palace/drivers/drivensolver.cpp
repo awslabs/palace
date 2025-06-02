@@ -49,11 +49,11 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   bool adaptive = (iodata.solver.driven.adaptive_tol > 0.0);
-  if (adaptive && omega.size() <= iodata.solver.driven.prom_samples.size())
+  if (adaptive && omega.size() <= iodata.solver.driven.prom_indices.size())
   {
     Mpi::Warning("Adaptive frequency sweep requires > {} total frequency samples!\n"
                  "Reverting to uniform sweep!\n",
-                 iodata.solver.driven.prom_samples.size());
+                 iodata.solver.driven.prom_indices.size());
     adaptive = false;
   }
   SaveMetadata(space_op.GetNDSpaces());
@@ -192,9 +192,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   double offline_tol = iodata.solver.driven.adaptive_tol;
   int convergence_memory = iodata.solver.driven.adaptive_memory;
   int max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
-  int nprom_samples = static_cast<int>(iodata.solver.driven.prom_samples.size());
-  MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_samples,
-              "Adaptive frequency sweep must sample at least " << nprom_samples
+  int nprom_indices = static_cast<int>(iodata.solver.driven.prom_indices.size());
+  MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_indices,
+              "Adaptive frequency sweep must sample at least " << nprom_indices
                                                                << " frequency points!");
   // Maximum size — no more than nr steps needed.
   max_size_per_excitation =
@@ -281,9 +281,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
 
     // Initialize PROM with explicit hdm samples, record the estimate but do not act on it.
     std::vector<double> max_errors;
-    for (auto i : iodata.solver.driven.prom_samples)
+    for (auto i : iodata.solver.driven.prom_indices)
     {
-      auto omega = omega_sample[i - 1];  // 1-based
+      auto omega = omega_sample[i];
       prom_op.SolveHDM(excitation_idx, omega, E);
       prom_op.SolvePROM(excitation_idx, omega, Eh);
       linalg::AXPY(-1.0, E, Eh);

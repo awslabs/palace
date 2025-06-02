@@ -108,7 +108,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   // initialize if needed.
   if (solver_t == config::ProblemData::Type::DRIVEN)
   {
-    paraview_save_step = iodata.solver.driven.save_step;
+    paraview_save_indices = iodata.solver.driven.save_indices;
   }
   else if (solver_t == config::ProblemData::Type::EIGENMODE)
   {
@@ -152,7 +152,8 @@ bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
 {
   return (paraview_delta_post > 0 && step % paraview_delta_post == 0) ||
          (paraview_n_post > 0 && step < paraview_n_post) ||
-         std::binary_search(paraview_save_step.cbegin(), paraview_save_step.cend(), step);
+         std::binary_search(paraview_save_indices.cbegin(), paraview_save_indices.cend(),
+                            step);
 }
 
 template <config::ProblemData::Type solver_t>
@@ -944,7 +945,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
-    WriteFields(double(step) / paraview_delta_post, freq_re);
+    auto ind = 1 + std::distance(paraview_save_indices.begin(),
+                                 std::lower_bound(paraview_save_indices.begin(),
+                                                  paraview_save_indices.end(), step));
+    WriteFields(ind, freq_re);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
   double total_energy = units.NonDimensionalize<Units::ValueType::ENERGY>(

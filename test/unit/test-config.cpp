@@ -137,15 +137,15 @@ TEST_CASE("Config Driven Solver", "[config]")
 
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
-    auto save_step = std::vector<size_t>{2, 4, 6, 8, 10};
+    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
     {
       // Top level configuration
       config::DrivenSolverData driven_solver;
       REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_base_uniform_sample")));
 
       CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-      CHECK(driven_solver.save_step == save_step);
-      CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+      CHECK(driven_solver.save_indices == save_indices);
+      CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
     }
     {
       // Equivalent to top level from within Samples, deduplicates
@@ -153,8 +153,8 @@ TEST_CASE("Config Driven Solver", "[config]")
       REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
 
       CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-      CHECK(driven_solver.save_step == save_step);
-      CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+      CHECK(driven_solver.save_indices == save_indices);
+      CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
     }
   }
   {
@@ -163,11 +163,11 @@ TEST_CASE("Config Driven Solver", "[config]")
     REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_nsample")));
 
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
-    auto save_step = std::vector<size_t>{2, 4, 6, 8};
+    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
 
     CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-    CHECK(driven_solver.save_step == save_step);
-    CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
   {
     // Combining two different linear sample resolutions
@@ -175,12 +175,12 @@ TEST_CASE("Config Driven Solver", "[config]")
     REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_paired_uniform_sample")));
 
     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
-    auto save_step =
-        std::vector<size_t>{1, 2, 4, 6, 7, 8, 9};  // 0.0, 0.25, 0.75, 2.5, 5.0, 7.5, 10.0
+    auto save_indices =
+        std::vector<size_t>{0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
 
     CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-    CHECK(driven_solver.save_step == save_step);
-    CHECK(driven_solver.prom_samples == std::vector{1, sample_f.size()});
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
   {
     // Combining two different linear sample resolutions
@@ -189,13 +189,12 @@ TEST_CASE("Config Driven Solver", "[config]")
 
     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
-    // 0.0, 0.125, 0.15, 0.35, 0.375, 0.55, 0.625, 0.875, 1.0
-    auto save_step = std::vector<size_t>{1, 2, 3, 5, 6, 8, 9, 11, 12};
-    auto prom_samples = std::vector<size_t>{1, sample_f.size(), 3, 5, 8};
+    auto save_indices = std::vector<size_t>{0, 2, 3, 4, 6, 7, 9, 11};
+    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 2, 4, 7};
 
     CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-    CHECK(driven_solver.save_step == save_step);
-    CHECK(driven_solver.prom_samples == prom_samples);
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == prom_indices);
   }
   {
     // Combining two different linear sample resolutions
@@ -204,12 +203,12 @@ TEST_CASE("Config Driven Solver", "[config]")
 
     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
                                 0.35, 0.55, 0.5623413251903491, 1.0};
-    auto save_step = std::vector<size_t>{2, 3, 5, 6, 7};
-    auto prom_samples = std::vector<size_t>{1, sample_f.size(), 2, 5, 6};
+    auto save_indices = std::vector<size_t>{0, 1, 3, 4, 5, 7};
+    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 1, 4, 5};
 
     CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
-    CHECK(driven_solver.save_step == save_step);
-    CHECK(driven_solver.prom_samples == prom_samples);
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == prom_indices);
   }
   std::vector<std::string> invalid_configs = {"driven_empty",
                                               "driven_mismatch_type_1",

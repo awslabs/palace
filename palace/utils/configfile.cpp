@@ -1674,9 +1674,9 @@ void DrivenSolverData::SetUp(json &solver)
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
     if (int save_step = driven->value("SaveStep", 0); save_step > 0)
     {
-      for (std::size_t n = save_step; n < sample_f.size() + 1; n += save_step)
+      for (std::size_t n = 0; n < sample_f.size(); n += save_step)
       {
-        save_f.emplace_back(sample_f[n - 1]);  // 0-based
+        save_f.emplace_back(sample_f[n]);
       }
     }
   }
@@ -1723,9 +1723,9 @@ void DrivenSolverData::SetUp(json &solver)
 
       if (auto save_step = r.value("SaveStep", 0); save_step > 0)
       {
-        for (std::size_t n = save_step; n < f.size() + 1; n += save_step)
+        for (std::size_t n = 0; n < f.size(); n += save_step)
         {
-          save_f.emplace_back(f[n - 1]);  // 0-based
+          save_f.emplace_back(f[n]);
         }
       }
       if (auto prom_sample = r.value("AddToPROM", false); prom_sample)
@@ -1794,21 +1794,15 @@ void DrivenSolverData::SetUp(json &solver)
     while (*it_sample != *it_save)  // safe because save samples is a subset of samples
     {
       ++it_sample;
-      if (it_sample == sample_f.end())
-      {
-        std::cout << "sample_f: ";
-        for (auto x : sample_f)
-          std::cout << x << ' ';
-        std::cout << '\n';
-        MFEM_ABORT("Save frequency " << *it_save << " not found in sample frequencies!");
-      }
+      MFEM_VERIFY(it_sample != sample_f.end(),
+                  "Save frequency " << *it_save << " not found in sample frequencies!");
     }
-    save_step.emplace_back(std::distance(sample_f.begin(), it_sample) + 1);  // 1-based
+    save_indices.emplace_back(std::distance(sample_f.begin(), it_sample));
   }
   // PROM sampling always begins with the minimum and maximum frequencies. Exclude them from
   // extra samples. Can use equality comparison given no floating point operations have been
   // done.
-  prom_samples = {1, sample_f.size()};
+  prom_indices = {0, sample_f.size() - 1};
   if (prom_f.size() > 0 && prom_f.back() == sample_f.back())
   {
     prom_f.pop_back();
@@ -1823,8 +1817,11 @@ void DrivenSolverData::SetUp(json &solver)
     while (*it_sample != *it_prom)  // safe because prom samples is a subset of samples
     {
       ++it_sample;
+      MFEM_VERIFY(it_sample != sample_f.end(), "PROM sample frequency "
+                                                   << *it_prom
+                                                   << " not found in sample frequencies!");
     }
-    prom_samples.emplace_back(std::distance(sample_f.begin(), it_sample) + 1);  // 1-based
+    prom_indices.emplace_back(std::distance(sample_f.begin(), it_sample));
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
@@ -1835,10 +1832,11 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "MinFreq: " << driven->value("MinFreq", 0.0) << '\n';
     std::cout << "MaxFreq: " << driven->value("MaxFreq", 0.0) << '\n';
     std::cout << "FreqStep: " << driven->value("FreqStep", 0) << '\n';
-    std::cout << "Save: " << save_f << '\n';
-    std::cout << "SaveStep: " << save_step << '\n';
     std::cout << "Samples: " << sample_f << '\n';
-    std::cout << "PromSamples: " << prom_samples << '\n';
+    std::cout << "SaveSamples: " << save_f << '\n';
+    std::cout << "PROMSamples: " << prom_f << '\n';
+    std::cout << "SaveIndices: " << save_indices << '\n';
+    std::cout << "PromIndices: " << prom_indices << '\n';
     std::cout << "Restart: " << rst << '\n';
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';

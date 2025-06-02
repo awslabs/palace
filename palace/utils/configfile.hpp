@@ -689,11 +689,11 @@ public:
   // Explicit frequency samples [GHz].
   std::vector<double> sample_f = {};
 
-  // Which steps to explicitly add to the PROM.
-  std::vector<std::size_t> prom_samples;
+  // Indices of frequency samples to explicitly add to the PROM.
+  std::vector<std::size_t> prom_indices;
 
-  // Steps on which to save fields to disk.
-  std::vector<std::size_t> save_step;
+  // Indices of frequency samples on which to save fields to disk.
+  std::vector<std::size_t> save_indices;
 
   // Restart iteration for a partial sweep.
   int rst = 1;
