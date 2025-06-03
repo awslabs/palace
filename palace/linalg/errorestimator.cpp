@@ -189,6 +189,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   estimates.UseDevice(true);
   estimates = 0.0;
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  MFEM_CONTRACT_VAR(nt);
   PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -269,6 +270,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
   // discontinuous flux is ε E = ε ∇V.
   const auto &mesh = nd_fespace.GetMesh();
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  MFEM_CONTRACT_VAR(nt);
   PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -388,6 +390,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  MFEM_CONTRACT_VAR(nt);
   PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
