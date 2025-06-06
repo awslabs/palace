@@ -168,9 +168,6 @@ class PostOperatorCSV
   void InitializeProbeB();
   void PrintProbeB();
 
-  // TODO: Upgrade SFINAE to C++20 concepts to simplify static selection since we can just
-  // use `void Function(...) requires (solver_t == Type::A);`.
-
   // Eigenmode + Driven + Transient
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
@@ -179,61 +176,55 @@ class PostOperatorCSV
   // prepare the tables for data insertion, whilst the print methods insert data
   // appropriately. Methods are only enabled when valid given the problem type.
 
-  template <ProblemType U = solver_t>
-  auto InitializePortVI()
-      -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                              U == ProblemType::TRANSIENT,
-                          void>;
+  void InitializePortVI()
+    requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+             solver_t == ProblemType::TRANSIENT);
 
-  template <ProblemType U = solver_t>
-  auto PrintPortVI()
-      -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                              U == ProblemType::TRANSIENT,
-                          void>;
+  void PrintPortVI()
+    requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+             solver_t == ProblemType::TRANSIENT);
 
   // Driven + Transient
   std::optional<TableWithCSVFile> surface_I;
 
-  template <ProblemType U = solver_t>
-  auto InitializeSurfaceI()
-      -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>;
+  void InitializeSurfaceI()
+    requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT);
 
-  template <ProblemType U = solver_t>
-  auto PrintSurfaceI()
-      -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>;
+  void PrintSurfaceI()
+    requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT);
 
   // Driven
   int driven_source_index = -1;
   std::optional<TableWithCSVFile> port_S;
 
-  template <ProblemType U = solver_t>
-  auto InitializePortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
-  template <ProblemType U = solver_t>
-  auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  void InitializePortS()
+    requires(solver_t == ProblemType::DRIVEN);
+  void PrintPortS()
+    requires(solver_t == ProblemType::DRIVEN);
 
   // Eigenmode
   std::optional<TableWithCSVFile> eig;
 
-  template <ProblemType U = solver_t>
-  auto InitializeEig() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
-  template <ProblemType U = solver_t>
-  auto PrintEig() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
+  void InitializeEig()
+    requires(solver_t == ProblemType::EIGENMODE);
+  void PrintEig()
+    requires(solver_t == ProblemType::EIGENMODE);
 
   std::vector<int> ports_with_L;
   std::vector<int> ports_with_R;
   std::optional<TableWithCSVFile> port_EPR;
 
-  template <ProblemType U = solver_t>
-  auto InitializeEigPortEPR() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
-  template <ProblemType U = solver_t>
-  auto PrintEigPortEPR() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
+  void InitializeEigPortEPR()
+    requires(solver_t == ProblemType::EIGENMODE);
+  void PrintEigPortEPR()
+    requires(solver_t == ProblemType::EIGENMODE);
 
   std::optional<TableWithCSVFile> port_Q;
 
-  template <ProblemType U = solver_t>
-  auto InitializeEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
-  template <ProblemType U = solver_t>
-  auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
+  void InitializeEigPortQ()
+    requires(solver_t == ProblemType::EIGENMODE);
+  void PrintEigPortQ()
+    requires(solver_t == ProblemType::EIGENMODE);
 
 public:
   // Set-up all files to be called from post_op.
