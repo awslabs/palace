@@ -1159,8 +1159,8 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     return;
   }
   fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [&buf](auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  auto to = [&buf]<typename... ft>(fmt::format_string<ft...> f, ft &&...a)
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<ft>(a)...); };
 
   // Print out BC info for all active port attributes.
   for (const auto &[idx, data] : ports)
