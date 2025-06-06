@@ -293,9 +293,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   fs::path sub_folder_name = "";
   auto nr_excitations = fem_op->GetPortExcitations().Size();
@@ -2037,12 +2036,11 @@ void PostOperator<solver_t>::MeasureProbes() const
 using fmt::format;
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
-                                                const ComplexVector &e,
-                                                const ComplexVector &b,
-                                                std::complex<double> omega)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
+                                                  const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetEGridFunction(e);
@@ -2079,9 +2077,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &rom_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &rom_op)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   reduced_postprocessing_ready = false;
   reduced_postprocessing_checked = false;
@@ -2164,12 +2161,11 @@ auto PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
+void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                                                     const ComplexVector &e,
                                                     std::complex<double> omega,
                                                     const Eigen::VectorXcd &y)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+  requires(solver_t == ProblemType::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
   MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
@@ -2288,13 +2284,12 @@ auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                                const ComplexVector &b,
-                                                std::complex<double> omega,
-                                                double error_abs, double error_bkwd,
-                                                int num_conv)
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega,
+                                                  double error_abs, double error_bkwd,
+                                                  int num_conv)
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetEGridFunction(e);
@@ -2346,10 +2341,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
-                                                int idx)
-    -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v,
+                                                  const Vector &e, int idx)
+  requires(solver_t == ProblemType::ELECTROSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetVGridFunction(v);
@@ -2376,10 +2370,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
          measurement_cache.domain_H_field_energy_all;
 }
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
-                                                int idx)
-    -> std::enable_if_t<U == ProblemType::MAGNETOSTATIC, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
+                                                  const Vector &b, int idx)
+  requires(solver_t == ProblemType::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetAGridFunction(a);
@@ -2407,10 +2400,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
-                                                double time, double J_coef)
-    -> std::enable_if_t<U == ProblemType::TRANSIENT, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e,
+                                                  const Vector &b, double time,
+                                                  double J_coef)
+  requires(solver_t == ProblemType::TRANSIENT)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetEGridFunction(e);
@@ -2464,10 +2457,9 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
-                                                          const ComplexVector &b)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, double>
+double PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                            const ComplexVector &b)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   SetEGridFunction(e);
   SetBGridFunction(b);
@@ -2480,13 +2472,12 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
-                                                const ComplexVector &en,
-                                                std::complex<double> kn, double omega,
-                                                double error_abs, double error_bkwd,
-                                                int num_conv)
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
+                                                  const ComplexVector &en,
+                                                  std::complex<double> kn, double omega,
+                                                  double error_abs, double error_bkwd,
+                                                  int num_conv)
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
 
@@ -2824,50 +2815,4 @@ template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
 template class PostOperator<ProblemType::BOUNDARYMODE>;
-
-// Function explicit instantiation.
-// TODO(C++20): with requires, we won't need a second template.
-
-template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(
-    int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
-    std::complex<double> omega) -> double;
-
-template auto
-PostOperator<ProblemType::DRIVEN>::ConfigureReducedPostprocessing<ProblemType::DRIVEN>(
-    const RomOperator &rom_op) -> void;
-
-template auto
-PostOperator<ProblemType::DRIVEN>::MeasureAndPrintReduced<ProblemType::DRIVEN>(
-    int ex_idx, int step, const ComplexVector &e, std::complex<double> omega,
-    const Eigen::VectorXcd &y) -> void;
-
-template auto
-PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(
-    int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
-    double error_abs, double error_bkwd, int num_conv) -> double;
-
-template auto
-PostOperator<ProblemType::ELECTROSTATIC>::MeasureAndPrintAll<ProblemType::ELECTROSTATIC>(
-    int step, const Vector &v, const Vector &e, int idx) -> double;
-
-template auto
-PostOperator<ProblemType::MAGNETOSTATIC>::MeasureAndPrintAll<ProblemType::MAGNETOSTATIC>(
-    int step, const Vector &a, const Vector &b, int idx) -> double;
-
-template auto
-PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>(
-    int step, const Vector &e, const Vector &b, double t, double J_coef) -> double;
-
-template auto
-PostOperator<ProblemType::BOUNDARYMODE>::MeasureAndPrintAll<ProblemType::BOUNDARYMODE>(
-    int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
-    double omega, double error_abs, double error_bkwd, int num_conv) -> double;
-
-template auto
-PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(
-    const ComplexVector &e, const ComplexVector &b) -> double;
-
-template auto
-PostOperator<ProblemType::DRIVEN>::InitializeParaviewDataCollection(int ex_idx) -> void;
-
 }  // namespace palace
