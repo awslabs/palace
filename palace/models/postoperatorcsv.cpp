@@ -218,8 +218,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 namespace
 {
 
-// TODO(C++20): Do constexpr with string.
-std::string DimLabel(int i)
+constexpr std::string DimLabel(int i)
 {
   switch (i)
   {
@@ -235,8 +234,7 @@ std::string DimLabel(int i)
   }
 }
 
-// TODO(C++20): Do constexpr with string.
-std::string LabelIndexCol(const ProblemType solver_t)
+constexpr std::string LabelIndexCol(const ProblemType solver_t)
 {
   switch (solver_t)
   {
@@ -637,9 +635,8 @@ void PostOperatorCSV<solver_t>::PrintProbeB()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
+void PostOperatorCSV<solver_t>::InitializeSurfaceI()
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
 {
   if (!(post_op->fem_op->GetSurfaceCurrentOp().Size() > 0))
   {
@@ -665,9 +662,8 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintSurfaceI()
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
+void PostOperatorCSV<solver_t>::PrintSurfaceI()
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
 {
   if (!surface_I)
   {
@@ -686,11 +682,9 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializePortVI()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                            U == ProblemType::TRANSIENT,
-                        void>
+void PostOperatorCSV<solver_t>::InitializePortVI()
+  requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+           solver_t == ProblemType::TRANSIENT)
 {
   if (!(post_op->fem_op->GetLumpedPortOp().Size() > 0))
   {
@@ -753,11 +747,9 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintPortVI()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                            U == ProblemType::TRANSIENT,
-                        void>
+void PostOperatorCSV<solver_t>::PrintPortVI()
+  requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+           solver_t == ProblemType::TRANSIENT)
 {
   if (!port_V)  // no need to recheck port_I
   {
@@ -808,9 +800,8 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializePortS()
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::InitializePortS()
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (!post_op->fem_op->GetPortExcitations().IsMultipleSimple() ||
       !((post_op->fem_op->GetLumpedPortOp().Size() > 0) xor
@@ -849,9 +840,8 @@ auto PostOperatorCSV<solver_t>::InitializePortS()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintPortS()
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::PrintPortS()
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (!port_S)
   {
@@ -873,9 +863,8 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEig()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeEig()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   using fmt::format;
   eig = TableWithCSVFile(post_op->post_dir / "eig.csv");
@@ -890,9 +879,8 @@ auto PostOperatorCSV<solver_t>::InitializeEig()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEig()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEig()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!eig)  // trivial check
   {
@@ -908,9 +896,8 @@ auto PostOperatorCSV<solver_t>::PrintEig()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeEigPortEPR()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
@@ -936,9 +923,8 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEigPortEPR()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!port_EPR)
   {
@@ -955,9 +941,8 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeEigPortQ()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
@@ -984,9 +969,8 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEigPortQ()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEigPortQ()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!port_Q)
   {
