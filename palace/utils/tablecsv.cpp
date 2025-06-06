@@ -127,8 +127,8 @@ Column &Table::operator[](std::string_view name)
 template <typename T>
 void Table::append_header(T &buf) const
 {
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
+  auto to = [&buf]<typename... ft>(fmt::format_string<ft...> f, ft &&...a)
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<ft>(a)...); };
 
   for (size_t i = 0; i < n_cols(); i++)
   {
@@ -144,8 +144,8 @@ void Table::append_header(T &buf) const
 template <typename T>
 void Table::append_row(T &buf, size_t row_j) const
 {
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
+  auto to = [&buf]<typename... ft>(fmt::format_string<ft...> f, ft &&...a)
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<ft>(a)...); };
 
   for (size_t i = 0; i < n_cols(); i++)
   {
