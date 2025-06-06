@@ -677,17 +677,23 @@ public:
 struct DrivenSolverData
 {
 public:
-  // Lower bound of frequency sweep [GHz].
-  double min_f = 0.0;
+  // Frequency sampling schemes.
+  enum class FrequencySampleType : u_int8_t
+  {
+    LINEAR,
+    LOG,
+    POINT,
+    DEFAULT = LINEAR
+  };
 
-  // Upper bound of frequency sweep [GHz].
-  double max_f = 0.0;
+  // Explicit frequency samples [GHz].
+  std::vector<double> sample_f = {};
 
-  // Step size for frequency sweep [GHz].
-  double delta_f = 0.0;
+  // Indices of frequency samples to explicitly add to the PROM.
+  std::vector<std::size_t> prom_indices;
 
-  // Step increment for saving fields to disk.
-  int delta_post = 0;
+  // Indices of frequency samples on which to save fields to disk.
+  std::vector<std::size_t> save_indices;
 
   // Restart iteration for a partial sweep.
   int rst = 1;
@@ -1029,6 +1035,10 @@ public:
 
   void SetUp(json &config);
 };
+
+// Calculate the number of steps from [start, end) in increments of delta. Will only include
+// end if it is a multiple of delta beyond start.
+int GetNumSteps(double start, double end, double delta);
 
 }  // namespace palace::config
 

@@ -1589,6 +1589,67 @@ void BoundaryData::SetUp(json &config)
                   << boundaries->dump(2));
 }
 
+std::vector<double> ConstructLinearRange(double start, double end, double delta)
+{
+  auto n_step = GetNumSteps(start, end, delta);
+  std::vector<double> f(n_step);
+  std::iota(f.begin(), f.end(), 0);
+  std::for_each(f.begin(), f.end(), [=](double &x) { x = start + x * delta; });
+  return f;
+}
+std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
+{
+  std::vector<double> f(n_sample);
+  for (int i = 0; i < n_sample; i++)
+  {
+    f[i] = start + (double(i) / (n_sample - 1)) * (end - start);
+  }
+  return f;
+}
+std::vector<double> ConstructLogRange(double start, double end, int n_sample)
+{
+  MFEM_VERIFY(start > 0 && end > 0,
+              "\"Type\": \"Log\" only valid for non-zero start and end!");
+  std::vector<double> f(n_sample);
+  double log_start = std::log10(start);
+  double log_end = std::log10(end);
+  for (int i = 0; i < n_sample; i++)
+  {
+    double log_val = log_start + (double(i) / (n_sample - 1)) * (log_end - log_start);
+    f[i] = std::pow(10.0, log_val);
+  }
+  return f;
+}
+
+// Helper to find entry closest to x in vec, up to tol. If no match, returns end.
+auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
+{
+  // Find the first element not less than x.
+  auto it = std::lower_bound(vec.begin(), vec.end(), x);
+  // Check if we found an exact match or a close enough value.
+  if (it != vec.end() && std::abs(*it - x) <= tol)
+  {
+    return it;
+  }
+  // If we're not at the beginning, check the previous element too.
+  if (it != vec.begin())
+  {
+    auto prev = std::prev(it);
+    if (std::abs(*prev - x) <= tol)
+    {
+      return prev;
+    }
+  }
+  // No value within tol found
+  return vec.end();
+}
+
+// Helper for converting string keys to enum for DrivenSolverData::FrequencySampleType.
+PALACE_JSON_SERIALIZE_ENUM(DrivenSolverData::FrequencySampleType,
+                           {{DrivenSolverData::FrequencySampleType::DEFAULT, "Default"},
+                            {DrivenSolverData::FrequencySampleType::LINEAR, "Linear"},
+                            {DrivenSolverData::FrequencySampleType::LOG, "Log"},
+                            {DrivenSolverData::FrequencySampleType::POINT, "Point"}})
 void DrivenSolverData::SetUp(json &solver)
 {
   auto driven = solver.find("Driven");
@@ -1596,24 +1657,198 @@ void DrivenSolverData::SetUp(json &solver)
   {
     return;
   }
-  MFEM_VERIFY(driven->find("MinFreq") != driven->end() &&
-                  driven->find("MaxFreq") != driven->end() &&
-                  driven->find("FreqStep") != driven->end(),
-              "Missing \"Driven\" solver \"MinFreq\", \"MaxFreq\", or \"FreqStep\" in "
-              "configuration file!");
-  min_f = driven->at("MinFreq");     // Required
-  max_f = driven->at("MaxFreq");     // Required
-  delta_f = driven->at("FreqStep");  // Required
-  delta_post = driven->value("SaveStep", delta_post);
+
   rst = driven->value("Restart", rst);
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
 
+  std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
+  // Backwards compatible top level interface.
+  if (driven->find("MinFreq") != driven->end() &&
+      driven->find("MaxFreq") != driven->end() && driven->find("FreqStep") != driven->end())
+  {
+    double min_f = driven->at("MinFreq");     // Required
+    double max_f = driven->at("MaxFreq");     // Required
+    double delta_f = driven->at("FreqStep");  // Required
+    sample_f = ConstructLinearRange(min_f, max_f, delta_f);
+    if (int save_step = driven->value("SaveStep", 0); save_step > 0)
+    {
+      for (std::size_t n = 0; n < sample_f.size(); n += save_step)
+      {
+        save_f.emplace_back(sample_f[n]);
+      }
+    }
+  }
+  if (auto freq_samples = driven->find("Samples"); freq_samples != driven->end())
+  {
+    for (auto &r : *freq_samples)
+    {
+      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampleType::POINT
+                                                            : FrequencySampleType::DEFAULT);
+      auto f = [&]()
+      {
+        switch (type)
+        {
+          case FrequencySampleType::LINEAR:
+            {
+              auto min_f = r.at("MinFreq");
+              auto max_f = r.at("MaxFreq");
+              auto delta_f = r.value("FreqStep", 0.0);
+              auto n_sample = r.value("NSample", 0);
+              MFEM_VERIFY(delta_f > 0 ^ n_sample > 0,
+                          "Only one of \"FreqStep\" or \"NSample\" can be specified for "
+                          "\"Type\": \"Linear\"!");
+              if (delta_f > 0)
+              {
+                return ConstructLinearRange(min_f, max_f, delta_f);
+              }
+              if (n_sample > 0)
+              {
+                return ConstructLinearRange(min_f, max_f, n_sample);
+              }
+            }
+          case FrequencySampleType::LOG:
+            {
+              auto min_f = r.at("MinFreq");
+              auto max_f = r.at("MaxFreq");
+              auto n_sample = r.at("NSample");
+              return ConstructLogRange(min_f, max_f, n_sample);
+            }
+          case FrequencySampleType::POINT:
+            return r.at("Freq").get<std::vector<double>>();
+        }
+      }();
+      sample_f.insert(sample_f.end(), f.begin(), f.end());
+
+      if (auto save_step = r.value("SaveStep", 0); save_step > 0)
+      {
+        for (std::size_t n = 0; n < f.size(); n += save_step)
+        {
+          save_f.emplace_back(f[n]);
+        }
+      }
+      if (auto prom_sample = r.value("AddToPROM", false); prom_sample)
+      {
+        if (adaptive_tol == 0)
+        {
+          MFEM_WARNING("Ignoring \"AddToPROM\" for non-adaptive simulation!");
+        }
+        prom_f.insert(prom_f.end(), f.begin(), f.end());
+      }
+
+      // Debug
+      if constexpr (JSON_DEBUG)
+      {
+        std::cout << "Type: " << type << '\n';
+        std::cout << "Freq: " << f << '\n';
+        std::cout << "FreqStep: " << r.value("FreqStep", 0.0) << '\n';
+        std::cout << "NSample: " << r.value("NSample", 0.0) << '\n';
+        std::cout << "SaveStep: " << r.value("SaveStep", 0) << '\n';
+        std::cout << "AddToPROM: " << r.value("AddToPROM", false) << '\n';
+      }
+
+      // Cleanup
+      r.erase("Type");
+      r.erase("MinFreq");
+      r.erase("MaxFreq");
+      r.erase("FreqStep");
+      r.erase("NSample");
+      r.erase("Freq");
+      r.erase("SaveStep");
+      r.erase("AddToPROM");
+      MFEM_VERIFY(r.empty(),
+                  "Found an unsupported configuration file keyword in \"Samples\"!\n"
+                      << r.dump(2));
+    }
+  }
+
+  // Deduplicate all samples, and find indices of save and prom samples.
+  constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
+  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
+  auto deduplicate = [&equal_f](auto &f)
+  {
+    std::sort(f.begin(), f.end());
+    f.erase(std::unique(f.begin(), f.end(), equal_f), f.end());
+  };
+
+  // Enforce explicit saves exactly match the sample frequencies.
+  deduplicate(sample_f);
+  auto explicit_save_f = driven->value("Save", std::vector<double>());
+  for (auto &f : explicit_save_f)
+  {
+    auto it = FindNearestValue(sample_f, f, delta_eps);
+    MFEM_VERIFY(it != sample_f.end(),
+                "Entry " << f << " in \"Save\" must be an explicitly sampled frequency!");
+    f = *it;
+  }
+  save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+  deduplicate(save_f);
+  deduplicate(prom_f);
+
+  // Given the matched ordering, and values are assigned by copying, can do a
+  // paired-iterator scan.
+  for (auto it_sample = sample_f.begin(), it_save = save_f.begin(); it_save != save_f.end();
+       ++it_save)
+  {
+    while (*it_sample != *it_save)  // safe because save samples is a subset of samples
+    {
+      ++it_sample;
+      MFEM_VERIFY(it_sample != sample_f.end(),
+                  "Save frequency " << *it_save << " not found in sample frequencies!");
+    }
+    save_indices.emplace_back(std::distance(sample_f.begin(), it_sample));
+  }
+  // PROM sampling always begins with the minimum and maximum frequencies. Exclude them from
+  // extra samples. Can use equality comparison given no floating point operations have been
+  // done.
+  prom_indices = {0, sample_f.size() - 1};
+  if (prom_f.size() > 0 && prom_f.back() == sample_f.back())
+  {
+    prom_f.pop_back();
+  }
+  if (prom_f.size() > 0 && prom_f.front() == sample_f.front())
+  {
+    prom_f.erase(prom_f.begin(), std::next(prom_f.begin()));
+  }
+  for (auto it_sample = sample_f.begin(), it_prom = prom_f.begin(); it_prom != prom_f.end();
+       ++it_prom)
+  {
+    while (*it_sample != *it_prom)  // safe because prom samples is a subset of samples
+    {
+      ++it_sample;
+      MFEM_VERIFY(it_sample != sample_f.end(), "PROM sample frequency "
+                                                   << *it_prom
+                                                   << " not found in sample frequencies!");
+    }
+    prom_indices.emplace_back(std::distance(sample_f.begin(), it_sample));
+  }
+
+  MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "MinFreq: " << driven->value("MinFreq", 0.0) << '\n';
+    std::cout << "MaxFreq: " << driven->value("MaxFreq", 0.0) << '\n';
+    std::cout << "FreqStep: " << driven->value("FreqStep", 0) << '\n';
+    std::cout << "Samples: " << sample_f << '\n';
+    std::cout << "SaveSamples: " << save_f << '\n';
+    std::cout << "PROMSamples: " << prom_f << '\n';
+    std::cout << "SaveIndices: " << save_indices << '\n';
+    std::cout << "PromIndices: " << prom_indices << '\n';
+    std::cout << "Restart: " << rst << '\n';
+    std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
+    std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
+    std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
+  }
+
   // Cleanup
   driven->erase("MinFreq");
   driven->erase("MaxFreq");
   driven->erase("FreqStep");
+  driven->erase("Samples");
+  driven->erase("Save");
   driven->erase("SaveStep");
   driven->erase("Restart");
   driven->erase("AdaptiveTol");
@@ -1622,19 +1857,6 @@ void DrivenSolverData::SetUp(json &solver)
   MFEM_VERIFY(driven->empty(),
               "Found an unsupported configuration file keyword under \"Driven\"!\n"
                   << driven->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "MinFreq: " << min_f << '\n';
-    std::cout << "MaxFreq: " << max_f << '\n';
-    std::cout << "FreqStep: " << delta_f << '\n';
-    std::cout << "SaveStep: " << delta_post << '\n';
-    std::cout << "Restart: " << rst << '\n';
-    std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
-    std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
-    std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
-  }
 }
 
 void EigenSolverData::SetUp(json &solver)
@@ -1780,6 +2002,7 @@ void TransientSolverData::SetUp(json &solver)
   order = transient->value("Order", order);
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
+  MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
 
   if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
   {
@@ -2079,6 +2302,20 @@ void SolverData::SetUp(json &config)
     std::cout << "Device: " << device << '\n';
     std::cout << "Backend: " << ceed_backend << '\n';
   }
+}
+
+int GetNumSteps(double start, double end, double delta)
+{
+  if (end < start)
+  {
+    return 1;
+  }
+  constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
+  double dn = std::abs(end - start) / std::abs(delta);
+  int n_step = 1 + static_cast<int>(dn);
+  double dfinal = start + n_step * delta;
+  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
+                   (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
 }  // namespace palace::config

@@ -491,7 +491,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
   // only nonzero on boundaries, will be empty if not needed.
-  if (has_A2)
+  if (has_A2 && Ar.rows() > 0)
   {
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
@@ -507,7 +507,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   Ar += (-omega * omega) * Mr;
 
-  if (has_RHS2)
+  if (has_RHS2 && RHSr.size() > 0)
   {
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
     ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);

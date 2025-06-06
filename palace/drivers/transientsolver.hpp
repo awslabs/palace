@@ -23,8 +23,6 @@ class TransientSolver : public BaseSolver
 private:
   std::function<double(double)> GetTimeExcitation(bool dot) const;
 
-  int GetNumSteps(double start, double end, double delta) const;
-
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
