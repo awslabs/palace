@@ -113,8 +113,8 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
   }
 
   fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [&buf](auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  auto to = [&buf]<typename... ft>(fmt::format_string<ft...> f, ft &&...a)
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<ft>(a)...); };
 
   using VT = Units::ValueType;
 
