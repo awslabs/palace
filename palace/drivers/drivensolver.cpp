@@ -167,11 +167,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
       }
 
       auto total_domain_energy =
-          post_op.MeasureAndPrintAll(excitation_idx, step++, E, B, omega);
+          post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      step++;
     }
     // Final postprocessing & printing.
     BlockTimer bt0(Timer::POSTPRO);
@@ -381,7 +382,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
         // B = -1/(iω) ∇ x E + 1/ω kp x E
         floquet_corr->AddMult(E, B, 1.0 / omega);
       }
-      post_op.MeasureAndPrintAll(excitation_idx, step++, E, B, omega);
+      post_op.MeasureAndPrintAll(excitation_idx, step, E, B, omega);
+      step++;
     }
     // Final postprocessing & printing: no change to indicator since these are in PROM.
     BlockTimer bt0(Timer::POSTPRO);

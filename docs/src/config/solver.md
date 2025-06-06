@@ -158,7 +158,7 @@ number of eigenmodes of the problem. The available options are:
     "MaxFreq": <float>,
     "FreqStep": <float>,
     "SaveStep": <int>,
-    "Samples": [ {...} ],
+    "Samples": [ ... ],
     "Save": [<float array>],
     "Restart": <int>,
     "AdaptiveTol": <float>,
@@ -180,14 +180,17 @@ fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visu
 Files are saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-`"Samples" [None]` : Array of sample specifications that specify how to construct frequency
-samples. These are all combined to form a sorted and unique collection of samples. These
-samples can be instead of, or in addition to, the interface provided by `"MinFreq"`,
-`"MaxFreq"`, `"FreqStep"` and `"SaveStep"`. See
-[`solver["Driven"]["Samples"]`](solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
+`"Samples" [None]` : Array of [sample
+specifications](solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) that specify how to
+construct frequency samples. These are all combined to form a sorted and unique collection
+of samples. These samples can be instead of, or in addition to, the interface provided by
+`"MinFreq"`, `"MaxFreq"`, `"FreqStep"` and `"SaveStep"`. See
+[`solver["Driven"]["Samples"]`](solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) for
+the construction of each of these structs.
 
 `"Save" [None]` : Array of frequencies to save computed fields to disk for [visualization
-with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/`
+with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by
+`"SaveStep"` in any sample specification. Files are saved in the `paraview/`
 directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -221,7 +224,7 @@ error tolerance.
     "MaxFreq": <float>,
     "FreqStep": <float>,
     "NSample": <float>,
-    "Freq": [<int float>],
+    "Freq": [<float array>],
     "SaveStep": <int>,
     "AddToPROM": <bool>
 }

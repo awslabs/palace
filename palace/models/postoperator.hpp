@@ -396,8 +396,6 @@ private:
   }
 
 public:
-  // Ctor.
-  // - nr_expected_measurement_rows is helper int to reserve space in csv printer tables.
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
 
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
