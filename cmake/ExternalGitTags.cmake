@@ -256,7 +256,7 @@ set(EXTERN_JSON_URL
 
 # fmt
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/10.2.1/fmt-10.2.1.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/11.1.4/fmt-11.1.4.zip" CACHE STRING
   "URL for external fmt build"
 )
 
