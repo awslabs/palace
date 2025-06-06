@@ -283,8 +283,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 namespace
 {
 
-// TODO(C++20): Do constexpr with string.
-std::string DimLabel(int i)
+constexpr std::string DimLabel(int i)
 {
   switch (i)
   {
@@ -300,8 +299,7 @@ std::string DimLabel(int i)
   }
 }
 
-// TODO(C++20): Do constexpr with string.
-std::string LabelIndexCol(const ProblemType solver_t)
+constexpr std::string LabelIndexCol(const ProblemType solver_t)
 {
   switch (solver_t)
   {
@@ -720,9 +718,8 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
 {
   if (!(surf_post_op.farfield.size() > 0))
   {
@@ -739,7 +736,7 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   int nr_expected_measurement_rows =
       static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  if constexpr (U == ProblemType::EIGENMODE)
+  if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     t.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
     t.insert("f_re", "f_re (GHz)");
@@ -768,9 +765,8 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_post_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_post_op)
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
 {
   if (!farfield_E)
   {
@@ -780,7 +776,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
   for (std::size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
   {
     farfield_E->table["idx"] << row_idx_v;
-    if constexpr (U == ProblemType::EIGENMODE)
+    if constexpr (solver_t == ProblemType::EIGENMODE)
     {
       farfield_E->table["f_re"] << measurement_cache.freq.real();
       farfield_E->table["f_im"] << measurement_cache.freq.imag();
@@ -948,9 +944,8 @@ void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeSurfaceI(const SurfaceCurrentOperator &surf_j_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
+void PostOperatorCSV<solver_t>::InitializeSurfaceI(const SurfaceCurrentOperator &surf_j_op)
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
 {
   if (!(surf_j_op.Size() > 0))
   {
@@ -975,10 +970,9 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI(const SurfaceCurrentOperator 
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintSurfaceI(const SurfaceCurrentOperator &surf_j_op,
+void PostOperatorCSV<solver_t>::PrintSurfaceI(const SurfaceCurrentOperator &surf_j_op,
                                               const Units &units)
-    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
+  requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
 {
   if (!surface_I)
   {
@@ -995,11 +989,9 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI(const SurfaceCurrentOperator &surf
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
-    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                            U == ProblemType::TRANSIENT,
-                        void>
+void PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
+  requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+           solver_t == ProblemType::TRANSIENT)
 {
   const auto &lumped_port_op = fem_op.GetLumpedPortOp();
   // Check if any wave ports have voltage coordinates configured.
@@ -1103,12 +1095,10 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_port_op,
+void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_port_op,
                                             const Units &units)
-    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
-                            U == ProblemType::TRANSIENT,
-                        void>
+  requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+           solver_t == ProblemType::TRANSIENT)
 {
   if (!port_V)  // no need to recheck port_I
   {
@@ -1168,9 +1158,8 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
   if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
@@ -1207,9 +1196,8 @@ auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintPortS()
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::PrintPortS()
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (!port_S)
   {
@@ -1232,9 +1220,8 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   // Only create port-Z.csv when wave ports have voltage coordinates configured.
   bool has_wave_port_voltage = false;
@@ -1289,9 +1276,8 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (fem_op.GetFloquetPortOp().Empty())
   {
@@ -1345,9 +1331,8 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintPortZ()
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::PrintPortZ()
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (!port_Z)
   {
@@ -1394,9 +1379,8 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+void PostOperatorCSV<solver_t>::PrintFloquetPortS()
+  requires(solver_t == ProblemType::DRIVEN)
 {
   if (!floquet_port_S)
   {
@@ -1439,9 +1423,8 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEig()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeEig()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   eig = TableWithCSVFile(post_dir / "eig.csv");
   eig->table.reserve(nr_expected_measurement_rows, 6);
@@ -1455,9 +1438,8 @@ auto PostOperatorCSV<solver_t>::InitializeEig()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEig()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEig()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!eig)  // trivial check
   {
@@ -1473,10 +1455,9 @@ auto PostOperatorCSV<solver_t>::PrintEig()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEigPortEPR(
+void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
     const LumpedPortOperator &lumped_port_op)
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : lumped_port_op)
@@ -1501,9 +1482,8 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortEPR(
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEigPortEPR()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!port_EPR)
   {
@@ -1519,9 +1499,8 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : lumped_port_op)
@@ -1547,9 +1526,8 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lum
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintEigPortQ()
-    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+void PostOperatorCSV<solver_t>::PrintEigPortQ()
+  requires(solver_t == ProblemType::EIGENMODE)
 {
   if (!port_Q)
   {
@@ -1566,9 +1544,8 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeKn()
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+void PostOperatorCSV<solver_t>::InitializeModeKn()
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   mode_kn = TableWithCSVFile(post_dir / "mode-kn.csv");
   mode_kn->table.reserve(nr_expected_measurement_rows, 7);
@@ -1583,9 +1560,8 @@ auto PostOperatorCSV<solver_t>::InitializeModeKn()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintModeKn()
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+void PostOperatorCSV<solver_t>::PrintModeKn()
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   if (!mode_kn)
   {
@@ -1602,10 +1578,9 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
+void PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
                                                 bool has_current)
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
   mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
@@ -1628,9 +1603,8 @@ auto PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintModeZ()
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+void PostOperatorCSV<solver_t>::PrintModeZ()
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   if (!mode_Z || measurement_cache.mode_data.impedance.empty())
   {
@@ -1659,9 +1633,8 @@ auto PostOperatorCSV<solver_t>::PrintModeZ()
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+void PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   mode_V = TableWithCSVFile(post_dir / "mode-V.csv");
   mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
@@ -1674,9 +1647,8 @@ auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
 }
 
 template <ProblemType solver_t>
-template <ProblemType U>
-auto PostOperatorCSV<solver_t>::PrintModeV()
-    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+void PostOperatorCSV<solver_t>::PrintModeV()
+  requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   if (!mode_V || measurement_cache.mode_data.voltage.empty())
   {
@@ -1928,29 +1900,4 @@ template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
 template class PostOperatorCSV<ProblemType::BOUNDARYMODE>;
-
-// Function explicit needed testing since everywhere it's through PostOperator.
-// TODO(C++20): with requires, we won't need a second template.
-
-template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(
-    const SpaceOperator &fem_op) -> void;
-
-// Mode analysis CSV explicit instantiations.
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeKn<ProblemType::BOUNDARYMODE>()
-    -> void;
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeKn<ProblemType::BOUNDARYMODE>()
-    -> void;
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeZ<ProblemType::BOUNDARYMODE>(
-    const std::vector<int> &, bool) -> void;
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeZ<ProblemType::BOUNDARYMODE>() -> void;
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeV<ProblemType::BOUNDARYMODE>(
-    const std::vector<int> &) -> void;
-template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeV<ProblemType::BOUNDARYMODE>() -> void;
-
 }  // namespace palace
