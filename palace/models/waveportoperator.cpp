@@ -614,7 +614,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
                        // associated with shift
   }
-  std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace); //SL JUST A TEST
+  std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
   std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
   std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
   {
@@ -1060,7 +1060,6 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
-  Mpi::Print("GetSParameter: port_sr: {}, post_si: {}, Sr: {}, Si: {}\n", port_sr, port_si, dot.real(), dot.imag());
   return dot;
 }
 
