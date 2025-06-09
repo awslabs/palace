@@ -178,10 +178,21 @@
     "Device": "CPU",
     "Driven":
     {
-      "MinFreq": 2.0,  // GHz
-      "MaxFreq": 30.0,  // GHz
-      "FreqStep": 4.0,  // GHz
-      "SaveStep": 2
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 2.0,  // GHz
+          "MaxFreq": 32.0,  // GHz
+          "FreqStep": 6.0  // GHz
+        },
+        {
+          "Type": "Point",
+          "Freq": [17.0], // GHz
+          "SaveStep": 1
+        }
+      ],
+      "Save": [2.0, 32.0]
     },
     "Linear":
     {

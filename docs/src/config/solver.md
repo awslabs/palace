@@ -158,6 +158,8 @@ number of eigenmodes of the problem. The available options are:
     "MaxFreq": <float>,
     "FreqStep": <float>,
     "SaveStep": <int>,
+    "Samples": [ ... ],
+    "Save": [<float array>],
     "Restart": <int>,
     "AdaptiveTol": <float>,
     "AdaptiveMaxSamples": <int>,
@@ -178,9 +180,23 @@ fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visu
 Files are saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
+`"Samples" [None]` : Array of [sample
+specifications](solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) that specify how to
+construct frequency samples. These are all combined to form a sorted and unique collection
+of samples. These samples can be instead of, or in addition to, the interface provided by
+`"MinFreq"`, `"MaxFreq"`, `"FreqStep"` and `"SaveStep"`. See
+[`solver["Driven"]["Samples"]`](solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) for
+the construction of each of these structs.
+
+`"Save" [None]` : Array of frequencies to save computed fields to disk for [visualization
+with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by
+`"SaveStep"` in any sample specification. Files are saved in the `paraview/`
+directory under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
 `"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
-simulation. That is, the initial frequency will be computed as
-`"MinFreq" + ("Restart" - 1) * "FreqStep"`.
+simulation. That is `"Restart": x` will start the frequency sweep from the ``x``-th sample
+rather than the first sample. This indexing is from the *combined* set of frequency samples.
 
 `"AdaptiveTol" [0.0]` :  Relative error convergence tolerance for adaptive frequency sweep.
 If zero, adaptive frequency sweep is disabled and the full-order model is solved at each
@@ -197,6 +213,48 @@ per excitation.
 sampling algorithm for constructing the reduced-order model for adaptive fast frequency
 sweep. For example, a memory of "2" requires two consecutive samples which satisfy the
 error tolerance.
+
+### `solver["Driven"]["Samples"]`
+
+```json
+"Samples":
+{
+    "Type": <string>,
+    "MinFreq": <float>,
+    "MaxFreq": <float>,
+    "FreqStep": <float>,
+    "NSample": <float>,
+    "Freq": [<float array>],
+    "SaveStep": <int>,
+    "AddToPROM": <bool>
+}
+```
+
+`"Type" [None]` : The type of range being specified. The list of valid options are
+`"Linear"`, `"Point"`, `"Log"`. For non-ambiguous combinations of other fields, this can be
+inferred for convenience.
+
+`"MinFreq" [None]` :  Lower bound of frequency sweep interval, GHz. Valid for `"Linear"` and `"Log"`.
+
+`"MaxFreq" [None]` :  Upper bound of frequency sweep interval, GHz. Valid for `"Linear"` and `"Log"`.
+
+`"FreqStep" [None]` :  Frequency step size for frequency sweep, GHz. Valid for `"Linear"` only.
+Mutually exclusive with `"NSample"`
+
+`"NSample" [None]` : Number of frequency samples over the specified range. Valid for `"Linear"` and `"Log"`.
+Mutually exclusive with `"FreqStep"`.
+
+`"Freq" [None]` : Explicit frequencies to be sample, GHz. Valid for `"Point"` only.
+
+`"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
+fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
+Files are saved in the `paraview/` directory under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+`"AddToPROM" [false]` : Advanced option to force the inclusion of this sample into the PROM
+when performing an adaptive sweep. This is primarily a debugging tool as the error
+estimation procedure will in general make more efficient selections of sampling points, and
+using this mechanism can result in a significantly larger and less efficient PROM.
 
 ## `solver["Transient"]`
 

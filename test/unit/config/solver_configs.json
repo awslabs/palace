@@ -1,0 +1,167 @@
+{
+  "driven_base_uniform_sample": {
+    "Driven": {
+      "MinFreq": 0.1,  // GHz
+      "MaxFreq": 1.1,  // GHz
+      "FreqStep": 0.1,  // GHz
+      "SaveStep": 2,
+      "Restart": 3
+    }
+  },
+  "driven_uniform_freq_step": {
+    "Driven": {
+      "MinFreq": 0.1,  // GHz
+      "MaxFreq": 1.1,  // GHz
+      "FreqStep": 0.1,  // GHz
+      "SaveStep": 2,
+      "Samples":[
+        {
+          "MinFreq": 0.1,  // GHz
+          "MaxFreq": 1.1,  // GHz
+          "FreqStep": 0.1,  // GHz
+          "SaveStep": 2
+        }
+      ]
+    }
+  },
+  "driven_uniform_nsample": {
+    "Driven": {
+      "Samples":[
+        {
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 9,
+          "SaveStep": 2
+        }
+      ]
+    }
+  },
+  "driven_paired_uniform_sample": {
+    "Driven": {
+      "Samples":[
+        {
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 5,
+          "SaveStep": 2
+        },
+        {
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 10.0,  // GHz
+          "NSample": 5,
+          "SaveStep": 1
+        }
+      ]
+    }
+  },
+  "driven_uniform_with_point": {
+    "Driven": {
+      "Samples":[
+        {
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 9,
+          "SaveStep": 2
+        },
+        {
+          "Freq": [0.15, 0.35, 0.55],
+          "SaveStep": 1,
+          "AddToPROM": true
+        }
+      ],
+      "Save": [0.0, 0.35, 1.0],
+      "AdaptiveTol": 1e-3
+    }
+  },
+  "driven_log_with_point": {
+    "Driven": {
+      "Samples":[
+        {
+          "Type": "Log",
+          "MinFreq": 0.1,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 5,
+          "SaveStep": 2
+        },
+        {
+          "Freq": [0.15, 0.35, 0.55],
+          "SaveStep": 1,
+          "AddToPROM": true
+        }
+      ],
+      "AdaptiveTol": 1e-3
+    }
+  },
+  "driven_empty": {
+    "Driven": {
+    }
+  },
+  "driven_mismatch_type_1": {
+    "Driven": {
+      "Samples":[
+        {
+          "Type": "Point",
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 11,
+          "SaveStep": 2
+        }
+      ]
+    }
+  },
+  "driven_mismatch_type_2": {
+    "Driven": {
+      "Samples":[
+        {
+          "Type": "Log",
+          "MinFreq": 0.1,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "FreqStep": 11,
+          "SaveStep": 2
+        }
+      ]
+    }
+  },
+  "driven_mismatch_type_3": {
+    "Driven": {
+      "Samples":[
+        {
+          "Type": "Linear",
+          "Freq": [0.11, 0.22, 0.34]
+        }
+      ]
+    }
+  },
+  "driven_invalid_log_range": {
+    "Driven": {
+      "Samples":[
+        {
+          "Type": "Log",
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 11,
+          "SaveStep": 2
+        }
+      ]
+    }
+  },
+  "driven_uniform_with_point_invalid_save": {
+    "Driven": {
+      "Samples":[
+        {
+          "MinFreq": 0.0,  // GHz
+          "MaxFreq": 1.0,  // GHz
+          "NSample": 11,
+          "SaveStep": 2
+        },
+        {
+          "Freq": [0.15, 0.35, 0.55],
+          "SaveStep": 1,
+          "AddToPROM": true
+        }
+      ],
+      "Save": [0.05],
+      "AdaptiveTol": 1e-3
+    }
+  }
+}

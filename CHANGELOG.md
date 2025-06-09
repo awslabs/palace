@@ -89,6 +89,17 @@ The format of this changelog is based on
   - Fix bug where `MakeSimplex` would fail for higher order meshes.
   - Fix bug in STRUMPACK build where dependency SCALAPACK library install directory could
     change based on build environment.
+  - Introduce `"Samples"` mechanism for driven simulation, which allows for specifying a
+    range of sample frequencies by combining `"Linear"`, `"Log"` and `"Point"`
+    specifications. These are joined together effectively allowing for variable resolution
+    sampling (for examples a coarse sampling supported by a fine sampling in a subset
+    region). This is in addition to the prior existing `"MinFreq"`, `"MaxFreq"`,
+    `"FreqStep"` interface which is now implicitly converted to a `"Linear"` sample scheme
+    internally.
+  - Introduce `"Save"` keyword for `"Driven"` simulation type, which will save specific
+    frequency choices as opposed to the existing (and maintained `"SaveStep"` based on a
+    regular sampling). Only frequencies contained within the set of `"Samples"` are
+    supported, as no interpolation is performed.
 
 ## [0.13.0] - 2024-05-20
 
