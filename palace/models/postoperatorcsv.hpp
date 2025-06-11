@@ -103,7 +103,6 @@ class PostOperatorCSV
                                            void>;
 
   // Driven
-  int driven_source_index = -1;
   std::optional<TableWithCSVFile> port_S;
 
   template <config::ProblemData::Type U = solver_t>

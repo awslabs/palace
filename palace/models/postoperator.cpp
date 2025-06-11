@@ -986,7 +986,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
     table.col_options = {6, 6};
-    table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
+    table.insert(Column("idx", "m", idx_pad, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)") << freq.real());
     table.insert(Column("f_im", "Im{f} (GHz)") << freq.imag());
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
