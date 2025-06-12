@@ -990,8 +990,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("f_re", "Re{f} (GHz)") << freq.real());
     table.insert(Column("f_im", "Im{f} (GHz)") << freq.imag());
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
-    table.insert(Column("err_back", "Error (Bkwd.)") << error_abs);
-    table.insert(Column("err_abs", "Error (Abs.)") << error_bkwd);
+    table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
+    table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
