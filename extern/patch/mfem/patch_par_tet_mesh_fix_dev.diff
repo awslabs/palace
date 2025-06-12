@@ -13,10 +13,10 @@ index 5d451eff02..3f74e0a0c5 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index e564c6f697..89e0508dae 100644
+index dd25a4775b..f2f3d2806b 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -2380,7 +2380,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2382,7 +2382,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -25,7 +25,7 @@ index e564c6f697..89e0508dae 100644
     }
  
     if (generate_edges)
-@@ -2835,82 +2835,117 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2837,82 +2837,117 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -181,7 +181,7 @@ index e564c6f697..89e0508dae 100644
        }
     }
  }
-@@ -3261,9 +3296,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -3263,9 +3298,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -192,7 +192,7 @@ index e564c6f697..89e0508dae 100644
     }
  
     GetElementToFaceTable();
-@@ -3530,8 +3563,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3532,8 +3565,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -202,7 +202,7 @@ index e564c6f697..89e0508dae 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -4232,8 +4264,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -4234,8 +4266,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -211,7 +211,7 @@ index e564c6f697..89e0508dae 100644
     }
     else
     {
-@@ -6575,37 +6605,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6719,37 +6749,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -254,7 +254,7 @@ index e564c6f697..89e0508dae 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -6625,89 +6639,42 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6769,89 +6783,42 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -367,7 +367,7 @@ index e564c6f697..89e0508dae 100644
           }
        }
     }
-@@ -7671,24 +7638,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7815,24 +7782,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -394,7 +394,7 @@ index e564c6f697..89e0508dae 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 84ddafb5e7..0d351c4e37 100644
+index 43b6ede00d..986f94c51c 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -378,12 +378,12 @@ protected:
@@ -415,7 +415,7 @@ index 84ddafb5e7..0d351c4e37 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 4e7343d00a..3567d56164 100644
+index ef69cb9393..1f21b41c7b 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -439,7 +439,7 @@ index 4e7343d00a..3567d56164 100644
                 // mark the shared face for refinement by reorienting
                 // it according to the refinement flag in the tetrahedron
                 // to which this shared face belongs to.
-@@ -1740,98 +1743,63 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
+@@ -1745,98 +1748,63 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
  
  void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
  {
@@ -578,7 +578,7 @@ index 4e7343d00a..3567d56164 100644
        }
     }
  
-@@ -1839,13 +1807,16 @@ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+@@ -1844,13 +1812,16 @@ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
     {
        if (boundary[i]->GetType() == Element::TRIANGLE)
        {
@@ -597,7 +597,7 @@ index 4e7343d00a..3567d56164 100644
     }
  }
  
-@@ -3249,7 +3220,7 @@ void ParMesh::ReorientTetMesh()
+@@ -3254,7 +3225,7 @@ void ParMesh::ReorientTetMesh()
     Array<int> svert_master_index(svert_lvert);
     for (int i = 0; i < group_svert.Size(); i++)
     {
