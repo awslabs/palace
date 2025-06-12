@@ -145,8 +145,8 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                      const ComplexOperator &C, const ComplexOperator &M,
-                      ScaleType type) override;
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
@@ -198,6 +198,12 @@ public:
 
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
+
+    // Test for linearized A2 matrix?
+  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ;  //
+
+  // Reference to space operator so we recompute A2
+  SpaceOperator *space_op; // TEST???
 };
 
 // Class for SLEPc's NEP problem type.
@@ -276,14 +282,14 @@ public:
   const ComplexOperator *opK, *opC, *opM;
 
   // Matrices defining the nonlinear eigenvalue problem
-  std::unique_ptr<ComplexOperator> opA, opA2, opJ;  //
+  //std::unique_ptr<ComplexOperator> opA, opA2, opA2p, opAJ, opJ;  //
   // ComplexOperator opA, opA2, opJ;
   // ComplexOperator *opA, *opA2, *opJ; // need J?
   //  do we need to own A (and A2?) since they will change?
   PetscScalar lambda_test, lambda_J;  // remove this?
 
   // Reference to space operator so we recompute A
-  SpaceOperator *space_op;
+  //SpaceOperator *space_op;
 
 private:
   // Operator norms for scaling.
@@ -427,8 +433,11 @@ public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
+  //void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+  //                  const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 
@@ -523,8 +532,11 @@ public:
   SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
+  //void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+  //                  const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetBMat(const Operator &B) override;
 };
 

@@ -80,6 +80,8 @@ private:
   // MRIs: one for each excitation index.
   std::map<int, MinimalRationalInterpolation> mri;
 
+  std::vector<double> z; // for eigs??
+
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);
 
@@ -120,7 +122,8 @@ public:
   }
 
   // Compute eigenvalue estimates for the current PROM system.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates() /*const*/;
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates2(double start, double end) /*const*/;
 };
 
 }  // namespace palace

@@ -156,6 +156,15 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
+  // A2(ω) \approx A2(ω0) + (ω - ω0) A2'(ω0) + 1/2 (ω - ω0)² A2''(ω0) + higher order terms
+  // A2'(ω0)  = (A2(ω0 + ε) - A2(ω0)) / ε
+  // A2''(ω0) = (A2(ω0 + ε) - 2 A2(ω0) + A2(ω0 - ε)) / ε²
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetExtraSystemMatrixJacobian(double eps, int order, const OperType *A2p,
+                  const OperType *A2, const OperType *A2m);
+
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.

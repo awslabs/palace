@@ -59,8 +59,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   }
   else if (iodata.problem.type == config::ProblemData::Type::EIGENMODE)
   {
-    MFEM_VERIFY(port_excitation_helper.Empty(),
-                "Eigenmode problems must not specify any excitation!");
+    // MFEM_VERIFY(port_excitation_helper.Empty(),
+    //             "Eigenmode problems must not specify any excitation!");
   }
   else if (iodata.problem.type == config::ProblemData::Type::TRANSIENT)
   {
@@ -613,6 +613,44 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
 
 }  // namespace
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetExtraSystemMatrixJacobian(double eps, int order,
+                               const OperType *A2p, const OperType *A2, const OperType *A2m)
+{
+  MFEM_VERIFY(order == 1 || order == 2, "GetExtraSystemMatrixJacobian order must be 1 or 2!");
+  using ParOperType =
+    typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                              ComplexParOperator, ParOperator>::type;
+  const auto *PtAP_A2p = (A2p) ? dynamic_cast<const ParOperType *>(A2p) : nullptr;
+  const auto *PtAP_A2  = (A2)  ? dynamic_cast<const ParOperType *>(A2)  : nullptr;
+  MFEM_VERIFY((!A2p || PtAP_A2p) && (!A2 || PtAP_A2),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+  const auto *PtAP_A2m = (A2m) ? dynamic_cast<const ParOperType *>(A2m) : nullptr;
+  int height = PtAP_A2->LocalOperator().Height(), width = PtAP_A2->LocalOperator().Width();
+  // A2'(ω0)  = (A2(ω0 + ε) - A2(ω0)) / ε
+  // A2''(ω0) = (A2(ω0 + ε) - 2 A2(ω0) + A2(ω0 - ε)) / ε²
+  //std::vector<std::unique_ptr<OperType>> linear_ops;
+  if (order == 1)
+  {
+    return BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+    //linear_ops.push_back(BuildParSumOperator(height, width, 1.0 + 1.0/eps, -1.0/eps, 0.0, PtAP_A2, PtAP_A2p, nullptr, nullptr, GetNDSpace()));
+    //linear_ops.push_back(BuildParSumOperator(height, width, -1.0/(eps * omega), 1.0/(eps * omega), 0.0, PtAP_A2, PtAP_A2p, nullptr, nullptr, GetNDSpace()));
+  }
+  else if (order == 2)
+  {
+    const auto eps2 = eps * eps;
+    return BuildParSumOperator(height, width, 1.0 / eps2, -2.0 / eps2, 1.0 / eps2, PtAP_A2p, PtAP_A2, PtAP_A2m, nullptr, GetNDSpace());
+    //double omega2 = omega * omega;
+    //linear_ops.push_back(BuildParSumOperator(height, width, 1.0 + 1.0/eps - 1.0/eps2, -1.0/eps + 1.0/(2.0 * eps2), 1.0/(2.0 * eps2), PtAP_A2, PtAP_A2p, PtAP_A2m, nullptr, GetNDSpace()));
+    //linear_ops.push_back(BuildParSumOperator(height, width, -1.0/(eps * omega) + 2.0/(eps2 * omega), 1.0/(eps * omega) - 1.0/(eps2 * omega), -1.0/(eps2 * omega), PtAP_A2, PtAP_A2p, PtAP_A2m, nullptr, GetNDSpace()));
+    //linear_ops.push_back(BuildParSumOperator(height, width, 1.0/(2.0 * eps2 * omega2), -1.0/(eps2 * omega2), 1.0/(eps2 * omega2), PtAP_A2, PtAP_A2p, PtAP_A2m, nullptr, GetNDSpace()));
+  }
+  //return linear_ops;
+}
+
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1094,6 +1132,10 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
+template std::unique_ptr<Operator>
+SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const Operator *, const Operator *, const Operator *);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const ComplexOperator *, const ComplexOperator *, const ComplexOperator *);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,

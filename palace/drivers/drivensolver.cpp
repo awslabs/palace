@@ -340,6 +340,37 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
 
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
   // in the general case with wave ports, etc.?)
+  const auto eigs = prom_op.ComputeEigenvalueEstimates();
+  if (Mpi::Root(space_op.GetComm()))
+  {
+    std::cout << "\n\nEigenvalues (nev = " << eigs.size() << "):\n";
+    for (auto omega : eigs)
+    {
+      const std::complex<double> f = {
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()),
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())};
+      const double Q =
+          (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
+      std::cout << f << ", " << Q << "\n";
+    }
+    std::cout << "\n";
+  }
+
+  const auto eigs2 = prom_op.ComputeEigenvalueEstimates2(omega_sample.front(), omega_sample.back());
+  if (Mpi::Root(space_op.GetComm()))
+  {
+    std::cout << "\n\nEigenvalues2 (nev = " << eigs2.size() << "):\n";
+    for (auto omega : eigs2)
+    {
+      const std::complex<double> f = {
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()),
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())};
+      const double Q =
+          (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
+      std::cout << f << ", " << Q << "\n";
+    }
+    std::cout << "\n";
+  }
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");

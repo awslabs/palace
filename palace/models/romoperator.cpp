@@ -478,6 +478,7 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+  z.push_back(omega);// test for eigs
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
@@ -539,11 +540,734 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
-std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
+namespace
+{
+
+template <typename F, typename VecType>
+void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
+          double tol = 1.0e-9, int max_it = 100)
+{
+  MFEM_VERIFY(x.size() == n,
+              "Must provide an initial guess for the eigenvector x in MSLP solver!");
+
+  using MatType = Eigen::MatrixXcd;
+  MatType T(n, n), dT(n, n), X(n, n);
+  VecType r(n), mu(n);
+  Eigen::ComplexEigenSolver<MatType> eps;
+
+  int it = 0;
+  while (it < max_it)
+  {
+    // Check convergence.
+    EvalFunction(lambda, T, dT, true, (it == 0));
+    r = T * x;
+
+    // // XX TODO DEBUG WIP
+    // Mpi::Print("MSLP iteration {:d}, l = {:e}{:+e}i, ||r|| = {:e}, ||T|| = {:e}\n", it,
+    //            lambda.real(), lambda.imag(), r.norm(), T.norm());
+
+    double res = r.norm() / (T.norm() * x.norm());
+    if (res < tol)
+    {
+      break;
+    }
+
+    // Set up and solve the linear EVP.
+    ZGGEV(T, dT, mu, X);
+
+    // Update eigenpair estimates.
+    const auto i =
+        std::distance(mu.begin(), std::min_element(mu.begin(), mu.end(),
+                                                   [](auto l, auto r)
+                                                   { return std::abs(l) < std::abs(r); }));
+    lambda -= mu(i);
+    x = X.col(i);
+    it++;
+  }
+      // if (it == max_it)
+  // {
+  //   EvalFunction(lambda, T, dT, false, false);
+  //   r = T * x;
+  //   Mpi::Warning(
+  //       "MSLP solver did not converge, ||Tx|| / ||T|| ||x|| = {:.3e} (tol = {:.3e})!\n",
+  //       r.norm() / (T.norm() * x.norm()), tol);
+  // }
+}
+
+
+
+template <typename F, typename MatType, typename VecType>
+void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
+              MatType &X)
+{
+  Mpi::Print("In Solve NEP num_eig: {}\n", num_eig);
+  // This is the deflation scheme used by SLEPc's NEP solver.
+  // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
+  //                eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
+  MatType T(n, n), dT(n, n), H;
+  for (int k = 0; k < num_eig; k++)
+  {
+    // Precompute all required powers of H. The minimality index of (X, H) is 1 if
+    // the eigenvectors are linearly independent.
+    int p = 1;
+    if constexpr (false)
+    {
+      if (k > 0)
+      {
+        MatType Vl = X;
+        Eigen::ColPivHouseholderQR<MatType> qr;
+        qr.compute(Vl);
+        while (qr.rank() < k)
+        {
+          Vl.conservativeResize((p + 1) * n, k);
+          Vl.bottomRows(n) = Vl.block((p - 1) * n, 0, n, k) * H;
+          qr.compute(Vl);
+          p++;
+        }
+      }
+    }
+    std::vector<MatType> HH(p);
+    HH[0] = MatType::Identity(k, k);
+    for (int i = 1; i < p; i++)
+    {
+      HH[i] = HH[i - 1] * H;
+    }
+
+    auto EvalDeflated =
+        [&](std::complex<double> l, MatType &Tp, MatType &dTp, bool jacobian, bool first)
+    {
+      if (k == 0)
+      {
+        EvalFunction(l, Tp, dTp, jacobian, first);
+        return;
+      }
+
+      // Compute the extended operators of the deflated problem, with explicit computation
+      // of S = (λ I - H)⁻¹ for U(λ) and U'(λ). When constructing S, for some reason the
+      // matrix inverse works more nicely than triangularView<Eigen::Upper>().solve().
+      EvalFunction(l, T, dT, jacobian, first);
+      const auto S = (l * MatType::Identity(k, k) - H).inverse();
+      Tp.topLeftCorner(n, n) = T;
+      Tp.topRightCorner(n, k) = T * (X * S);
+
+      // Second row: A(λ) x + B(λ) t = 0.
+      Tp.bottomRows(k) = MatType::Zero(k, n + k);
+      MatType XH(n, k);
+      for (int i = 0; i < p; i++)
+      {
+        XH = (X * HH[i]).adjoint();
+        Tp.bottomLeftCorner(k, n) += std::pow(l, i) * XH;
+        if (i > 0)
+        {
+          MatType qi = MatType::Zero(k, k);
+          for (int j = 0; j <= i - 1; j++)
+          {
+            qi += std::pow(l, j) * HH[i - j - 1];
+          }
+          Tp.bottomRightCorner(k, k) += XH * (X * qi);
+        }
+      }
+
+      if (jacobian)
+      {
+        dTp.topLeftCorner(n, n) = dT;
+        dTp.topRightCorner(n, k) = dT * X * S;
+        dTp.topRightCorner(n, k) -= Tp.topRightCorner(n, k) * S;
+        dTp.bottomRows(k) = MatType::Zero(k, n + k);
+        for (int i = 1; i < p; i++)
+        {
+          XH = (X * HH[i]).adjoint();
+          dTp.bottomLeftCorner(k, n) += (std::pow(l, i - 1) * (double)i) * XH;
+          if (i > 1)
+          {
+            MatType qi = MatType::Zero(k, k);
+            for (int j = 1; j <= i - 1; j++)
+            {
+              qi += (std::pow(l, j - 1) * (double)j) * HH[i - j - 1];
+            }
+            dTp.bottomRightCorner(k, k) += XH * (X * qi);
+          }
+        }
+      }
+    };
+
+    // Solve the deflated NEP with initial guess σ.
+    auto lambda = sigma;
+    VecType x = VecType::Random(n + k);
+    Mpi::Print("Call MSLP\n");
+    MSLP(n + k, EvalDeflated, lambda, x);
+
+    // XX TODO DEBUG WIP
+    Mpi::Print("Eigenvalue {:d}/{:d}, l = {:e}{:+e}i\n", k + 1, num_eig, lambda.real(),
+               lambda.imag());
+
+    // Update the invariant pair with normalization. This seems to work better than taking
+    // the pair (X, H) and normalizing it via a QR decomposition of X.
+    X.conservativeResize(n, k + 1);
+    H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+    const auto scale = x.head(n).norm();
+    X.col(k) = x.head(n) / scale;
+    H.col(k).head(k) = x.tail(k) / scale;
+    H(k, k) = lambda;
+  }
+
+  // Eigenpair extraction from the invariant pair (X, H).
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(H);
+  D = eps.eigenvalues();
+  X *= eps.eigenvectors();
+  X *= X.colwise().norm().cwiseInverse().asDiagonal();
+}
+
+template <typename F, typename MatType, typename VecType>
+void SolveNEP2(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
+               MatType &X)
+{
+  // Deflate the converged eigenvectors explicitly (works as long as eigenvectors are
+  // independent).
+  MatType QQ;
+  D.resize(num_eig);
+  X.resize(n, num_eig);
+  for (int k = 0; k < num_eig; k++)
+  {
+    auto EvalDeflated =
+        [&](std::complex<double> l, MatType &T, MatType &dT, bool jacobian, bool first)
+    {
+      EvalFunction(l, T, dT, jacobian, first);
+      if (k == 0)
+      {
+        return;
+      }
+      const double penalty = 1.0e3 * T.norm();
+      T += penalty * QQ;
+    };
+
+    // Solve the deflated NEP with initial guess σ.
+    auto lambda = sigma;
+    VecType x = VecType::Random(n);
+    MSLP(n, EvalDeflated, lambda, x);
+    D(k) = lambda;
+    X.col(k) = x;
+
+    // XX TODO DEBUG WIP
+    Mpi::Print("Eigenvalue {:d}/{:d}, l = {:e}{:+e}i\n", k + 1, num_eig, D(k).real(),
+               D(k).imag());
+
+    // Update basis for deflation (Eigen QR returns the full Q).
+    Eigen::ColPivHouseholderQR<MatType> qr(X.leftCols(k + 1));
+    const MatType Q = qr.householderQ() * MatType::Identity(n, k + 1);
+    QQ = Q * Q.adjoint();
+  }
+}
+
+}  // namespace
+
+
+namespace
+{
+
+enum class BasisType
+{
+  MONOMIAL,
+  CHEBYSHEV_1
+};
+
+struct Eigenpairs
+{
+  Eigen::VectorXcd D;
+  Eigen::MatrixXcd X;
+};
+
+Eigenpairs SolvePEP(const std::vector<const Eigen::MatrixXcd *> &P, BasisType type)
+{
+  // Solve the polynomial EVP: P(λ) x = (∑ᵢ λⁱ Pᵢ) x = 0 by linearization. If provided in
+  // the Chebyshev basis instead of the monomial basis, the problem is: P(λ) x =
+  // (∑ᵢ Tᵢ(λ) Pᵢ) x = 0, where Tᵢ are the Chebyshev polynomials of the first or second
+  // kind.
+  const std::size_t d = P.size() - 1;
+  const std::size_t n = [&P]()
+  {
+    for (const auto Pi : P)
+    {
+      if (Pi)
+      {
+        return Pi->rows();
+      }
+    }
+    return 0l;
+  }();
+  MFEM_VERIFY(d > 0 && n > 0 && P[d], "Invalid inputs for polynomial eigenvalue problem!");
+
+  Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(d * n, d * n),
+                   L1 = Eigen::MatrixXcd::Zero(d * n, d * n);
+  switch (type)
+  {
+    case BasisType::MONOMIAL:
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L0.block(i * n, (i + 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+      }
+      for (std::size_t i = 0; i < d; i++)
+      {
+        if (P[i])
+        {
+          L0.block((d - 1) * n, i * n, n, n) = -(*P[i]);
+        }
+      }
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L1.block(i * n, i * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+      }
+      L1.block((d - 1) * n, (d - 1) * n, n, n) = *P[d];
+      break;
+    case BasisType::CHEBYSHEV_1:
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L0.block(i * n, (i + 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+        if (i > 0)
+        {
+          L0.block(i * n, (i - 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+        }
+      }
+      for (std::size_t i = 0; i < d; i++)
+      {
+        if (P[i])
+        {
+          L0.block((d - 1) * n, i * n, n, n) = -(*P[i]);
+        }
+      }
+      L0.block((d - 1) * n, (d - 2) * n, n, n) += *P[d];
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L1.block(i * n, i * n, n, n) =
+            (i > 0 ? 2.0 : 1.0) * Eigen::MatrixXcd::Identity(n, n);
+      }
+      L1.block((d - 1) * n, (d - 1) * n, n, n) = 2.0 * (*P[d]);
+      break;
+  }
+
+  // Solve the eigenvalue problem.
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(L1.partialPivLu().solve(L0));
+  return {eps.eigenvalues(), eps.eigenvectors()};
+}
+
+std::vector<double> Chebyshev1Nodes(int d, double a, double b)
+{
+  // Chebyshev nodes of the first kind.
+  std::vector<double> nodes(d + 1);
+  for (int i = 0; i <= d; i++)
+  {
+    nodes[i] = 0.5 * (a + b) + 0.5 * (b - a) * std::cos((i + 0.5) * M_PI / (d + 1.0));
+  }
+  return nodes;
+}
+
+template <typename MatType>
+void DCTIII(double a, double b, const std::vector<double> &nodes,
+            const std::vector<MatType> &T, std::vector<MatType> &P)
+{
+  // Inverse transform for Chebyshev nodes of the first kind.
+  const std::size_t d = T.size() - 1;
+  for (std::size_t i = 0; i <= d; i++)
+  {
+    P[i] = MatType::Zero(T[0].rows(), T[0].cols());
+    const double p = (i > 0) ? 2.0 : 1.0;
+    for (std::size_t j = 0; j <= d; j++)
+    {
+      const double xj = (2.0 * (nodes[j] - a) / (b - a)) - 1.0;
+      P[i] += (p / (d + 1.0) * std::cos(i * std::acos(xj))) * T[j];
+    }
+
+    // // XX TODO UNCLEAR IF NEED DOMAIN [-1, 1] -> [a, b] SCALING HERE TOO?
+    // P[i] = (1.0 / (d + 1.0)) * T[0];
+    // for (std::size_t j = 1; j <= d; j++)
+    // {
+    //   P[i] += (2.0 / (d + 1.0) * std::cos((i + 0.5) * j * M_PI / (d + 1.0))) * T[j];
+    // }
+  }
+}
+
+}  // namespace
+
+
+std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() /*const*/
 {
   // XX TODO: Not yet implemented
-  MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
-  return {};
+  //MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
+  //return {};
+  Mpi::Print("PROM ComputeEigenvalueEstimates!\n");
+  MFEM_VERIFY(dim_V > 0,
+              "Eigenvalue estimates are only available for a PROM with nonzero dimension!");
+  Eigen::VectorXcd omega;
+  Eigen::MatrixXcd X;
+  if (!has_A2)
+  {
+    if (Cr.rows() == 0)
+    {
+      Mpi::Print("Linear generalized EVP\n");
+      // Linear generalized EVP: M⁻¹ K x = μ x. Linear EVP has eigenvalue μ = -λ² = ω².
+      Eigen::MatrixXcd cKr(Kr), cMr(Mr);
+      ZGGEV(cKr, cMr, omega, X);
+      for (std::size_t i = 0; i < dim_V; i++)
+      {
+        omega(i) = std::sqrt(omega(i));
+      }
+    }
+    else
+    {
+      Mpi::Print("Quadratic EVP\n");
+      // Quadratic EVP: P(λ) x = (K + λ C + λ² M) x = 0, solved via linearization.
+      Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
+      L0.topRightCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
+      L0.bottomLeftCorner(dim_V, dim_V) = -Kr;
+      L0.bottomRightCorner(dim_V, dim_V) = -Cr;
+      Eigen::MatrixXcd L1 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
+      L1.topLeftCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
+      L1.bottomRightCorner(dim_V, dim_V) = Mr;
+      ZGGEV(L0, L1, omega, X);
+      for (std::size_t i = 0; i < 2 * dim_V; i++)
+      {
+        // if (omega(i).imag() >= -0.1 * std::abs(omega(i).real()))
+        {
+          omega(i) /= 1i;
+        }
+        // else
+        // {
+
+        //   // XX TODO: For dynamics, do we really want to do this?
+
+        //   // Ignore eigenpairs outside the desired range.
+        //   omega(i) = mfem::infinity();
+        // }
+      }
+    }
+  }
+  else
+  {
+    Mpi::Print("General nonlinear EVP\n");
+    // General nonlinear EVP: T(λ) x = (K + λ C + λ² M + A2(Im{λ})) x = 0. If C != 0, the
+    // problem is at least quadratic. The all processes solve the eigenvalue problem
+    // together.
+    std::complex<double> l_prev;
+    Eigen::MatrixXcd Ar_prev;
+    auto EvalFunction = [&l_prev, &Ar_prev, this](std::complex<double> l,
+                                                  Eigen::MatrixXcd &T, Eigen::MatrixXcd &dT,
+                                                  bool jacobian, bool first)
+    {
+      // Assemble T(λ) = K + λ C + λ² M + A2(Im{λ}) and T'(λ) = C + 2 λ M + A2'(Im{λ}) .
+      if (has_A2)
+      {
+        auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+                                                                Operator::DIAG_ZERO);
+        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+        T = Ar;
+      }
+      else
+      {
+        T.setZero();
+      }
+      T += Kr;
+      if (Cr.rows() > 0)
+      {
+        T += l * Cr;
+      }
+      T += (l * l) * Mr;
+      if (jacobian)
+      {
+        if (has_A2)
+        {
+          // Evaluate A2' by finite differencing, and reuse the existing evaluation from the
+          // residual evaluation.
+          if (!first && Ar_prev.rows() > 0)
+          {
+            dT = Ar_prev;
+            dT -= Ar;
+            dT * -1.0 / (l_prev - l);
+          }
+          else
+          {
+            const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
+            auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(
+                std::abs(l.imag()) * (1.0 + eps), Operator::DIAG_ZERO);
+            ProjectMatInternal(space_op.GetComm(), V, *A2, dT, r, 0);
+            dT -= Ar;
+            dT *= 1.0 / (eps * std::abs(l.imag()));
+          }
+        }
+        else
+        {
+          dT.setZero();
+        }
+        if (Cr.rows() > 0)
+        {
+          dT += Cr;
+        }
+        dT += (2.0 * l) * Mr;
+      }
+      if (has_A2)
+      {
+        l_prev = l;
+        Ar_prev = Ar;
+      }
+    };
+
+    // For the initial guess, we choose the second smallest entry of the sample points. We
+    // could alternatively use the center of the sample range.
+    double sigma = *std::min_element(z.begin(), z.end());
+    // sigma = *std::min_element(z.begin(), z.end(),
+    //                           [sigma](auto l, auto r)
+    //                           {
+    //                             if (l == sigma)
+    //                               return false;
+    //                             if (r == sigma)
+    //                               return true;
+    //                             return l < r;
+    //                           });
+    sigma = 0.5 * (sigma + *std::max_element(z.begin(), z.end()));
+    const std::size_t num_eig = dim_V;  // XX TODO SPECIFY AT RUNTIME WITH TOLERANCES
+    if constexpr (false)
+    {
+      // Variant with explicit deflation of eigenbasis.
+      SolveNEP2(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
+    }
+    else
+    {
+      // Variant with extended problem deflation from Effenberger.
+      Mpi::Print("Call SolveNEP with sigma: {}\n", sigma);
+      SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
+    }
+    for (std::size_t i = 0; i < num_eig; i++)
+    {
+      // if (omega(i).imag() >= -0.1 * std::abs(omega(i).real()))
+      {
+        omega(i) /= 1i;
+      }
+      // else
+      // {
+
+      //   // XX TODO: For dynamics, do we really want to do this?
+
+      //   // Ignore eigenpairs outside the desired range.
+      //   omega(i) = mfem::infinity();
+      // }
+    }
+  }
+
+  // XX TODO: Evaluate A2(ω) in the complex plane (upgrade models)
+
+  // Compute HDM eigenvectors and residual norms.
+  std::vector<std::size_t> perm(omega.size());
+  std::iota(perm.begin(), perm.end(), 0);
+  std::sort(perm.begin(), perm.end(),
+            [&omega](auto l, auto r) { return std::abs(omega(l)) < std::abs(omega(r)); });
+
+  //XX TODO DEBUG
+  Mpi::Print("\n\nEigenpair residuals:\n");
+
+  ComplexVector u(r.Size());
+  for (int i = 0; i < omega.size(); i++)
+  {
+    // Compute HDM eigenmode.
+    ProlongatePROMSolution(dim_V, V, X.col(i), u);
+    linalg::Normalize(space_op.GetComm(), u);
+
+    // Evaluate the HDM eigenpair residual.
+    std::unique_ptr<ComplexOperator> A2;
+    if (has_A2)
+    {
+      A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega(i).real(),
+                                                         Operator::DIAG_ZERO);
+    }
+    auto A =
+        space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega(i),
+                                -omega(i) * omega(i), K.get(), C.get(), M.get(), A2.get());
+    A->Mult(u, r);
+    double res = linalg::Norml2(space_op.GetComm(), r);
+
+
+    //XX TODO DEBUG
+    Mpi::Print("omega = {:e}{:+e}, ||r|| = {:e}\n",
+               omega(i).real(), omega(i).imag(), res);
+
+
+    // XX TODO WIP.... (scaling, storage, etc.)
+  }
+
+  // XX TODO FILTERING...
+
+  return {omega.begin(), omega.end()};
+}
+
+
+
+std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates2(double start,
+                                                                          double end)
+{
+
+  // XX TODO ADD EIGENVECTORS TO COMPUTE HDM RESIDUAL ERROR?
+
+  MFEM_VERIFY(dim_V > 0,
+              "Eigenvalue estimates are only available for a PROM with nonzero dimension!");
+  if (!has_A2)
+  {
+    if (Cr.rows() == 0)
+    {
+      // Linear generalized EVP: M⁻¹ K x = ω² x (Eigen does not support complex-valued
+      // generalized EVPs).
+      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+      eps.compute(Mr.partialPivLu().solve(Kr));
+      auto D = eps.eigenvalues();
+      std::vector<std::complex<double>> omega(D.size());
+      for (auto eig : D)
+      {
+        omega.push_back(std::sqrt(eig));
+      }
+      std::sort(omega.begin(), omega.end(),
+                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+      return omega;
+    }
+    else
+    {
+      // Quadratic EVP: P(ω) x = (K + iω C - ω² M) x = 0 , solved via linearization.
+      const Eigen::MatrixXcd iCr = 1i * Cr;
+      const Eigen::MatrixXcd nMr = -Mr;
+      std::vector<const Eigen::MatrixXcd *> P = {&Kr, &iCr, &nMr};
+      auto [D, X] = SolvePEP(P, BasisType::MONOMIAL);
+      std::vector<std::complex<double>> omega;
+      omega.reserve(D.size());
+      for (auto eig : D)
+      {
+        if (eig.real() >= -0.1 * std::abs(eig.imag()))
+        {
+          omega.push_back(eig);
+        }
+      }
+      std::sort(omega.begin(), omega.end(),
+                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+      return omega;
+    }
+  }
+  else
+  {
+    // General nonlinear EVP: T(ω) x = (K + iω C - ω² M + A2(Re{ω})) x = 0 . We first
+    // interpolate A2 as a polynomial function of ω, using the first d + 1 Chebyshev
+    // polynomials, and then solve the polynomial EVP via linearization.
+    constexpr std::size_t d = 4;
+    const auto nodes = Chebyshev1Nodes(d, start, end);
+    MFEM_VERIFY(nodes.size() == d + 1,
+                "Unexpected number of Chebyshev interpolation nodes for order " << d
+                                                                                << "!");
+
+    // Get Chebyshev polynomial coefficients by inverse DCT.
+    std::vector<Eigen::MatrixXcd> T2(d + 1), P2(d + 1);
+    for (std::size_t i = 0; i <= d; i++)
+    {
+      auto A2 =
+          space_op.GetExtraSystemMatrix<ComplexOperator>(nodes[i], Operator::DIAG_ZERO);
+      T2[i].resize(dim_V, dim_V);
+      ProjectMatInternal(space_op.GetComm(), V, *A2, T2[i], r, 0);
+
+      // //XX TODO TEST INTERPOLATION EXACT
+      // T2[i] = Kr;
+      // // if (Cr.rows() > 0)
+      // // {
+      // //   T2[i] += 1i * nodes[i] * Cr;
+      // // }
+      // T2[i] -= nodes[i] * nodes[i] * Mr;
+    }
+    DCTIII(start, end, nodes, T2, P2);
+
+    // Add contributions of the quadratic EVP in the Chebyshev basis.
+    const std::size_t d_min = 2;
+    if (d < d_min)
+    {
+      const auto P2b(P2);
+      P2.resize(d_min + 1);
+      for (std::size_t i = 0; i <= d; i++)
+      {
+        P2[i] = P2b[i];
+      }
+      for (std::size_t i = d + 1; i <= d_min; i++)
+      {
+        P2[i] = Eigen::MatrixXcd::Zero(dim_V, dim_V);
+      }
+    }
+    P2[0] += Kr;
+    P2[0] += -0.5 * Mr;
+    if (Cr.rows() > 0)
+    {
+      P2[1] += 1i * Cr;
+    }
+    P2[2] += -0.5 * Mr;
+
+    // P2[0] = Kr;  //XX TODO FOR TESTING...
+    // P2[0] += -0.5 * Mr;
+    // P2[1].setZero();
+    // P2[2] = -0.5 * Mr;
+
+    // // XX TODO WIP DEBUG
+    // if (Mpi::Root(Mpi::World()))
+    // {
+    //   for (std::size_t i = 0; i <= std::max(d, d_min); i++)
+    //   {
+    //     std::cout << "P[" << i << "]:\n" << P2[i] << "\n";
+    //   }
+    // }
+
+    // Solve the polynomial EVP.
+    std::vector<const Eigen::MatrixXcd *> P(std::max(d, d_min) + 1);
+    for (std::size_t i = 0; i <= std::max(d, d_min); i++)
+    {
+      P[i] = &P2[i];
+    }
+    auto [D, X] = SolvePEP(P, BasisType::CHEBYSHEV_1);
+    std::vector<std::complex<double>> omega;
+    omega.reserve(D.size());
+    for (auto eig : D)
+    {
+      if (eig.real() >= -0.1 * std::abs(eig.imag()))
+      {
+        omega.push_back(eig);
+      }
+    }
+    std::sort(omega.begin(), omega.end(),
+              [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+
+    //XX TODO DEBUG
+    Mpi::Print("\n\nEigenpair residuals:\n");
+
+    ComplexVector u(r.Size());
+    for (int i = 0; i < omega.size(); i++)
+    {
+      // Compute HDM eigenmode.
+      ProlongatePROMSolution(dim_V, V, X.col(i), u);
+      linalg::Normalize(space_op.GetComm(), u);
+
+      // Evaluate the HDM eigenpair residual.
+      std::unique_ptr<ComplexOperator> A2;
+      if (has_A2)
+      {
+        A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega[i].real(),
+                                                         Operator::DIAG_ZERO);
+      }
+      auto A =
+          space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega[i],
+                                -omega[i] * omega[i], K.get(), C.get(), M.get(), A2.get());
+      A->Mult(u, r);
+      double res = linalg::Norml2(space_op.GetComm(), r);
+
+
+      //XX TODO DEBUG
+      Mpi::Print("omega = {:e}{:+e}, ||r|| = {:e}\n",
+               omega[i].real(), omega[i].imag(), res);
+
+
+    // XX TODO WIP.... (scaling, storage, etc.)
+    }
+
+    return omega;
+  }
 }
 
 }  // namespace palace

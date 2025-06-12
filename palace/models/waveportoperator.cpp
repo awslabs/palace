@@ -888,6 +888,7 @@ void WavePortData::Initialize(double omega)
     {
       if (shift) // Sometimes SMALLEST_REAL diverges but LARGEST_MAGNITUDE converges
       {
+        Mpi::Print("\n\n\n COULD NOT FIND A SMALLEST_REAL WAVEPORT MODE, SWITCHING TO LARGEST_MAGNITUDE!! \n\n\n");
         eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
         num_conv = eigen->Solve();
         eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL); // reset

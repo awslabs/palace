@@ -142,7 +142,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (nonlinear)
+  if (nonlinear || C)
   {
     eigen->SetOperators(space_op, *K, *C, *M, scale);
     // set NLEIGS numdegrees?
@@ -279,6 +279,47 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
+
+  // Test to see waveport mode a difference frequencies
+  std::vector<double> facs = {1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0};
+  for (auto fac : facs)
+  {
+    auto A2test = space_op.GetExtraSystemMatrix<ComplexOperator>(target * fac, Operator::DIAG_ZERO);
+  }
+
+  // TEST DIVIDED DIFFERENCE JACOBIAN -- ONLY WORKS IF A2 is not null
+  /*
+  const auto eps = 1.0e-6;//std::sqrt(std::numeric_limits<double>::epsilon());
+  std::vector<double> facs = {0.9999, 0.999, 0.99, 0.9, 0.5};
+  for (auto c : facs)
+  {
+    double linearization_point = target * c;
+    Mpi::Print("target: {}, linearization point: {}\n", target, linearization_point);
+    auto A20 = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point, Operator::DIAG_ZERO);
+    auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point * (1.0 + eps), Operator::DIAG_ZERO);
+    auto A2m = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point * (1.0 - eps), Operator::DIAG_ZERO);
+    auto A2jac = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * linearization_point, 1, A2p.get(), A20.get(), A2m.get());
+    auto A2jac2 = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * linearization_point, 2, A2p.get(), A20.get(), A2m.get());
+    ComplexVector tt(A2->Height());
+    tt = std::complex<double>(1.23, 1.23);
+    ComplexVector x1(A2->Height()), x2(A2->Height()), diff(A2->Height());
+    x1 = 0.0; x2 = 0.0;
+    A2->Mult(tt, x1);
+    double normx1 = linalg::Norml2(space_op.GetComm(), x1);
+    A20->Mult(tt, x2);
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    double res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 0 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    A2jac->AddMult(tt, x2, (target - linearization_point));
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 1 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    A2jac2->AddMult(tt, x2, 0.5 * pow(target - linearization_point, 2));
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 2 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+  }
+  */
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
