@@ -20,6 +20,10 @@ static PetscErrorCode __mat_apply_PEPLinear_L0(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEPLinear_L1(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEPLinear_B(Mat, Vec, Vec);
 static PetscErrorCode __pc_apply_PEPLinear(PC, Vec, Vec);
+static PetscErrorCode __mat_apply_PEPLinear2_L0(Mat, Vec, Vec);
+static PetscErrorCode __mat_apply_PEPLinear2_L1(Mat, Vec, Vec);
+static PetscErrorCode __mat_apply_PEPLinear2_B(Mat, Vec, Vec);
+static PetscErrorCode __pc_apply_PEPLinear2(PC, Vec, Vec);
 static PetscErrorCode __mat_apply_PEP_A0(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEP_A1(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEP_A2(Mat, Vec, Vec);
@@ -752,7 +756,7 @@ void SlepcNEPSolver::Customize()
 int SlepcNEPSolver::Solve()
 {
   MFEM_VERIFY(T /*&& TJ*/ && opInv, "Operators are not set for SlepcNEPSolver!");
-
+  Mpi::Print("\n\n\n!!!!! NEPSolver::Solve etc\n\n\n\n\n");
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
@@ -1144,7 +1148,16 @@ void SlepcEPSSolverBase::Customize()
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
-
+  Mpi::Print("\n\n\n!!!!! EPSSolver::Solve etc\n\n\n\n\n");
+  if (space_op)
+  {
+    Mpi::Print("Creating opA2 in EPSSolverBase::Solve\n");
+  // Test
+  const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
+  opA2 = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()), palace::Operator::DIAG_ZERO);
+  opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
+  opJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(sigma.imag()), 1, opA2p.get(), opA2.get(), opA2.get());
+  }
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
@@ -1337,9 +1350,9 @@ void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref, const Compl
     PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
                                    (void *)this, &A1));
     PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear2_L0)); //test
     PalacePetscCall(
-        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear2_L1)); //test
     PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
     PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
     PalacePetscCall(EPSSetOperators(eps, A0, A1));
@@ -1376,7 +1389,7 @@ void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref, const Compl
   // Configure linear solver.
   if (first)
   {
-    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEPLinear);
+    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEPLinear2); //test
   }
 }
 
@@ -1388,7 +1401,7 @@ void SlepcPEPLinearSolver::SetBMat(const Operator &B)
   PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
                                  (void *)this, &B0));
   PalacePetscCall(
-      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_B));
+      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear2_B));//test
   PalacePetscCall(MatShellSetVecType(B0, PetscVecType()));
 
   BV bv = GetBV();
@@ -1437,18 +1450,24 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   //auto t_opJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(eps * std::abs(sigma.imag()), 1, t_opA2p.get(), t_opA2.get(), t_opA2.get());
 
   //Mpi::Print("GetResNorm sigma: {}, {}\n", sigma.real(), sigma.imag());
-  opK->Mult(x, r);
+  //opK->Mult(x, r);
   //Mpi::Print("A2\n");
   //t_opA2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   //Mpi::Print("J sigma\n");
   //t_opJ->AddMult(x, r, -sigma);
   //Mpi::Print("J l.imag()\n");
   //t_opJ->AddMult(x, r, std::complex<double>(0.0, l.imag()));
-  opC->AddMult(x, r, l);
-  opM->AddMult(x, r, l * l);
+  //opC->AddMult(x, r, l);
+  //opM->AddMult(x, r, l * l);
   //auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
   //A2->AddMult(x, r, 1.0); //test!?
   //Mpi::Print("GetResNorm done\n");
+
+  Mpi::Print("PEPLinear GetResidualNorm with A2!\n");
+  auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
+  auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), l, l * l, opK, opC,
+                                     opM, A2.get());
+  A->Mult(x, r);
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1643,12 +1662,12 @@ void SlepcPEPSolverBase::Customize()
 int SlepcPEPSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && A2 && opInv, "Operators are not set for SlepcPEPSolverBase!");
-  //Mpi::Print("\n\n\n!!!!! USER PEPSolver with opA2 etc\n\n\n\n\n");
+  Mpi::Print("\n\n\n!!!!! PEPSolverBase::Solve etc\n\n\n\n\n");
   // Test
-  //const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  //opA2 = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()), palace::Operator::DIAG_ZERO);
-  //opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()) * (1.0 + eps), palace::Operator::DIAG_ZERO);
-  //opJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(eps * std::abs(sigma.imag()), 1, opA2p.get(), opA2.get(), opA2.get());
+  const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
+  opA2 = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()), palace::Operator::DIAG_ZERO);
+  opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(sigma.imag()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
+  opJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(sigma.imag()), 1, opA2p.get(), opA2.get(), opA2.get());
 
   // Solve the eigenvalue problem.
   PetscInt num_conv;
@@ -1842,7 +1861,7 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_EPS_A0\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   ctx->y1 *= ctx->delta;
@@ -1857,7 +1876,7 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_EPS_A1\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   ctx->y1 *= ctx->delta * ctx->gamma;
@@ -1891,7 +1910,7 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   palace::slepc::SlepcEPSSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+std::cerr << "__pc_apply_EPS\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
@@ -1921,14 +1940,16 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  std::cerr << "__mat_apply_PEPLinear_L0\n";
+  std::exit(0); // THIS NEVER GETS CALLED?!?!?
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);
-  //ctx->opJ->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0)); // TEST??? (SHOULD ONLY BE IMAG PART OF LAMBDA?!)
+  ctx->opJ->AddMult(ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0)); // TEST??? (OR SHOULD ONLY BE IMAG PART OF LAMBDA?!)
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  //ctx->opA2->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0)); // TEST???
-  //ctx->opJ->AddMult(ctx->x1, ctx->y1, -ctx->sigma.imag()); //TEST???
+  ctx->opA2->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0)); // TEST???
+  ctx->opJ->AddMult(ctx->x1, ctx->y2, -ctx->sigma); //TEST??? sigma like this?
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -1943,7 +1964,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_PEPLinear_L1\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
@@ -1959,7 +1980,7 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_PEPLinear_B\n";
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -1988,6 +2009,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   if (!ctx->sinvert)
   {
+    //std::cerr << "__pc_apply_PEPLinear !sinvert\n";
     ctx->y1 = ctx->x1;
     if (ctx->opProj)
     {
@@ -2007,8 +2029,11 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   }
   else
   {
+    std::cerr << "__pc_apply_PEPLinear sinvert ctx->sigma: " << ctx->sigma << "\n";
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opA2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // TEST???
+    //ctx->opJ->AddMult(ctx->x1, ctx->y1, -ctx->sigma); // TEST??? for this to make sense maybe J needs to be in opInv!?
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -2031,17 +2056,144 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+
+PetscErrorCode __mat_apply_PEPLinear2_L0(Mat A, Vec x, Vec y)
+{
+  // Apply the linearized operator L₀ = [ -K  0 ]
+  //                                    [  0  I ] .
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcPEPLinearSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  std::cerr << "__mat_apply_PEPLinear2_L0\n";
+  std::exit(0); // THIS NEVER GETS CALLED?!?!?
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  ctx->opK->Mult(ctx->x1, ctx->y1);
+  ctx->opA2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  ctx->opJ->AddMult(ctx->x1, ctx->y2, -ctx->sigma);
+  ctx->y1 *= -1.0;
+  ctx->y2 = ctx->x2;
+  // TODO: FIGURE OUT SCALING!!
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_apply_PEPLinear2_L1(Mat A, Vec x, Vec y)
+{
+  // Apply the linearized operator L₁ = [ C  M ]
+  //                                    [ I  0 ] .
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcPEPLinearSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  std::cerr << "__mat_apply_PEPLinear2_L1\n";
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  ctx->opC->Mult(ctx->x1, ctx->y1);
+  //ctx->opJ->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // TEST
+  ctx->opM->AddMult(ctx->x2, ctx->y1, std::complex<double>(1.0, 0.0));
+  ctx->y2 = ctx->x1;
+  // TODO: FIGURE OUT SCALING!!
+  //ctx->y1 = ctx->x1;
+  //ctx->opM->Mult(ctx->x2, ctx->y2);
+  //ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_apply_PEPLinear2_B(Mat A, Vec x, Vec y)
+{
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcPEPLinearSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+std::cerr << "__mat_apply_PEPLinear2_B\n";
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
+  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
+  ctx->opB->Mult(ctx->x2.Real(), ctx->y2.Real());
+  ctx->opB->Mult(ctx->x2.Imag(), ctx->y2.Imag());
+  ctx->y1 *= ctx->delta * ctx->gamma * ctx->gamma;
+  ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pc_apply_PEPLinear2(PC pc, Vec x, Vec y)
+{
+  // Solve the linear system associated with the generalized eigenvalue problem after
+  // linearization: y = L₁⁻¹ x, or with the shift-and-invert spectral transformation:
+  // y = (L₀ - σ L₁)⁻¹ x, with:
+  //               L₀ = [ -K  0 ]    L₁ = [ C  M ]
+  //                    [  0  I ] ,       [ I  0 ] .
+  // Enforces the divergence-free constraint using the supplied projector.
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcPEPLinearSolver *ctx;
+  PetscCall(PCShellGetContext(pc, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
+
+  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  if (!ctx->sinvert)
+  {
+    //std::cerr << "__pc_apply_PEPLinear !sinvert\n";
+    ctx->y1 = ctx->x1;
+    if (ctx->opProj)
+    {
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      ctx->opProj->Mult(ctx->y1);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    }
+
+    ctx->opInv->Mult(ctx->x2, ctx->y2);
+    ctx->y2 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
+    if (ctx->opProj)
+    {
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+      ctx->opProj->Mult(ctx->y2);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+    }
+  }
+  else
+  {
+    std::cerr << "__pc_apply_PEPLinear2 sinvert ctx->sigma: " << ctx->sigma << "\n";
+    ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x1, 0.0);
+    ctx->opK->AddMult(ctx->x2, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opA2->AddMult(ctx->x2, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opC->AddMult(ctx->x2, ctx->y1, ctx->sigma);
+    ctx->opInv->Mult(ctx->y1, ctx->y2);
+    if (ctx->opProj)
+    {
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+      ctx->opProj->Mult(ctx->y2);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+    }
+    ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x2,
+                     0.0);
+    if (ctx->opProj)
+    {
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      ctx->opProj->Mult(ctx->y1);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    }
+  }
+  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+  std::cerr << "__mat_apply_PEP_A0\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   //ctx->opA2->AddMult(ctx->x1, ctx->y1, 1.0); //TEST???
-  //ctx->opJ->AddMult(ctx->x1, ctx->y1, -ctx->sigma.imag()); //TEST???
+  //ctx->opJ->AddMult(ctx->x1, ctx->y1, -ctx->sigma); //TEST???
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2053,7 +2205,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_PEP_A1\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opC->Mult(ctx->x1, ctx->y1);
   //ctx->opJ->AddMult(ctx->x1, ctx->y1, 1.0); //TEST???
@@ -2068,7 +2220,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "__mat_apply_PEP_A2\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   PetscCall(ToPetscVec(ctx->y1, y));
@@ -2101,7 +2253,7 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+std::cerr << "__pc_apply_PEP\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)

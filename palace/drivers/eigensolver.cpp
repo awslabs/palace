@@ -113,12 +113,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
+        Mpi::Print("Using SLEPc PEP solver\n");
         slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
       }
       else
       {
+        Mpi::Print("Using SLEPc PEPLinear solver\n");
         slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
                                                               iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
@@ -126,6 +128,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
+      Mpi::Print("Using SLEPc EPS solver\n");
       slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
@@ -145,6 +148,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (nonlinear || C)
   {
+    Mpi::Print("SetOperators with space_op\n");
     eigen->SetOperators(space_op, *K, *C, *M, scale);
     // set NLEIGS numdegrees?
   }
@@ -243,6 +247,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (C || nonlinear)
   {
     // Search for eigenvalues closest to λ = iσ.
+    Mpi::Print("SetShiftInvert i*target\n");
     eigen->SetShiftInvert(1i * target);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
@@ -281,13 +286,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
 
-  // Test to see waveport mode a difference frequencies
+  // Test to see waveport mode at difference frequencies
+  /*
   std::vector<double> facs = {1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0};
   for (auto fac : facs)
   {
     auto A2test = space_op.GetExtraSystemMatrix<ComplexOperator>(target * fac, Operator::DIAG_ZERO);
   }
-
+  */
   // TEST DIVIDED DIFFERENCE JACOBIAN -- ONLY WORKS IF A2 is not null
   /*
   const auto eps = 1.0e-6;//std::sqrt(std::numeric_limits<double>::epsilon());
@@ -321,6 +327,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("Order 2 res: {}, res/normx1: {}, \n\n", res, res/normx1);
   }
   */
+  Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
@@ -341,6 +348,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
+  Mpi::Print("Call eigen->Solve()\n");
   int num_conv = eigen->Solve();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
