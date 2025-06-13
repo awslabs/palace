@@ -355,7 +355,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     }
     std::cout << "\n";
   }
-
+/*
   const auto eigs2 = prom_op.ComputeEigenvalueEstimates2(omega_sample.front(), omega_sample.back());
   if (Mpi::Root(space_op.GetComm()))
   {
@@ -371,7 +371,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     }
     std::cout << "\n";
   }
-
+*/
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression

@@ -34,6 +34,7 @@ static PetscErrorCode __mat_duplicate_NEP_J(Mat, MatDuplicateOption, Mat *);
 static PetscErrorCode __pc_apply_NEP(PC, Vec, Vec);
 static PetscErrorCode __form_NEP_function(NEP, PetscScalar, Mat, Mat, void *);
 static PetscErrorCode __form_NEP_jacobian(NEP, PetscScalar, Mat, void *);  // remove?
+static PetscErrorCode __compute_singularities(NEP, PetscInt*, PetscScalar*, void*);
 
 namespace
 {
@@ -615,6 +616,8 @@ void SlepcNEPSolver::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
       PalacePetscCall(NEPSetProblemType(nep, NEP_GENERAL));
       break;
     case ProblemType::RATIONAL:
+      PalacePetscCall(NEPSetProblemType(nep, NEP_RATIONAL));
+      break;
     case ProblemType::HERMITIAN:
     case ProblemType::NON_HERMITIAN:
     case ProblemType::GEN_HERMITIAN:
@@ -656,6 +659,8 @@ void SlepcNEPSolver::SetType(SlepcEigenvalueSolver::Type type)
       // degree << "\n"; PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 10));//what
       // makes sense?
       PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 50));  // what makes sense?
+      //PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-8, 300));  // test tighter, takes much longer
+      //PalacePetscCall(NEPNLEIGSSetSingularitiesFunction(nep, __compute_singularities, NULL));
 
       break;
     case Type::KRYLOVSCHUR:
@@ -697,8 +702,8 @@ void SlepcNEPSolver::Customize()
   if (sinvert && region)
   {
     std::cerr << "NEP region sigma: " << sigma << "\n";
-    const double upper_bound_fac = 80.0; //80.0;
-    const double width = 1.0; //1.0
+    const double upper_bound_fac = 10.0; //80.0;
+    const double width = 1.0; //1.0 // On CPW ex, width 0.2 takes super long compared to 1
     if (PetscImaginaryPart(sigma) == 0.0)
     {
       PetscReal sr = PetscRealPart(sigma);
@@ -895,6 +900,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
       PalacePetscCall(PCShellSetContext(pc, (void *)this));
       PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     }
+    //PalacePetscCall(NEPSetRefine(nep, NEP_REFINE_MULTIPLE, 1, 1e-6, 3, NEP_REFINE_SCHEME_EXPLICIT /*3*/)); // ONLY IMPLEMENTED IN SPLIT FORM!
     /**/
     // CISS (only supports computing all eigs)
     /*
@@ -2335,6 +2341,18 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
                                               ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get());
   ctxF->lambda_J = lambda;      // needed for duplication?
   std::cerr << "Leaving SlepcNepSolver FormJacobian\n";
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __compute_singularities(NEP nep, PetscInt *maxnp, PetscScalar *xi, void *pt)
+{
+  PetscReal h;
+  PetscInt i; // JUST A TEST
+  PetscFunctionBeginUser;
+  std::cerr << "In SlepcNepSolver compute_singularities maxnp: " << *maxnp << "\n";
+  h = 11.0/(*maxnp-1);
+   xi[0] = -1e-5; xi[*maxnp-1] = -1e+6;
+  for (i=1;i<*maxnp-1;i++) xi[i] = -PetscPowReal(10,-5+h*i);
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
