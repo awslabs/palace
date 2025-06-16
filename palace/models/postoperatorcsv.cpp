@@ -774,9 +774,6 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
   CheckAppendIndex(port_V->table["idx"], m_idx_value, m_idx_row);
   CheckAppendIndex(port_I->table["idx"], m_idx_value, m_idx_row);
 
-  auto unit_V = post_op->units.template GetScaleFactor<Units::ValueType::VOLTAGE>();
-  auto unit_A = post_op->units.template GetScaleFactor<Units::ValueType::CURRENT>();
-
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
     for (const auto &[idx, data] : lumped_port_op)
@@ -789,21 +786,23 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
                            ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
                            : 0.0;
 
-        port_V->table[format("inc{}_{}", idx, m_ex_idx)] << V_inc * unit_V;
-        port_I->table[format("inc{}_{}", idx, m_ex_idx)] << I_inc * unit_A;
+        port_V->table[format("inc{}_{}", idx, m_ex_idx)]
+            << post_op->units.template Dimensionalize<Units::ValueType::VOLTAGE>(V_inc);
+        port_I->table[format("inc{}_{}", idx, m_ex_idx)]
+            << post_op->units.template Dimensionalize<Units::ValueType::CURRENT>(I_inc);
       }
     }
   }
 
   for (const auto &[idx, data] : measurement_cache.lumped_port_vi)
   {
-    port_V->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.V.real() * unit_V;
-    port_I->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I.real() * unit_A;
+    port_V->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.V.real();
+    port_I->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I.real();
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag() * unit_V;
-      port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag() * unit_A;
+      port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag();
+      port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag();
     }
   }
   port_V->WriteFullTableTrunc();
@@ -1086,8 +1085,9 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   m_idx_value = idx_value_dimensionful;
   m_idx_row = step;
 
+  // PostOperator acts on a nondimensional measurement cache, we write a dimensional cache.
   measurement_cache =
-      Measurement::Nondimensionalize(post_op->units, non_dim_measurement_cache);
+      Measurement::Dimensionalize(post_op->units, non_dim_measurement_cache);
 
   PrintDomainE();
   PrintSurfaceF();

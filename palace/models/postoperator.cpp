@@ -532,16 +532,13 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     // Use V if it has it rather than E.
     auto &field = V ? *V : *E;
-    auto energy_raw = dom_post_op.GetElectricFieldEnergy(field);
-    measurement_cache.domain_E_field_energy_all =
-        units.Dimensionalize<Units::ValueType::ENERGY>(energy_raw);
+    auto energy = dom_post_op.GetElectricFieldEnergy(field);
+    measurement_cache.domain_E_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i_raw = dom_post_op.GetDomainElectricFieldEnergy(idx, field);
-      auto energy_i = units.Dimensionalize<Units::ValueType::ENERGY>(energy_i_raw);
-      auto participation_ratio =
-          std::abs(energy_raw) > 0.0 ? energy_i_raw / energy_raw : 0.0;
+      auto energy_i = dom_post_op.GetDomainElectricFieldEnergy(idx, field);
+      auto participation_ratio = std::abs(energy_i) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_E_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
     }
@@ -560,16 +557,13 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   if (HasBGridFunction<solver_t>())
   {
     auto &field = A ? *A : *B;
-    auto energy_raw = dom_post_op.GetMagneticFieldEnergy(field);
-    measurement_cache.domain_H_field_energy_all =
-        units.Dimensionalize<Units::ValueType::ENERGY>(energy_raw);
+    auto energy = dom_post_op.GetMagneticFieldEnergy(field);
+    measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i_raw = dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
-      auto energy_i = units.Dimensionalize<Units::ValueType::ENERGY>(energy_i_raw);
-      auto participation_ratio =
-          std::abs(energy_raw) > 0.0 ? energy_i_raw / energy_raw : 0.0;
+      auto energy_i = dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+      auto participation_ratio = std::abs(energy) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
     }
@@ -624,24 +618,24 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         // Compute current from the port impedance, separate contributions for R, L, C
         // branches.
         // Get value and make real: Matches current behaviour (even for eigensolver!).
-        auto omega_re =
-            units.Nondimensionalize<Units::ValueType::FREQUENCY>(measurement_cache.freq)
-                .real();
         MFEM_VERIFY(
-            omega_re > 0.0,
+            measurement_cache.freq.real() > 0.0,
             "Frequency domain lumped port postprocessing requires nonzero frequency!");
-        vi.I_RLC[0] = (std::abs(data.R) > 0.0)
-                          ? vi.V / data.GetCharacteristicImpedance(
-                                       omega_re, LumpedPortData::Branch::R)
-                          : 0.0;
-        vi.I_RLC[1] = (std::abs(data.L) > 0.0)
-                          ? vi.V / data.GetCharacteristicImpedance(
-                                       omega_re, LumpedPortData::Branch::L)
-                          : 0.0;
-        vi.I_RLC[2] = (std::abs(data.C) > 0.0)
-                          ? vi.V / data.GetCharacteristicImpedance(
-                                       omega_re, LumpedPortData::Branch::C)
-                          : 0.0;
+        vi.I_RLC[0] =
+            (std::abs(data.R) > 0.0)
+                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                         LumpedPortData::Branch::R)
+                : 0.0;
+        vi.I_RLC[1] =
+            (std::abs(data.L) > 0.0)
+                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                         LumpedPortData::Branch::L)
+                : 0.0;
+        vi.I_RLC[2] =
+            (std::abs(data.C) > 0.0)
+                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                         LumpedPortData::Branch::C)
+                : 0.0;
         vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
                                std::complex<double>{0.0, 0.0});
         vi.S = data.GetSParameter(*E);
@@ -651,8 +645,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         if (std::abs(data.L) > 0.0)
         {
           std::complex<double> I_mj = vi.I_RLC[1];
-          vi.inductor_energy = units.Dimensionalize<Units::ValueType::ENERGY>(
-              0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj)));
+          vi.inductor_energy = 0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj));
           measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
         }
 
@@ -661,8 +654,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         if (std::abs(data.C) > 0.0)
         {
           std::complex<double> V_mj = vi.V;
-          vi.capacitor_energy = units.Dimensionalize<Units::ValueType::ENERGY>(
-              0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj)));
+          vi.capacitor_energy = 0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj));
           measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
         }
       }
@@ -704,10 +696,7 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
         // Note conventions: mean(I²) = (I_r² + I_i²) / 2;
         auto resistor_power = 0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj));
         vi.mode_port_kappa =
-            units.Dimensionalize<Units::ValueType::FREQUENCY>(std::copysign(
-                resistor_power /
-                    units.Nondimensionalize<Units::ValueType::ENERGY>(energy_electric_all),
-                I_mj.real()));
+            std::copysign(resistor_power / energy_electric_all, I_mj.real());
         vi.quality_factor = (vi.mode_port_kappa == 0.0)
                                 ? mfem::infinity()
                                 : freq_re / std::abs(vi.mode_port_kappa);
@@ -841,23 +830,8 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   measurement_cache.surface_flux_i.reserve(surf_post_op.flux_surfs.size());
   for (const auto &[idx, data] : surf_post_op.flux_surfs)
   {
-    auto flux = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
-    if (data.type == SurfaceFlux::ELECTRIC)
-    {
-      flux *= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-      flux *= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-    }
-    else if (data.type == SurfaceFlux::MAGNETIC)
-    {
-      flux *= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-      flux *= units.GetScaleFactor<Units::ValueType::CURRENT>();
-    }
-    else if (data.type == SurfaceFlux::POWER)
-    {
-      flux *= units.GetScaleFactor<Units::ValueType::POWER>();
-    }
-    measurement_cache.surface_flux_i.emplace_back(
-        Measurement::FluxData{idx, flux, data.type});
+    measurement_cache.surface_flux_i.emplace_back(Measurement::FluxData{
+        idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
   }
 }
 
@@ -885,8 +859,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     measurement_cache.interface_eps_i.reserve(surf_post_op.eps_surfs.size());
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
-      auto energy = units.Dimensionalize<Units::ValueType::ENERGY>(
-          surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E));
+      auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
 
       auto energy_participation_p = energy / energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
@@ -911,16 +884,14 @@ void PostOperator<solver_t>::MeasureProbes() const
   {
     if (interp_op.GetProbes().size() > 0)
     {
-      measurement_cache.probe_E_field =
-          units.Dimensionalize<Units::ValueType::FIELD_E>(interp_op.ProbeField(*E));
+      measurement_cache.probe_E_field = interp_op.ProbeField(*E);
     }
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
     if (interp_op.GetProbes().size() > 0)
     {
-      measurement_cache.probe_B_field =
-          units.Dimensionalize<Units::ValueType::FIELD_B>(interp_op.ProbeField(*B));
+      measurement_cache.probe_B_field = interp_op.ProbeField(*B);
     }
   }
 #endif
@@ -937,30 +908,27 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     -> std::enable_if_t<U == ProblemType::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-  auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   SetEGridFunction(e);
   SetBGridFunction(b);
 
   measurement_cache = {};
-  measurement_cache.freq = freq;
+  measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
-  auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(measurement_cache, freq_re, step, ex_idx);
+  omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
+  post_op_csv.PrintAllCSVData(measurement_cache, omega.real(), step, ex_idx);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(paraview_save_indices.begin(),
                                  std::lower_bound(paraview_save_indices.begin(),
                                                   paraview_save_indices.end(), step));
-    WriteFields(freq_re, ind);
+    WriteFields(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 
 template <ProblemType solver_t>
@@ -973,15 +941,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     -> std::enable_if_t<U == ProblemType::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-  auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   SetEGridFunction(e);
   SetBGridFunction(b);
 
   measurement_cache = {};
-  measurement_cache.freq = freq;
-  measurement_cache.eigenmode_Q = (freq.imag() == 0.0)
-                                      ? mfem::infinity()
-                                      : 0.5 * std::abs(freq) / std::abs(freq.imag());
+  measurement_cache.freq = omega;
+  measurement_cache.eigenmode_Q =
+      (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 
@@ -993,8 +959,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
     table.col_options = {6, 6};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
-    table.insert(Column("f_re", "Re{f} (GHz)") << freq.real());
-    table.insert(Column("f_im", "Im{f} (GHz)") << freq.imag());
+    table.insert(Column("f_re", "Re{f} (GHz)") << omega.real());
+    table.insert(Column("f_im", "Im{f} (GHz)") << omega.imag());
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
@@ -1003,17 +969,15 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   }
   MeasureAllImpl();
 
-  int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
-    WriteFields(step, eigen_print_idx);
-    Mpi::Print(" Wrote mode {:d} to disk\n", eigen_print_idx);
+    WriteFields(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk\n", print_idx);
   }
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 
 template <ProblemType solver_t>
@@ -1029,18 +993,16 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
   measurement_cache = {};
   MeasureAllImpl();
 
-  int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
     Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
   }
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 template <ProblemType solver_t>
 template <ProblemType U>
@@ -1055,28 +1017,25 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
   measurement_cache = {};
   MeasureAllImpl();
 
-  int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
     Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
   }
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 
 template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
-                                                double t, double J_coef)
+                                                double time, double J_coef)
     -> std::enable_if_t<U == ProblemType::TRANSIENT, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-  auto time = units.Dimensionalize<Units::ValueType::TIME>(t);
   SetEGridFunction(e);
   SetBGridFunction(b);
 
@@ -1084,6 +1043,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   measurement_cache.Jcoeff_excitation = J_coef;
   MeasureAllImpl();
 
+  // Time must be converted before passing into csv due to the shared PrintAllCSVData
+  // method.
+  time = units.Dimensionalize<Units::ValueType::TIME>(time);
   post_op_csv.PrintAllCSVData(measurement_cache, time, step);
   if (write_paraview_fields(step))
   {
@@ -1091,10 +1053,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
     WriteFields(double(step) / paraview_delta_post, time);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 
 template <ProblemType solver_t>
@@ -1121,10 +1081,8 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
   Mpi::Barrier(fem_op->GetComm());
 
   // Return total domain energy for normalizing error indicator.
-  double total_energy = units.Nondimensionalize<Units::ValueType::ENERGY>(
-      measurement_cache.domain_E_field_energy_all +
-      measurement_cache.domain_H_field_energy_all);
-  return total_energy;
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
 }
 
 // Explict template instantiation.
