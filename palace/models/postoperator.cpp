@@ -649,7 +649,8 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         if (std::abs(data.L) > 0.0)
         {
           std::complex<double> I_mj = vi.I_RLC[1];
-          vi.inductor_energy = 0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj));
+          vi.inductor_energy = units.Dimensionalize<Units::ValueType::ENERGY>(
+              0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj)));
           measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
         }
 
@@ -658,7 +659,8 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         if (std::abs(data.C) > 0.0)
         {
           std::complex<double> V_mj = vi.V;
-          vi.capacitor_energy = 0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj));
+          vi.capacitor_energy = units.Dimensionalize<Units::ValueType::ENERGY>(
+              0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj)));
           measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
         }
       }
@@ -699,8 +701,11 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
         // Power = 1/2 R_j I_mj².
         // Note conventions: mean(I²) = (I_r² + I_i²) / 2;
         auto resistor_power = 0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj));
-        vi.mode_port_kappa = units.Dimensionalize<Units::ValueType::FREQUENCY>(
-            std::copysign(resistor_power / energy_electric_all, I_mj.real()));
+        vi.mode_port_kappa =
+            units.Dimensionalize<Units::ValueType::FREQUENCY>(std::copysign(
+                resistor_power /
+                    units.NonDimensionalize<Units::ValueType::ENERGY>(energy_electric_all),
+                I_mj.real()));
         vi.quality_factor = (vi.mode_port_kappa == 0.0)
                                 ? mfem::infinity()
                                 : freq_re / std::abs(vi.mode_port_kappa);
