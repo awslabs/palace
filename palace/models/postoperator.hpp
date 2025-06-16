@@ -237,7 +237,7 @@ private:
   };
 
   // Results of measurements on fields. All values here should be in SI units (i.e. we call
-  // Dimenzionalize<units>(value) on the results before storage here). Not all measurements
+  // Dimensionalize<units>(value) on the results before storage here). Not all measurements
   // are sensible to define for all solvers, but it is a hassle to statically restrict them.
   // Since this class is private we will just leave them defaulted.
   struct Measurement
@@ -283,6 +283,12 @@ private:
   };
 
   mutable Measurement measurement_cache;
+
+  // Dimensionalize and nondimensionalize a set of measurements
+  static Measurement Dimensionalize(const Units &units,
+                                    const Measurement &nondim_measurement_cache);
+  static Measurement Nondimensionalize(const Units &units,
+                                       const Measurement &dim_measurement_cache);
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.

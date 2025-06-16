@@ -158,26 +158,26 @@ public:
   }
 
   template <ValueType unit, typename T>
-  auto NonDimensionalize(T value) const
+  auto Nondimensionalize(T value) const
   {
     return value / GetScaleFactor<unit>();
   }
 
   template <ValueType unit, typename T, std::size_t N>
-  auto NonDimensionalize(const std::array<T, N> &value) const
+  auto Nondimensionalize(const std::array<T, N> &value) const
   {
     auto out = value;
     std::transform(out.begin(), out.end(), out.begin(),
-                   [this](T v) { return NonDimensionalize<unit>(v); });
+                   [this](T v) { return Nondimensionalize<unit>(v); });
     return out;
   }
 
   template <ValueType unit, typename T>
-  auto NonDimensionalize(const std::vector<T> &value) const
+  auto Nondimensionalize(const std::vector<T> &value) const
   {
     auto out = value;
     std::transform(out.begin(), out.end(), out.begin(),
-                   [this](T v) { return NonDimensionalize<unit>(v); });
+                   [this](T v) { return Nondimensionalize<unit>(v); });
     return out;
   }
 };
