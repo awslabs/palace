@@ -67,7 +67,7 @@ public:
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  virtual void SetLinearSolver(const ComplexKspSolver &ksp) = 0;
+  virtual void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) = 0;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   virtual void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) = 0;

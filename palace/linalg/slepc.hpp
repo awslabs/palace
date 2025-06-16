@@ -104,7 +104,7 @@ protected:
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  const ComplexKspSolver *opInv;
+  /*const*/ ComplexKspSolver *opInv;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -151,7 +151,7 @@ public:
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  void SetLinearSolver(const ComplexKspSolver &ksp) override;
+  void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
@@ -444,6 +444,8 @@ public:
   void SetInitialSpace(const ComplexVector &v) override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
+
+  int Solve() override; // test
 };
 
 // Base class for SLEPc's PEP problem type.

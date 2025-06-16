@@ -594,7 +594,89 @@ void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
   // }
 }
 
+template <typename F>
+void RII(int n, F EvalFunction, std::complex<double> &lambda, Eigen::VectorXcd &x)
+{
 
+  // XX TODO
+  constexpr auto max_it = 100;
+  constexpr auto tol = 1.0e-9;
+
+  Eigen::MatrixXcd T(n, n), dT(n, n);
+  Eigen::VectorXcd r(n);
+
+  int it = 0;
+  double res = 1.0;
+
+  // Initialize the linear solver and eigenvector estimate.
+  EvalFunction(lambda, T, dT, true, res);
+  Eigen::PartialPivLU<Eigen::MatrixXcd> lu;
+  // Eigen::FullPivLU<Eigen::MatrixXcd> lu;  // XX TODO IS THIS EVER SINGULAR?
+  lu.compute(T);
+  x = lu.solve(Eigen::VectorXcd::Random(n));
+  x /= x.norm();
+
+  while (it < max_it)
+  {
+    // Compute nonlinear Rayleigh functional, with current eigenvalue as the initial guess.
+    int inner_it = 0;
+    while (inner_it < max_it)
+    {
+      if (inner_it > 0)
+      {
+        EvalFunction(lambda, T, dT, true, res);
+      }
+      r = T * x;
+      const std::complex<double> num = x.adjoint() * lu.solve(r);
+      r = dT * x;
+      const std::complex<double> den = x.adjoint() * lu.solve(r);
+      const auto mu = num / den;
+
+      // XX TODO DEBUG WIP
+      Mpi::Print(
+          "RII inner iteration {:d}, l = {:e}{:+e}i, num = {:e}{:+e}i, den = {:e}{:+e}i\n",
+          inner_it, lambda.real(), lambda.imag(), num.real(), num.imag(), den.real(),
+          den.imag());
+
+      if (std::abs(mu) <
+          std::sqrt(std::numeric_limits<double>::epsilon()) * std::abs(lambda))
+      {
+        break;
+      }
+      lambda -= mu;
+      inner_it++;
+    }
+    if (inner_it == max_it)
+    {
+      // XX TODO WARNING...
+    }
+
+    // Check convergence.
+    EvalFunction(lambda, T, dT, true, res);
+    r = T * x;
+
+    // XX TODO DEBUG WIP
+    Mpi::Print("RII iteration {:d} (inner iterations = {:d}), l = {:e}{:+e}i, ||r|| = {:e} "
+               "(||T|| = {:e})\n",
+               it, inner_it, lambda.real(), lambda.imag(), r.norm(), T.norm());
+
+    res = r.norm() / (T.norm() * x.norm());
+    if (res < tol)
+    {
+      break;
+    }
+
+    // Update linear solver and eigenvector estimate.
+    lu.compute(T);
+    x -= lu.solve(r);
+    x /= x.norm();
+    it++;
+  }
+  if (it == max_it)
+  {
+    // XX TODO WARNING...
+  }
+}
 
 template <typename F, typename MatType, typename VecType>
 void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
