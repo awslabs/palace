@@ -51,20 +51,82 @@
     return os;                                                                      \
   }
 
+using json = nlohmann::json;
+namespace palace
+{
+// Helpers for converting enums specified in labels.hpp. Must be done in palace scope rather
+// than palace::config scope to ensure argument-dependent-lookup succeeds in json.
+
+// Helper for converting string keys to enum for CoordinateSystem.
+PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
+                           {{CoordinateSystem::CARTESIAN, "Cartesian"},
+                            {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
+
+// Helper for converting string keys to enum for ProblemDataType.
+PALACE_JSON_SERIALIZE_ENUM(ProblemDataType,
+                           {{ProblemDataType::DRIVEN, "Driven"},
+                            {ProblemDataType::EIGENMODE, "Eigenmode"},
+                            {ProblemDataType::ELECTROSTATIC, "Electrostatic"},
+                            {ProblemDataType::MAGNETOSTATIC, "Magnetostatic"},
+                            {ProblemDataType::TRANSIENT, "Transient"}})
+
+// Helper for converting string keys to enum for EigenSolverType.
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverType, {{EigenSolverType::DEFAULT, "Default"},
+                                             {EigenSolverType::SLEPC, "SLEPc"},
+                                             {EigenSolverType::ARPACK, "ARPACK"}})
+
+// Helper for converting string keys to enum for SurfaceFluxPostType.
+PALACE_JSON_SERIALIZE_ENUM(SurfaceFluxType, {{SurfaceFluxType::ELECTRIC, "Electric"},
+                                             {SurfaceFluxType::MAGNETIC, "Magnetic"},
+                                             {SurfaceFluxType::POWER, "Power"}})
+
+// Helper for converting string keys to enum for InterfaceDielectricType.
+PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricType,
+                           {{InterfaceDielectricType::DEFAULT, "Default"},
+                            {InterfaceDielectricType::MA, "MA"},
+                            {InterfaceDielectricType::MS, "MS"},
+                            {InterfaceDielectricType::SA, "SA"}})
+
+// Helper for converting string keys to enum for FrequencySampleType.
+PALACE_JSON_SERIALIZE_ENUM(FrequencySampleType, {{FrequencySampleType::DEFAULT, "Default"},
+                                                 {FrequencySampleType::LINEAR, "Linear"},
+                                                 {FrequencySampleType::LOG, "Log"},
+                                                 {FrequencySampleType::POINT, "Point"}})
+
+// Helper for converting string keys to enum for TransientSolverType and ExcitationType.
+PALACE_JSON_SERIALIZE_ENUM(TransientSolverType,
+                           {{TransientSolverType::DEFAULT, "Default"},
+                            {TransientSolverType::GEN_ALPHA, "GeneralizedAlpha"},
+                            {TransientSolverType::RUNGE_KUTTA, "RungeKutta"},
+                            {TransientSolverType::CVODE, "CVODE"},
+                            {TransientSolverType::ARKODE, "ARKODE"}})
+PALACE_JSON_SERIALIZE_ENUM(ExcitationType,
+                           {{ExcitationType::SINUSOIDAL, "Sinusoidal"},
+                            {ExcitationType::GAUSSIAN, "Gaussian"},
+                            {ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
+                            {ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
+                            {ExcitationType::RAMP_STEP, "Ramp"},
+                            {ExcitationType::SMOOTH_STEP, "SmoothStep"}})
+
+// Helper for converting string keys to enum for LinearSolverType.
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverType,
+                           {{LinearSolverType::DEFAULT, "Default"},
+                            {LinearSolverType::AMS, "AMS"},
+                            {LinearSolverType::BOOMER_AMG, "BoomerAMG"},
+                            {LinearSolverType::MUMPS, "MUMPS"},
+                            {LinearSolverType::SUPERLU, "SuperLU"},
+                            {LinearSolverType::STRUMPACK, "STRUMPACK"},
+                            {LinearSolverType::STRUMPACK_MP, "STRUMPACK-MP"},
+                            {LinearSolverType::JACOBI, "Jacobi"}})
+
+// Helpers for converting string keys to enum for Device.
+PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
+                                    {Device::GPU, "GPU"},
+                                    {Device::DEBUG, "Debug"}})
+}  // namespace palace
+
 namespace palace::config
 {
-
-using json = nlohmann::json;
-
-namespace internal
-{
-
-// Helper for converting string keys to enum for ElementData::CoordinateSystem.
-PALACE_JSON_SERIALIZE_ENUM(ElementData::CoordinateSystem,
-                           {{ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
-                            {ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
-
-}  // namespace internal
 
 namespace
 {
@@ -230,14 +292,6 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 constexpr bool JSON_DEBUG = false;
 
 }  // namespace
-
-// Helper for converting string keys to enum for ProblemData::Type.
-PALACE_JSON_SERIALIZE_ENUM(ProblemData::Type,
-                           {{ProblemData::Type::DRIVEN, "Driven"},
-                            {ProblemData::Type::EIGENMODE, "Eigenmode"},
-                            {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
-                            {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
-                            {ProblemData::Type::TRANSIENT, "Transient"}})
 
 void ProblemData::SetUp(json &config)
 {
@@ -1154,12 +1208,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
   }
 }
 
-// Helper for converting string keys to enum for WavePortData::EigenSolverType.
-PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
-                           {{WavePortData::EigenSolverType::DEFAULT, "Default"},
-                            {WavePortData::EigenSolverType::SLEPC, "SLEPc"},
-                            {WavePortData::EigenSolverType::ARPACK, "ARPACK"}})
-
 void WavePortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("WavePort");
@@ -1304,12 +1352,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
 }
 
-// Helper for converting string keys to enum for SurfaceFluxPostData::Type.
-PALACE_JSON_SERIALIZE_ENUM(SurfaceFluxData::Type,
-                           {{SurfaceFluxData::Type::ELECTRIC, "Electric"},
-                            {SurfaceFluxData::Type::MAGNETIC, "Magnetic"},
-                            {SurfaceFluxData::Type::POWER, "Power"}})
-
 void SurfaceFluxPostData::SetUp(json &postpro)
 {
   auto flux = postpro.find("SurfaceFlux");
@@ -1363,13 +1405,6 @@ void SurfaceFluxPostData::SetUp(json &postpro)
     }
   }
 }
-
-// Helper for converting string keys to enum for InterfaceDielectricData::Type.
-PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricData::Type,
-                           {{InterfaceDielectricData::Type::DEFAULT, "Default"},
-                            {InterfaceDielectricData::Type::MA, "MA"},
-                            {InterfaceDielectricData::Type::MS, "MS"},
-                            {InterfaceDielectricData::Type::SA, "SA"}})
 
 void InterfaceDielectricPostData::SetUp(json &postpro)
 {
@@ -1644,12 +1679,6 @@ auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
   return vec.end();
 }
 
-// Helper for converting string keys to enum for DrivenSolverData::FrequencySampleType.
-PALACE_JSON_SERIALIZE_ENUM(DrivenSolverData::FrequencySampleType,
-                           {{DrivenSolverData::FrequencySampleType::DEFAULT, "Default"},
-                            {DrivenSolverData::FrequencySampleType::LINEAR, "Linear"},
-                            {DrivenSolverData::FrequencySampleType::LOG, "Log"},
-                            {DrivenSolverData::FrequencySampleType::POINT, "Point"}})
 void DrivenSolverData::SetUp(json &solver)
 {
   auto driven = solver.find("Driven");
@@ -1961,23 +1990,6 @@ void MagnetostaticSolverData::SetUp(json &solver)
   }
 }
 
-// Helper for converting string keys to enum for TransientSolverData::Type and
-// TransientSolverData::ExcitationType.
-PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
-                           {{TransientSolverData::Type::DEFAULT, "Default"},
-                            {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TransientSolverData::Type::RUNGE_KUTTA, "RungeKutta"},
-                            {TransientSolverData::Type::CVODE, "CVODE"},
-                            {TransientSolverData::Type::ARKODE, "ARKODE"}})
-PALACE_JSON_SERIALIZE_ENUM(
-    TransientSolverData::ExcitationType,
-    {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
-     {TransientSolverData::ExcitationType::GAUSSIAN, "Gaussian"},
-     {TransientSolverData::ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
-     {TransientSolverData::ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
-     {TransientSolverData::ExcitationType::RAMP_STEP, "Ramp"},
-     {TransientSolverData::ExcitationType::SMOOTH_STEP, "SmoothStep"}})
-
 void TransientSolverData::SetUp(json &solver)
 {
   auto transient = solver.find("Transient");
@@ -2059,19 +2071,10 @@ void TransientSolverData::SetUp(json &solver)
   }
 }
 
-// Helpers for converting string keys to enum for LinearSolverData::Type,
-// LinearSolverData::KspType, LinearSolverData::SideType,
-// LinearSolverData::MultigridCoarsenType, LinearSolverData::SymFactType,
-// LinearSolverData::CompressionType, and LinearSolverData::OrthogType.
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
-                           {{LinearSolverData::Type::DEFAULT, "Default"},
-                            {LinearSolverData::Type::AMS, "AMS"},
-                            {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
-                            {LinearSolverData::Type::MUMPS, "MUMPS"},
-                            {LinearSolverData::Type::SUPERLU, "SuperLU"},
-                            {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
-                            {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"},
-                            {LinearSolverData::Type::JACOBI, "Jacobi"}})
+// Helpers for converting string keys to enum for LinearSolverData::KspType,
+// LinearSolverData::SideType, LinearSolverData::MultigridCoarsenType,
+// LinearSolverData::SymFactType, LinearSolverData::CompressionType, and
+// LinearSolverData::OrthogType.
 PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
                            {{LinearSolverData::KspType::DEFAULT, "Default"},
                             {LinearSolverData::KspType::CG, "CG"},
@@ -2247,11 +2250,6 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
   }
 }
-
-// Helpers for converting string keys to enum for SolverData::Device.
-PALACE_JSON_SERIALIZE_ENUM(SolverData::Device, {{SolverData::Device::CPU, "CPU"},
-                                                {SolverData::Device::GPU, "GPU"},
-                                                {SolverData::Device::DEBUG, "Debug"}})
 
 void SolverData::SetUp(json &config)
 {

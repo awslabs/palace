@@ -12,6 +12,7 @@
 #include "fem/gridfunction.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
+#include "utils/labels.hpp"
 
 // XX TODO: Add bulk element Eval() overrides to speed up postprocessing (also needed in
 //          mfem::DataCollection classes.
@@ -145,14 +146,6 @@ public:
   }
 };
 
-// Helper for BdrSurfaceFluxCoefficient.
-enum class SurfaceFluxType
-{
-  ELECTRIC,
-  MAGNETIC,
-  POWER
-};
-
 // Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.
@@ -269,15 +262,6 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
   V.SetSize(W1.Size());
   Cross3(W1, W2, V);
 }
-
-// Helper for InterfaceDielectricCoefficient.
-enum class InterfaceDielectricType
-{
-  DEFAULT,
-  MA,
-  MS,
-  SA
-};
 
 // Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
 // Uses the neighbor element on a user specified side to compute a single-sided value for

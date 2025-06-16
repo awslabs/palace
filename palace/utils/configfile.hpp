@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
+#include "labels.hpp"
 
 namespace palace::config
 {
@@ -75,11 +76,13 @@ struct ElementData
   std::array<double, 3> direction{{0.0, 0.0, 0.0}};
 
   // Coordinate system that the normal vector is expressed in.
-  enum class CoordinateSystem
-  {
-    CARTESIAN,
-    CYLINDRICAL
-  };
+  using CoordinateSystem = CoordinateSystem;
+
+  // enum class CoordinateSystem
+  // {
+  //   CARTESIAN,
+  //   CYLINDRICAL
+  // };
   CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
 
   // List of boundary attributes for this element.
@@ -94,14 +97,7 @@ struct ProblemData
 {
 public:
   // Simulation type.
-  enum class Type
-  {
-    DRIVEN,
-    EIGENMODE,
-    ELECTROSTATIC,
-    MAGNETOSTATIC,
-    TRANSIENT
-  };
+  using Type = ProblemDataType;
   Type type = Type::DRIVEN;
 
   // Level of printing.
@@ -519,12 +515,7 @@ public:
   double d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
-  enum class EigenSolverType
-  {
-    DEFAULT,
-    SLEPC,
-    ARPACK
-  };
+  using EigenSolverType = EigenSolverType;
   EigenSolverType eigen_type = EigenSolverType::DEFAULT;
 
   // Input excitation for driven & transient solver:
@@ -575,12 +566,7 @@ struct SurfaceFluxData
 {
 public:
   // Surface flux type.
-  enum class Type
-  {
-    ELECTRIC,
-    MAGNETIC,
-    POWER
-  };
+  using Type = SurfaceFluxType;
   Type type = Type::ELECTRIC;
 
   // Flag for whether or not to consider the boundary as an infinitely thin two-sided
@@ -608,13 +594,7 @@ struct InterfaceDielectricData
 {
 public:
   // Type of interface dielectric for computing electric field energy participation ratios.
-  enum class Type
-  {
-    DEFAULT,
-    MA,
-    MS,
-    SA
-  };
+  using Type = InterfaceDielectricType;
   Type type = Type::DEFAULT;
 
   // Dielectric interface thickness [m].
@@ -678,13 +658,7 @@ struct DrivenSolverData
 {
 public:
   // Frequency sampling schemes.
-  enum class FrequencySampleType : u_int8_t
-  {
-    LINEAR,
-    LOG,
-    POINT,
-    DEFAULT = LINEAR
-  };
+  using FrequencySampleType = FrequencySampleType;
 
   // Explicit frequency samples [GHz].
   std::vector<double> sample_f = {};
@@ -743,7 +717,7 @@ public:
   bool mass_orthog = false;
 
   // Eigenvalue solver type.
-  using Type = WavePortData::EigenSolverType;
+  using Type = EigenSolverType;
   Type type = Type::DEFAULT;
 
   // For SLEPc eigenvalue solver, use linearized formulation for quadratic eigenvalue
@@ -775,26 +749,11 @@ struct TransientSolverData
 {
 public:
   // Time integration scheme type.
-  enum class Type
-  {
-    GEN_ALPHA,
-    RUNGE_KUTTA,
-    ARKODE,
-    CVODE,
-    DEFAULT = GEN_ALPHA
-  };
+  using Type = TransientSolverType;
   Type type = Type::DEFAULT;
 
   // Excitation type for port excitation.
-  enum class ExcitationType
-  {
-    SINUSOIDAL,
-    GAUSSIAN,
-    DIFF_GAUSSIAN,
-    MOD_GAUSSIAN,
-    RAMP_STEP,
-    SMOOTH_STEP
-  };
+  using ExcitationType = ExcitationType;
   ExcitationType excitation = ExcitationType::SINUSOIDAL;
 
   // Excitation parameters: frequency [GHz] and pulse width [ns].
@@ -826,17 +785,7 @@ struct LinearSolverData
 {
 public:
   // Solver type.
-  enum class Type
-  {
-    DEFAULT,
-    AMS,
-    BOOMER_AMG,
-    MUMPS,
-    SUPERLU,
-    STRUMPACK,
-    STRUMPACK_MP,
-    JACOBI
-  };
+  using Type = LinearSolverType;
   Type type = Type::DEFAULT;
 
   // Krylov solver type.
@@ -1014,12 +963,7 @@ public:
   int q_order_extra = 0;
 
   // Device used to configure MFEM.
-  enum class Device
-  {
-    CPU,
-    GPU,
-    DEBUG
-  };
+  using Device = Device;
   Device device = Device::CPU;
 
   // Backend for libCEED (https://libceed.org/en/latest/gettingstarted/#backends).
@@ -1042,4 +986,4 @@ int GetNumSteps(double start, double end, double delta);
 
 }  // namespace palace::config
 
-#endif  // PALACE_UTILS_CONFIGFILE_HPP
+#endif  // PALACE_UTILS_CONFIG_FILE_HPP
