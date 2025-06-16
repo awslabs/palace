@@ -520,214 +520,6 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
 // Measurements.
 
 template <ProblemType solver_t>
-// static
-typename PostOperator<solver_t>::Measurement
-PostOperator<solver_t>::Dimensionalize(const Units &units,
-                                       const Measurement &nondim_measurement_cache)
-{
-  Measurement measurement_cache;
-  measurement_cache.freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq);
-  measurement_cache.Jcoeff_excitation =
-      nondim_measurement_cache.Jcoeff_excitation;                        // NONE // ????
-  measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;  // NONE
-  measurement_cache.error_abs = nondim_measurement_cache.error_abs;      // NONE
-  measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;    // NONE
-
-  measurement_cache.domain_E_field_energy_all =
-      units.Dimensionalize<Units::ValueType::ENERGY>(
-          nondim_measurement_cache.domain_E_field_energy_all);
-  measurement_cache.domain_H_field_energy_all =
-      units.Dimensionalize<Units::ValueType::ENERGY>(
-          nondim_measurement_cache.domain_H_field_energy_all);
-  for (const auto &e : nondim_measurement_cache.domain_E_field_energy_i)
-  {
-    measurement_cache.domain_E_field_energy_i.emplace_back(
-        DomainData{e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
-                   e.participation_ratio});
-  }
-  for (const auto &e : nondim_measurement_cache.domain_H_field_energy_i)
-  {
-    measurement_cache.domain_H_field_energy_i.emplace_back(
-        DomainData{e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
-                   e.participation_ratio});
-  }
-  measurement_cache.lumped_port_capacitor_energy =
-      units.Dimensionalize<Units::ValueType::ENERGY>(
-          nondim_measurement_cache.lumped_port_capacitor_energy);
-  measurement_cache.lumped_port_inductor_energy =
-      units.Dimensionalize<Units::ValueType::ENERGY>(
-          nondim_measurement_cache.lumped_port_inductor_energy);
-
-  auto dimensionalize_port_post_data = [&units](const std::map<int, PortPostData> &nondim)
-  {
-    std::map<int, PortPostData> dim;
-    for (const auto &[k, data] : nondim)
-    {
-      dim[k] = PortPostData();
-      dim[k].P = units.Dimensionalize<Units::ValueType::POWER>(data.P);
-      dim[k].V = units.Dimensionalize<Units::ValueType::VOLTAGE>(data.V),
-      dim[k].I = units.Dimensionalize<Units::ValueType::CURRENT>(data.I),
-      dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
-                      units.Dimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
-                      units.Dimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
-      dim[k].S = data.S;                // NONE
-      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
-      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
-
-      dim[k].inductor_energy =
-          units.Dimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
-      dim[k].capacitor_energy =
-          units.Dimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
-
-      dim[k].mode_port_kappa =
-          units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
-      dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
-    }
-    return dim;
-  };
-  measurement_cache.lumped_port_vi =
-      dimensionalize_port_post_data(nondim_measurement_cache.lumped_port_vi);
-  measurement_cache.wave_port_vi =
-      dimensionalize_port_post_data(nondim_measurement_cache.wave_port_vi);
-
-  measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
-      nondim_measurement_cache.probe_E_field);
-  measurement_cache.probe_B_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
-      nondim_measurement_cache.probe_B_field);
-
-  for (const auto &data : nondim_measurement_cache.surface_flux_i)
-  {
-    auto &flux = measurement_cache.surface_flux_i.emplace_back(data);
-    if (data.type == SurfaceFluxType::ELECTRIC)
-    {
-      flux.Phi *= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-      flux.Phi *= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-    }
-    else if (data.type == SurfaceFluxType::MAGNETIC)
-    {
-      flux.Phi *= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-      flux.Phi *= units.GetScaleFactor<Units::ValueType::CURRENT>();
-    }
-    else if (data.type == SurfaceFluxType::POWER)
-    {
-      flux.Phi *= units.GetScaleFactor<Units::ValueType::POWER>();
-    }
-  }
-
-  for (const auto &data : nondim_measurement_cache.interface_eps_i)
-  {
-    auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
-    eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
-  }
-  return measurement_cache;
-}
-
-template <ProblemType solver_t>
-// static
-typename PostOperator<solver_t>::Measurement
-PostOperator<solver_t>::Nondimensionalize(const Units &units,
-                                          const Measurement &dim_measurement_cache)
-{
-  Measurement measurement_cache;
-  measurement_cache.freq =
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq);
-  measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
-  measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
-  measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
-  measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
-
-  measurement_cache.domain_E_field_energy_all =
-      units.Nondimensionalize<Units::ValueType::ENERGY>(
-          dim_measurement_cache.domain_E_field_energy_all);
-  measurement_cache.domain_H_field_energy_all =
-      units.Nondimensionalize<Units::ValueType::ENERGY>(
-          dim_measurement_cache.domain_H_field_energy_all);
-  for (const auto &e : dim_measurement_cache.domain_E_field_energy_i)
-  {
-    measurement_cache.domain_E_field_energy_i.emplace_back(
-        DomainData{e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
-                   e.participation_ratio});
-  }
-  for (const auto &e : dim_measurement_cache.domain_H_field_energy_i)
-  {
-    measurement_cache.domain_H_field_energy_i.emplace_back(
-        DomainData{e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
-                   e.participation_ratio});
-  }
-  measurement_cache.lumped_port_capacitor_energy =
-      units.Nondimensionalize<Units::ValueType::ENERGY>(
-          dim_measurement_cache.lumped_port_capacitor_energy);
-  measurement_cache.lumped_port_inductor_energy =
-      units.Nondimensionalize<Units::ValueType::ENERGY>(
-          dim_measurement_cache.lumped_port_inductor_energy);
-
-  auto dimensionalize_port_post_data = [&units](const std::map<int, PortPostData> &nondim)
-  {
-    std::map<int, PortPostData> dim;
-    for (const auto &[k, data] : nondim)
-    {
-      dim[k] = PortPostData();
-      dim[k].P = units.Nondimensionalize<Units::ValueType::POWER>(data.P);
-      dim[k].V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(data.V),
-      dim[k].I = units.Nondimensionalize<Units::ValueType::CURRENT>(data.I),
-      dim[k].I_RLC = {
-          units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
-          units.Nondimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
-          units.Nondimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
-      dim[k].S = data.S;                // NONE
-      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
-      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
-
-      dim[k].inductor_energy =
-          units.Nondimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
-      dim[k].capacitor_energy =
-          units.Nondimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
-
-      dim[k].mode_port_kappa =
-          units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
-      dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
-    }
-    return dim;
-  };
-  measurement_cache.lumped_port_vi =
-      dimensionalize_port_post_data(dim_measurement_cache.lumped_port_vi);
-  measurement_cache.wave_port_vi =
-      dimensionalize_port_post_data(dim_measurement_cache.wave_port_vi);
-
-  measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
-      dim_measurement_cache.probe_E_field);
-  measurement_cache.probe_B_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
-      dim_measurement_cache.probe_B_field);
-
-  for (const auto &data : dim_measurement_cache.surface_flux_i)
-  {
-    auto &flux = measurement_cache.surface_flux_i.emplace_back(data);
-    if (data.type == SurfaceFluxType::ELECTRIC)
-    {
-      flux.Phi /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-      flux.Phi /= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-    }
-    else if (data.type == SurfaceFluxType::MAGNETIC)
-    {
-      flux.Phi /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-      flux.Phi /= units.GetScaleFactor<Units::ValueType::CURRENT>();
-    }
-    else if (data.type == SurfaceFluxType::POWER)
-    {
-      flux.Phi /= units.GetScaleFactor<Units::ValueType::POWER>();
-    }
-  }
-
-  for (const auto &data : dim_measurement_cache.interface_eps_i)
-  {
-    auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
-    eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
-  }
-  return measurement_cache;
-}
-
-template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 {
   measurement_cache.domain_E_field_energy_i.clear();
@@ -751,7 +543,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
       auto participation_ratio =
           std::abs(energy_raw) > 0.0 ? energy_i_raw / energy_raw : 0.0;
       measurement_cache.domain_E_field_energy_i.emplace_back(
-          DomainData{idx, energy_i, participation_ratio});
+          Measurement::DomainData{idx, energy_i, participation_ratio});
     }
   }
   else
@@ -760,7 +552,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     measurement_cache.domain_E_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      measurement_cache.domain_E_field_energy_i.emplace_back(DomainData{idx, 0.0, 0.0});
+      measurement_cache.domain_E_field_energy_i.emplace_back(
+          Measurement::DomainData{idx, 0.0, 0.0});
     }
   }
 
@@ -778,7 +571,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
       auto participation_ratio =
           std::abs(energy_raw) > 0.0 ? energy_i_raw / energy_raw : 0.0;
       measurement_cache.domain_H_field_energy_i.emplace_back(
-          DomainData{idx, energy_i, participation_ratio});
+          Measurement::DomainData{idx, energy_i, participation_ratio});
     }
   }
   else
@@ -787,7 +580,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     measurement_cache.domain_H_field_energy_all = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      measurement_cache.domain_H_field_energy_i.emplace_back(DomainData{idx, 0.0, 0.0});
+      measurement_cache.domain_H_field_energy_i.emplace_back(
+          Measurement::DomainData{idx, 0.0, 0.0});
     }
   }
 
@@ -1062,7 +856,8 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
     {
       flux *= units.GetScaleFactor<Units::ValueType::POWER>();
     }
-    measurement_cache.surface_flux_i.emplace_back(FluxData{idx, flux, data.type});
+    measurement_cache.surface_flux_i.emplace_back(
+        Measurement::FluxData{idx, flux, data.type});
   }
 }
 
@@ -1099,7 +894,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
                                   ? mfem::infinity()
                                   : 1.0 / (loss_tangent_delta * energy_participation_p);
 
-      measurement_cache.interface_eps_i.emplace_back(InterfaceData{
+      measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
           idx, energy, loss_tangent_delta, energy_participation_p, quality_factor_Q});
     }
   }
@@ -1152,7 +947,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   MeasureAllImpl();
 
   auto freq_re = measurement_cache.freq.real();
-  post_op_csv.PrintAllCSVData(freq_re, step, ex_idx);
+  post_op_csv.PrintAllCSVData(measurement_cache, freq_re, step, ex_idx);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1209,7 +1004,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   MeasureAllImpl();
 
   int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(eigen_print_idx, step);
+  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
   if (write_paraview_fields(step))
   {
     WriteFields(step, eigen_print_idx);
@@ -1235,7 +1030,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
   MeasureAllImpl();
 
   int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(eigen_print_idx, step);
+  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1261,7 +1056,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
   MeasureAllImpl();
 
   int eigen_print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(eigen_print_idx, step);
+  post_op_csv.PrintAllCSVData(measurement_cache, eigen_print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1289,7 +1084,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   measurement_cache.Jcoeff_excitation = J_coef;
   MeasureAllImpl();
 
-  post_op_csv.PrintAllCSVData(time, step);
+  post_op_csv.PrintAllCSVData(measurement_cache, time, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");

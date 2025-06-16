@@ -11,6 +11,212 @@
 namespace palace
 {
 
+// static
+Measurement Measurement::Dimensionalize(const Units &units,
+                                        const Measurement &nondim_measurement_cache)
+{
+  Measurement measurement_cache;
+  measurement_cache.freq =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq);
+  measurement_cache.Jcoeff_excitation =
+      nondim_measurement_cache.Jcoeff_excitation;                        // NONE // ????
+  measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;  // NONE
+  measurement_cache.error_abs = nondim_measurement_cache.error_abs;      // NONE
+  measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;    // NONE
+
+  measurement_cache.domain_E_field_energy_all =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.domain_E_field_energy_all);
+  measurement_cache.domain_H_field_energy_all =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.domain_H_field_energy_all);
+  for (const auto &e : nondim_measurement_cache.domain_E_field_energy_i)
+  {
+    measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  for (const auto &e : nondim_measurement_cache.domain_H_field_energy_i)
+  {
+    measurement_cache.domain_H_field_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  measurement_cache.lumped_port_capacitor_energy =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.lumped_port_capacitor_energy);
+  measurement_cache.lumped_port_inductor_energy =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.lumped_port_inductor_energy);
+
+  auto dimensionalize_port_post_data =
+      [&units](const std::map<int, Measurement::PortPostData> &nondim)
+  {
+    std::map<int, Measurement::PortPostData> dim;
+    for (const auto &[k, data] : nondim)
+    {
+      dim[k] = Measurement::PortPostData();
+      dim[k].P = units.Dimensionalize<Units::ValueType::POWER>(data.P);
+      dim[k].V = units.Dimensionalize<Units::ValueType::VOLTAGE>(data.V),
+      dim[k].I = units.Dimensionalize<Units::ValueType::CURRENT>(data.I),
+      dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
+                      units.Dimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
+                      units.Dimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
+      dim[k].S = data.S;                // NONE
+      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
+      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
+
+      dim[k].inductor_energy =
+          units.Dimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
+      dim[k].capacitor_energy =
+          units.Dimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
+
+      dim[k].mode_port_kappa =
+          units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+      dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
+    }
+    return dim;
+  };
+  measurement_cache.lumped_port_vi =
+      dimensionalize_port_post_data(nondim_measurement_cache.lumped_port_vi);
+  measurement_cache.wave_port_vi =
+      dimensionalize_port_post_data(nondim_measurement_cache.wave_port_vi);
+
+  measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.probe_E_field);
+  measurement_cache.probe_B_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
+      nondim_measurement_cache.probe_B_field);
+
+  for (const auto &data : nondim_measurement_cache.surface_flux_i)
+  {
+    auto &flux = measurement_cache.surface_flux_i.emplace_back(data);
+    if (data.type == SurfaceFlux::ELECTRIC)
+    {
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+    }
+    else if (data.type == SurfaceFlux::MAGNETIC)
+    {
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::CURRENT>();
+    }
+    else if (data.type == SurfaceFlux::POWER)
+    {
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::POWER>();
+    }
+  }
+
+  for (const auto &data : nondim_measurement_cache.interface_eps_i)
+  {
+    auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
+    eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
+  }
+  return measurement_cache;
+}
+
+// static
+Measurement Measurement::Nondimensionalize(const Units &units,
+                                           const Measurement &dim_measurement_cache)
+{
+  Measurement measurement_cache;
+  measurement_cache.freq =
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq);
+  measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
+  measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
+  measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
+  measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
+
+  measurement_cache.domain_E_field_energy_all =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.domain_E_field_energy_all);
+  measurement_cache.domain_H_field_energy_all =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.domain_H_field_energy_all);
+  for (const auto &e : dim_measurement_cache.domain_E_field_energy_i)
+  {
+    measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  for (const auto &e : dim_measurement_cache.domain_H_field_energy_i)
+  {
+    measurement_cache.domain_H_field_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  measurement_cache.lumped_port_capacitor_energy =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.lumped_port_capacitor_energy);
+  measurement_cache.lumped_port_inductor_energy =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.lumped_port_inductor_energy);
+
+  auto dimensionalize_port_post_data =
+      [&units](const std::map<int, Measurement::PortPostData> &nondim)
+  {
+    std::map<int, Measurement::PortPostData> dim;
+    for (const auto &[k, data] : nondim)
+    {
+      dim[k] = Measurement::PortPostData();
+      dim[k].P = units.Nondimensionalize<Units::ValueType::POWER>(data.P);
+      dim[k].V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(data.V),
+      dim[k].I = units.Nondimensionalize<Units::ValueType::CURRENT>(data.I),
+      dim[k].I_RLC = {
+          units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
+          units.Nondimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
+          units.Nondimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
+      dim[k].S = data.S;                // NONE
+      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
+      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
+
+      dim[k].inductor_energy =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
+      dim[k].capacitor_energy =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
+
+      dim[k].mode_port_kappa =
+          units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+      dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
+    }
+    return dim;
+  };
+  measurement_cache.lumped_port_vi =
+      dimensionalize_port_post_data(dim_measurement_cache.lumped_port_vi);
+  measurement_cache.wave_port_vi =
+      dimensionalize_port_post_data(dim_measurement_cache.wave_port_vi);
+
+  measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      dim_measurement_cache.probe_E_field);
+  measurement_cache.probe_B_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
+      dim_measurement_cache.probe_B_field);
+
+  for (const auto &data : dim_measurement_cache.surface_flux_i)
+  {
+    auto &flux = measurement_cache.surface_flux_i.emplace_back(data);
+    if (data.type == SurfaceFlux::ELECTRIC)
+    {
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+    }
+    else if (data.type == SurfaceFlux::MAGNETIC)
+    {
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::CURRENT>();
+    }
+    else if (data.type == SurfaceFlux::POWER)
+    {
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::POWER>();
+    }
+  }
+
+  for (const auto &data : dim_measurement_cache.interface_eps_i)
+  {
+    auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
+    eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
+  }
+  return measurement_cache;
+}
+
 namespace
 {
 
@@ -130,16 +336,18 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   }
   using fmt::format;
   CheckAppendIndex(domain_E->table["idx"], m_idx_value, m_idx_row);
-  domain_E->table[format("Ee_{}", m_ex_idx)] << MCache().domain_E_field_energy_all;
-  domain_E->table[format("Em_{}", m_ex_idx)] << MCache().domain_H_field_energy_all;
-  domain_E->table[format("Ec_{}", m_ex_idx)] << MCache().lumped_port_capacitor_energy;
-  domain_E->table[format("Ei_{}", m_ex_idx)] << MCache().lumped_port_inductor_energy;
-  for (const auto &data : MCache().domain_E_field_energy_i)
+  domain_E->table[format("Ee_{}", m_ex_idx)] << measurement_cache.domain_E_field_energy_all;
+  domain_E->table[format("Em_{}", m_ex_idx)] << measurement_cache.domain_H_field_energy_all;
+  domain_E->table[format("Ec_{}", m_ex_idx)]
+      << measurement_cache.lumped_port_capacitor_energy;
+  domain_E->table[format("Ei_{}", m_ex_idx)]
+      << measurement_cache.lumped_port_inductor_energy;
+  for (const auto &data : measurement_cache.domain_E_field_energy_i)
   {
     domain_E->table[format("Ee_{}_{}", data.idx, m_ex_idx)] << data.energy;
     domain_E->table[format("pe_{}_{}", data.idx, m_ex_idx)] << data.participation_ratio;
   }
-  for (const auto &data : MCache().domain_H_field_energy_i)
+  for (const auto &data : measurement_cache.domain_H_field_energy_i)
   {
     domain_E->table[format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy;
     domain_E->table[format("pm_{}_{}", data.idx, m_ex_idx)] << data.participation_ratio;
@@ -216,7 +424,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
   }
   using fmt::format;
   CheckAppendIndex(surface_F->table["idx"], m_idx_value, m_idx_row);
-  for (const auto &data : MCache().surface_flux_i)
+  for (const auto &data : measurement_cache.surface_flux_i)
   {
     surface_F->table[format("F_{}_{}_re", data.idx, m_ex_idx)] << data.Phi.real();
     if (HasComplexGridFunction<solver_t>() &&
@@ -266,7 +474,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
   using fmt::format;
   CheckAppendIndex(surface_Q->table["idx"], m_idx_value, m_idx_row);
 
-  for (const auto &data : MCache().interface_eps_i)
+  for (const auto &data : measurement_cache.interface_eps_i)
   {
     surface_Q->table[format("p_{}_{}", data.idx, m_ex_idx)] << data.energy_participation;
     surface_Q->table[format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
@@ -326,7 +534,7 @@ void PostOperatorCSV<solver_t>::PrintProbeE()
   }
   using fmt::format;
   auto v_dim = post_op->interp_op.GetVDim();
-  auto probe_field = MCache().probe_E_field;
+  auto probe_field = measurement_cache.probe_E_field;
   MFEM_VERIFY(probe_field.size() == v_dim * post_op->interp_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op->interp_op.GetProbes().size(),
@@ -405,7 +613,7 @@ void PostOperatorCSV<solver_t>::PrintProbeB()
   using fmt::format;
 
   auto v_dim = post_op->interp_op.GetVDim();
-  auto probe_field = MCache().probe_B_field;
+  auto probe_field = measurement_cache.probe_B_field;
   MFEM_VERIFY(probe_field.size() == v_dim * post_op->interp_op.GetProbes().size(),
               format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
                      v_dim, post_op->interp_op.GetProbes().size(),
@@ -471,7 +679,7 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI()
   CheckAppendIndex(surface_I->table["idx"], m_idx_value, m_idx_row);
   for (const auto &[idx, data] : post_op->fem_op->GetSurfaceCurrentOp())
   {
-    auto I_inc_raw = data.GetExcitationCurrent() * MCache().Jcoeff_excitation;
+    auto I_inc_raw = data.GetExcitationCurrent() * measurement_cache.Jcoeff_excitation;
     auto I_inc =
         post_op->units.template Dimensionalize<Units::ValueType::CURRENT>(I_inc_raw);
     surface_I->table[format("I_{}_{}", idx, m_ex_idx)] << I_inc;
@@ -575,7 +783,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
     {
       if (data.excitation == m_ex_idx)
       {
-        auto Jcoeff = MCache().Jcoeff_excitation;
+        auto Jcoeff = measurement_cache.Jcoeff_excitation;
         double V_inc = data.GetExcitationVoltage() * Jcoeff;
         double I_inc = (std::abs(V_inc) > 0.0)
                            ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
@@ -587,7 +795,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
     }
   }
 
-  for (const auto &[idx, data] : MCache().lumped_port_vi)
+  for (const auto &[idx, data] : measurement_cache.lumped_port_vi)
   {
     port_V->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.V.real() * unit_V;
     port_I->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I.real() * unit_A;
@@ -654,12 +862,12 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
   }
   using fmt::format;
   CheckAppendIndex(port_S->table["idx"], m_idx_value, m_idx_row);
-  for (const auto &[idx, data] : MCache().lumped_port_vi)
+  for (const auto &[idx, data] : measurement_cache.lumped_port_vi)
   {
     port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
     port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
   }
-  for (const auto &[idx, data] : MCache().wave_port_vi)
+  for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
     port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
     port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
@@ -694,11 +902,11 @@ auto PostOperatorCSV<solver_t>::PrintEig()
     return;
   }
   eig->table["idx"] << m_idx_value;
-  eig->table["f_re"] << MCache().freq.real();
-  eig->table["f_im"] << MCache().freq.imag();
-  eig->table["q"] << MCache().eigenmode_Q;
-  eig->table["err_back"] << MCache().error_bkwd;
-  eig->table["err_abs"] << MCache().error_abs;
+  eig->table["f_re"] << measurement_cache.freq.real();
+  eig->table["f_im"] << measurement_cache.freq.imag();
+  eig->table["q"] << measurement_cache.eigenmode_Q;
+  eig->table["err_back"] << measurement_cache.error_bkwd;
+  eig->table["err_abs"] << measurement_cache.error_abs;
   eig->WriteFullTableTrunc();
 }
 
@@ -743,7 +951,7 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
   port_EPR->table["idx"] << m_idx_value;
   for (const auto idx : ports_with_L)
   {
-    auto vi = MCache().lumped_port_vi.at(idx);
+    auto vi = measurement_cache.lumped_port_vi.at(idx);
     port_EPR->table[format("p_{}", idx)] << vi.inductive_energy_participation;
   }
   port_EPR->WriteFullTableTrunc();
@@ -791,7 +999,7 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
   port_Q->table["idx"] << m_idx_value;
   for (const auto idx : ports_with_R)
   {
-    auto vi = MCache().lumped_port_vi.at(idx);
+    auto vi = measurement_cache.lumped_port_vi.at(idx);
     port_Q->table[format("Ql_{}", idx)] << vi.quality_factor;
     port_Q->table[format("Kl_{}", idx)] << vi.mode_port_kappa;
   }
@@ -868,7 +1076,8 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, int step)
+void PostOperatorCSV<solver_t>::PrintAllCSVData(
+    const Measurement &non_dim_measurement_cache, double idx_value_dimensionful, int step)
 {
   if (!Mpi::Root(post_op->fem_op->GetComm()))
   {
@@ -876,6 +1085,9 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, i
   }
   m_idx_value = idx_value_dimensionful;
   m_idx_row = step;
+
+  measurement_cache =
+      Measurement::Nondimensionalize(post_op->units, non_dim_measurement_cache);
 
   PrintDomainE();
   PrintSurfaceF();
