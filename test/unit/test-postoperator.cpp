@@ -85,7 +85,7 @@ auto RandomMeasurement(int ndomain = 5)
   };
   for (auto &[i, l] : cache.lumped_port_vi)
   {
-    double R = randd(100), L = randd(100), C = randd(100);
+    double R = 1 + randd(100), L = 1 + randd(100), C = 1 + randd(100);
     l.P = {1 + randd(100), -50 + randd(100)};
     l.V = {randd(100), randd(100)};
     // l.I = std::conj(l.P / l.V);
