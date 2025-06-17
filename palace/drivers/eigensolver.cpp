@@ -43,7 +43,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator<config::ProblemData::Type::EIGENMODE> post_op(iodata, space_op);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
@@ -52,28 +52,28 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
-  config::EigenSolverData::Type type = iodata.solver.eigenmode.type;
+  EigenSolverType type = iodata.solver.eigenmode.type;
 #if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
-  if (type == config::EigenSolverData::Type::DEFAULT)
+  if (type == EigenSolverType::DEFAULT)
   {
-    type = config::EigenSolverData::Type::SLEPC;
+    type = EigenSolverType::SLEPC;
   }
 #elif defined(PALACE_WITH_ARPACK)
-  if (iodata.solver.eigenmode.type == config::EigenSolverData::Type::SLEPC)
+  if (iodata.solver.eigenmode.type == EigenSolverType::SLEPC)
   {
     Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
   }
-  type = config::EigenSolverData::Type::ARPACK;
+  type = EigenSolverType::ARPACK;
 #elif defined(PALACE_WITH_SLEPC)
-  if (iodata.solver.eigenmode.type == config::EigenSolverData::Type::ARPACK)
+  if (iodata.solver.eigenmode.type == EigenSolverType::ARPACK)
   {
     Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
   }
-  type = config::EigenSolverData::Type::SLEPC;
+  type = EigenSolverType::SLEPC;
 #else
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
 #endif
-  if (type == config::EigenSolverData::Type::ARPACK)
+  if (type == EigenSolverType::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
@@ -89,7 +89,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 #endif
   }
-  else  // config::EigenSolverData::Type::SLEPC
+  else  // EigenSolverType::SLEPC
   {
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
@@ -116,9 +116,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     }
     slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    slepc->SetOrthogonalization(
-        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS,
-        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::CGS2);
+    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
+                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
     eigen = std::move(slepc);
 #endif
   }
@@ -221,7 +220,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
-    if (type == config::EigenSolverData::Type::ARPACK)
+    if (type == EigenSolverType::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
       // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
@@ -237,7 +236,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
     eigen->SetShiftInvert(target * target);
-    if (type == config::EigenSolverData::Type::ARPACK)
+    if (type == EigenSolverType::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
       // will be a large-magnitude positive real number for an eigenvalue μ with frequency

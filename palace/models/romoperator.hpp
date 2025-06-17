@@ -36,8 +36,7 @@ private:
 public:
   MinimalRationalInterpolation(int max_size);
   void AddSolutionSample(double omega, const ComplexVector &u,
-                         const SpaceOperator &space_op,
-                         GmresSolverBase::OrthogType orthog_type);
+                         const SpaceOperator &space_op, Orthogonalization orthog_type);
   std::vector<double> FindMaxError(int N) const;
 
   const auto &GetSamplePoints() const { return z; }
@@ -75,7 +74,7 @@ private:
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
   std::size_t dim_V = 0;
-  GmresSolverBase::OrthogType orthog_type;
+  Orthogonalization orthog_type;
 
   // MRIs: one for each excitation index.
   std::map<int, MinimalRationalInterpolation> mri;

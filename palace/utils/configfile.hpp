@@ -75,14 +75,6 @@ struct ElementData
   // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
   std::array<double, 3> direction{{0.0, 0.0, 0.0}};
 
-  // Coordinate system that the normal vector is expressed in.
-  using CoordinateSystem = CoordinateSystem;
-
-  // enum class CoordinateSystem
-  // {
-  //   CARTESIAN,
-  //   CYLINDRICAL
-  // };
   CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
 
   // List of boundary attributes for this element.
@@ -97,8 +89,7 @@ struct ProblemData
 {
 public:
   // Simulation type.
-  using Type = ProblemDataType;
-  Type type = Type::DRIVEN;
+  ProblemType type = ProblemType::DRIVEN;
 
   // Level of printing.
   int verbose = 1;
@@ -515,7 +506,6 @@ public:
   double d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
-  using EigenSolverType = EigenSolverType;
   EigenSolverType eigen_type = EigenSolverType::DEFAULT;
 
   // Input excitation for driven & transient solver:
@@ -566,8 +556,7 @@ struct SurfaceFluxData
 {
 public:
   // Surface flux type.
-  using Type = SurfaceFluxType;
-  Type type = Type::ELECTRIC;
+  SurfaceFluxType type = SurfaceFluxType::ELECTRIC;
 
   // Flag for whether or not to consider the boundary as an infinitely thin two-sided
   // boundary for postprocessing.
@@ -594,8 +583,7 @@ struct InterfaceDielectricData
 {
 public:
   // Type of interface dielectric for computing electric field energy participation ratios.
-  using Type = InterfaceDielectricType;
-  Type type = Type::DEFAULT;
+  InterfaceDielectricType type = InterfaceDielectricType::DEFAULT;
 
   // Dielectric interface thickness [m].
   double t = 0.0;
@@ -657,9 +645,6 @@ public:
 struct DrivenSolverData
 {
 public:
-  // Frequency sampling schemes.
-  using FrequencySampleType = FrequencySampleType;
-
   // Explicit frequency samples [GHz].
   std::vector<double> sample_f = {};
 
@@ -717,8 +702,7 @@ public:
   bool mass_orthog = false;
 
   // Eigenvalue solver type.
-  using Type = EigenSolverType;
-  Type type = Type::DEFAULT;
+  EigenSolverType type = EigenSolverType::DEFAULT;
 
   // For SLEPc eigenvalue solver, use linearized formulation for quadratic eigenvalue
   // problems.
@@ -749,11 +733,9 @@ struct TransientSolverData
 {
 public:
   // Time integration scheme type.
-  using Type = TransientSolverType;
-  Type type = Type::DEFAULT;
+  TransientSolverType type = TransientSolverType::DEFAULT;
 
   // Excitation type for port excitation.
-  using ExcitationType = ExcitationType;
   ExcitationType excitation = ExcitationType::SINUSOIDAL;
 
   // Excitation parameters: frequency [GHz] and pulse width [ns].
@@ -785,20 +767,10 @@ struct LinearSolverData
 {
 public:
   // Solver type.
-  using Type = LinearSolverType;
-  Type type = Type::DEFAULT;
+  LinearSolverType type = LinearSolverType::DEFAULT;
 
   // Krylov solver type.
-  enum class KspType
-  {
-    DEFAULT,
-    CG,
-    MINRES,
-    GMRES,
-    FGMRES,
-    BICGSTAB
-  };
-  KspType ksp_type = KspType::DEFAULT;
+  KrylovSolver ksp_type = KrylovSolver::DEFAULT;
 
   // Iterative solver relative tolerance.
   double tol = 1.0e-6;
@@ -816,12 +788,7 @@ public:
   int mg_max_levels = 100;
 
   // Type of coarsening for p-multigrid.
-  enum class MultigridCoarsenType
-  {
-    LINEAR,
-    LOGARITHMIC
-  };
-  MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
+  MultigridCoarsening mg_coarsen_type = MultigridCoarsening::LOGARITHMIC;
 
   // Controls whether or not to include in the geometric multigrid hierarchy the mesh levels
   // from uniform refinement.
@@ -863,42 +830,16 @@ public:
   bool complex_coarse_solve = false;
 
   // Choose left or right preconditioning.
-  enum class SideType
-  {
-    DEFAULT,
-    RIGHT,
-    LEFT
-  };
-  SideType pc_side_type = SideType::DEFAULT;
+  PreconditionerSide pc_side_type = PreconditionerSide::DEFAULT;
 
   // Specify details for the column ordering method in the symbolic factorization for sparse
   // direct solvers.
-  enum class SymFactType
-  {
-    DEFAULT,
-    METIS,
-    PARMETIS,
-    SCOTCH,
-    PTSCOTCH,
-    PORD,
-    AMD,
-    RCM
-  };
-  SymFactType sym_fact_type = SymFactType::DEFAULT;
+  SymbolicFactorization sym_fact_type = SymbolicFactorization::DEFAULT;
 
   // Low-rank and butterfly compression parameters for sparse direct solvers which support
   // it (mainly STRUMPACK).
-  enum class CompressionType
-  {
-    NONE,
-    BLR,
-    HSS,
-    HODLR,
-    ZFP,
-    BLR_HODLR,
-    ZFP_BLR_HODLR
-  };
-  CompressionType strumpack_compression_type = CompressionType::NONE;
+  SparseCompression strumpack_compression_type = SparseCompression::NONE;
+
   double strumpack_lr_tol = 1.0e-3;
   int strumpack_lossy_precision = 16;
   int strumpack_butterfly_l = 1;
@@ -935,13 +876,7 @@ public:
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
-  enum class OrthogType
-  {
-    MGS,
-    CGS,
-    CGS2
-  };
-  OrthogType gs_orthog_type = OrthogType::MGS;
+  Orthogonalization gs_orthog = Orthogonalization::MGS;
 
   void SetUp(json &solver);
 };
@@ -963,7 +898,6 @@ public:
   int q_order_extra = 0;
 
   // Device used to configure MFEM.
-  using Device = Device;
   Device device = Device::CPU;
 
   // Backend for libCEED (https://libceed.org/en/latest/gettingstarted/#backends).

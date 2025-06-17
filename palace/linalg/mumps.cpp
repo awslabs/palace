@@ -9,8 +9,7 @@ namespace palace
 {
 
 MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
-                         config::LinearSolverData::SymFactType reorder, double blr_tol,
-                         int print)
+                         SymbolicFactorization reorder, double blr_tol, int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
@@ -18,26 +17,26 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   SetMatrixSymType(sym);
   switch (reorder)
   {
-    case config::LinearSolverData::SymFactType::METIS:
+    case SymbolicFactorization::METIS:
       SetReorderingStrategy(mfem::MUMPSSolver::METIS);
       break;
-    case config::LinearSolverData::SymFactType::PARMETIS:
+    case SymbolicFactorization::PARMETIS:
       SetReorderingStrategy(mfem::MUMPSSolver::PARMETIS);
       break;
-    case config::LinearSolverData::SymFactType::SCOTCH:
+    case SymbolicFactorization::SCOTCH:
       SetReorderingStrategy(mfem::MUMPSSolver::SCOTCH);
       break;
-    case config::LinearSolverData::SymFactType::PTSCOTCH:
+    case SymbolicFactorization::PTSCOTCH:
       SetReorderingStrategy(mfem::MUMPSSolver::PTSCOTCH);
       break;
-    case config::LinearSolverData::SymFactType::PORD:
+    case SymbolicFactorization::PORD:
       SetReorderingStrategy(mfem::MUMPSSolver::PORD);
       break;
-    case config::LinearSolverData::SymFactType::AMD:
-    case config::LinearSolverData::SymFactType::RCM:
+    case SymbolicFactorization::AMD:
+    case SymbolicFactorization::RCM:
       SetReorderingStrategy(mfem::MUMPSSolver::AMD);
       break;
-    case config::LinearSolverData::SymFactType::DEFAULT:
+    case SymbolicFactorization::DEFAULT:
       SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
       break;
   }

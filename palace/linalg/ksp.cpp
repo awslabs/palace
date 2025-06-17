@@ -32,26 +32,26 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
   const int print = iodata.problem.verbose;
   switch (type)
   {
-    case config::LinearSolverData::KspType::CG:
+    case KrylovSolver::CG:
       ksp = std::make_unique<CgSolver<OperType>>(comm, print);
       break;
-    case config::LinearSolverData::KspType::GMRES:
+    case KrylovSolver::GMRES:
       {
         auto gmres = std::make_unique<GmresSolver<OperType>>(comm, print);
         gmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(gmres);
       }
       break;
-    case config::LinearSolverData::KspType::FGMRES:
+    case KrylovSolver::FGMRES:
       {
         auto fgmres = std::make_unique<FgmresSolver<OperType>>(comm, print);
         fgmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(fgmres);
       }
       break;
-    case config::LinearSolverData::KspType::MINRES:
-    case config::LinearSolverData::KspType::BICGSTAB:
-    case config::LinearSolverData::KspType::DEFAULT:
+    case KrylovSolver::MINRES:
+    case KrylovSolver::BICGSTAB:
+    case KrylovSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
       break;
   }
@@ -60,51 +60,27 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
   ksp->SetMaxIter(iodata.solver.linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
-  if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT &&
-      type != config::LinearSolverData::KspType::GMRES)
+  if (iodata.solver.linear.pc_side_type != PreconditionerSide::DEFAULT &&
+      type != KrylovSolver::GMRES)
   {
     Mpi::Warning(comm,
                  "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
   }
   else
   {
-    if (type == config::LinearSolverData::KspType::GMRES ||
-        type == config::LinearSolverData::KspType::FGMRES)
+    if (type == KrylovSolver::GMRES || type == KrylovSolver::FGMRES)
     {
       auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-      switch (iodata.solver.linear.pc_side_type)
-      {
-        case config::LinearSolverData::SideType::LEFT:
-          gmres->SetPrecSide(GmresSolverBase::PrecSide::LEFT);
-          break;
-        case config::LinearSolverData::SideType::RIGHT:
-          gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
-          break;
-        case config::LinearSolverData::SideType::DEFAULT:
-          // Do nothing.
-          break;
-      }
+      gmres->SetPreconditionerSide(iodata.solver.linear.pc_side_type);
     }
   }
 
   // Configure orthogonalization method for GMRES/FMGRES.
-  if (type == config::LinearSolverData::KspType::GMRES ||
-      type == config::LinearSolverData::KspType::FGMRES)
+  if (type == KrylovSolver::GMRES || type == KrylovSolver::FGMRES)
   {
     // Because FGMRES inherits from GMRES, this is OK.
     auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-    switch (iodata.solver.linear.gs_orthog_type)
-    {
-      case config::LinearSolverData::OrthogType::MGS:
-        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::MGS);
-        break;
-      case config::LinearSolverData::OrthogType::CGS:
-        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::CGS);
-        break;
-      case config::LinearSolverData::OrthogType::CGS2:
-        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::CGS2);
-        break;
-    }
+    gmres->SetOrthogonalization(iodata.solver.linear.gs_orthog);
   }
 
   // Configure timing for the primary linear solver.
@@ -147,7 +123,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
   const int print = iodata.problem.verbose - 1;
   switch (type)
   {
-    case config::LinearSolverData::Type::AMS:
+    case LinearSolverType::AMS:
       // Can either be the coarse solve for geometric multigrid or the solver at the finest
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
@@ -156,11 +132,11 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
           iodata, fespaces.GetNumLevels() > 1, fespaces.GetFESpaceAtLevel(0),
           aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
-    case config::LinearSolverData::Type::BOOMER_AMG:
+    case LinearSolverType::BOOMER_AMG:
       pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1,
                                                         print);
       break;
-    case config::LinearSolverData::Type::SUPERLU:
+    case LinearSolverType::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
       pc = MakeWrapperSolver<OperType, SuperLUSolver>(iodata, comm, print);
 #else
@@ -168,7 +144,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case config::LinearSolverData::Type::STRUMPACK:
+    case LinearSolverType::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(iodata, comm, print);
 #else
@@ -176,7 +152,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case config::LinearSolverData::Type::STRUMPACK_MP:
+    case LinearSolverType::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
       pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(iodata, comm, print);
 #else
@@ -184,7 +160,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case config::LinearSolverData::Type::MUMPS:
+    case LinearSolverType::MUMPS:
 #if defined(MFEM_USE_MUMPS)
       pc = MakeWrapperSolver<OperType, MumpsSolver>(iodata, comm, print);
 #else
@@ -192,10 +168,10 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
           "Solver was not built with MUMPS support, please choose a different solver!");
 #endif
       break;
-    case config::LinearSolverData::Type::JACOBI:
+    case LinearSolverType::JACOBI:
       pc = std::make_unique<JacobiSmoother<OperType>>(comm);
       break;
-    case config::LinearSolverData::Type::DEFAULT:
+    case LinearSolverType::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
   }

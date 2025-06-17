@@ -185,7 +185,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       continue;
     }
     const auto &data = iodata.domains.materials[i];
-    if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC)
+    if (iodata.problem.type == ProblemType::ELECTROSTATIC)
     {
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
       if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
@@ -195,7 +195,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
             "electrical conductivity, or London depth!\n");
       }
     }
-    else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+    else if (iodata.problem.type == ProblemType::MAGNETOSTATIC)
     {
       MFEM_VERIFY(IsValid(data.mu_r), "Material has no valid permeability defined!");
       if (!IsIdentity(data.epsilon_r) || IsValid(data.tandelta) || IsValid(data.sigma) ||
@@ -210,7 +210,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     {
       MFEM_VERIFY(IsValid(data.mu_r) && IsValid(data.epsilon_r),
                   "Material has no valid permeability or no valid permittivity defined!");
-      if (iodata.problem.type == config::ProblemData::Type::TRANSIENT)
+      if (iodata.problem.type == ProblemType::TRANSIENT)
       {
         MFEM_VERIFY(!IsValid(data.tandelta),
                     "Transient problem type does not support material loss tangent, use "
@@ -334,8 +334,8 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   wave_vector += local_wave_vector;
   has_wave_attr = (wave_vector.Norml2() > tol);
 
-  MFEM_VERIFY(!has_wave_attr || iodata.problem.type == config::ProblemData::Type::DRIVEN ||
-                  iodata.problem.type == config::ProblemData::Type::EIGENMODE,
+  MFEM_VERIFY(!has_wave_attr || iodata.problem.type == ProblemType::DRIVEN ||
+                  iodata.problem.type == ProblemType::EIGENMODE,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
   MFEM_VERIFY(!has_wave_attr || sdim == 3,

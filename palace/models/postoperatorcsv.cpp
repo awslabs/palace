@@ -32,33 +32,33 @@ std::string DimLabel(int i)
 }
 
 // TODO(C++20): Do constexpr with string.
-std::string LabelIndexCol(const config::ProblemData::Type solver_t)
+std::string LabelIndexCol(const ProblemType solver_t)
 {
   switch (solver_t)
   {
-    case config::ProblemData::Type::DRIVEN:
+    case ProblemType::DRIVEN:
       return "f (GHz)";
-    case config::ProblemData::Type::EIGENMODE:
+    case ProblemType::EIGENMODE:
       return "m";
-    case config::ProblemData::Type::ELECTROSTATIC:
-    case config::ProblemData::Type::MAGNETOSTATIC:
+    case ProblemType::ELECTROSTATIC:
+    case ProblemType::MAGNETOSTATIC:
       return "i";
-    case config::ProblemData::Type::TRANSIENT:
+    case ProblemType::TRANSIENT:
       return "t (ns)";
     default:
       return "unkown";
   }
 }
-int PrecIndexCol(const config::ProblemData::Type solver_t)
+int PrecIndexCol(const ProblemType solver_t)
 {
   switch (solver_t)
   {
-    case config::ProblemData::Type::DRIVEN:
-    case config::ProblemData::Type::TRANSIENT:
+    case ProblemType::DRIVEN:
+    case ProblemType::TRANSIENT:
       return 8;
-    case config::ProblemData::Type::EIGENMODE:
-    case config::ProblemData::Type::ELECTROSTATIC:
-    case config::ProblemData::Type::MAGNETOSTATIC:
+    case ProblemType::EIGENMODE:
+    case ProblemType::ELECTROSTATIC:
+    case ProblemType::MAGNETOSTATIC:
       return 2;
     default:
       return 8;
@@ -86,7 +86,7 @@ void CheckAppendIndex(Column &idx_col, double idx_value, size_t m_idx_row)
 
 }  // namespace
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE()
 {
   using fmt::format;
@@ -121,7 +121,7 @@ void PostOperatorCSV<solver_t>::InitializeDomainE()
   domain_E->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintDomainE()
 {
   if (!domain_E)  // trivial check: always written and we are always on root
@@ -147,7 +147,7 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   domain_E->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceF()
 {
   if (!(post_op->surf_post_op.flux_surfs.size() > 0))
@@ -207,7 +207,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
   surface_F->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintSurfaceF()
 {
   if (!surface_F)
@@ -228,7 +228,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
   surface_F->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceQ()
 {
   if (!(post_op->surf_post_op.eps_surfs.size() > 0))
@@ -256,7 +256,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ()
   surface_Q->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintSurfaceQ()
 {
   if (!surface_Q)
@@ -274,7 +274,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
   surface_Q->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeProbeE()
 {
   if (!(post_op->interp_op.GetProbes().size() > 0) || !HasEGridFunction<solver_t>())
@@ -317,7 +317,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeE()
   probe_E->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeE()
 {
   if (!probe_E)
@@ -351,7 +351,7 @@ void PostOperatorCSV<solver_t>::PrintProbeE()
   probe_E->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeProbeB()
 {
   if (!(post_op->interp_op.GetProbes().size() > 0) || !HasBGridFunction<solver_t>())
@@ -395,7 +395,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeB()
   probe_B->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeB()
 {
   if (!probe_B)
@@ -430,12 +430,10 @@ void PostOperatorCSV<solver_t>::PrintProbeB()
   probe_B->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN ||
-                            U == config::ProblemData::Type::TRANSIENT,
-                        void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
 {
   if (!(post_op->fem_op->GetSurfaceCurrentOp().Size() > 0))
   {
@@ -460,12 +458,10 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI()
   surface_I->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintSurfaceI()
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN ||
-                            U == config::ProblemData::Type::TRANSIENT,
-                        void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>
 {
   if (!surface_I)
   {
@@ -483,12 +479,11 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI()
   surface_I->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortVI()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE ||
-                            U == config::ProblemData::Type::DRIVEN ||
-                            U == config::ProblemData::Type::TRANSIENT,
+    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
+                            U == ProblemType::TRANSIENT,
                         void>
 {
   if (!(post_op->fem_op->GetLumpedPortOp().Size() > 0))
@@ -514,8 +509,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
     std::string ex_label = SingleColBlock() ? "" : format("[{}]", ex_idx);
 
     // Print incident signal, if solver supports excitation on ports.
-    if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                  solver_t == config::ProblemData::Type::TRANSIENT)
+    if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
     {
       auto ex_spec = post_op->fem_op->GetPortExcitations().excitations.at(ex_idx);
       for (const auto &idx : ex_spec.lumped_port)
@@ -552,12 +546,11 @@ auto PostOperatorCSV<solver_t>::InitializePortVI()
   port_I->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintPortVI()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE ||
-                            U == config::ProblemData::Type::DRIVEN ||
-                            U == config::ProblemData::Type::TRANSIENT,
+    -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||
+                            U == ProblemType::TRANSIENT,
                         void>
 {
   if (!port_V)  // no need to recheck port_I
@@ -576,8 +569,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
   auto unit_V = post_op->units.template GetScaleFactor<Units::ValueType::VOLTAGE>();
   auto unit_A = post_op->units.template GetScaleFactor<Units::ValueType::CURRENT>();
 
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
     for (const auto &[idx, data] : lumped_port_op)
     {
@@ -610,10 +602,10 @@ auto PostOperatorCSV<solver_t>::PrintPortVI()
   port_I->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortS()
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
   if (!post_op->fem_op->GetPortExcitations().IsMultipleSimple() ||
       !((post_op->fem_op->GetLumpedPortOp().Size() > 0) xor
@@ -651,10 +643,10 @@ auto PostOperatorCSV<solver_t>::InitializePortS()
   port_S->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintPortS()
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
   if (!port_S)
   {
@@ -675,10 +667,10 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
   port_S->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializeEig()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   using fmt::format;
   eig = TableWithCSVFile(post_op->post_dir / "eig.csv");
@@ -692,10 +684,10 @@ auto PostOperatorCSV<solver_t>::InitializeEig()
   eig->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintEig()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   if (!eig)  // trivial check
   {
@@ -710,10 +702,10 @@ auto PostOperatorCSV<solver_t>::PrintEig()
   eig->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
@@ -738,10 +730,10 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortEPR()
   port_EPR->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   if (!port_EPR)
   {
@@ -757,10 +749,10 @@ auto PostOperatorCSV<solver_t>::PrintEigPortEPR()
   port_EPR->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
   for (const auto &[idx, data] : post_op->fem_op->GetLumpedPortOp())
@@ -786,10 +778,10 @@ auto PostOperatorCSV<solver_t>::InitializeEigPortQ()
   port_Q->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintEigPortQ()
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, void>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
 {
   if (!port_Q)
   {
@@ -806,7 +798,7 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
   port_Q->WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintErrorIndicator(
     const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
@@ -826,13 +818,12 @@ void PostOperatorCSV<solver_t>::PrintErrorIndicator(
   error_indicator.WriteFullTableTrunc();
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
 {
   // Initialize multi-excitation column block index. Only driven or transient support
   // excitations; for other solvers this is default to a single idx=0.
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
     auto excitation_helper = post_op->fem_op->GetPortExcitations();
     excitation_idx_all.clear();
@@ -855,22 +846,20 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
   InitializeProbeE();
   InitializeProbeB();
 #endif
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
     InitializeSurfaceI();
   }
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::EIGENMODE ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+                solver_t == ProblemType::TRANSIENT)
   {
     InitializePortVI();
   }
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
+  if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS();
   }
-  if constexpr (solver_t == config::ProblemData::Type::EIGENMODE)
+  if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     InitializeEig();
     InitializeEigPortEPR();
@@ -878,7 +867,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection()
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, int step)
 {
   if (!Mpi::Root(post_op->fem_op->GetComm()))
@@ -895,23 +884,21 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, i
   PrintProbeE();
   PrintProbeB();
 #endif
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
     PrintSurfaceI();
   }
 
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::EIGENMODE ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+                solver_t == ProblemType::TRANSIENT)
   {
     PrintPortVI();
   }
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
+  if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
   }
-  if constexpr (solver_t == config::ProblemData::Type::EIGENMODE)
+  if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     PrintEig();
     PrintEigPortEPR();
@@ -920,10 +907,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(double idx_value_dimensionful, i
 }
 
 // Explicit template instantiation.
-template class PostOperatorCSV<config::ProblemData::Type::DRIVEN>;
-template class PostOperatorCSV<config::ProblemData::Type::EIGENMODE>;
-template class PostOperatorCSV<config::ProblemData::Type::ELECTROSTATIC>;
-template class PostOperatorCSV<config::ProblemData::Type::MAGNETOSTATIC>;
-template class PostOperatorCSV<config::ProblemData::Type::TRANSIENT>;
+template class PostOperatorCSV<ProblemType::DRIVEN>;
+template class PostOperatorCSV<ProblemType::EIGENMODE>;
+template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
+template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
+template class PostOperatorCSV<ProblemType::TRANSIENT>;
 
 }  // namespace palace

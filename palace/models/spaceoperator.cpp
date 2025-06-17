@@ -52,17 +52,17 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op)
 {
   // Check Excitations.
-  if (iodata.problem.type == config::ProblemData::Type::DRIVEN)
+  if (iodata.problem.type == ProblemType::DRIVEN)
   {
     MFEM_VERIFY(!port_excitation_helper.Empty(),
                 "Driven problems must specify at least one excitation!");
   }
-  else if (iodata.problem.type == config::ProblemData::Type::EIGENMODE)
+  else if (iodata.problem.type == ProblemType::EIGENMODE)
   {
     MFEM_VERIFY(port_excitation_helper.Empty(),
                 "Eigenmode problems must not specify any excitation!");
   }
-  else if (iodata.problem.type == config::ProblemData::Type::TRANSIENT)
+  else if (iodata.problem.type == ProblemType::TRANSIENT)
   {
     MFEM_VERIFY(
         port_excitation_helper.Size() == 1,

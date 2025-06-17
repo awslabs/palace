@@ -11,26 +11,25 @@ namespace palace
 namespace
 {
 
-strumpack::CompressionType
-GetCompressionType(config::LinearSolverData::CompressionType type)
+strumpack::CompressionType GetCompressionType(SparseCompression type)
 {
   switch (type)
   {
-    case config::LinearSolverData::CompressionType::HSS:
+    case SparseCompression::HSS:
       return strumpack::CompressionType::HSS;
-    case config::LinearSolverData::CompressionType::BLR:
+    case SparseCompression::BLR:
       return strumpack::CompressionType::BLR;
-    case config::LinearSolverData::CompressionType::HODLR:
+    case SparseCompression::HODLR:
       return strumpack::CompressionType::HODLR;
-    case config::LinearSolverData::CompressionType::ZFP:
+    case SparseCompression::ZFP:
       return strumpack::CompressionType::LOSSY;
-    case config::LinearSolverData::CompressionType::BLR_HODLR:
+    case SparseCompression::BLR_HODLR:
       return strumpack::CompressionType::BLR_HODLR;
       break;
-    case config::LinearSolverData::CompressionType::ZFP_BLR_HODLR:
+    case SparseCompression::ZFP_BLR_HODLR:
       return strumpack::CompressionType::ZFP_BLR_HODLR;
       break;
-    case config::LinearSolverData::CompressionType::NONE:
+    case SparseCompression::NONE:
       return strumpack::CompressionType::NONE;
   }
   return strumpack::CompressionType::NONE;  // For compiler warning
@@ -40,9 +39,8 @@ GetCompressionType(config::LinearSolverData::CompressionType type)
 
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
-    MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
-    config::LinearSolverData::CompressionType compression, double lr_tol, int butterfly_l,
-    int lossy_prec, int print)
+    MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
+    double lr_tol, int butterfly_l, int lossy_prec, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -53,27 +51,27 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetMatching(strumpack::MatchingJob::NONE);
   switch (reorder)
   {
-    case config::LinearSolverData::SymFactType::METIS:
+    case SymbolicFactorization::METIS:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
       // this->SetReorderingStrategy(strumpack::ReorderingStrategy::AND);
       break;
-    case config::LinearSolverData::SymFactType::PARMETIS:
+    case SymbolicFactorization::PARMETIS:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
       break;
-    case config::LinearSolverData::SymFactType::SCOTCH:
+    case SymbolicFactorization::SCOTCH:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
       break;
-    case config::LinearSolverData::SymFactType::PTSCOTCH:
+    case SymbolicFactorization::PTSCOTCH:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::PTSCOTCH);
       break;
-    case config::LinearSolverData::SymFactType::AMD:
+    case SymbolicFactorization::AMD:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
       // this->SetReorderingStrategy(strumpack::ReorderingStrategy::MMD);
       break;
-    case config::LinearSolverData::SymFactType::RCM:
+    case SymbolicFactorization::RCM:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
-    case config::LinearSolverData::SymFactType::PORD:
-    case config::LinearSolverData::SymFactType::DEFAULT:
+    case SymbolicFactorization::PORD:
+    case SymbolicFactorization::DEFAULT:
       // Should have good default.
       break;
   }
@@ -83,7 +81,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetCompression(GetCompressionType(compression));
   switch (compression)
   {
-    case config::LinearSolverData::CompressionType::ZFP:
+    case SparseCompression::ZFP:
       if (lossy_prec <= 0)
       {
         this->SetCompression(strumpack::CompressionType::LOSSLESS);
@@ -93,16 +91,16 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
         this->SetCompressionLossyPrecision(lossy_prec);
       }
       break;
-    case config::LinearSolverData::CompressionType::ZFP_BLR_HODLR:
+    case SparseCompression::ZFP_BLR_HODLR:
       this->SetCompressionLossyPrecision(lossy_prec);
-    case config::LinearSolverData::CompressionType::HODLR:
-    case config::LinearSolverData::CompressionType::BLR_HODLR:
+    case SparseCompression::HODLR:
+    case SparseCompression::BLR_HODLR:
       this->SetCompressionButterflyLevels(butterfly_l);
-    case config::LinearSolverData::CompressionType::HSS:
-    case config::LinearSolverData::CompressionType::BLR:
+    case SparseCompression::HSS:
+    case SparseCompression::BLR:
       this->SetCompressionRelTol(lr_tol);
       break;
-    case config::LinearSolverData::CompressionType::NONE:
+    case SparseCompression::NONE:
       break;
   }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))

@@ -10,6 +10,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -142,28 +143,10 @@ public:
   void Mult(const VecType &b, VecType &x) const override;
 };
 
-// Base class defining enums for GMRES.
-class GmresSolverBase
-{
-public:
-  enum class OrthogType
-  {
-    MGS,
-    CGS,
-    CGS2
-  };
-
-  enum class PrecSide
-  {
-    LEFT,
-    RIGHT
-  };
-};
-
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
 // linear systems.
 template <typename OperType>
-class GmresSolver : public IterativeSolver<OperType>, GmresSolverBase
+class GmresSolver : public IterativeSolver<OperType>
 {
 protected:
   using VecType = typename Solver<OperType>::VecType;
@@ -192,10 +175,10 @@ protected:
 
   // Orthogonalization method for orthonormalizing a newly computed vector against a basis
   // at each iteration.
-  OrthogType orthog_type;
+  Orthogonalization gs_orthog;
 
   // Use left or right preconditioning.
-  PrecSide pc_side;
+  PreconditionerSide pc_side;
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> V;
@@ -210,8 +193,8 @@ protected:
 
 public:
   GmresSolver(MPI_Comm comm, int print)
-    : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
-      pc_side(PrecSide::LEFT)
+    : IterativeSolver<OperType>(comm, print), max_dim(-1),
+      gs_orthog(Orthogonalization::MGS), pc_side(PreconditionerSide::LEFT)
   {
   }
 
@@ -219,10 +202,10 @@ public:
   void SetRestartDim(int dim) { max_dim = dim; }
 
   // Set the orthogonalization method.
-  void SetOrthogonalization(OrthogType type) { orthog_type = type; }
+  void SetOrthogonalization(Orthogonalization orthog) { gs_orthog = orthog; }
 
   // Set the side for preconditioning.
-  virtual void SetPrecSide(PrecSide side) { pc_side = side; }
+  virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
 
   void Mult(const VecType &b, VecType &x) const override;
 };
@@ -232,10 +215,6 @@ public:
 template <typename OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
-public:
-  using OrthogType = typename GmresSolverBase::OrthogType;
-  using PrecSide = typename GmresSolverBase::PrecSide;
-
 protected:
   using VecType = typename GmresSolver<OperType>::VecType;
   using RealType = typename GmresSolver<OperType>::RealType;
@@ -259,7 +238,7 @@ protected:
   using GmresSolver<OperType>::final_it;
 
   using GmresSolver<OperType>::max_dim;
-  using GmresSolver<OperType>::orthog_type;
+  using GmresSolver<OperType>::gs_orthog;
   using GmresSolver<OperType>::pc_side;
   using GmresSolver<OperType>::V;
   using GmresSolver<OperType>::H;
@@ -277,12 +256,12 @@ protected:
 public:
   FgmresSolver(MPI_Comm comm, int print) : GmresSolver<OperType>(comm, print)
   {
-    pc_side = PrecSide::RIGHT;
+    pc_side = PreconditionerSide::RIGHT;
   }
 
-  void SetPrecSide(PrecSide side) override
+  void SetPreconditionerSide(const PreconditionerSide side) override
   {
-    MFEM_VERIFY(side == PrecSide::RIGHT,
+    MFEM_VERIFY(side == PreconditionerSide::RIGHT,
                 "FGMRES solver only supports right preconditioning!");
   }
 

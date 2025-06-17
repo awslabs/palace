@@ -7,13 +7,15 @@
 namespace palace
 {
 
-enum class CoordinateSystem : uint8_t
+// Usable coordinate systems.
+enum class CoordinateSystem : char
 {
   CARTESIAN,
   CYLINDRICAL
 };
 
-enum class ProblemDataType : uint8_t
+// Problem types Palace is able to solve.
+enum class ProblemType : char
 {
   DRIVEN,
   EIGENMODE,
@@ -22,21 +24,24 @@ enum class ProblemDataType : uint8_t
   TRANSIENT
 };
 
-enum class EigenSolverType : uint8_t
+// Eigenvalue solver type.
+enum class EigenSolverType : char
 {
   DEFAULT,
   SLEPC,
   ARPACK
 };
 
-enum class SurfaceFluxType : uint8_t
+// Surface fluxes.
+enum class SurfaceFluxType : char
 {
   ELECTRIC,
   MAGNETIC,
   POWER
 };
 
-enum class InterfaceDielectricType : uint8_t
+// Interface dielectrics for computing electric field energy participation ratios.
+enum class InterfaceDielectricType : char
 {
   DEFAULT,
   MA,
@@ -44,7 +49,8 @@ enum class InterfaceDielectricType : uint8_t
   SA
 };
 
-enum class FrequencySampleType : u_int8_t
+// Frequency sampling schemes.
+enum class FrequencySampleType : char
 {
   LINEAR,
   LOG,
@@ -52,7 +58,8 @@ enum class FrequencySampleType : u_int8_t
   DEFAULT = LINEAR
 };
 
-enum class TransientSolverType : uint8_t
+// Time integration scheme type.
+enum class TransientSolverType : char
 {
   GEN_ALPHA,
   RUNGE_KUTTA,
@@ -61,7 +68,8 @@ enum class TransientSolverType : uint8_t
   DEFAULT = GEN_ALPHA
 };
 
-enum class ExcitationType : uint8_t
+// Excitation type for port excitation.
+enum class ExcitationType : char
 {
   SINUSOIDAL,
   GAUSSIAN,
@@ -71,7 +79,8 @@ enum class ExcitationType : uint8_t
   SMOOTH_STEP
 };
 
-enum class LinearSolverType : uint8_t
+// Type of linear solver.
+enum class LinearSolverType : char
 {
   DEFAULT,
   AMS,
@@ -83,7 +92,69 @@ enum class LinearSolverType : uint8_t
   JACOBI
 };
 
-enum class Device : uint8_t
+// Krylov solver type in linear solver.
+enum class KrylovSolver : char
+{
+  DEFAULT,
+  CG,
+  MINRES,
+  GMRES,
+  FGMRES,
+  BICGSTAB
+};
+
+// Type of coarsening for p-multigrid.
+enum class MultigridCoarsening : char
+{
+  LINEAR,
+  LOGARITHMIC
+};
+
+// Preconditioning side.
+enum class PreconditionerSide : char
+{
+  DEFAULT,
+  RIGHT,
+  LEFT
+};
+
+// Column ordering method in the symbolic factorization for sparse direct solvers.
+enum class SymbolicFactorization : char
+{
+  DEFAULT,
+  METIS,
+  PARMETIS,
+  SCOTCH,
+  PTSCOTCH,
+  PORD,
+  AMD,
+  RCM
+};
+
+// Low-rank and butterfly compression scheme for sparse direct solvers which support it
+// (mainly STRUMPACK).
+enum class SparseCompression : char
+{
+  NONE,
+  BLR,
+  HSS,
+  HODLR,
+  ZFP,
+  BLR_HODLR,
+  ZFP_BLR_HODLR
+};
+
+// Variations of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative solvers and SLEPc
+// eigenvalue solver.
+enum class Orthogonalization : char
+{
+  MGS,
+  CGS,
+  CGS2
+};
+
+// Device used to configure MFEM.
+enum class Device : char
 {
   CPU,
   GPU,

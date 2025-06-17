@@ -15,7 +15,7 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
-template <config::ProblemData::Type>
+template <ProblemType>
 class PostOperator;
 class SurfaceCurrentOperator;
 
@@ -25,7 +25,7 @@ class SurfaceCurrentOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void PostprocessTerminals(PostOperator<config::ProblemData::Type::MAGNETOSTATIC> &post_op,
+  void PostprocessTerminals(PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
                             const SurfaceCurrentOperator &surf_j_op,
                             const std::vector<Vector> &A,
                             const std::vector<double> &I_inc) const;

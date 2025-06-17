@@ -38,7 +38,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
-  PostOperator<config::ProblemData::Type::TRANSIENT> post_op(iodata, space_op);
+  PostOperator<ProblemType::TRANSIENT> post_op(iodata, space_op);
 
   // Transient solver only supports a single excitation, this is check in SpaceOperator.
   Mpi::Print("\nComputing transient response for:\n{}",
@@ -100,30 +100,26 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
   using namespace excitations;
   using F = std::function<double(double)>;
   const config::TransientSolverData &data = iodata.solver.transient;
-  const config::TransientSolverData::ExcitationType &type = data.excitation;
-  if (type == config::TransientSolverData::ExcitationType::SINUSOIDAL ||
-      type == config::TransientSolverData::ExcitationType::MOD_GAUSSIAN)
+  const ExcitationType &type = data.excitation;
+  if (type == ExcitationType::SINUSOIDAL || type == ExcitationType::MOD_GAUSSIAN)
   {
     MFEM_VERIFY(data.pulse_f > 0.0,
                 "Excitation frequency is missing for transient simulation!");
   }
-  if (type == config::TransientSolverData::ExcitationType::GAUSSIAN ||
-      type == config::TransientSolverData::ExcitationType::DIFF_GAUSSIAN ||
-      type == config::TransientSolverData::ExcitationType::MOD_GAUSSIAN ||
-      type == config::TransientSolverData::ExcitationType::SMOOTH_STEP)
+  if (type == ExcitationType::GAUSSIAN || type == ExcitationType::DIFF_GAUSSIAN ||
+      type == ExcitationType::MOD_GAUSSIAN || type == ExcitationType::SMOOTH_STEP)
   {
     MFEM_VERIFY(data.pulse_tau > 0.0,
                 "Excitation width is missing for transient simulation!");
   }
   const double delay =
-      (type == config::TransientSolverData::ExcitationType::GAUSSIAN ||
-       type == config::TransientSolverData::ExcitationType::DIFF_GAUSSIAN ||
-       type == config::TransientSolverData::ExcitationType::MOD_GAUSSIAN)
+      (type == ExcitationType::GAUSSIAN || type == ExcitationType::DIFF_GAUSSIAN ||
+       type == ExcitationType::MOD_GAUSSIAN)
           ? 4.5 * data.pulse_tau
           : 0.0;
   switch (type)
   {
-    case config::TransientSolverData::ExcitationType::SINUSOIDAL:
+    case ExcitationType::SINUSOIDAL:
       if (dot)
       {
         return F{[=](double t) { return dpulse_sinusoidal(t, data.pulse_f, delay); }};
@@ -133,7 +129,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
         return F{[=](double t) { return pulse_sinusoidal(t, data.pulse_f, delay); }};
       }
       break;
-    case config::TransientSolverData::ExcitationType::GAUSSIAN:
+    case ExcitationType::GAUSSIAN:
       if (dot)
       {
         return F{[=](double t) { return dpulse_gaussian(t, data.pulse_tau, delay); }};
@@ -143,7 +139,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
         return F{[=](double t) { return pulse_gaussian(t, data.pulse_tau, delay); }};
       }
       break;
-    case config::TransientSolverData::ExcitationType::DIFF_GAUSSIAN:
+    case ExcitationType::DIFF_GAUSSIAN:
       if (dot)
       {
         return F{[=](double t) { return dpulse_gaussian_diff(t, data.pulse_tau, delay); }};
@@ -153,7 +149,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
         return F{[=](double t) { return pulse_gaussian_diff(t, data.pulse_tau, delay); }};
       }
       break;
-    case config::TransientSolverData::ExcitationType::MOD_GAUSSIAN:
+    case ExcitationType::MOD_GAUSSIAN:
       if (dot)
       {
         return F{[=](double t)
@@ -165,7 +161,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
                  { return pulse_gaussian_mod(t, data.pulse_f, data.pulse_tau, delay); }};
       }
       break;
-    case config::TransientSolverData::ExcitationType::RAMP_STEP:
+    case ExcitationType::RAMP_STEP:
       if (dot)
       {
         return F{[=](double t) { return dpulse_ramp(t, data.pulse_tau, delay); }};
@@ -175,7 +171,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
         return F{[=](double t) { return pulse_ramp(t, data.pulse_tau, delay); }};
       }
       break;
-    case config::TransientSolverData::ExcitationType::SMOOTH_STEP:
+    case ExcitationType::SMOOTH_STEP:
       if (dot)
       {
         return F{[=](double t) { return dpulse_smootherstep(t, data.pulse_tau, delay); }};

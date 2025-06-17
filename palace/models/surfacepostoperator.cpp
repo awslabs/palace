@@ -66,13 +66,13 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   // Store the type of flux.
   switch (data.type)
   {
-    case config::SurfaceFluxData::Type::ELECTRIC:
+    case SurfaceFluxType::ELECTRIC:
       type = SurfaceFluxType::ELECTRIC;
       break;
-    case config::SurfaceFluxData::Type::MAGNETIC:
+    case SurfaceFluxType::MAGNETIC:
       type = SurfaceFluxType::MAGNETIC;
       break;
-    case config::SurfaceFluxData::Type::POWER:
+    case SurfaceFluxType::POWER:
       type = SurfaceFluxType::POWER;
       break;
   }
@@ -140,16 +140,16 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   //                       p * E_elec = 1/2 t Re{∫ (ε E)ᴴ E_m dS} .
   switch (data.type)
   {
-    case config::InterfaceDielectricData::Type::DEFAULT:
+    case InterfaceDielectricType::DEFAULT:
       type = InterfaceDielectricType::DEFAULT;
       break;
-    case config::InterfaceDielectricData::Type::MA:
+    case InterfaceDielectricType::MA:
       type = InterfaceDielectricType::MA;
       break;
-    case config::InterfaceDielectricData::Type::MS:
+    case InterfaceDielectricType::MS:
       type = InterfaceDielectricType::MS;
       break;
-    case config::InterfaceDielectricData::Type::SA:
+    case InterfaceDielectricType::SA:
       type = InterfaceDielectricType::SA;
       break;
   }
@@ -207,12 +207,12 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   // Surface flux postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
   {
-    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::ELECTROSTATIC ||
-                    data.type == config::SurfaceFluxData::Type::ELECTRIC,
+    MFEM_VERIFY(iodata.problem.type != ProblemType::ELECTROSTATIC ||
+                    data.type == SurfaceFluxType::ELECTRIC,
                 "Magnetic field or power surface flux postprocessing are not available "
                 "for electrostatic problems!");
-    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC ||
-                    data.type == config::SurfaceFluxData::Type::MAGNETIC,
+    MFEM_VERIFY(iodata.problem.type != ProblemType::MAGNETOSTATIC ||
+                    data.type == SurfaceFluxType::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
                 "for magnetostatic problems!");
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
@@ -220,7 +220,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
 
   // Interface dielectric postprocessing.
   MFEM_VERIFY(iodata.boundaries.postpro.dielectric.empty() ||
-                  iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC,
+                  iodata.problem.type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)

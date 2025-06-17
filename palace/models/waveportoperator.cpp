@@ -649,25 +649,25 @@ WavePortData::WavePortData(const config::WavePortData &data,
     gmres->SetRelTol(data.ksp_tol);
     gmres->SetMaxIter(data.ksp_max_its);
     gmres->SetRestartDim(data.ksp_max_its);
-    // gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
+    // gmres->SetPrecSide(PreconditionerSide::RIGHT);
 
-    config::LinearSolverData::Type pc_type = solver.linear.type;
-    if (pc_type == config::LinearSolverData::Type::SUPERLU)
+    LinearSolverType pc_type = solver.linear.type;
+    if (pc_type == LinearSolverType::SUPERLU)
     {
 #if !defined(MFEM_USE_SUPERLU)
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (pc_type == config::LinearSolverData::Type::STRUMPACK ||
-             pc_type == config::LinearSolverData::Type::STRUMPACK_MP)
+    else if (pc_type == LinearSolverType::STRUMPACK ||
+             pc_type == LinearSolverType::STRUMPACK_MP)
     {
 #if !defined(MFEM_USE_STRUMPACK)
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (pc_type == config::LinearSolverData::Type::MUMPS)
+    else if (pc_type == LinearSolverType::MUMPS)
     {
 #if !defined(MFEM_USE_MUMPS)
       MFEM_ABORT("Solver was not built with MUMPS support, please choose a "
@@ -677,11 +677,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
     else  // Default choice
     {
 #if defined(MFEM_USE_SUPERLU)
-      pc_type = config::LinearSolverData::Type::SUPERLU;
+      pc_type = LinearSolverType::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-      pc_type = config::LinearSolverData::Type::STRUMPACK;
+      pc_type = LinearSolverType::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-      pc_type = config::LinearSolverData::Type::MUMPS;
+      pc_type = LinearSolverType::MUMPS;
 #else
 #error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
 #endif
@@ -689,33 +689,31 @@ WavePortData::WavePortData(const config::WavePortData &data,
     auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
         [&]() -> std::unique_ptr<mfem::Solver>
         {
-          if (pc_type == config::LinearSolverData::Type::SUPERLU)
+          if (pc_type == LinearSolverType::SUPERLU)
           {
 #if defined(MFEM_USE_SUPERLU)
             auto slu = std::make_unique<SuperLUSolver>(
-                port_comm, config::LinearSolverData::SymFactType::DEFAULT, false,
-                data.verbose - 1);
+                port_comm, SymbolicFactorization::DEFAULT, false, data.verbose - 1);
             // slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
             return slu;
 #endif
           }
-          else if (pc_type == config::LinearSolverData::Type::STRUMPACK)
+          else if (pc_type == LinearSolverType::STRUMPACK)
           {
 #if defined(MFEM_USE_STRUMPACK)
             auto strumpack = std::make_unique<StrumpackSolver>(
-                port_comm, config::LinearSolverData::SymFactType::DEFAULT,
-                config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0,
-                data.verbose - 1);
+                port_comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE, 0.0, 0,
+                0, data.verbose - 1);
             // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
             return strumpack;
 #endif
           }
-          else if (pc_type == config::LinearSolverData::Type::MUMPS)
+          else if (pc_type == LinearSolverType::MUMPS)
           {
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
-                port_comm, mfem::MUMPSSolver::UNSYMMETRIC,
-                config::LinearSolverData::SymFactType::DEFAULT, 0.0, data.verbose - 1);
+                port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
+                0.0, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
@@ -727,15 +725,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
     // Define the eigenvalue solver.
     constexpr int print = 0;
-    config::WavePortData::EigenSolverType type = data.eigen_type;
-    if (type == config::WavePortData::EigenSolverType::SLEPC)
+    EigenSolverType type = data.eigen_type;
+    if (type == EigenSolverType::SLEPC)
     {
 #if !defined(PALACE_WITH_SLEPC)
       MFEM_ABORT("Solver was not built with SLEPc support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (type == config::WavePortData::EigenSolverType::ARPACK)
+    else if (type == EigenSolverType::ARPACK)
     {
 #if !defined(PALACE_WITH_ARPACK)
       MFEM_ABORT("Solver was not built with ARPACK support, please choose a "
@@ -745,20 +743,20 @@ WavePortData::WavePortData(const config::WavePortData &data,
     else  // Default choice
     {
 #if defined(PALACE_WITH_SLEPC)
-      type = config::WavePortData::EigenSolverType::SLEPC;
+      type = EigenSolverType::SLEPC;
 #elif defined(PALACE_WITH_ARPACK)
-      type = config::WavePortData::EigenSolverType::ARPACK;
+      type = EigenSolverType::ARPACK;
 #else
 #error "Wave port solver requires building with ARPACK or SLEPc!"
 #endif
     }
-    if (type == config::WavePortData::EigenSolverType::ARPACK)
+    if (type == EigenSolverType::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)
       eigen = std::make_unique<arpack::ArpackEPSSolver>(port_comm, print);
 #endif
     }
-    else  // config::WavePortData::EigenSolverType::SLEPC
+    else  // EigenSolverType::SLEPC
     {
 #if defined(PALACE_WITH_SLEPC)
       auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
@@ -1152,7 +1150,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                       port_dbc_bcs);
   }
   MFEM_VERIFY(
-      ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,
+      ports.empty() || iodata.problem.type == ProblemType::DRIVEN,
       "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 

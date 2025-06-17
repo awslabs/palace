@@ -22,11 +22,11 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
     attr_list.Append(elem.attributes.data(), elem.attributes.size());
     switch (elem.coordinate_system)
     {
-      case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
+      case CoordinateSystem::CYLINDRICAL:
         elems.push_back(
             std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
         break;
-      case config::internal::ElementData::CoordinateSystem::CARTESIAN:
+      case CoordinateSystem::CARTESIAN:
         elems.push_back(
             std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
         break;
