@@ -25,7 +25,7 @@ enum class ProblemType : char
 };
 
 // Eigenvalue solver type.
-enum class EigenSolverType : char
+enum class EigenSolverBackend : char
 {
   DEFAULT,
   SLEPC,

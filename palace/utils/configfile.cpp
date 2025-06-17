@@ -69,10 +69,10 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
                                          {ProblemType::TRANSIENT, "Transient"}})
 
-// Helper for converting string keys to enum for EigenSolverType.
-PALACE_JSON_SERIALIZE_ENUM(EigenSolverType, {{EigenSolverType::DEFAULT, "Default"},
-                                             {EigenSolverType::SLEPC, "SLEPc"},
-                                             {EigenSolverType::ARPACK, "ARPACK"}})
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
+                                             {EigenSolverBackend::SLEPC, "SLEPc"},
+                                             {EigenSolverBackend::ARPACK, "ARPACK"}})
 
 // Helper for converting string keys to enum for SurfaceFluxPostType.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},

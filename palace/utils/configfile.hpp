@@ -506,7 +506,7 @@ public:
   double d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
-  EigenSolverType eigen_type = EigenSolverType::DEFAULT;
+  EigenSolverBackend eigen_type = EigenSolverBackend::DEFAULT;
 
   // Input excitation for driven & transient solver:
   // - Wave/Lumped ports with same index are excited together.
@@ -702,7 +702,7 @@ public:
   bool mass_orthog = false;
 
   // Eigenvalue solver type.
-  EigenSolverType type = EigenSolverType::DEFAULT;
+  EigenSolverBackend type = EigenSolverBackend::DEFAULT;
 
   // For SLEPc eigenvalue solver, use linearized formulation for quadratic eigenvalue
   // problems.

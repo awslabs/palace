@@ -725,15 +725,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
     // Define the eigenvalue solver.
     constexpr int print = 0;
-    EigenSolverType type = data.eigen_type;
-    if (type == EigenSolverType::SLEPC)
+    EigenSolverBackend type = data.eigen_type;
+    if (type == EigenSolverBackend::SLEPC)
     {
 #if !defined(PALACE_WITH_SLEPC)
       MFEM_ABORT("Solver was not built with SLEPc support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (type == EigenSolverType::ARPACK)
+    else if (type == EigenSolverBackend::ARPACK)
     {
 #if !defined(PALACE_WITH_ARPACK)
       MFEM_ABORT("Solver was not built with ARPACK support, please choose a "
@@ -743,20 +743,20 @@ WavePortData::WavePortData(const config::WavePortData &data,
     else  // Default choice
     {
 #if defined(PALACE_WITH_SLEPC)
-      type = EigenSolverType::SLEPC;
+      type = EigenSolverBackend::SLEPC;
 #elif defined(PALACE_WITH_ARPACK)
-      type = EigenSolverType::ARPACK;
+      type = EigenSolverBackend::ARPACK;
 #else
 #error "Wave port solver requires building with ARPACK or SLEPc!"
 #endif
     }
-    if (type == EigenSolverType::ARPACK)
+    if (type == EigenSolverBackend::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)
       eigen = std::make_unique<arpack::ArpackEPSSolver>(port_comm, print);
 #endif
     }
-    else  // EigenSolverType::SLEPC
+    else  // EigenSolverBackend::SLEPC
     {
 #if defined(PALACE_WITH_SLEPC)
       auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
