@@ -102,6 +102,9 @@ The format of this changelog is based on
     supported, as no interpolation is performed.
   - Fix bugs in post processing where `E_cap`, `E_ind`, and `mode_port_kappa` and other
     dependent quantities were not dimensionalized correctly.
+  - Refactor `PostOperator` usage of `Measurement` to be entirely non-dimensional, until
+    `PostOperatorCSV` which dimensionalizes all measurements before writing to file. Reduces
+    the risk of mixed unit bugs throughout `PostOperator`.
 
 ## [0.13.0] - 2024-05-20
 
