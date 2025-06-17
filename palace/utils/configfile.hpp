@@ -733,7 +733,7 @@ struct TransientSolverData
 {
 public:
   // Time integration scheme type.
-  TransientSolverType type = TransientSolverType::DEFAULT;
+  TimeSteppingScheme type = TimeSteppingScheme::DEFAULT;
 
   // Excitation type for port excitation.
   ExcitationType excitation = ExcitationType::SINUSOIDAL;

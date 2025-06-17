@@ -59,7 +59,7 @@ enum class FrequencySampling : char
 };
 
 // Time integration scheme type.
-enum class TransientSolverType : char
+enum class TimeSteppingScheme : char
 {
   GEN_ALPHA,
   RUNGE_KUTTA,

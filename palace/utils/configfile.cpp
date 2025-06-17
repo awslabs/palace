@@ -92,13 +92,13 @@ PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Def
                                                  {FrequencySampling::LOG, "Log"},
                                                  {FrequencySampling::POINT, "Point"}})
 
-// Helper for converting string keys to enum for TransientSolverType and ExcitationType.
-PALACE_JSON_SERIALIZE_ENUM(TransientSolverType,
-                           {{TransientSolverType::DEFAULT, "Default"},
-                            {TransientSolverType::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TransientSolverType::RUNGE_KUTTA, "RungeKutta"},
-                            {TransientSolverType::CVODE, "CVODE"},
-                            {TransientSolverType::ARKODE, "ARKODE"}})
+// Helper for converting string keys to enum for TimeSteppingScheme and ExcitationType.
+PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
+                           {{TimeSteppingScheme::DEFAULT, "Default"},
+                            {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
+                            {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
+                            {TimeSteppingScheme::CVODE, "CVODE"},
+                            {TimeSteppingScheme::ARKODE, "ARKODE"}})
 PALACE_JSON_SERIALIZE_ENUM(ExcitationType,
                            {{ExcitationType::SINUSOIDAL, "Sinusoidal"},
                             {ExcitationType::GAUSSIAN, "Gaussian"},
@@ -2050,7 +2050,7 @@ void TransientSolverData::SetUp(json &solver)
   abs_tol = transient->value("AbsTol", abs_tol);
   MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
 
-  if (type == TransientSolverType::GEN_ALPHA || type == TransientSolverType::RUNGE_KUTTA)
+  if (type == TimeSteppingScheme::GEN_ALPHA || type == TimeSteppingScheme::RUNGE_KUTTA)
   {
     if (transient->contains("Order"))
     {
