@@ -28,7 +28,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
 {
   // Create the solver.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
-  const auto type = iodata.solver.linear.ksp_type;
+  const auto type = iodata.solver.linear.krylov_solver;
   const int print = iodata.problem.verbose;
   switch (type)
   {
@@ -60,7 +60,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
   ksp->SetMaxIter(iodata.solver.linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
-  if (iodata.solver.linear.pc_side_type != PreconditionerSide::DEFAULT &&
+  if (iodata.solver.linear.pc_side != PreconditionerSide::DEFAULT &&
       type != KrylovSolver::GMRES)
   {
     Mpi::Warning(comm,
@@ -71,7 +71,18 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
     if (type == KrylovSolver::GMRES || type == KrylovSolver::FGMRES)
     {
       auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-      gmres->SetPreconditionerSide(iodata.solver.linear.pc_side_type);
+      switch (iodata.solver.linear.pc_side)
+      {
+        case PreconditionerSide::LEFT:
+          gmres->SetPreconditionerSide(PreconditionerSide::LEFT);
+          break;
+        case PreconditionerSide::RIGHT:
+          gmres->SetPreconditionerSide(PreconditionerSide::RIGHT);
+          break;
+        case PreconditionerSide::DEFAULT:
+          // Do nothing. Set in ctors.
+          break;
+      }
     }
   }
 

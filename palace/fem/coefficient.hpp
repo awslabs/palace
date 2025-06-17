@@ -169,10 +169,9 @@ public:
                                                         : *B->ParFESpace()->GetParMesh()),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
   {
-    MFEM_VERIFY(
-        (E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
-            (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
-        "Missing E or B field grid function for surface flux coefficient!");
+    MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
+                    (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
+                "Missing E or B field grid function for surface flux coefficient!");
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
@@ -250,8 +249,9 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>::GetLocalFlux(
 }
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(
-    mfem::ElementTransformation &T, mfem::Vector &V) const
+inline void
+BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransformation &T,
+                                                            mfem::Vector &V) const
 {
   // Flux E x H = E x μ⁻¹ B.
   double W1_data[3], W2_data[3];

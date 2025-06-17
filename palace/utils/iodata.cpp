@@ -351,18 +351,18 @@ void IoData::CheckConfiguration()
 #endif
     }
   }
-  if (solver.linear.ksp_type == KrylovSolver::DEFAULT)
+  if (solver.linear.krylov_solver == KrylovSolver::DEFAULT)
   {
     // Problems with SPD operators use CG by default, else GMRES.
     if (problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC ||
         problem.type == ProblemType::TRANSIENT)
     {
-      solver.linear.ksp_type = KrylovSolver::CG;
+      solver.linear.krylov_solver = KrylovSolver::CG;
     }
     else
     {
-      solver.linear.ksp_type = KrylovSolver::GMRES;
+      solver.linear.krylov_solver = KrylovSolver::GMRES;
     }
   }
   if (solver.linear.max_size < 0)

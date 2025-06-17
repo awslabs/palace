@@ -29,14 +29,14 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     rt_fecs(fem::ConstructFECollections<mfem::RT_FECollection>(
         iodata.solver.order - 1, mesh.back()->Dimension(),
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(

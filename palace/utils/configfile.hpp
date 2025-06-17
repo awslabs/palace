@@ -506,7 +506,7 @@ public:
   double d_offset = 0.0;
 
   // Eigenvalue solver type for boundary mode calculation.
-  EigenSolverBackend eigen_type = EigenSolverBackend::DEFAULT;
+  EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 
   // Input excitation for driven & transient solver:
   // - Wave/Lumped ports with same index are excited together.
@@ -770,7 +770,7 @@ public:
   LinearSolver type = LinearSolver::DEFAULT;
 
   // Krylov solver type.
-  KrylovSolver ksp_type = KrylovSolver::DEFAULT;
+  KrylovSolver krylov_solver = KrylovSolver::DEFAULT;
 
   // Iterative solver relative tolerance.
   double tol = 1.0e-6;
@@ -788,7 +788,7 @@ public:
   int mg_max_levels = 100;
 
   // Type of coarsening for p-multigrid.
-  MultigridCoarsening mg_coarsen_type = MultigridCoarsening::LOGARITHMIC;
+  MultigridCoarsening mg_coarsening = MultigridCoarsening::LOGARITHMIC;
 
   // Controls whether or not to include in the geometric multigrid hierarchy the mesh levels
   // from uniform refinement.
@@ -830,11 +830,11 @@ public:
   bool complex_coarse_solve = false;
 
   // Choose left or right preconditioning.
-  PreconditionerSide pc_side_type = PreconditionerSide::DEFAULT;
+  PreconditionerSide pc_side = PreconditionerSide::DEFAULT;
 
   // Specify details for the column ordering method in the symbolic factorization for sparse
   // direct solvers.
-  SymbolicFactorization sym_fact_type = SymbolicFactorization::DEFAULT;
+  SymbolicFactorization sym_factorization = SymbolicFactorization::DEFAULT;
 
   // Low-rank and butterfly compression parameters for sparse direct solvers which support
   // it (mainly STRUMPACK).

@@ -112,11 +112,10 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
     MFEM_VERIFY(data.pulse_tau > 0.0,
                 "Excitation width is missing for transient simulation!");
   }
-  const double delay =
-      (type == Excitation::GAUSSIAN || type == Excitation::DIFF_GAUSSIAN ||
-       type == Excitation::MOD_GAUSSIAN)
-          ? 4.5 * data.pulse_tau
-          : 0.0;
+  const double delay = (type == Excitation::GAUSSIAN || type == Excitation::DIFF_GAUSSIAN ||
+                        type == Excitation::MOD_GAUSSIAN)
+                           ? 4.5 * data.pulse_tau
+                           : 0.0;
   switch (type)
   {
     case Excitation::SINUSOIDAL:

@@ -23,13 +23,13 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
                                                    mesh.back()->Dimension())),
     rt_fecs(fem::ConstructFECollections<mfem::RT_FECollection>(
         iodata.solver.order - 1, mesh.back()->Dimension(),
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
     nd_fespace(*mesh.back(), nd_fec.get()),

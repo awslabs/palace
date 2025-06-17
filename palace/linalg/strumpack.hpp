@@ -29,7 +29,7 @@ public:
                       int lossy_prec, int print);
 
   StrumpackSolverBase(const IoData &iodata, MPI_Comm comm, int print)
-    : StrumpackSolverBase(comm, iodata.solver.linear.sym_fact_type,
+    : StrumpackSolverBase(comm, iodata.solver.linear.sym_factorization,
                           iodata.solver.linear.strumpack_compression_type,
                           iodata.solver.linear.strumpack_lr_tol,
                           iodata.solver.linear.strumpack_butterfly_l,

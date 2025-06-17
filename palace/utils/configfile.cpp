@@ -71,26 +71,25 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
-                                             {EigenSolverBackend::SLEPC, "SLEPc"},
-                                             {EigenSolverBackend::ARPACK, "ARPACK"}})
+                                                {EigenSolverBackend::SLEPC, "SLEPc"},
+                                                {EigenSolverBackend::ARPACK, "ARPACK"}})
 
-// Helper for converting string keys to enum for SurfaceFluxPostType.
+// Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
-                                             {SurfaceFlux::MAGNETIC, "Magnetic"},
-                                             {SurfaceFlux::POWER, "Power"}})
+                                         {SurfaceFlux::MAGNETIC, "Magnetic"},
+                                         {SurfaceFlux::POWER, "Power"}})
 
 // Helper for converting string keys to enum for InterfaceDielectric.
-PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric,
-                           {{InterfaceDielectric::DEFAULT, "Default"},
-                            {InterfaceDielectric::MA, "MA"},
-                            {InterfaceDielectric::MS, "MS"},
-                            {InterfaceDielectric::SA, "SA"}})
+PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric, {{InterfaceDielectric::DEFAULT, "Default"},
+                                                 {InterfaceDielectric::MA, "MA"},
+                                                 {InterfaceDielectric::MS, "MS"},
+                                                 {InterfaceDielectric::SA, "SA"}})
 
 // Helper for converting string keys to enum for FrequencySampling.
 PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Default"},
-                                                 {FrequencySampling::LINEAR, "Linear"},
-                                                 {FrequencySampling::LOG, "Log"},
-                                                 {FrequencySampling::POINT, "Point"}})
+                                               {FrequencySampling::LINEAR, "Linear"},
+                                               {FrequencySampling::LOG, "Log"},
+                                               {FrequencySampling::POINT, "Point"}})
 
 // Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
 PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
@@ -109,15 +108,14 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation,
 
 // Helper for converting string keys to enum for LinearSolver, KrylovSolver, and
 // MultigridCoarsening
-PALACE_JSON_SERIALIZE_ENUM(LinearSolver,
-                           {{LinearSolver::DEFAULT, "Default"},
-                            {LinearSolver::AMS, "AMS"},
-                            {LinearSolver::BOOMER_AMG, "BoomerAMG"},
-                            {LinearSolver::MUMPS, "MUMPS"},
-                            {LinearSolver::SUPERLU, "SuperLU"},
-                            {LinearSolver::STRUMPACK, "STRUMPACK"},
-                            {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
-                            {LinearSolver::JACOBI, "Jacobi"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
+                                          {LinearSolver::AMS, "AMS"},
+                                          {LinearSolver::BOOMER_AMG, "BoomerAMG"},
+                                          {LinearSolver::MUMPS, "MUMPS"},
+                                          {LinearSolver::SUPERLU, "SuperLU"},
+                                          {LinearSolver::STRUMPACK, "STRUMPACK"},
+                                          {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
+                                          {LinearSolver::JACOBI, "Jacobi"}})
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                           {KrylovSolver::CG, "CG"},
                                           {KrylovSolver::MINRES, "MINRES"},
@@ -1268,7 +1266,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(data.mode_idx > 0,
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
-    data.eigen_type = it->value("SolverType", data.eigen_type);
+    data.eigen_solver = it->value("SolverType", data.eigen_solver);
 
     data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
@@ -1300,7 +1298,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "Attributes: " << data.attributes << '\n';
       std::cout << "Mode: " << data.mode_idx << '\n';
       std::cout << "Offset: " << data.d_offset << '\n';
-      std::cout << "SolverType: " << data.eigen_type << '\n';
+      std::cout << "SolverType: " << data.eigen_solver << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
@@ -2113,7 +2111,7 @@ void LinearSolverData::SetUp(json &solver)
     return;
   }
   type = linear->value("Type", type);
-  ksp_type = linear->value("KSPType", ksp_type);
+  krylov_solver = linear->value("KSPType", krylov_solver);
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
   max_size = linear->value("MaxSize", max_size);
@@ -2121,7 +2119,7 @@ void LinearSolverData::SetUp(json &solver)
 
   // Options related to multigrid.
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
-  mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
+  mg_coarsening = linear->value("MGCoarsenType", mg_coarsening);
   mg_use_mesh = linear->value("MGUseMesh", mg_use_mesh);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
@@ -2135,8 +2133,8 @@ void LinearSolverData::SetUp(json &solver)
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
-  pc_side_type = linear->value("PCSide", pc_side_type);
-  sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
+  pc_side = linear->value("PCSide", pc_side);
+  sym_factorization = linear->value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
       linear->value("STRUMPACKCompressionType", strumpack_compression_type);
   strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
@@ -2203,14 +2201,14 @@ void LinearSolverData::SetUp(json &solver)
   if constexpr (JSON_DEBUG)
   {
     std::cout << "Type: " << type << '\n';
-    std::cout << "KSPType: " << ksp_type << '\n';
+    std::cout << "KSPType: " << krylov_solver << '\n';
     std::cout << "Tol: " << tol << '\n';
     std::cout << "MaxIts: " << max_it << '\n';
     std::cout << "MaxSize: " << max_size << '\n';
     std::cout << "InitialGuess: " << initial_guess << '\n';
 
     std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
-    std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
+    std::cout << "MGCoarsenType: " << mg_coarsening << '\n';
     std::cout << "MGUseMesh: " << mg_use_mesh << '\n';
     std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
     std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
@@ -2223,8 +2221,8 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "PCMatReal: " << pc_mat_real << '\n';
     std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
     std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
-    std::cout << "PCSide: " << pc_side_type << '\n';
-    std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
+    std::cout << "PCSide: " << pc_side << '\n';
+    std::cout << "ColumnOrdering: " << sym_factorization << '\n';
     std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
     std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
     std::cout << "STRUMPACKLossyPrecision: " << strumpack_lossy_precision << '\n';

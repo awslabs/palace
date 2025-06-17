@@ -659,8 +659,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
                  "different solver!");
 #endif
     }
-    else if (pc_type == LinearSolver::STRUMPACK ||
-             pc_type == LinearSolver::STRUMPACK_MP)
+    else if (pc_type == LinearSolver::STRUMPACK || pc_type == LinearSolver::STRUMPACK_MP)
     {
 #if !defined(MFEM_USE_STRUMPACK)
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
@@ -725,7 +724,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
     // Define the eigenvalue solver.
     constexpr int print = 0;
-    EigenSolverBackend type = data.eigen_type;
+    EigenSolverBackend type = data.eigen_solver;
     if (type == EigenSolverBackend::SLEPC)
     {
 #if !defined(PALACE_WITH_SLEPC)

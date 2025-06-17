@@ -169,17 +169,17 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
           InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
           attr_list, E, mat_op, t, epsilon);
     case InterfaceDielectric::MA:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(
+          attr_list, E, mat_op, t, epsilon);
     case InterfaceDielectric::MS:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
+          attr_list, E, mat_op, t, epsilon);
     case InterfaceDielectric::SA:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(
+          attr_list, E, mat_op, t, epsilon);
   }
   return {};  // For compiler warning
 }

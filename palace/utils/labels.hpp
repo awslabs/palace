@@ -14,7 +14,7 @@ enum class CoordinateSystem : char
   CYLINDRICAL
 };
 
-// Problem types Palace is able to solve.
+// The types of problem Palace is able to solve.
 enum class ProblemType : char
 {
   DRIVEN,
@@ -79,7 +79,7 @@ enum class Excitation : char
   SMOOTH_STEP
 };
 
-// Type of linear solver.
+// Possible linear solvers
 enum class LinearSolver : char
 {
   DEFAULT,
@@ -92,7 +92,7 @@ enum class LinearSolver : char
   JACOBI
 };
 
-// Krylov solver type in linear solver.
+// Krylov solvers to use in the linear solver.
 enum class KrylovSolver : char
 {
   DEFAULT,
@@ -103,7 +103,7 @@ enum class KrylovSolver : char
   BICGSTAB
 };
 
-// Type of coarsening for p-multigrid.
+// Method of coarsening for p-multigrid.
 enum class MultigridCoarsening : char
 {
   LINEAR,
