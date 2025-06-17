@@ -41,7 +41,7 @@ enum class SurfaceFlux : char
 };
 
 // Interface dielectrics for computing electric field energy participation ratios.
-enum class InterfaceDielectricType : char
+enum class InterfaceDielectric : char
 {
   DEFAULT,
   MA,

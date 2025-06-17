@@ -79,12 +79,12 @@ PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                              {SurfaceFlux::MAGNETIC, "Magnetic"},
                                              {SurfaceFlux::POWER, "Power"}})
 
-// Helper for converting string keys to enum for InterfaceDielectricType.
-PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricType,
-                           {{InterfaceDielectricType::DEFAULT, "Default"},
-                            {InterfaceDielectricType::MA, "MA"},
-                            {InterfaceDielectricType::MS, "MS"},
-                            {InterfaceDielectricType::SA, "SA"}})
+// Helper for converting string keys to enum for InterfaceDielectric.
+PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric,
+                           {{InterfaceDielectric::DEFAULT, "Default"},
+                            {InterfaceDielectric::MA, "MA"},
+                            {InterfaceDielectric::MS, "MS"},
+                            {InterfaceDielectric::SA, "SA"}})
 
 // Helper for converting string keys to enum for FrequencySampleType.
 PALACE_JSON_SERIALIZE_ENUM(FrequencySampleType, {{FrequencySampleType::DEFAULT, "Default"},

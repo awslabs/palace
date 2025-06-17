@@ -583,7 +583,7 @@ struct InterfaceDielectricData
 {
 public:
   // Type of interface dielectric for computing electric field energy participation ratios.
-  InterfaceDielectricType type = InterfaceDielectricType::DEFAULT;
+  InterfaceDielectric type = InterfaceDielectric::DEFAULT;
 
   // Dielectric interface thickness [m].
   double t = 0.0;

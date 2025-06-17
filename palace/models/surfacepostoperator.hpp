@@ -54,7 +54,7 @@ private:
   };
   struct InterfaceDielectricData : public SurfaceData
   {
-    InterfaceDielectricType type;
+    InterfaceDielectric type;
     double t, epsilon, tandelta;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,

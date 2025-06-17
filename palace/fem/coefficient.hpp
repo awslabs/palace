@@ -270,7 +270,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(
 // and subtrate-air interfaces following:
 //   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
 //     resonators, Appl. Phys. Lett. (2011).
-template <InterfaceDielectricType Type>
+template <InterfaceDielectric Type>
 class InterfaceDielectricCoefficient : public mfem::Coefficient,
                                        public BdrGridFunctionCoefficient
 {
@@ -339,7 +339,7 @@ public:
 };
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution. Don't use lightspeed detection for differentiating side.
@@ -371,7 +371,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on air (vacuum) side and neighboring element attribute.
@@ -397,7 +397,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on substrate side and neighboring element attribute.
@@ -426,7 +426,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on air side and neighboring element attribute.

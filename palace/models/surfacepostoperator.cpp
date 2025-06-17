@@ -140,17 +140,17 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   //                       p * E_elec = 1/2 t Re{∫ (ε E)ᴴ E_m dS} .
   switch (data.type)
   {
-    case InterfaceDielectricType::DEFAULT:
-      type = InterfaceDielectricType::DEFAULT;
+    case InterfaceDielectric::DEFAULT:
+      type = InterfaceDielectric::DEFAULT;
       break;
-    case InterfaceDielectricType::MA:
-      type = InterfaceDielectricType::MA;
+    case InterfaceDielectric::MA:
+      type = InterfaceDielectric::MA;
       break;
-    case InterfaceDielectricType::MS:
-      type = InterfaceDielectricType::MS;
+    case InterfaceDielectric::MS:
+      type = InterfaceDielectric::MS;
       break;
-    case InterfaceDielectricType::SA:
-      type = InterfaceDielectricType::SA;
+    case InterfaceDielectric::SA:
+      type = InterfaceDielectric::SA;
       break;
   }
   t = data.t;
@@ -164,21 +164,21 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 {
   switch (type)
   {
-    case InterfaceDielectricType::DEFAULT:
+    case InterfaceDielectric::DEFAULT:
       return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>>>(
+          InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
           attr_list, E, mat_op, t, epsilon);
-    case InterfaceDielectricType::MA:
+    case InterfaceDielectric::MA:
       return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::MA>>>(attr_list, E,
+          InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(attr_list, E,
                                                                         mat_op, t, epsilon);
-    case InterfaceDielectricType::MS:
+    case InterfaceDielectric::MS:
       return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::MS>>>(attr_list, E,
+          InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(attr_list, E,
                                                                         mat_op, t, epsilon);
-    case InterfaceDielectricType::SA:
+    case InterfaceDielectric::SA:
       return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::SA>>>(attr_list, E,
+          InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(attr_list, E,
                                                                         mat_op, t, epsilon);
   }
   return {};  // For compiler warning
