@@ -772,24 +772,19 @@ void PostOperator<solver_t>::MeasureSParameter() const
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
 
       const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
-      std::complex<double> S_ij = vi.S;
       if (idx == drive_port_idx)
       {
-        S_ij.real(S_ij.real() - 1.0);
+        vi.S.real(vi.S.real() - 1.0);
       }
       // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
       if (std::abs(data.R) > 0.0)
       {
-        S_ij *= std::sqrt(src_data.R / data.R);
+        vi.S *= std::sqrt(src_data.R / data.R);
       }
 
-      vi.S = S_ij;
-      vi.abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
-      vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
-
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
-                 vi.abs_S_ij, vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
@@ -799,23 +794,18 @@ void PostOperator<solver_t>::MeasureSParameter() const
       // Wave port modes are not normalized to a characteristic impedance so no generalized
       // S-parameters are available.
       const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
-      std::complex<double> S_ij = vi.S;
       if (idx == drive_port_idx)
       {
-        S_ij.real(S_ij.real() - 1.0);
+        vi.S.real(vi.S.real() - 1.0);
       }
       // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default
       // 0 unless specified).
-      S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-      S_ij *= std::exp(1i * data.kn0 * data.d_offset);
-
-      vi.S = S_ij;
-      vi.abs_S_ij = 20.0 * std::log10(std::abs(S_ij));
-      vi.arg_S_ij = std::arg(S_ij) * 180.0 / M_PI;
+      vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+      vi.S *= std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), S_ij.real(), S_ij.imag(),
-                 vi.abs_S_ij, vi.arg_S_ij);
+                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
   }
 }

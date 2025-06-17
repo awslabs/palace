@@ -95,8 +95,6 @@ auto RandomMeasurement(int ndomain = 5)
     l.I = std::accumulate(l.I_RLC.begin(), l.I_RLC.end(), std::complex(0.0, 0.0));
     // Random sub-unit magnitude and random phase
     l.S = randd(1000) / 1000 * std::exp(std::complex(randd(100) / 100, randd(100) / 100));
-    l.abs_S_ij = 20.0 * std::log10(std::abs(l.S));  // TODO: eliminate these
-    l.arg_S_ij = std::arg(l.S) * 180 / M_PI;
 
     l.inductor_energy = (1 + randd(100));
     l.capacitor_energy = (1 + randd(100));
@@ -110,8 +108,6 @@ auto RandomMeasurement(int ndomain = 5)
     l.P = {1 + randd(100), -50 + randd(100)};
     // Random sub-unit magnitude and random phase
     l.S = randd(1000) / 1000 * std::exp(std::complex(randd(100) / 100, randd(100) / 100));
-    l.abs_S_ij = 20.0 * std::log10(std::abs(l.S));  // TODO: eliminate these
-    l.arg_S_ij = std::arg(l.S) * 180 / M_PI;
   }
 
   int nprobe = 5;

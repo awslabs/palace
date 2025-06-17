@@ -55,8 +55,6 @@ struct Measurement
 
     // S-Parameter.
     std::complex<double> S = 0.0;
-    double abs_S_ij = 0.0;
-    double arg_S_ij = 0.0;
 
     // Energies (currently only for lumped port).
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
@@ -114,6 +112,9 @@ struct Measurement
                                     const Measurement &nondim_measurement_cache);
   static Measurement Nondimensionalize(const Units &units,
                                        const Measurement &dim_measurement_cache);
+  // Helpers for converting complex variable to magnitude in dB and phase.
+  static double Magnitude(std::complex<double> x) { return 20.0 * std::log10(std::abs(x)); }
+  static double Phase(std::complex<double> x) { return std::arg(x) * 180.0 / M_PI; }
 };
 
 // Helper class to PostOperator to collect csv tables and printers for measurement that will

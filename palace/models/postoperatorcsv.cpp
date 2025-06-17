@@ -62,9 +62,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
                       units.Dimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
                       units.Dimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
-      dim[k].S = data.S;                // NONE
-      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
-      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
+      dim[k].S = data.S;  // NONE
 
       dim[k].inductor_energy =
           units.Dimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -165,9 +163,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
           units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
           units.Nondimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
           units.Nondimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
-      dim[k].S = data.S;                // NONE
-      dim[k].abs_S_ij = data.abs_S_ij;  // NONE
-      dim[k].arg_S_ij = data.arg_S_ij;  // NONE
+      dim[k].S = data.S;  // NONE
 
       dim[k].inductor_energy =
           units.Nondimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -863,13 +859,13 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
   CheckAppendIndex(port_S->table["idx"], m_idx_value, m_idx_row);
   for (const auto &[idx, data] : measurement_cache.lumped_port_vi)
   {
-    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
-    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
+    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << Measurement::Magnitude(data.S);
+    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << Measurement::Phase(data.S);
   }
   for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
-    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << data.abs_S_ij;
-    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << data.arg_S_ij;
+    port_S->table[format("abs_{}_{}", idx, m_ex_idx)] << Measurement::Magnitude(data.S);
+    port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << Measurement::Phase(data.S);
   }
   port_S->WriteFullTableTrunc();
 }
