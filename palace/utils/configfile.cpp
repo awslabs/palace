@@ -92,20 +92,20 @@ PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Def
                                                  {FrequencySampling::LOG, "Log"},
                                                  {FrequencySampling::POINT, "Point"}})
 
-// Helper for converting string keys to enum for TimeSteppingScheme and ExcitationType.
+// Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
 PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
                            {{TimeSteppingScheme::DEFAULT, "Default"},
                             {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
                             {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
                             {TimeSteppingScheme::CVODE, "CVODE"},
                             {TimeSteppingScheme::ARKODE, "ARKODE"}})
-PALACE_JSON_SERIALIZE_ENUM(ExcitationType,
-                           {{ExcitationType::SINUSOIDAL, "Sinusoidal"},
-                            {ExcitationType::GAUSSIAN, "Gaussian"},
-                            {ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
-                            {ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
-                            {ExcitationType::RAMP_STEP, "Ramp"},
-                            {ExcitationType::SMOOTH_STEP, "SmoothStep"}})
+PALACE_JSON_SERIALIZE_ENUM(Excitation,
+                           {{Excitation::SINUSOIDAL, "Sinusoidal"},
+                            {Excitation::GAUSSIAN, "Gaussian"},
+                            {Excitation::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
+                            {Excitation::MOD_GAUSSIAN, "ModulatedGaussian"},
+                            {Excitation::RAMP_STEP, "Ramp"},
+                            {Excitation::SMOOTH_STEP, "SmoothStep"}})
 
 // Helper for converting string keys to enum for LinearSolverType, KrylovSolver, and
 // MultigridCoarsening

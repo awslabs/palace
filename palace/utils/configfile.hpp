@@ -736,7 +736,7 @@ public:
   TimeSteppingScheme type = TimeSteppingScheme::DEFAULT;
 
   // Excitation type for port excitation.
-  ExcitationType excitation = ExcitationType::SINUSOIDAL;
+  Excitation excitation = Excitation::SINUSOIDAL;
 
   // Excitation parameters: frequency [GHz] and pulse width [ns].
   double pulse_f = 0.0;

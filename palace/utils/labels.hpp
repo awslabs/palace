@@ -69,7 +69,7 @@ enum class TimeSteppingScheme : char
 };
 
 // Excitation type for port excitation.
-enum class ExcitationType : char
+enum class Excitation : char
 {
   SINUSOIDAL,
   GAUSSIAN,
