@@ -200,10 +200,14 @@ public:
   virtual operator PetscObject() const = 0;
 
     // Test for linearized A2 matrix?
-  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ;  //
+  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ;  //
 
   // Reference to space operator so we recompute A2
   SpaceOperator *space_op; // TEST???
+
+    // Test for RII correction for nonlinear eigenproblem
+  std::vector<std::complex<double>> eigen_values;
+  std::vector<ComplexVector> eigen_vectors;
 };
 
 // Class for SLEPc's NEP problem type.

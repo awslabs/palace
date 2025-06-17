@@ -739,7 +739,7 @@ void SlepcNEPSolver::Customize()
       MFEM_ABORT("Shift-and-invert with general complex eigenvalue target is unsupported!");
     }
   }
-
+  std::cerr << "NEPSetTarget with sigma: " << sigma << "!!\n";
   PalacePetscCall(NEPSetTarget(nep, sigma / gamma));
   if (!cl_custom)
   {
@@ -893,7 +893,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PC pc;
     PetscInt nsolve;
     // NLEIGS
-    /**/
+    /*
     KSP *ksp;
     PalacePetscCall(NEPNLEIGSGetKSPs(nep, &nsolve, &ksp));
     for (int i = 0; i < nsolve; i++)
@@ -904,8 +904,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
       PalacePetscCall(PCShellSetContext(pc, (void *)this));
       PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     }
-    //PalacePetscCall(NEPSetRefine(nep, NEP_REFINE_MULTIPLE, 1, 1e-6, 3, NEP_REFINE_SCHEME_EXPLICIT /*3*/)); // ONLY IMPLEMENTED IN SPLIT FORM!
-    /**/
+    */
     // CISS (only supports computing all eigs)
     /*
     KSP *ksp;
@@ -920,7 +919,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     }
     */
     // RII (needs Jacobian and target_magnitude)
-    /*
+    /**/
     KSP ksp;
     PalacePetscCall(NEPRIISetLagPreconditioner(nep, 1));
     //PalacePetscCall(NEPRIISetConstCorrectionTol(nep, PETSC_TRUE));
@@ -931,7 +930,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
     PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
-    */
+    /**/
     // SLP
     /*
     KSP ksp;
@@ -951,6 +950,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
 PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
                                           ComplexVector &r) const
 {
+  Mpi::Print("SlepcNEPSolver GetResidualNorm with l: {:e}{:+e}i\n", l.real(), l.imag());
   // Compute the i-th eigenpair residual: || A(λ) x ||₂ for eigenvalue λ.
   auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
   auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), l, l * l, opK, opC,
@@ -1148,7 +1148,7 @@ void SlepcEPSSolverBase::Customize()
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
-  Mpi::Print("\n\n\n!!!!! EPSSolver::Solve etc\n\n\n\n\n");
+  //Mpi::Print("\n\n\n!!!!! EPSSolver::Solve etc\n\n\n\n\n");
   if (space_op)
   {
     Mpi::Print("Creating opA2 in EPSSolverBase::Solve\n");
@@ -1180,6 +1180,10 @@ int SlepcEPSSolverBase::Solve()
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
 {
+  if (i < eigen_values.size())
+  {
+    return eigen_values[i]; // * gamma; ??
+  }
   PetscScalar l;
   PalacePetscCall(EPSGetEigenvalue(eps, i, &l, nullptr));
   return l * gamma;
@@ -1187,6 +1191,11 @@ std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
 
 void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &x) const
 {
+  if (i < eigen_vectors.size())
+  {
+    x = eigen_vectors[i];
+    return;
+  }
   MFEM_VERIFY(
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
@@ -1422,7 +1431,7 @@ int SlepcPEPLinearSolver::Solve()
   }
 
   // TEST TO REFINE EIGENVALUES WITH QUASI-NEWTON METHOD?
-  int max_outer_it = 10;
+  int max_outer_it = 100;
   int max_inner_it = 5;
   double tol = 1e-6;
   ComplexVector v, u, w, c, w0, z;
@@ -1444,24 +1453,37 @@ int SlepcPEPLinearSolver::Solve()
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon()); // TODO: define only once above
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput!
   xscale = std::make_unique<PetscReal[]>(num_conv); // ??
+  //eigen_values.resize(num_conv);
+  //eigen_vectors.resize(num_conv);
+  Mpi::Print("Found {:d} eigenvalues in linear problem\n", num_conv);
   for (int i = 0; i < num_conv; i++)
   {
     std::complex<double> eig = GetEigenvalue(i);
     std::complex<double> init_eig = eig;
     xscale.get()[i] = 0.0; // annoying, maybe use rescale eigenvectors??
     GetEigenvector(i, v);
-
-    /**/
+    Mpi::Print("Refining eigenvalue #{:d}: {:e}{:+e}i\n", i, eig.real(), eig.imag());
+    /*
     // RII (similar to Algorithm 2 https://arxiv.org/pdf/1910.11712)
-    // Update sigma = lambda0?
-    double res = 1.0;
-    auto A20 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
-    auto A0 = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A20.get());
-    A0->Mult(v, u);
-    double init_res = linalg::Norml2(GetComm(), u);
-    auto P0 = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
-    opInv->SetOperators(*A0, *P0);
+    int update_freq = 5;//test
+    // update_freq=1  5, 14 its
+    //1,      +7.219130e+00,      +3.798150e-01,      +9.516626e+00,      +1.261412e-10,      +2.701629e-07
+    //2,      +7.761920e+00,      +3.774097e-01,      +1.029530e+01,      +4.620842e-10,      +9.906911e-07
+    // update_freq=2  5, 9 its
+    //1,      +7.219038e+00,      +3.797892e-01,      +9.517150e+00,      +1.457863e-11,      +3.122377e-08
+    //2,      +7.760907e+00,      +3.661238e-01,      +1.061053e+01,      +2.696456e-11,      +5.781083e-08
+    // update_freq=5  4, 8 its
+    //1,      +7.219082e+00,      +3.798019e-01,      +9.516890e+00,      +2.215002e-10,      +4.743980e-07
+    //2,      +7.759773e+00,      +3.710332e-01,      +1.046893e+01,      +3.102829e-10,      +6.652317e-07
 
+    double res = 1.0;
+    opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
+    opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+    opInv->SetOperators(*opA, *opP);
+
+    opA->Mult(v, u);
+    double init_res = linalg::Norml2(GetComm(), u);
     // Normalize eigenvector???
     v *= 1.0 / linalg::Norml2(GetComm(), v);
 
@@ -1476,7 +1498,6 @@ int SlepcPEPLinearSolver::Solve()
         auto A2p = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO); // Maybe use this only for it=0 and after use prev A2?
         auto AJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(dl * std::abs(eig.imag()), 1, A2p.get(), A2.get(), A2.get());
         auto J = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2 * eig, opK, opC, opM, AJ.get());
-        //auto J = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2 * eig, opK, opC, opM);//test AJ=0
 
         A->Mult(v, u);
         opInv->Mult(u, w);
@@ -1487,7 +1508,7 @@ int SlepcPEPLinearSolver::Solve()
         const auto mu = num / den;
         //Mpi::Print("\n RII inner iteration {:d}.{:d} eig: {:e}{:+e}i, |mu|/|eig|: {}\n\n", it, inner_it, eig.real(), eig.imag(), std::abs(mu)/std::abs(eig));
 
-        if (std::abs(mu) <  std::sqrt(std::numeric_limits<double>::epsilon()) * std::abs(eig))
+        if (std::abs(mu) < dl * std::abs(eig))
         {
           Mpi::Print("\nRII inner iteration {:d}.{:d}.{:d} reached tolerance with eig: {:e}{:+e}i\n\n", i, it, inner_it, eig.real(), eig.imag());
           break;
@@ -1496,89 +1517,141 @@ int SlepcPEPLinearSolver::Solve()
         inner_it++;
       }
 
-      A20 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
-      A0 = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A20.get());
-      A0->Mult(v, u);
+      auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
+      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2.get());
+      A->Mult(v, u);
       res = linalg::Norml2(GetComm(), u);
       Mpi::Print(GetComm(), "RII outer iteration: {:d}, {:d}, eig: {:e}{:+e}i, res: {}\n", i, it, eig.real(), eig.imag(), res);
       if (res < tol)
       {
+        eigen_values.push_back(eig);
+        eigen_vectors.push_back(v);
+        //eigen_values[i] = eig;
+        //eigen_vectors[i] = v;
         Mpi::Print("\nRII for eig #{:d} reached tolerance in {:d} iterations with init res: {}, final res: {}, init_eig: {:e}{:+e}i, final eig: {:e}{:+e}i\n\n\n", i, it+1, init_res, res, init_eig.real(), init_eig.imag(), eig.real(), eig.imag());
         break;
       }
 
       // Update opInv or not??
-      P0 = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
-      opInv->SetOperators(*A0, *P0);
+      if (it % update_freq == 0)
+      {
+        Mpi::Print("Update opInv at outer it #{:d}\n", it);
+        opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
+        opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
+        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+        opInv->SetOperators(*opA, *opP);
+      }
       opInv->Mult(u, w);
       linalg::AXPBY(std::complex<double>(-1.0, 0.0), w, std::complex<double>(1.0, 0.0), v);
       v *= 1.0 / linalg::Norml2(GetComm(), v);
       it++;
       if (it == max_outer_it)
       {
-         Mpi::Print("\nRII for eig #{:d} reached max it with init res: {}, final res: {}, init_eig: {:e}{:+e}i, final eig: {:e}{:+e}i\n\n\n", i, init_res, res, init_eig.real(), init_eig.imag(), eig.real(), eig.imag());
+        // We should instead set it to the lowest residual iteration, which MAY NOT be the last one
+        eigen_values.push_back(eig);
+        eigen_vectors.push_back(v);
+        //eigen_values[i] = eig;
+        //eigen_vectors[i] = v;
+        Mpi::Print("\nRII for eig #{:d} reached max it with init res: {}, final res: {}, init_eig: {:e}{:+e}i, final eig: {:e}{:+e}i\n\n\n", i, init_res, res, init_eig.real(), init_eig.imag(), eig.real(), eig.imag());
       }
     }
-    /**/
+    */
 
-    // TEST update ksp every eigenvalue?!
-    //auto A20 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
-    //auto A0 = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A20.get());
-    //auto P0 = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
-    //opInv->SetOperators(*A0, *P0);
-    // Quasi-Newton 2 from https://arxiv.org/pdf/1702.08492
+    // Waveguide adapter:
+    // eig0: -1.114373e+00+2.118196e+01i
+    // eig1: -1.110740e+00+2.277491e+01i
     /*
+    // Quasi-Newton 2 from https://arxiv.org/pdf/1702.08492
+    opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
+    opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+    opInv->SetOperators(*opA, *opP);
+    int update_freq = 3;//test
+    // update_freq=1  43, 30 its
+    //1,      +7.120867e+00,      +3.683617e-01,      +9.678516e+00,      +4.250972e-10,      +9.102878e-07
+    //2,      +7.577326e+00,      +4.315980e-01,      +8.792450e+00,      +2.409751e-10,      +5.164587e-07
+    // update_freq=2  43, 32 its
+    //1,      +7.112863e+00,      +3.641351e-01,      +9.779582e+00,      +3.666994e-10,      +7.852252e-07
+    //2,      +7.563062e+00,      +4.182341e-01,      +9.055476e+00,      +3.975758e-10,      +8.520614e-07
+    // update_freq=5  51, 49 its
+    //1,      +7.071786e+00,      +3.527732e-01,      +1.003560e+01,      +4.322906e-10,      +9.256083e-07
+    //2,      +7.485256e+00,      +4.122635e-01,      +9.092000e+00,      +2.992645e-10,      +6.412705e-07
+
+    double alpha = 1.0;
     double min_res = 1e6;
     int min_it = 0;
     double init_res = 1e6;
     double res = 1e6;
+    double prev_res = 1e6;
     int it = 0;
-    while (it < max_it && res > tol)
+    while (it < max_outer_it)
     {
-      // Check residual and compute u = A * v
-      auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
-      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2.get());
-      // TEST UPDATE P and ksp every iteration?!
-      //auto P = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
-      //opInv->SetOperators(*A, *P);
+
+      // Compute u = A * v and check residual
+      auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
+      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2n.get());
 
       A->Mult(v, u);
+      //prev_res = res;
       res = linalg::Norml2(GetComm(), u) / linalg::Norml2(GetComm(), v);
       if (it == 0) init_res = res;
       if (res < min_res){min_res = res; min_it = it;}
       //min_res = std::min(res, min_res);
-      Mpi::Print(GetComm(), "i: {}, it: {}, eig: {}, {}, res: {}\n", i, it, eig.real(), eig.imag(), res);
+      Mpi::Print(GetComm(), "i: {}, it: {}, eig: {}, {}, res: {}, alpha: {}\n", i, it, eig.real(), eig.imag(), res, alpha);
 
-      // Compute w = A' * v
-      auto A2p = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO); // Maybe use this only for it=0 and after use prev A2?
-      auto AJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(dl * std::abs(eig.imag()), 1, A2p.get(), A2.get(), A2.get());
-      auto J = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2 * eig, opK, opC, opM, AJ.get());
-      J->Mult(v, w);
+      if (res < tol)
+      {
+        eigen_values.push_back(eig);
+        eigen_vectors.push_back(v);
+        break;
+      }
+
+      // Update safety factor?
+      //if (res > prev_res) alpha = std::max(0.4, 0.9*alpha);
+      //if (res < prev_res) alpha = std::min(1.0, 1.1*alpha);
+
+      // Compute w = J * v
+      opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO); // Maybe use this only for it=0 and after use prev A2?
+      opAJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(dl * std::abs(eig.imag()), 1, opA2p.get(), A2n.get(), A2n.get());
+      opJ = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2 * eig, opK, opC, opM, opAJ.get());
+      opJ->Mult(v, w);
 
       // Compute delta_eig = - dot(w0, u) / dot(w0, w)
-      //std::complex<double> delta = - linalg::Dot(GetComm(), w0, u) / linalg::Dot(GetComm(), w0, w) * 1.0; // safety factor?? // Dot or DotTranspose
-      std::complex<double> delta = - u.TransposeDot(w0) / w.TransposeDot(w0);
-      Mpi::Print("delta_eig: {}, {}\n", delta.real(), delta.imag());
+      std::complex<double> delta = - u.TransposeDot(w0) / w.TransposeDot(w0) * alpha; // safety factor? use some kind of momentum?
+
       // Update eigenvalue eig += delta_eig
       eig += delta;
 
-      // Compute z = -(delta_eig * u + w)  TODO: reuse w instead of difference variable z?
-      // OR IS IT z = -(delta * w + u) ?? See https://arxiv.org/pdf/1702.08492 pages 5 and 6
-      //linalg::AXPBYPCZ(-delta, u, std::complex<double>(-1.0, 0.0), w, std::complex<double>(0.0, 0.0), z);
+      // Compute z = -(delta_eig * w + u)  TODO: reuse w instead of different variable z?
       linalg::AXPBYPCZ(-delta, w, std::complex<double>(-1.0, 0.0), u, std::complex<double>(0.0, 0.0), z);
 
       //  M (x_k+1 - x_k) = z
+      // TEST UPDATE P and ksp every iteration?!
+      if (it > 0 && it % update_freq == 0)
+      {
+        Mpi::Print("Update opInv\n");
+        opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
+        opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
+        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+        opInv->SetOperators(*opA, *opP);
+      }
       opInv->Mult(z, u);
       v += u;
 
       it++;
+      if (it == max_outer_it)
+      {
+        eigen_values.push_back(eig);
+        eigen_vectors.push_back(v);
+        break;
+      }
     }
     Mpi::Print(GetComm(), "\n\n i: {}, init_res: {}, min_res: {}, min_it: {}\n\n", i, init_res, min_res, min_it);
     */
   }
 
   space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
-  std::exit(0);
+
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
   return (int)num_conv;
@@ -1615,6 +1688,11 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
 {
+  if (i < eigen_vectors.size())
+  {
+    x = eigen_vectors[i];
+    return;
+  }
   // Select the most accurate x for y = [x₁; x₂] from the linearized eigenvalue problem. Or,
   // just take x = x₁.
   MFEM_VERIFY(
@@ -1654,7 +1732,7 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   //A2->AddMult(x, r, 1.0); //test!?
   //Mpi::Print("GetResNorm done\n");
 
-  Mpi::Print("PEPLinear GetResidualNorm with A2!\n");
+  Mpi::Print("PEPLinear GetResidualNorm with A2 for l: {:e}{:+e}i!\n", l.real(), l.imag());
   auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
   auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), l, l * l, opK, opC,
                                      opM, A2.get());
@@ -1882,6 +1960,10 @@ int SlepcPEPSolverBase::Solve()
 
 std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const
 {
+  if (i < eigen_values.size())
+  {
+    return eigen_values[i]; // * gamma; ??
+  }
   PetscScalar l;
   PalacePetscCall(PEPGetEigenpair(pep, i, &l, nullptr, nullptr, nullptr));
   return l * gamma;
@@ -1889,6 +1971,11 @@ std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const
 
 void SlepcPEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
 {
+  if (i < eigen_vectors.size())
+  {
+    x = eigen_vectors[i];
+    return;
+  }
   MFEM_VERIFY(
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
@@ -2131,8 +2218,7 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  std::cerr << "__mat_apply_PEPLinear_L0\n";
-  std::exit(0); // THIS NEVER GETS CALLED?!?!?
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);
@@ -2155,7 +2241,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-std::cerr << "__mat_apply_PEPLinear_L1\n";
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
@@ -2171,7 +2257,7 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-std::cerr << "__mat_apply_PEPLinear_B\n";
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -2220,7 +2306,6 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   }
   else
   {
-    std::cerr << "__pc_apply_PEPLinear sinvert ctx->sigma: " << ctx->sigma << "\n";
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // TEST???
@@ -2256,8 +2341,7 @@ PetscErrorCode __mat_apply_PEPLinear2_L0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  std::cerr << "__mat_apply_PEPLinear2_L0\n";
-  std::exit(0); // THIS NEVER GETS CALLED?!?!?
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   ctx->opA2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
@@ -2278,7 +2362,7 @@ PetscErrorCode __mat_apply_PEPLinear2_L1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  std::cerr << "__mat_apply_PEPLinear2_L1\n";
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opC->Mult(ctx->x1, ctx->y1);
   //ctx->opJ->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // TEST
@@ -2299,7 +2383,7 @@ PetscErrorCode __mat_apply_PEPLinear2_B(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPLinearSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-std::cerr << "__mat_apply_PEPLinear2_B\n";
+
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
   ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
@@ -2328,7 +2412,6 @@ PetscErrorCode __pc_apply_PEPLinear2(PC pc, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   if (!ctx->sinvert)
   {
-    //std::cerr << "__pc_apply_PEPLinear !sinvert\n";
     ctx->y1 = ctx->x1;
     if (ctx->opProj)
     {
@@ -2348,7 +2431,6 @@ PetscErrorCode __pc_apply_PEPLinear2(PC pc, Vec x, Vec y)
   }
   else
   {
-    std::cerr << "__pc_apply_PEPLinear2 sinvert ctx->sigma: " << ctx->sigma << "\n";
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x1, 0.0);
     ctx->opK->AddMult(ctx->x2, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2->AddMult(ctx->x2, ctx->y1, std::complex<double>(1.0, 0.0));
@@ -2380,7 +2462,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  std::cerr << "__mat_apply_PEP_A0\n";
+
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
   //ctx->opA2->AddMult(ctx->x1, ctx->y1, 1.0); //TEST???
@@ -2396,7 +2478,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-std::cerr << "__mat_apply_PEP_A1\n";
+
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opC->Mult(ctx->x1, ctx->y1);
   //ctx->opJ->AddMult(ctx->x1, ctx->y1, 1.0); //TEST???
@@ -2411,7 +2493,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-std::cerr << "__mat_apply_PEP_A2\n";
+
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   PetscCall(ToPetscVec(ctx->y1, y));
@@ -2444,7 +2526,7 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-std::cerr << "__pc_apply_PEP\n";
+
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
@@ -2472,7 +2554,7 @@ PetscErrorCode __mat_apply_NEP_A(Mat A, Vec x, Vec y)
   palace::slepc::SlepcNEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-  // std::cerr << "In  __mat_apply_NEP_A with lambda: " << ctx->lambda_test << "\n";
+  std::cerr << "In  __mat_apply_NEP_A with lambda: " << ctx->lambda_test << "\n";
   // PetscCall(FromPetscVec(x, ctx->x1));
   // std::cerr << "In  __mat_apply_NEP_A after frompetscvec\n";
   // std::cerr << "In  __mat_apply_NEP_A ctx->x1.Size(): " << ctx->x1.Size() << "
@@ -2505,7 +2587,6 @@ PetscErrorCode __mat_destroy_NEP_A(Mat A)
 
 PetscErrorCode __mat_duplicate_NEP_A(Mat A, MatDuplicateOption op, Mat *B)
 {
-  std::cerr << "in __mat_duplicate_NEP_A \n";
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxA, *ctxB;
   PetscInt m, n, M, N;
@@ -2514,23 +2595,26 @@ PetscErrorCode __mat_duplicate_NEP_A(Mat A, MatDuplicateOption op, Mat *B)
   MFEM_VERIFY(ctxA, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(MatGetSize(A, &M, &N));
   PetscCall(MatGetLocalSize(A, &m, &n));
-
+  std::cerr << "In  __mat_duplicate_NEP_A \n";
   PetscCall(PetscNew(&ctxB));
   ctxB->space_op = ctxA->space_op;
   ctxB->opK = ctxA->opK;
   ctxB->opC = ctxA->opC;
   ctxB->opM = ctxA->opM;
   ctxB->lambda_test = ctxA->lambda_test;  // needed?
+  ctxB->sigma = ctxA->sigma;
   ctxB->opInv = ctxA->opInv;
 
-  std::complex<double> lambda = ctxB->lambda_test;
+  std::complex<double> lambda = ctxB->lambda_test + ctxB->sigma; // TEST???
+  std::cerr << "In __mat_duplicate_NEP_A ctxA->sigma: " << ctxA->sigma.real() << "+" << ctxA->sigma.imag() <<"i\n";
+  std::cerr << "In __mat_duplicate_NEP_A lambda: " << lambda.real() << "+" << lambda.imag() <<"i\n";
   // why recalculate???? can't we just do ctxB->opA = ctxA->opA??
   ctxB->opA2 = ctxB->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()), palace::Operator::DIAG_ZERO); //std:abs???
   ctxB->opA = ctxB->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
                                               lambda * lambda, ctxB->opK, ctxB->opC,
                                               ctxB->opM, ctxB->opA2.get());
-
+  std::cerr << "In __mat_duplicate_NEP_A done calculating opA2 and opA\n";
   ctxB->x1.SetSize(ctxB->opK->Height());  //?
   ctxB->y1.SetSize(ctxB->opK->Height());  //?
   ctxB->x1.UseDevice(true);
@@ -2550,7 +2634,6 @@ PetscErrorCode __mat_duplicate_NEP_A(Mat A, MatDuplicateOption op, Mat *B)
 // Remove if we don't need J
 PetscErrorCode __mat_duplicate_NEP_J(Mat A, MatDuplicateOption op, Mat *B)
 {
-  std::cerr << "in __mat_duplicate_NEP_J \n";
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxA, *ctxB;
   PetscInt m, n, M, N;
@@ -2559,7 +2642,7 @@ PetscErrorCode __mat_duplicate_NEP_J(Mat A, MatDuplicateOption op, Mat *B)
   MFEM_VERIFY(ctxA, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(MatGetSize(A, &M, &N));
   PetscCall(MatGetLocalSize(A, &m, &n));
-
+std::cerr << "In  __mat_duplicate_NEP_J \n";
   PetscCall(PetscNew(&ctxB));
   ctxB->space_op = ctxA->space_op;
   ctxB->opK = ctxA->opK;
@@ -2567,9 +2650,11 @@ PetscErrorCode __mat_duplicate_NEP_J(Mat A, MatDuplicateOption op, Mat *B)
   ctxB->opM = ctxA->opM;
   ctxB->lambda_J = ctxA->lambda_J;  // needed?
   ctxB->opInv = ctxA->opInv;
-
+  ctxB->sigma = ctxA->sigma; //??
   // why recalculate???? can't we just do ctxB->opJ = ctxA->opJ??
   std::complex<double> lambda = ctxB->lambda_test;
+  std::cerr << "In __mat_duplicate_NEP_J ctxA->sigma: " << ctxA->sigma.real() << "+" << ctxA->sigma.imag() <<"i\n";
+  std::cerr << "In __mat_duplicate_NEP_J lambda: " << lambda.real() << "+" << lambda.imag() <<"i\n";
   ctxB->opA2 = ctxB->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()), palace::Operator::DIAG_ZERO); //std:abs???
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
@@ -2599,12 +2684,11 @@ PetscErrorCode __mat_duplicate_NEP_J(Mat A, MatDuplicateOption op, Mat *B)
 // Remove if we don't need J
 PetscErrorCode __mat_apply_NEP_J(Mat J, Vec x, Vec y)
 {
-  std::cerr << "in __mat_apply_NEP_J\n";
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctx;
   PetscCall(MatShellGetContext(J, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
+std::cerr << "In  __mat_apply__NEP_J \n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opJ->Mult(ctx->x1, ctx->y1);
   // ctx->y1 *= ctx->delta * ctx->gamma; //needed?
@@ -2615,13 +2699,12 @@ PetscErrorCode __mat_apply_NEP_J(Mat J, Vec x, Vec y)
 
 PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
 {
-  std::cerr << "in __pc_apply_NEP\n";
   //
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctx;
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
-
+std::cerr << "In  __pc_apply_NEP \n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   /**/
