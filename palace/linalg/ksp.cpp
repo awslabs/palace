@@ -123,7 +123,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
   const int print = iodata.problem.verbose - 1;
   switch (type)
   {
-    case LinearSolverType::AMS:
+    case LinearSolver::AMS:
       // Can either be the coarse solve for geometric multigrid or the solver at the finest
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
@@ -132,11 +132,11 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
           iodata, fespaces.GetNumLevels() > 1, fespaces.GetFESpaceAtLevel(0),
           aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
-    case LinearSolverType::BOOMER_AMG:
+    case LinearSolver::BOOMER_AMG:
       pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1,
                                                         print);
       break;
-    case LinearSolverType::SUPERLU:
+    case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
       pc = MakeWrapperSolver<OperType, SuperLUSolver>(iodata, comm, print);
 #else
@@ -144,7 +144,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case LinearSolverType::STRUMPACK:
+    case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(iodata, comm, print);
 #else
@@ -152,7 +152,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case LinearSolverType::STRUMPACK_MP:
+    case LinearSolver::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
       pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(iodata, comm, print);
 #else
@@ -160,7 +160,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
                  "different solver!");
 #endif
       break;
-    case LinearSolverType::MUMPS:
+    case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
       pc = MakeWrapperSolver<OperType, MumpsSolver>(iodata, comm, print);
 #else
@@ -168,10 +168,10 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
           "Solver was not built with MUMPS support, please choose a different solver!");
 #endif
       break;
-    case LinearSolverType::JACOBI:
+    case LinearSolver::JACOBI:
       pc = std::make_unique<JacobiSmoother<OperType>>(comm);
       break;
-    case LinearSolverType::DEFAULT:
+    case LinearSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
   }

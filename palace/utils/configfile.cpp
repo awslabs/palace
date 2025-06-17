@@ -107,17 +107,17 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation,
                             {Excitation::RAMP_STEP, "Ramp"},
                             {Excitation::SMOOTH_STEP, "SmoothStep"}})
 
-// Helper for converting string keys to enum for LinearSolverType, KrylovSolver, and
+// Helper for converting string keys to enum for LinearSolver, KrylovSolver, and
 // MultigridCoarsening
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverType,
-                           {{LinearSolverType::DEFAULT, "Default"},
-                            {LinearSolverType::AMS, "AMS"},
-                            {LinearSolverType::BOOMER_AMG, "BoomerAMG"},
-                            {LinearSolverType::MUMPS, "MUMPS"},
-                            {LinearSolverType::SUPERLU, "SuperLU"},
-                            {LinearSolverType::STRUMPACK, "STRUMPACK"},
-                            {LinearSolverType::STRUMPACK_MP, "STRUMPACK-MP"},
-                            {LinearSolverType::JACOBI, "Jacobi"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolver,
+                           {{LinearSolver::DEFAULT, "Default"},
+                            {LinearSolver::AMS, "AMS"},
+                            {LinearSolver::BOOMER_AMG, "BoomerAMG"},
+                            {LinearSolver::MUMPS, "MUMPS"},
+                            {LinearSolver::SUPERLU, "SuperLU"},
+                            {LinearSolver::STRUMPACK, "STRUMPACK"},
+                            {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
+                            {LinearSolver::JACOBI, "Jacobi"}})
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                           {KrylovSolver::CG, "CG"},
                                           {KrylovSolver::MINRES, "MINRES"},

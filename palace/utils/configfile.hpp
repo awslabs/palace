@@ -767,7 +767,7 @@ struct LinearSolverData
 {
 public:
   // Solver type.
-  LinearSolverType type = LinearSolverType::DEFAULT;
+  LinearSolver type = LinearSolver::DEFAULT;
 
   // Krylov solver type.
   KrylovSolver ksp_type = KrylovSolver::DEFAULT;

@@ -80,7 +80,7 @@ enum class Excitation : char
 };
 
 // Type of linear solver.
-enum class LinearSolverType : char
+enum class LinearSolver : char
 {
   DEFAULT,
   AMS,

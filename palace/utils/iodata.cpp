@@ -326,28 +326,28 @@ void IoData::CheckConfiguration()
   }
 
   // Resolve default values in configuration file.
-  if (solver.linear.type == LinearSolverType::DEFAULT)
+  if (solver.linear.type == LinearSolver::DEFAULT)
   {
     if (problem.type == ProblemType::ELECTROSTATIC)
     {
-      solver.linear.type = LinearSolverType::BOOMER_AMG;
+      solver.linear.type = LinearSolver::BOOMER_AMG;
     }
     else if (problem.type == ProblemType::MAGNETOSTATIC ||
              problem.type == ProblemType::TRANSIENT)
     {
-      solver.linear.type = LinearSolverType::AMS;
+      solver.linear.type = LinearSolver::AMS;
     }
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
 #if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = LinearSolverType::SUPERLU;
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-      solver.linear.type = LinearSolverType::STRUMPACK;
+      solver.linear.type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-      solver.linear.type = LinearSolverType::MUMPS;
+      solver.linear.type = LinearSolver::MUMPS;
 #else
-      solver.linear.type = LinearSolverType::AMS;
+      solver.linear.type = LinearSolver::AMS;
 #endif
     }
   }
@@ -387,7 +387,7 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.pc_mat_shifted < 0)
   {
-    if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolverType::AMS)
+    if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
     {
       // Default true only driven simulations using AMS (false for most cases).
       solver.linear.pc_mat_shifted = 1;

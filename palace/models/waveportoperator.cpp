@@ -651,23 +651,23 @@ WavePortData::WavePortData(const config::WavePortData &data,
     gmres->SetRestartDim(data.ksp_max_its);
     // gmres->SetPrecSide(PreconditionerSide::RIGHT);
 
-    LinearSolverType pc_type = solver.linear.type;
-    if (pc_type == LinearSolverType::SUPERLU)
+    LinearSolver pc_type = solver.linear.type;
+    if (pc_type == LinearSolver::SUPERLU)
     {
 #if !defined(MFEM_USE_SUPERLU)
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (pc_type == LinearSolverType::STRUMPACK ||
-             pc_type == LinearSolverType::STRUMPACK_MP)
+    else if (pc_type == LinearSolver::STRUMPACK ||
+             pc_type == LinearSolver::STRUMPACK_MP)
     {
 #if !defined(MFEM_USE_STRUMPACK)
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (pc_type == LinearSolverType::MUMPS)
+    else if (pc_type == LinearSolver::MUMPS)
     {
 #if !defined(MFEM_USE_MUMPS)
       MFEM_ABORT("Solver was not built with MUMPS support, please choose a "
@@ -677,11 +677,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
     else  // Default choice
     {
 #if defined(MFEM_USE_SUPERLU)
-      pc_type = LinearSolverType::SUPERLU;
+      pc_type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-      pc_type = LinearSolverType::STRUMPACK;
+      pc_type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-      pc_type = LinearSolverType::MUMPS;
+      pc_type = LinearSolver::MUMPS;
 #else
 #error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
 #endif
@@ -689,7 +689,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
         [&]() -> std::unique_ptr<mfem::Solver>
         {
-          if (pc_type == LinearSolverType::SUPERLU)
+          if (pc_type == LinearSolver::SUPERLU)
           {
 #if defined(MFEM_USE_SUPERLU)
             auto slu = std::make_unique<SuperLUSolver>(
@@ -698,7 +698,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
             return slu;
 #endif
           }
-          else if (pc_type == LinearSolverType::STRUMPACK)
+          else if (pc_type == LinearSolver::STRUMPACK)
           {
 #if defined(MFEM_USE_STRUMPACK)
             auto strumpack = std::make_unique<StrumpackSolver>(
@@ -708,7 +708,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
             return strumpack;
 #endif
           }
-          else if (pc_type == LinearSolverType::MUMPS)
+          else if (pc_type == LinearSolver::MUMPS)
           {
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
