@@ -100,6 +100,8 @@ The format of this changelog is based on
     frequency choices as opposed to the existing (and maintained `"SaveStep"` based on a
     regular sampling). Only frequencies contained within the set of `"Samples"` are
     supported, as no interpolation is performed.
+  - Fix bugs in post processing where `E_cap`, `E_ind`, and `mode_port_kappa` and other
+    dependent quantities were not dimensionalized correctly.
 
 ## [0.13.0] - 2024-05-20
 
