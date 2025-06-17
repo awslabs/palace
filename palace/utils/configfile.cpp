@@ -86,11 +86,11 @@ PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric,
                             {InterfaceDielectric::MS, "MS"},
                             {InterfaceDielectric::SA, "SA"}})
 
-// Helper for converting string keys to enum for FrequencySampleType.
-PALACE_JSON_SERIALIZE_ENUM(FrequencySampleType, {{FrequencySampleType::DEFAULT, "Default"},
-                                                 {FrequencySampleType::LINEAR, "Linear"},
-                                                 {FrequencySampleType::LOG, "Log"},
-                                                 {FrequencySampleType::POINT, "Point"}})
+// Helper for converting string keys to enum for FrequencySampling.
+PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Default"},
+                                                 {FrequencySampling::LINEAR, "Linear"},
+                                                 {FrequencySampling::LOG, "Log"},
+                                                 {FrequencySampling::POINT, "Point"}})
 
 // Helper for converting string keys to enum for TransientSolverType and ExcitationType.
 PALACE_JSON_SERIALIZE_ENUM(TransientSolverType,
@@ -1747,13 +1747,13 @@ void DrivenSolverData::SetUp(json &solver)
   {
     for (auto &r : *freq_samples)
     {
-      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampleType::POINT
-                                                            : FrequencySampleType::DEFAULT);
+      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampling::POINT
+                                                            : FrequencySampling::DEFAULT);
       auto f = [&]()
       {
         switch (type)
         {
-          case FrequencySampleType::LINEAR:
+          case FrequencySampling::LINEAR:
             {
               auto min_f = r.at("MinFreq");
               auto max_f = r.at("MaxFreq");
@@ -1771,14 +1771,14 @@ void DrivenSolverData::SetUp(json &solver)
                 return ConstructLinearRange(min_f, max_f, n_sample);
               }
             }
-          case FrequencySampleType::LOG:
+          case FrequencySampling::LOG:
             {
               auto min_f = r.at("MinFreq");
               auto max_f = r.at("MaxFreq");
               auto n_sample = r.at("NSample");
               return ConstructLogRange(min_f, max_f, n_sample);
             }
-          case FrequencySampleType::POINT:
+          case FrequencySampling::POINT:
             return r.at("Freq").get<std::vector<double>>();
         }
       }();

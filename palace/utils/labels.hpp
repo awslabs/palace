@@ -50,7 +50,7 @@ enum class InterfaceDielectric : char
 };
 
 // Frequency sampling schemes.
-enum class FrequencySampleType : char
+enum class FrequencySampling : char
 {
   LINEAR,
   LOG,
