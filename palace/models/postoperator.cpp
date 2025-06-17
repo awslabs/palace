@@ -195,13 +195,13 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
-    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
-      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
           &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
     }
   }
@@ -835,17 +835,17 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   for (const auto &[idx, data] : surf_post_op.flux_surfs)
   {
     auto flux = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
-    if (data.type == SurfaceFluxType::ELECTRIC)
+    if (data.type == SurfaceFlux::ELECTRIC)
     {
       flux *= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
       flux *= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
     }
-    else if (data.type == SurfaceFluxType::MAGNETIC)
+    else if (data.type == SurfaceFlux::MAGNETIC)
     {
       flux *= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
       flux *= units.GetScaleFactor<Units::ValueType::CURRENT>();
     }
-    else if (data.type == SurfaceFluxType::POWER)
+    else if (data.type == SurfaceFlux::POWER)
     {
       flux *= units.GetScaleFactor<Units::ValueType::POWER>();
     }

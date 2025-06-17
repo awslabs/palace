@@ -149,7 +149,7 @@ public:
 // Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.
-template <SurfaceFluxType Type>
+template <SurfaceFlux Type>
 class BdrSurfaceFluxCoefficient : public mfem::Coefficient,
                                   public BdrGridFunctionCoefficient
 {
@@ -170,8 +170,8 @@ public:
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
   {
     MFEM_VERIFY(
-        (E || (Type != SurfaceFluxType::ELECTRIC && Type != SurfaceFluxType::POWER)) &&
-            (B || (Type != SurfaceFluxType::MAGNETIC && Type != SurfaceFluxType::POWER)),
+        (E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
+            (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
         "Missing E or B field grid function for surface flux coefficient!");
   }
 
@@ -231,7 +231,7 @@ public:
 };
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux D.
@@ -242,7 +242,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
 }
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>::GetLocalFlux(
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux B.
@@ -250,7 +250,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>::GetLocalFlux(
 }
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux E x H = E x μ⁻¹ B.

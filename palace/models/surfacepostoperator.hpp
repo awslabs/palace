@@ -41,7 +41,7 @@ private:
   };
   struct SurfaceFluxData : public SurfaceData
   {
-    SurfaceFluxType type;
+    SurfaceFlux type;
     bool two_sided;
     mfem::Vector center;
 

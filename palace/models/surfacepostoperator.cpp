@@ -66,14 +66,14 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   // Store the type of flux.
   switch (data.type)
   {
-    case SurfaceFluxType::ELECTRIC:
-      type = SurfaceFluxType::ELECTRIC;
+    case SurfaceFlux::ELECTRIC:
+      type = SurfaceFlux::ELECTRIC;
       break;
-    case SurfaceFluxType::MAGNETIC:
-      type = SurfaceFluxType::MAGNETIC;
+    case SurfaceFlux::MAGNETIC:
+      type = SurfaceFlux::MAGNETIC;
       break;
-    case SurfaceFluxType::POWER:
-      type = SurfaceFluxType::POWER;
+    case SurfaceFlux::POWER:
+      type = SurfaceFlux::POWER;
       break;
   }
 
@@ -109,17 +109,17 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 {
   switch (type)
   {
-    case SurfaceFluxType::ELECTRIC:
+    case SurfaceFlux::ELECTRIC:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>>(
           attr_list, E, nullptr, mat_op, two_sided, center);
-    case SurfaceFluxType::MAGNETIC:
+    case SurfaceFlux::MAGNETIC:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>>(
           attr_list, nullptr, B, mat_op, two_sided, center);
-    case SurfaceFluxType::POWER:
+    case SurfaceFlux::POWER:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>>(
           attr_list, E, B, mat_op, two_sided, center);
   }
   return {};
@@ -208,11 +208,11 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
   {
     MFEM_VERIFY(iodata.problem.type != ProblemType::ELECTROSTATIC ||
-                    data.type == SurfaceFluxType::ELECTRIC,
+                    data.type == SurfaceFlux::ELECTRIC,
                 "Magnetic field or power surface flux postprocessing are not available "
                 "for electrostatic problems!");
     MFEM_VERIFY(iodata.problem.type != ProblemType::MAGNETOSTATIC ||
-                    data.type == SurfaceFluxType::MAGNETIC,
+                    data.type == SurfaceFlux::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
                 "for magnetostatic problems!");
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
@@ -250,7 +250,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
                                   mat_op);
     double doti = GetLocalSurfaceIntegral(*f, attr_marker);
-    if (it->second.type == SurfaceFluxType::POWER)
+    if (it->second.type == SurfaceFlux::POWER)
     {
       dot += doti;
     }

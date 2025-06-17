@@ -169,7 +169,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
     {
       switch (data.type)
       {
-        case SurfaceFluxType::ELECTRIC:
+        case SurfaceFlux::ELECTRIC:
           if (HasComplexGridFunction<solver_t>())
           {
             surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
@@ -183,7 +183,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
                                     format("Φ_elec[{}]{} (C)", idx, ex_label));
           }
           break;
-        case SurfaceFluxType::MAGNETIC:
+        case SurfaceFlux::MAGNETIC:
           if (HasComplexGridFunction<solver_t>())
           {
             surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
@@ -197,7 +197,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF()
                                     format("Φ_mag[{}]{} (Wb)", idx, ex_label));
           }
           break;
-        case SurfaceFluxType::POWER:
+        case SurfaceFlux::POWER:
           surface_F->table.insert(format("F_{}_{}_re", idx, ex_idx),
                                   format("Φ_pow[{}]{} (W)", idx, ex_label));
           break;
@@ -220,7 +220,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
   {
     surface_F->table[format("F_{}_{}_re", data.idx, m_ex_idx)] << data.Phi.real();
     if (HasComplexGridFunction<solver_t>() &&
-        (data.type == SurfaceFluxType::ELECTRIC || data.type == SurfaceFluxType::MAGNETIC))
+        (data.type == SurfaceFlux::ELECTRIC || data.type == SurfaceFlux::MAGNETIC))
     {
       surface_F->table[format("F_{}_{}_im", data.idx, m_ex_idx)] << data.Phi.imag();
     }

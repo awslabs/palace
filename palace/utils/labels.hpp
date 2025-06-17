@@ -33,7 +33,7 @@ enum class EigenSolverType : char
 };
 
 // Surface fluxes.
-enum class SurfaceFluxType : char
+enum class SurfaceFlux : char
 {
   ELECTRIC,
   MAGNETIC,

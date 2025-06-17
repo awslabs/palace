@@ -198,7 +198,7 @@ private:
   {
     int idx;                   // Surface index
     std::complex<double> Phi;  // Integrated flux
-    SurfaceFluxType type;
+    SurfaceFlux type;
   };
 
   struct InterfaceData

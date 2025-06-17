@@ -556,7 +556,7 @@ struct SurfaceFluxData
 {
 public:
   // Surface flux type.
-  SurfaceFluxType type = SurfaceFluxType::ELECTRIC;
+  SurfaceFlux type = SurfaceFlux::ELECTRIC;
 
   // Flag for whether or not to consider the boundary as an infinitely thin two-sided
   // boundary for postprocessing.

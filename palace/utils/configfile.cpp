@@ -75,9 +75,9 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverType, {{EigenSolverType::DEFAULT, "Default
                                              {EigenSolverType::ARPACK, "ARPACK"}})
 
 // Helper for converting string keys to enum for SurfaceFluxPostType.
-PALACE_JSON_SERIALIZE_ENUM(SurfaceFluxType, {{SurfaceFluxType::ELECTRIC, "Electric"},
-                                             {SurfaceFluxType::MAGNETIC, "Magnetic"},
-                                             {SurfaceFluxType::POWER, "Power"}})
+PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
+                                             {SurfaceFlux::MAGNETIC, "Magnetic"},
+                                             {SurfaceFlux::POWER, "Power"}})
 
 // Helper for converting string keys to enum for InterfaceDielectricType.
 PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricType,
