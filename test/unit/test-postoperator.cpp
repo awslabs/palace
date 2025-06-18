@@ -86,13 +86,12 @@ auto RandomMeasurement(int ndomain = 5)
   for (auto &[i, l] : cache.lumped_port_vi)
   {
     double R = 1 + randd(100), L = 1 + randd(100), C = 1 + randd(100);
-    l.P = {1 + randd(100), -50 + randd(100)};
-    l.V = {randd(100), randd(100)};
-    // l.I = std::conj(l.P / l.V);
+    l.V = {1 + randd(100), -50 + randd(100)};
     l.I_RLC[0] = l.V / impedance(cache.freq, Branch::R, R, L, C);
     l.I_RLC[1] = l.V / impedance(cache.freq, Branch::L, R, L, C);
     l.I_RLC[2] = l.V / impedance(cache.freq, Branch::C, R, L, C);
     l.I = std::accumulate(l.I_RLC.begin(), l.I_RLC.end(), std::complex(0.0, 0.0));
+    l.P = l.V * std::conj(l.I);
     // Random sub-unit magnitude and random phase
     l.S = randd(1000) / 1000 * std::exp(std::complex(randd(100) / 100, randd(100) / 100));
 
@@ -178,6 +177,7 @@ TEST_CASE("PostOperator", "[idempotent]")
   }
   auto check_port_data = [&](const auto &c, const auto &dc, const auto &ndc)
   {
+    CAPTURE(c, dc, ndc);
     // Nondimensional
     CHECK(std::abs(c.P) == Approx(std::abs(ndc.P)));
     CHECK(std::arg(c.P) == Approx(std::arg(ndc.P)));
@@ -192,6 +192,13 @@ TEST_CASE("PostOperator", "[idempotent]")
       CHECK(std::abs(c.I_RLC[i]) == Approx(std::abs(ndc.I_RLC[i])));
       CHECK(std::arg(c.I_RLC[i]) == Approx(std::arg(ndc.I_RLC[i])));
     }
+    auto sum_cI = std::accumulate(c.I_RLC.begin(), c.I_RLC.end(), std::complex{0.0, 0.0});
+    CHECK(std::abs(c.I) == Approx(std::abs(sum_cI)));
+    CHECK(std::arg(c.I) == Approx(std::arg(sum_cI)));
+    auto sum_ndcI =
+        std::accumulate(ndc.I_RLC.begin(), ndc.I_RLC.end(), std::complex{0.0, 0.0});
+    CHECK(std::abs(ndc.I) == Approx(std::abs(sum_ndcI)));
+    CHECK(std::arg(ndc.I) == Approx(std::arg(sum_ndcI)));
 
     CHECK(c.inductor_energy == Approx(ndc.inductor_energy));
     CHECK(c.capacitor_energy == Approx(ndc.capacitor_energy));
@@ -215,6 +222,19 @@ TEST_CASE("PostOperator", "[idempotent]")
         CHECK(std::abs(c.I_RLC[i]) != Approx(std::abs(dc.I_RLC[i])));
         CHECK(std::arg(c.I_RLC[i]) == Approx(std::arg(dc.I_RLC[i])));
       }
+      auto sum_dcI =
+          std::accumulate(dc.I_RLC.begin(), dc.I_RLC.end(), std::complex{0.0, 0.0});
+      CHECK(std::abs(dc.I) == Approx(std::abs(sum_dcI)));
+      CHECK(std::arg(dc.I) == Approx(std::arg(sum_dcI)));
+
+      // Power voltage current relations are stable through unit conversion
+      auto ndcP = ndc.V * std::conj(ndc.I);
+      CHECK(std::abs(ndc.P) == Approx(std::abs(ndcP)));
+      CHECK(std::arg(ndc.P) == Approx(std::arg(ndcP)));
+
+      auto dcP = dc.V * std::conj(dc.I);
+      CHECK(std::abs(dc.P) == Approx(std::abs(dcP)));
+      CHECK(std::arg(dc.P) == Approx(std::arg(dcP)));
 
       CHECK(c.inductor_energy != Approx(dc.inductor_energy));
       CHECK(c.capacitor_energy != Approx(dc.capacitor_energy));
@@ -235,26 +255,30 @@ TEST_CASE("PostOperator", "[idempotent]")
 
   for (std::size_t i = 0; i < cache.probe_E_field.size(); i++)
   {
-    {
-      const auto &cE = cache.probe_E_field[i];
-      const auto &ndcE = non_dim_cache.probe_E_field[i];
-      CHECK(std::abs(cE) == Approx(std::abs(ndcE)));
-      CHECK(std::arg(cE) == Approx(std::arg(ndcE)));
+    const auto &cE = cache.probe_E_field[i];
+    const auto &ndcE = non_dim_cache.probe_E_field[i];
+    CHECK(std::abs(cE) == Approx(std::abs(ndcE)));
+    CHECK(std::arg(cE) == Approx(std::arg(ndcE)));
 
-      const auto &dcE = dim_cache.probe_E_field[i];
-      CHECK(std::abs(cE) != Approx(std::abs(dcE)));
-      CHECK(std::arg(cE) == Approx(std::arg(dcE)));
-    }
-    {
-      const auto &cB = cache.probe_B_field[i];
-      const auto &ndcB = non_dim_cache.probe_B_field[i];
-      CHECK(std::abs(cB) == Approx(std::abs(ndcB)));
-      CHECK(std::arg(cB) == Approx(std::arg(ndcB)));
+    const auto &dcE = dim_cache.probe_E_field[i];
+    CHECK(std::abs(cE) != Approx(std::abs(dcE)));
+    CHECK(std::arg(cE) == Approx(std::arg(dcE)));
 
-      const auto &dcB = dim_cache.probe_B_field[i];
-      CHECK(std::abs(cB) != Approx(std::abs(dcB)));
-      CHECK(std::arg(cB) == Approx(std::arg(dcB)));
-    }
+    const auto &cB = cache.probe_B_field[i];
+    const auto &ndcB = non_dim_cache.probe_B_field[i];
+    CHECK(std::abs(cB) == Approx(std::abs(ndcB)));
+    CHECK(std::arg(cB) == Approx(std::arg(ndcB)));
+
+    const auto &dcB = dim_cache.probe_B_field[i];
+    CHECK(std::abs(cB) != Approx(std::abs(dcB)));
+    CHECK(std::arg(cB) == Approx(std::arg(dcB)));
+
+    // Compute Poynting vector H x E^ᴴ, W/m^2
+    auto cP = cE * std::conj(cB);
+    auto dcP = dcE * std::conj(dcB) / electromagnetics::mu0_;
+    auto l_c = units.GetScaleFactor<Units::ValueType::LENGTH>();
+    CHECK(std::abs(cP) == Approx(std::abs(dcP) * l_c * l_c));
+    CHECK(std::arg(cP) == Approx(std::arg(dcP)));
   }
 
   for (std::size_t i = 0; i < cache.surface_flux_i.size(); i++)

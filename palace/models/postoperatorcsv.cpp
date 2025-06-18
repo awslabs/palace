@@ -59,9 +59,9 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dim[k].P = units.Dimensionalize<Units::ValueType::POWER>(data.P);
       dim[k].V = units.Dimensionalize<Units::ValueType::VOLTAGE>(data.V),
       dim[k].I = units.Dimensionalize<Units::ValueType::CURRENT>(data.I),
-      dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
-                      units.Dimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
-                      units.Dimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
+      dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[0]),
+                      units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
+                      units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
 
       dim[k].inductor_energy =
@@ -159,10 +159,9 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dim[k].P = units.Nondimensionalize<Units::ValueType::POWER>(data.P);
       dim[k].V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(data.V),
       dim[k].I = units.Nondimensionalize<Units::ValueType::CURRENT>(data.I),
-      dim[k].I_RLC = {
-          units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.I_RLC[0]),
-          units.Nondimensionalize<Units::ValueType::INDUCTANCE>(data.I_RLC[1]),
-          units.Nondimensionalize<Units::ValueType::CAPACITANCE>(data.I_RLC[2])};
+      dim[k].I_RLC = {units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[0]),
+                      units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
+                      units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
 
       dim[k].inductor_energy =
