@@ -331,8 +331,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                             target);
+  //auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target, target);
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), 1i * target,
+                                    std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
@@ -388,41 +389,86 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen2->SetOperators(space_op, *K, *C, *M, scale);
 
     eigen2->SetNumModes(1, iodata.solver.eigenmode.max_size);
-    //eigen2->SetTol(iodata.solver.eigenmode.tol);
-    eigen2->SetTol(1e-4);
+    eigen2->SetTol(iodata.solver.eigenmode.tol);
+    //eigen2->SetTol(1e-4);
     eigen2->SetMaxIter(iodata.solver.eigenmode.max_it);
     Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen2->GetScalingGamma(), eigen2->GetScalingDelta());
 
-    if (iodata.solver.eigenmode.init_v0)
-    {
-      ComplexVector v0;
-      if (iodata.solver.eigenmode.init_v0_const)
-      {
-        Mpi::Print(" Using constant starting vector\n");
-        space_op.GetConstantInitialVector(v0);
-      }
-      else
-      {
-        Mpi::Print(" Using random starting vector\n");
-        space_op.GetRandomInitialVector(v0);
-      }
-      if (divfree)
-      {
-        divfree->Mult(v0);
-      }
-      eigen2->SetInitialSpace(v0);  // Copies the vector
-    }
+    ComplexVector v0;
+    v0.SetSize(Curl.Width());
+    v0.UseDevice(true);
+    eigen->GetEigenvector(i, v0);
+    eigen2->SetInitialSpace(v0);  // Copies the vector
+
     std::complex<double> omega_lin = eigen->GetEigenvalue(i);
     eigen2->SetShiftInvert(omega_lin);
     eigen2->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII?
 
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(omega_lin.imag()), Operator::DIAG_ZERO);
     A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, K.get(), C.get(), M.get(), A2.get());
-    P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega_lin.imag(), - omega_lin.imag() * omega_lin.imag(), omega_lin.imag());
+    //P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega_lin.imag(), - omega_lin.imag() * omega_lin.imag(), omega_lin.imag());
+    P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, omega_lin.imag());
+
     ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
     ksp->SetOperators(*A, *P);
     eigen2->SetLinearSolver(*ksp);
-    eigen2->SetIoData(iodata); //test
+
+    Mpi::Print("\n");
+    Mpi::Print("Call eigen2->Solve() with initial guess: {:.3e}{:+.3e}i\n", omega_lin.real(), omega_lin.imag());
+    int num_conv2 = eigen2->Solve();
+    {
+      std::complex<double> lambda = (num_conv2 > 0) ? eigen2->GetEigenvalue(0) : 0.0;
+      Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv2,
+                 (num_conv2 > 1) ? "s" : "",
+                 (num_conv2 > 0)
+                     ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
+                     : "");
+    }
+    */
+    /*
+    // Test refine by doing another linear eigensolve with an updated target??
+    // Test refine eigen solution with RII or SLP?
+    std::unique_ptr<EigenvalueSolver> eigen2;
+    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc2;
+    Mpi::Print("Using SLEPc NEP solver to refine eigen solution\n");
+    slepc2 = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(), iodata.problem.verbose);
+    slepc2->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    slepc2->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    slepc2->SetOrthogonalization(
+        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS,
+        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::CGS2);
+    eigen2 = std::move(slepc2);
+    eigen2->SetOperators(space_op, *K, *C, *M, scale);
+
+    eigen2->SetNumModes(1, iodata.solver.eigenmode.max_size);
+    eigen2->SetTol(iodata.solver.eigenmode.tol);
+    //eigen2->SetTol(1e-4);
+    eigen2->SetMaxIter(iodata.solver.eigenmode.max_it);
+    Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen2->GetScalingGamma(), eigen2->GetScalingDelta());
+
+    //ComplexVector v0;
+    //v0.SetSize(Curl.Width());
+    //v0.UseDevice(true);
+    //eigen->GetEigenvector(i, v0);
+    //eigen2->SetInitialSpace(v0);  // Copies the vector
+
+    std::complex<double> omega_lin = eigen->GetEigenvalue(i);
+    double new_target = omega_lin.imag() - eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    eigen2->SetShiftInvert(1i * new_target);
+    eigen2->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+
+    // ??
+    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(omega_lin.imag()), Operator::DIAG_ZERO);
+    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, K.get(), C.get(), M.get(), A2.get());
+    //P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega_lin.imag(), - omega_lin.imag() * omega_lin.imag(), omega_lin.imag());
+    P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, omega_lin.imag());
+    //A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(new_target, Operator::DIAG_ZERO);
+    //A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * new_target, std::complex<double>(-new_target * -new_target, 0.0), K.get(), C.get(), M.get(), A2.get());
+    //P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, new_target, - new_target * new_target, new_target);
+    //P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), 1i * new_target, std::complex<double>(-new_target * -new_target, 0.0), new_target);
+    ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+    ksp->SetOperators(*A, *P);
+    eigen2->SetLinearSolver(*ksp);
 
     Mpi::Print("\n");
     Mpi::Print("Call eigen2->Solve() with initial guess: {:.3e}{:+.3e}i\n", omega_lin.real(), omega_lin.imag());
@@ -459,6 +505,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
     //eigen2->GetEigenvector(0, E);
+
+    // Could have something like
+    // if (nonlinear && error_abs > iodata.solver.eigenmode.tol)
+    //   RII(space_op, K, C, M, ksp, tol, omega, E);
+    //   QN2(space_op, K, C, M, ksp, tol, omega, E)
+    //
+
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);

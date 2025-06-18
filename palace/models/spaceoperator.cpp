@@ -336,7 +336,9 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
-  AddPeriodicCoefficients(1.0, f, fc);
+  //AddPeriodicCoefficients(1.0, f, fc);
+  AddRealPeriodicCoefficients(1.0, f);
+  AddImagPeriodicCoefficients(1.0, fc);
   int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -768,44 +770,44 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
 
 }  // namespace
 
-template <typename OperType>
-std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
-                                                                 double a2, double a3)
-{
-  // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix).
+//namespace
+//{
 
-  // When partially assembled, the coarse operators can reuse the fine operator quadrature
-  // data if the spaces correspond to the same mesh. When appropriate, we build the
-  // preconditioner on all levels based on the actual complex-valued system matrix. The
-  // coarse operator is always fully assembled.
-  if (print_prec_hdr)
+  void SpaceOperator::AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                            std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+                          std::vector<std::unique_ptr<Operator>> &bi_vec,
+                        std::vector<std::unique_ptr<Operator>> &bi_aux_vec )
   {
-    Mpi::Print("\nAssembling multigrid hierarchy:\n");
-  }
-  MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
-              "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-
-  const auto n_levels = GetNDSpaces().GetNumLevels();
-  std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
-      br_aux_vec(n_levels), bi_aux_vec(n_levels);
-  constexpr bool skip_zeros = false, assemble_q_data = false;
-  if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
-  {
+    Mpi::Print("Using AssemblePreconditioner with complex coefficients!\n");
+    constexpr bool skip_zeros = false, assemble_q_data = false;
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
         dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
         fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
         dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
         fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
         fpr(mat_op.MaxCeedAttribute());
-    AddStiffnessCoefficients(a0, dfr, fr);
-    AddStiffnessBdrCoefficients(a0, fbr);
-    AddDampingCoefficients(a1, fi);
-    AddDampingBdrCoefficients(a1, fbi);
-    AddRealMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
-    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-    AddImagMassCoefficients(a2, fi);
+    AddStiffnessCoefficients(a0.real(), dfr, fr);
+    AddStiffnessCoefficients(a0.imag(), dfi, fi);
+    AddStiffnessBdrCoefficients(a0.real(), fbr);
+    AddStiffnessBdrCoefficients(a0.imag(), fbi);
+    AddDampingCoefficients(a1.real(), fr);
+    AddDampingCoefficients(a1.imag(), fi);
+    AddDampingBdrCoefficients(a1.real(), fbr);
+    AddDampingBdrCoefficients(a1.imag(), fbi);
+    AddRealMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
+    AddRealMassCoefficients(a2.imag(), fi);
+    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
+    AddRealMassBdrCoefficients(a2.imag(), fbi);
+    AddImagMassCoefficients(a2.real(), fi);
+    AddImagMassCoefficients(-a2.imag(), fr);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-    AddPeriodicCoefficients(a0, fr, fpi);
+    //AddPeriodicCoefficients(a0.real(), fr, fpi);//?
+    AddRealPeriodicCoefficients(a0.real(), fr);
+    AddRealPeriodicCoefficients(a0.imag(), fi);
+    AddImagPeriodicCoefficients(a0.real(), fpi);
+    AddImagPeriodicCoefficients(-a0.imag(), fpr);
     int empty[2] = {
         (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
         (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
@@ -825,19 +827,24 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
           AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
     }
   }
-  else
+
+  void SpaceOperator::AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                                      std::vector<std::unique_ptr<Operator>> &br_vec,
+                            std::vector<std::unique_ptr<Operator>> &br_aux_vec )
   {
+    constexpr bool skip_zeros = false, assemble_q_data = false;
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
-        fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
-        fbr(mat_op.MaxCeedBdrAttribute()), fpr(mat_op.MaxCeedAttribute());
-    AddStiffnessCoefficients(a0, dfr, fr);
-    AddStiffnessBdrCoefficients(a0, fbr);
-    AddDampingCoefficients(a1, fr);
-    AddDampingBdrCoefficients(a1, fbr);
-    AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
-    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+      fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
+      fbr(mat_op.MaxCeedBdrAttribute()), fpr(mat_op.MaxCeedAttribute());
+    AddStiffnessCoefficients(a0.real(), dfr, fr);
+    AddStiffnessBdrCoefficients(a0.real(), fbr);
+    AddDampingCoefficients(a1.imag(), fr);
+    AddDampingBdrCoefficients(a1.imag(), fbr);
+    AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
+    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-    AddPeriodicCoefficients(a0, fr, fpr);
+    AddRealPeriodicCoefficients(a0.real(), fr);
     int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
     Mpi::GlobalMin(1, &empty, GetComm());
     if (!empty)
@@ -847,6 +854,62 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       br_aux_vec =
           AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
     }
+  }
+
+  void SpaceOperator::AssemblePreconditioner(double a0,double  a1, double a2, double a3,
+                                      std::vector<std::unique_ptr<Operator>> &br_vec,
+                            std::vector<std::unique_ptr<Operator>> &br_aux_vec )
+  {
+    constexpr bool skip_zeros = false, assemble_q_data = false;
+    MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
+      fr(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
+      fbr(mat_op.MaxCeedBdrAttribute()), fpr(mat_op.MaxCeedAttribute());
+    AddStiffnessCoefficients(a0, dfr, fr);
+    AddStiffnessBdrCoefficients(a0, fbr);
+    AddDampingCoefficients(a1, fr);
+    AddDampingBdrCoefficients(a1, fbr);
+    AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
+    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+    AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+    AddRealPeriodicCoefficients(a0, fr);
+    int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
+    Mpi::GlobalMin(1, &empty, GetComm());
+    if (!empty)
+    {
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
+                                 assemble_q_data);
+      br_aux_vec =
+          AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
+    }
+  }
+//} // namespace
+
+template <typename OperType, typename ScalarType>
+std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
+                                                                 ScalarType a2, double a3)
+{
+  // When partially assembled, the coarse operators can reuse the fine operator quadrature
+  // data if the spaces correspond to the same mesh. When appropriate, we build the
+  // preconditioner on all levels based on the actual complex-valued system matrix. The
+  // coarse operator is always fully assembled.
+  if (print_prec_hdr)
+  {
+    Mpi::Print("\nAssembling multigrid hierarchy:\n");
+  }
+  MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
+              "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
+
+  const auto n_levels = GetNDSpaces().GetNumLevels();
+  std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
+      br_aux_vec(n_levels), bi_aux_vec(n_levels);
+  constexpr bool skip_zeros = false, assemble_q_data = false;
+  if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
+  {
+    AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
+  }
+  else
+  {
+    AssemblePreconditioner(a0, a2, a2, a3, br_vec, br_aux_vec);
   }
 
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
@@ -977,14 +1040,23 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
-void SpaceOperator::AddPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &fm,
-                                            MaterialPropertyCoefficient &fc)
+void SpaceOperator::AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   // Floquet periodicity contributions.
   if (mat_op.HasWaveVector())
   {
-    fm.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetMass(), coeff);
-    fc.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), -coeff);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetMass(), coeff);
+    //fc.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), -coeff);
+  }
+}
+
+void SpaceOperator::AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f)
+{
+  // Floquet periodicity contributions.
+  if (mat_op.HasWaveVector())
+  {
+    //fm.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetMass(), coeff);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), -coeff);
   }
 }
 
@@ -1148,8 +1220,9 @@ SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
     const ComplexOperator *);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPreconditionerMatrix<Operator>(double, double, double, double);
+SpaceOperator::GetPreconditionerMatrix<Operator, double>(double, double, double, double);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPreconditionerMatrix<ComplexOperator>(double, double, double, double);
+SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
+  std::complex<double>, std::complex<double>, std::complex<double>, double);
 
 }  // namespace palace

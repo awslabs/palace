@@ -1455,17 +1455,20 @@ int SlepcPEPLinearSolver::Solve()
   xscale = std::make_unique<PetscReal[]>(num_conv); // ??
   //eigen_values.resize(num_conv);
   //eigen_vectors.resize(num_conv);
-  Mpi::Print("Found {:d} eigenvalues in linear problem\n", num_conv);
+  //Mpi::Print("Found {:d} eigenvalues in linear problem\n", num_conv);
   for (int i = 0; i < num_conv; i++)
   {
     std::complex<double> eig = GetEigenvalue(i);
     std::complex<double> init_eig = eig;
     xscale.get()[i] = 0.0; // annoying, maybe use rescale eigenvectors??
     GetEigenvector(i, v);
-    Mpi::Print("Refining eigenvalue #{:d}: {:e}{:+e}i\n", i, eig.real(), eig.imag());
+    //Mpi::Print("Refining eigenvalue #{:d}: {:e}{:+e}i\n", i, eig.real(), eig.imag());
+    //
+    // IF WE STICK WITH THIS, SHOULD PROBABLY MOVE REFINEMENT OUT OF SLEPC.CPP AND IN EIGENSOLVER.CPP OR ELSEWHERE?
+    //
     /*
     // RII (similar to Algorithm 2 https://arxiv.org/pdf/1910.11712)
-    int update_freq = 5;//test
+    int update_freq = 3;//test
     // update_freq=1  5, 14 its
     //1,      +7.219130e+00,      +3.798150e-01,      +9.516626e+00,      +1.261412e-10,      +2.701629e-07
     //2,      +7.761920e+00,      +3.774097e-01,      +1.029530e+01,      +4.620842e-10,      +9.906911e-07
@@ -1479,7 +1482,9 @@ int SlepcPEPLinearSolver::Solve()
     double res = 1.0;
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
     opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+        // WHEN eig =! eig.imag() the preconditioner matrix is no longer exact!!!!!!!!
+    //opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
     opA->Mult(v, u);
@@ -1538,7 +1543,9 @@ int SlepcPEPLinearSolver::Solve()
         Mpi::Print("Update opInv at outer it #{:d}\n", it);
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
         opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
-        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+            // WHEN eig =! eig.imag() the preconditioner matrix is no longer exact!!!!!!!!
+        //opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
       }
       opInv->Mult(u, w);
@@ -1560,11 +1567,16 @@ int SlepcPEPLinearSolver::Solve()
     // Waveguide adapter:
     // eig0: -1.114373e+00+2.118196e+01i
     // eig1: -1.110740e+00+2.277491e+01i
-    /*
+    /**/
     // Quasi-Newton 2 from https://arxiv.org/pdf/1702.08492
+    // Normalize eigenvector???
+    v *= 1.0 / linalg::Norml2(GetComm(), v);
+
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
     opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+    // WHEN eig =! eig.imag() the preconditioner matrix is no longer exact!!!!!!!!
+    //opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
     int update_freq = 3;//test
     // update_freq=1  43, 30 its
@@ -1632,11 +1644,15 @@ int SlepcPEPLinearSolver::Solve()
         Mpi::Print("Update opInv\n");
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
         opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
-        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+            // WHEN eig =! eig.imag() the preconditioner matrix is no longer exact!!!!!!!!
+        //opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0, eig.imag(), -eig.imag() * eig.imag(), eig.imag());
+        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
       }
       opInv->Mult(z, u);
       v += u;
+      // Normalize eigenvector???
+      v *= 1.0 / linalg::Norml2(GetComm(), v);
 
       it++;
       if (it == max_outer_it)
@@ -1647,7 +1663,7 @@ int SlepcPEPLinearSolver::Solve()
       }
     }
     Mpi::Print(GetComm(), "\n\n i: {}, init_res: {}, min_res: {}, min_it: {}\n\n", i, init_res, min_res, min_it);
-    */
+    /**/
   }
 
   space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
