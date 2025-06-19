@@ -147,7 +147,9 @@ public:
   Table table = {};
 
   TableWithCSVFile() = default;
-  explicit TableWithCSVFile(std::string csv_file_fullpath);
+  explicit TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file = false);
+
+  std::string_view get_csv_filepath() const { return {csv_file_fullpath_}; }
 
   void WriteFullTableTrunc();
 };
