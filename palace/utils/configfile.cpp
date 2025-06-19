@@ -1779,6 +1779,7 @@ void DrivenSolverData::SetUp(json &solver)
           case FrequencySampling::POINT:
             return r.at("Freq").get<std::vector<double>>();
         }
+        return std::vector<double>{};
       }();
       sample_f.insert(sample_f.end(), f.begin(), f.end());
 
