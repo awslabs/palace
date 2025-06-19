@@ -39,7 +39,7 @@ private:
   void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void SetUpFloquetWaveVector(const IoData &iodata, const mfem::ParMesh &mesh);
 
-  const auto AttrToMat(int attr) const
+  auto AttrToMat(int attr) const
   {
     const auto &loc_attr = mesh.GetCeedAttributes();
     MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
@@ -47,7 +47,7 @@ private:
     return attr_mat[loc_attr.at(attr) - 1];
   }
 
-  const auto Wrap(const mfem::DenseTensor &data, int attr) const
+  auto Wrap(const mfem::DenseTensor &data, int attr) const
   {
     const int k = AttrToMat(attr);
     return mfem::DenseMatrix(const_cast<double *>(data.GetData(k)), data.SizeI(),
@@ -59,17 +59,17 @@ public:
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
-  const auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
-  const auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
-  const auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
-  const auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
-  const auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
-  const auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
-  const auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
-  const auto GetInvLondonDepth(int attr) const { return Wrap(mat_invLondon, attr); }
-  const auto GetFloquetCurl(int attr) const { return Wrap(mat_muinvkx, attr); }
-  const auto GetFloquetMass(int attr) const { return Wrap(mat_kxTmuinvkx, attr); }
-  const auto GetFloquetCross(int attr) const { return Wrap(mat_kx, attr); }
+  auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
+  auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
+  auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
+  auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
+  auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
+  auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
+  auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
+  auto GetInvLondonDepth(int attr) const { return Wrap(mat_invLondon, attr); }
+  auto GetFloquetCurl(int attr) const { return Wrap(mat_muinvkx, attr); }
+  auto GetFloquetMass(int attr) const { return Wrap(mat_kxTmuinvkx, attr); }
+  auto GetFloquetCross(int attr) const { return Wrap(mat_kx, attr); }
 
   auto GetLightSpeedMin(int attr) const { return mat_c0_min[AttrToMat(attr)]; }
   auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }
