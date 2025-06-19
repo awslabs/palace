@@ -15,12 +15,13 @@ namespace palace
 
 struct ColumnOptions
 {
-  std::string empty_cell_val = {"NULL"};
-
   // Options that individual cols can overwrite.
   std::size_t min_left_padding = 8;
   std::size_t float_precision = 12;
   std::string fmt_sign = {"+"};
+
+  // Common options
+  std::string empty_cell_val = {"NULL"};
 };
 
 class Column
@@ -85,12 +86,17 @@ class Table
   std::size_t reserve_n_rows = 0;
 
 public:
+  Table() = default;
+  Table(std::string_view table_str,
+        std::optional<std::string_view> print_col_separator_ = std::nullopt,
+        std::optional<std::string_view> print_row_separator_ = std::nullopt);
+
   // Default column options; can be overwritten column-wise.
   ColumnOptions col_options = {};
 
   // Global printing options.
-  std::string print_col_separator = ",";
-  std::string print_row_separator = "\n";
+  std::string_view print_col_separator{",", 1};
+  std::string_view print_row_separator{"\n", 1};
 
   // Table properties.
 
