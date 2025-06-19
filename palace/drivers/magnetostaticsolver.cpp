@@ -168,7 +168,7 @@ void MagnetostaticSolver::PostprocessTerminals(
       output.table["i"] << idx2;
 
       auto &col = output.table[format("i2{}", idx2)];
-      for (int i = 0; i < surf_j_op.Size(); i++)
+      for (std::size_t i = 0; i < surf_j_op.Size(); i++)
       {
         col << mat(i, j) * scale;
       }

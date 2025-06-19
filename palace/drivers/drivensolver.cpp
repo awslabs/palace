@@ -41,7 +41,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto omega = iodata.solver.driven.sample_f;
   if (iodata.solver.driven.rst > 0)
   {
-    MFEM_VERIFY(iodata.solver.driven.rst <= omega.size(),
+    MFEM_VERIFY(iodata.solver.driven.rst <= static_cast<int>(omega.size()),
                 "\"Restart\": (" << iodata.solver.driven.rst
                                  << ") is greater than the number of samples ("
                                  << omega.size() << ")!");
