@@ -133,8 +133,6 @@ TEST_CASE("Config Driven Solver", "[config]")
   using namespace Catch::Matchers;
 
   constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
-  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
-
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
     auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
