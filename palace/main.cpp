@@ -94,15 +94,15 @@ static int GetDeviceId(MPI_Comm comm, int ngpu)
 #endif
 }
 
-static std::string ConfigureDevice(config::SolverData::Device device)
+static std::string ConfigureDevice(Device device)
 {
   std::string device_str;
   switch (device)
   {
-    case config::SolverData::Device::CPU:
+    case Device::CPU:
       device_str = "cpu";
       break;
-    case config::SolverData::Device::GPU:
+    case Device::GPU:
 #if defined(MFEM_USE_CUDA)
       device_str = "cuda";
 #elif defined(MFEM_USE_HIP)
@@ -113,7 +113,7 @@ static std::string ConfigureDevice(config::SolverData::Device device)
       device_str = "cpu";
 #endif
       break;
-    case config::SolverData::Device::DEBUG:
+    case Device::DEBUG:
       device_str = "cpu,debug";
       break;
   }
@@ -287,19 +287,19 @@ int main(int argc, char *argv[])
   {
     switch (iodata.problem.type)
     {
-      case config::ProblemData::Type::DRIVEN:
+      case ProblemType::DRIVEN:
         return std::make_unique<DrivenSolver>(iodata, world_root, world_size, omp_threads,
                                               GetPalaceGitTag());
-      case config::ProblemData::Type::EIGENMODE:
+      case ProblemType::EIGENMODE:
         return std::make_unique<EigenSolver>(iodata, world_root, world_size, omp_threads,
                                              GetPalaceGitTag());
-      case config::ProblemData::Type::ELECTROSTATIC:
+      case ProblemType::ELECTROSTATIC:
         return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
-      case config::ProblemData::Type::MAGNETOSTATIC:
+      case ProblemType::MAGNETOSTATIC:
         return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
-      case config::ProblemData::Type::TRANSIENT:
+      case ProblemType::TRANSIENT:
         return std::make_unique<TransientSolver>(iodata, world_root, world_size,
                                                  omp_threads, GetPalaceGitTag());
     }

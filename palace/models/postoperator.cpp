@@ -24,19 +24,19 @@ namespace palace
 namespace
 {
 
-std::string ParaviewFoldername(const config::ProblemData::Type solver_t)
+std::string ParaviewFoldername(const ProblemType solver_t)
 {
   switch (solver_t)
   {
-    case config::ProblemData::Type::DRIVEN:
+    case ProblemType::DRIVEN:
       return "driven";
-    case config::ProblemData::Type::EIGENMODE:
+    case ProblemType::EIGENMODE:
       return "eigenmode";
-    case config::ProblemData::Type::ELECTROSTATIC:
+    case ProblemType::ELECTROSTATIC:
       return "electrostatic";
-    case config::ProblemData::Type::MAGNETOSTATIC:
+    case ProblemType::MAGNETOSTATIC:
       return "magnetostatic";
-    case config::ProblemData::Type::TRANSIENT:
+    case ProblemType::TRANSIENT:
       return "transient";
     default:
       return "unkown";
@@ -45,7 +45,7 @@ std::string ParaviewFoldername(const config::ProblemData::Type solver_t)
 
 }  // namespace
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
     post_op_csv(this),
@@ -53,12 +53,12 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
         {
-          if constexpr (solver_t == config::ProblemData::Type::ELECTROSTATIC)
+          if constexpr (solver_t == ProblemType::ELECTROSTATIC)
           {
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
                                       fem_op_.GetH1Space());
           }
-          else if constexpr (solver_t == config::ProblemData::Type::MAGNETOSTATIC)
+          else if constexpr (solver_t == ProblemType::MAGNETOSTATIC)
           {
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
                                       fem_op_.GetNDSpace());
@@ -106,23 +106,23 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   // If we write paraview fields, initialize paraview files and dependant measurements. We
   // currently don't use the dependant grid functions for non-paraview measurements, so only
   // initialize if needed.
-  if (solver_t == config::ProblemData::Type::DRIVEN)
+  if (solver_t == ProblemType::DRIVEN)
   {
     paraview_save_indices = iodata.solver.driven.save_indices;
   }
-  else if (solver_t == config::ProblemData::Type::EIGENMODE)
+  else if (solver_t == ProblemType::EIGENMODE)
   {
     paraview_n_post = iodata.solver.eigenmode.n_post;
   }
-  else if (solver_t == config::ProblemData::Type::ELECTROSTATIC)
+  else if (solver_t == ProblemType::ELECTROSTATIC)
   {
     paraview_n_post = iodata.solver.electrostatic.n_post;
   }
-  else if (solver_t == config::ProblemData::Type::MAGNETOSTATIC)
+  else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
     paraview_n_post = iodata.solver.magnetostatic.n_post;
   }
-  else if (solver_t == config::ProblemData::Type::TRANSIENT)
+  else if (solver_t == ProblemType::TRANSIENT)
   {
     paraview_delta_post = iodata.solver.transient.delta_post;
   }
@@ -132,10 +132,10 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   post_op_csv.InitializeCSVDataCollection();
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
   fs::path sub_folder_name = "";
   auto nr_excitations = fem_op->GetPortExcitations().Size();
@@ -147,7 +147,7 @@ auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
   InitializeParaviewDataCollection(sub_folder_name);
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
 {
   return (paraview_delta_post > 0 && step % paraview_delta_post == 0) ||
@@ -156,7 +156,7 @@ bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
                             step);
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
     const fs::path &sub_folder_name)
 {
@@ -195,13 +195,13 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
-    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
-      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
           &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
     }
   }
@@ -403,7 +403,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 
 }  // namespace
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteFields(double time, int step)
 {
   if (!write_paraview_fields())
@@ -432,7 +432,7 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   Mpi::Barrier(fem_op->GetComm());
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
 {
   if (!write_paraview_fields())
@@ -519,7 +519,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
 
 // Measurements.
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 {
   measurement_cache.domain_E_field_energy_i.clear();
@@ -592,7 +592,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
   }
-  else if constexpr (solver_t != config::ProblemData::Type::EIGENMODE)
+  else if constexpr (solver_t != ProblemType::EIGENMODE)
   {
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
                measurement_cache.domain_E_field_energy_all,
@@ -602,24 +602,22 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureLumpedPorts() const
 {
   measurement_cache.lumped_port_vi.clear();
   measurement_cache.lumped_port_inductor_energy = 0.0;
   measurement_cache.lumped_port_capacitor_energy = 0.0;
 
-  if constexpr (solver_t == config::ProblemData::Type::EIGENMODE ||
-                solver_t == config::ProblemData::Type::DRIVEN ||
-                solver_t == config::ProblemData::Type::TRANSIENT)
+  if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
+                solver_t == ProblemType::TRANSIENT)
   {
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
       vi.P = data.GetPower(*E, *B);
       vi.V = data.GetVoltage(*E);
-      if constexpr (solver_t == config::ProblemData::Type::EIGENMODE ||
-                    solver_t == config::ProblemData::Type::DRIVEN)
+      if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
         // branches.
@@ -674,11 +672,11 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureLumpedPortsEig() const
 {
   // Depends on MeasureLumpedPorts.
-  if constexpr (solver_t == config::ProblemData::Type::EIGENMODE)
+  if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     auto freq_re = measurement_cache.freq.real();
     auto energy_electric_all = measurement_cache.domain_E_field_energy_all +
@@ -727,12 +725,12 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureWavePorts() const
 {
   measurement_cache.wave_port_vi.clear();
 
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
+  if constexpr (solver_t == ProblemType::DRIVEN)
   {
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
@@ -749,11 +747,11 @@ void PostOperator<solver_t>::MeasureWavePorts() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSParameter() const
 {
   // Depends on LumpedPorts, WavePorts.
-  if constexpr (solver_t == config::ProblemData::Type::DRIVEN)
+  if constexpr (solver_t == ProblemType::DRIVEN)
   {
     using fmt::format;
     using std::complex_literals::operator""i;
@@ -826,7 +824,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSurfaceFlux() const
 {
   // Compute the flux through a surface as Φ_j = ∫ F ⋅ n_j dS, with F = B, F = ε D, or F =
@@ -837,17 +835,17 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   for (const auto &[idx, data] : surf_post_op.flux_surfs)
   {
     auto flux = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
-    if (data.type == SurfaceFluxType::ELECTRIC)
+    if (data.type == SurfaceFlux::ELECTRIC)
     {
       flux *= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
       flux *= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
     }
-    else if (data.type == SurfaceFluxType::MAGNETIC)
+    else if (data.type == SurfaceFlux::MAGNETIC)
     {
       flux *= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
       flux *= units.GetScaleFactor<Units::ValueType::CURRENT>();
     }
-    else if (data.type == SurfaceFluxType::POWER)
+    else if (data.type == SurfaceFlux::POWER)
     {
       flux *= units.GetScaleFactor<Units::ValueType::POWER>();
     }
@@ -855,7 +853,7 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 {
   // Depends on Lumped Port Energy since this is used in normalization of participation
@@ -894,7 +892,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
   }
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureProbes() const
 {
   measurement_cache.probe_E_field.clear();
@@ -922,13 +920,13 @@ void PostOperator<solver_t>::MeasureProbes() const
 
 using fmt::format;
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
                                                 const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
+    -> std::enable_if_t<U == ProblemType::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
@@ -957,14 +955,14 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   return total_energy;
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
                                                 const ComplexVector &b,
                                                 std::complex<double> omega,
                                                 double error_abs, double error_bkwd,
                                                 int num_conv)
-    -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto freq = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
@@ -1010,11 +1008,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   return total_energy;
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
                                                 int idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>
+    -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetVGridFunction(v);
@@ -1036,11 +1034,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
       measurement_cache.domain_H_field_energy_all);
   return total_energy;
 }
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
                                                 int idx)
-    -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>
+    -> std::enable_if_t<U == ProblemType::MAGNETOSTATIC, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetAGridFunction(a);
@@ -1063,11 +1061,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
   return total_energy;
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const Vector &b,
                                                 double t, double J_coef)
-    -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>
+    -> std::enable_if_t<U == ProblemType::TRANSIENT, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto time = units.Dimensionalize<Units::ValueType::TIME>(t);
@@ -1091,7 +1089,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   return total_energy;
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -1103,11 +1101,11 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   }
 }
 
-template <config::ProblemData::Type solver_t>
-template <config::ProblemData::Type U>
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
                                                           const ComplexVector &b)
-    -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>
+    -> std::enable_if_t<U == ProblemType::DRIVEN, double>
 {
   SetEGridFunction(e);
   SetBGridFunction(b);
@@ -1123,44 +1121,41 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
 
 // Explict template instantiation.
 
-template class PostOperator<config::ProblemData::Type::DRIVEN>;
-template class PostOperator<config::ProblemData::Type::EIGENMODE>;
-template class PostOperator<config::ProblemData::Type::ELECTROSTATIC>;
-template class PostOperator<config::ProblemData::Type::MAGNETOSTATIC>;
-template class PostOperator<config::ProblemData::Type::TRANSIENT>;
+template class PostOperator<ProblemType::DRIVEN>;
+template class PostOperator<ProblemType::EIGENMODE>;
+template class PostOperator<ProblemType::ELECTROSTATIC>;
+template class PostOperator<ProblemType::MAGNETOSTATIC>;
+template class PostOperator<ProblemType::TRANSIENT>;
 
 // Function explict instantiation.
 // TODO(C++20): with requires, we won't need a second template.
 
-template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureAndPrintAll<
-    config::ProblemData::Type::DRIVEN>(int ex_idx, int step, const ComplexVector &e,
-                                       const ComplexVector &b, std::complex<double> omega)
-    -> double;
-
-template auto PostOperator<config::ProblemData::Type::EIGENMODE>::MeasureAndPrintAll<
-    config::ProblemData::Type::EIGENMODE>(int step, const ComplexVector &e,
-                                          const ComplexVector &b,
-                                          std::complex<double> omega, double error_abs,
-                                          double error_bkwd, int num_conv) -> double;
-
-template auto PostOperator<config::ProblemData::Type::ELECTROSTATIC>::MeasureAndPrintAll<
-    config::ProblemData::Type::ELECTROSTATIC>(int step, const Vector &v, const Vector &e,
-                                              int idx) -> double;
-
-template auto PostOperator<config::ProblemData::Type::MAGNETOSTATIC>::MeasureAndPrintAll<
-    config::ProblemData::Type::MAGNETOSTATIC>(int step, const Vector &a, const Vector &b,
-                                              int idx) -> double;
-
-template auto PostOperator<config::ProblemData::Type::TRANSIENT>::MeasureAndPrintAll<
-    config::ProblemData::Type::TRANSIENT>(int step, const Vector &e, const Vector &b,
-                                          double t, double J_coef) -> double;
-
-template auto PostOperator<config::ProblemData::Type::DRIVEN>::MeasureDomainFieldEnergyOnly<
-    config::ProblemData::Type::DRIVEN>(const ComplexVector &e, const ComplexVector &b)
-    -> double;
+template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(
+    int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
+    std::complex<double> omega) -> double;
 
 template auto
-PostOperator<config::ProblemData::Type::DRIVEN>::InitializeParaviewDataCollection(
-    int ex_idx) -> void;
+PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(
+    int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
+    double error_abs, double error_bkwd, int num_conv) -> double;
+
+template auto
+PostOperator<ProblemType::ELECTROSTATIC>::MeasureAndPrintAll<ProblemType::ELECTROSTATIC>(
+    int step, const Vector &v, const Vector &e, int idx) -> double;
+
+template auto
+PostOperator<ProblemType::MAGNETOSTATIC>::MeasureAndPrintAll<ProblemType::MAGNETOSTATIC>(
+    int step, const Vector &a, const Vector &b, int idx) -> double;
+
+template auto
+PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>(
+    int step, const Vector &e, const Vector &b, double t, double J_coef) -> double;
+
+template auto
+PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(
+    const ComplexVector &e, const ComplexVector &b) -> double;
+
+template auto
+PostOperator<ProblemType::DRIVEN>::InitializeParaviewDataCollection(int ex_idx) -> void;
 
 }  // namespace palace

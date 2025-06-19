@@ -22,8 +22,7 @@ namespace palace::fem
 // Construct sequence of FECollection objects.
 template <typename FECollection>
 inline std::vector<std::unique_ptr<FECollection>>
-ConstructFECollections(int p, int dim, int mg_max_levels,
-                       config::LinearSolverData::MultigridCoarsenType mg_coarsen_type,
+ConstructFECollections(int p, int dim, int mg_max_levels, MultigridCoarsening mg_coarsening,
                        bool mat_lor)
 {
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
@@ -58,12 +57,12 @@ ConstructFECollections(int p, int dim, int mg_max_levels,
     {
       break;
     }
-    switch (mg_coarsen_type)
+    switch (mg_coarsening)
     {
-      case config::LinearSolverData::MultigridCoarsenType::LINEAR:
+      case MultigridCoarsening::LINEAR:
         p--;
         break;
-      case config::LinearSolverData::MultigridCoarsenType::LOGARITHMIC:
+      case MultigridCoarsening::LOGARITHMIC:
         p = (p + pmin) / 2;
         break;
     }

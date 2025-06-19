@@ -41,7 +41,7 @@ private:
   };
   struct SurfaceFluxData : public SurfaceData
   {
-    SurfaceFluxType type;
+    SurfaceFlux type;
     bool two_sided;
     mfem::Vector center;
 
@@ -54,7 +54,7 @@ private:
   };
   struct InterfaceDielectricData : public SurfaceData
   {
-    InterfaceDielectricType type;
+    InterfaceDielectric type;
     double t, epsilon, tandelta;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,

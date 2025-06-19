@@ -24,10 +24,10 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.linear.mg_coarsening, false)),
     rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
                                                    mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(

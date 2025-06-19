@@ -27,10 +27,9 @@ private:
   mfem::SuperLUSolver solver;
 
 public:
-  SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder, bool use_3d,
-                int print);
+  SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d, int print);
   SuperLUSolver(const IoData &iodata, MPI_Comm comm, int print)
-    : SuperLUSolver(comm, iodata.solver.linear.sym_fact_type,
+    : SuperLUSolver(comm, iodata.solver.linear.sym_factorization,
                     iodata.solver.linear.superlu_3d, print)
   {
   }

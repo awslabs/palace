@@ -70,7 +70,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
 {
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed if multiple excitations.
-  PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
   auto excitation_helper = space_op.GetPortExcitations();
 
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -186,7 +186,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
                                            const std::vector<double> &omega_sample) const
 {
   // Initialize postprocessing for measurement and printers.
-  PostOperator<config::ProblemData::Type::DRIVEN> post_op(iodata, space_op);
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
   auto excitation_helper = space_op.GetPortExcitations();
 
   // Configure PROM parameters if not specified.

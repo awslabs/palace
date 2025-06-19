@@ -223,11 +223,11 @@ void IoData::CheckConfiguration()
 {
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
-  if (problem.type == config::ProblemData::Type::DRIVEN)
+  if (problem.type == ProblemType::DRIVEN)
   {
     // No unsupported domain or boundary objects for frequency domain driven simulations.
   }
-  else if (problem.type == config::ProblemData::Type::EIGENMODE)
+  else if (problem.type == ProblemType::EIGENMODE)
   {
     if (!boundaries.conductivity.empty())
     {
@@ -245,7 +245,7 @@ void IoData::CheckConfiguration()
                    "with order > 1!\n");
     }
   }
-  else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
+  else if (problem.type == ProblemType::ELECTROSTATIC)
   {
     if (!boundaries.farfield.empty())
     {
@@ -273,7 +273,7 @@ void IoData::CheckConfiguration()
           "Electrostatic problem type does not support surface current excitation!\n");
     }
   }
-  else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+  else if (problem.type == ProblemType::MAGNETOSTATIC)
   {
     if (!boundaries.farfield.empty())
     {
@@ -306,7 +306,7 @@ void IoData::CheckConfiguration()
                    "dielectric loss postprocessing!\n");
     }
   }
-  else if (problem.type == config::ProblemData::Type::TRANSIENT)
+  else if (problem.type == ProblemType::TRANSIENT)
   {
     if (!boundaries.conductivity.empty())
     {
@@ -326,43 +326,43 @@ void IoData::CheckConfiguration()
   }
 
   // Resolve default values in configuration file.
-  if (solver.linear.type == config::LinearSolverData::Type::DEFAULT)
+  if (solver.linear.type == LinearSolver::DEFAULT)
   {
-    if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
+    if (problem.type == ProblemType::ELECTROSTATIC)
     {
-      solver.linear.type = config::LinearSolverData::Type::BOOMER_AMG;
+      solver.linear.type = LinearSolver::BOOMER_AMG;
     }
-    else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
-             problem.type == config::ProblemData::Type::TRANSIENT)
+    else if (problem.type == ProblemType::MAGNETOSTATIC ||
+             problem.type == ProblemType::TRANSIENT)
     {
-      solver.linear.type = config::LinearSolverData::Type::AMS;
+      solver.linear.type = LinearSolver::AMS;
     }
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
 #if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = config::LinearSolverData::Type::SUPERLU;
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-      solver.linear.type = config::LinearSolverData::Type::STRUMPACK;
+      solver.linear.type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-      solver.linear.type = config::LinearSolverData::Type::MUMPS;
+      solver.linear.type = LinearSolver::MUMPS;
 #else
-      solver.linear.type = config::LinearSolverData::Type::AMS;
+      solver.linear.type = LinearSolver::AMS;
 #endif
     }
   }
-  if (solver.linear.ksp_type == config::LinearSolverData::KspType::DEFAULT)
+  if (solver.linear.krylov_solver == KrylovSolver::DEFAULT)
   {
     // Problems with SPD operators use CG by default, else GMRES.
-    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
-        problem.type == config::ProblemData::Type::TRANSIENT)
+    if (problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::MAGNETOSTATIC ||
+        problem.type == ProblemType::TRANSIENT)
     {
-      solver.linear.ksp_type = config::LinearSolverData::KspType::CG;
+      solver.linear.krylov_solver = KrylovSolver::CG;
     }
     else
     {
-      solver.linear.ksp_type = config::LinearSolverData::KspType::GMRES;
+      solver.linear.krylov_solver = KrylovSolver::GMRES;
     }
   }
   if (solver.linear.max_size < 0)
@@ -371,11 +371,10 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == config::ProblemData::Type::DRIVEN &&
-         solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == config::ProblemData::Type::TRANSIENT ||
-        problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
+        problem.type == ProblemType::TRANSIENT ||
+        problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Default true only driven simulations without adaptive frequency sweep, transient
       // simulations, electrostatics, or magnetostatics.
@@ -388,8 +387,7 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.pc_mat_shifted < 0)
   {
-    if (problem.type == config::ProblemData::Type::DRIVEN &&
-        solver.linear.type == config::LinearSolverData::Type::AMS)
+    if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
     {
       // Default true only driven simulations using AMS (false for most cases).
       solver.linear.pc_mat_shifted = 1;
@@ -401,8 +399,8 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.mg_smooth_aux < 0)
   {
-    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+    if (problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Disable auxiliary space smoothing using distributive relaxation by default for
       // problems which don't need it.
@@ -419,15 +417,13 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    solver.linear.ams_singular_op =
-        (problem.type == config::ProblemData::Type::MAGNETOSTATIC);
+    solver.linear.ams_singular_op = (problem.type == ProblemType::MAGNETOSTATIC);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
-    solver.linear.amg_agg_coarsen =
-        (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-         problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
-         problem.type == config::ProblemData::Type::TRANSIENT);
+    solver.linear.amg_agg_coarsen = (problem.type == ProblemType::ELECTROSTATIC ||
+                                     problem.type == ProblemType::MAGNETOSTATIC ||
+                                     problem.type == ProblemType::TRANSIENT);
   }
 
   // Configure settings for quadrature rules and partial assembly.

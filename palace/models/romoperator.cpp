@@ -32,20 +32,20 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
 template <typename VecType, typename ScalarType>
-inline void OrthogonalizeColumn(GmresSolverBase::OrthogType type, MPI_Comm comm,
+inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
                                 int j)
 {
   // Orthogonalize w against the leading j columns of V.
   switch (type)
   {
-    case GmresSolverBase::OrthogType::MGS:
+    case Orthogonalization::MGS:
       linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
       break;
-    case GmresSolverBase::OrthogType::CGS:
+    case Orthogonalization::CGS:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
       break;
-    case GmresSolverBase::OrthogType::CGS2:
+    case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
       break;
   }
@@ -191,9 +191,9 @@ MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
   Q.resize(max_size, ComplexVector());
 }
 
-void MinimalRationalInterpolation::AddSolutionSample(
-    double omega, const ComplexVector &u, const SpaceOperator &space_op,
-    GmresSolverBase::OrthogType orthog_type)
+void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
+                                                     const SpaceOperator &space_op,
+                                                     Orthogonalization orthog_type)
 {
   MPI_Comm comm = space_op.GetComm();
 
@@ -313,7 +313,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          int max_size_per_excitation)
-  : space_op(space_op)
+  : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -343,18 +343,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   MFEM_VERIFY(max_size_per_excitation * excitation_helper.Size() > 0,
               "Reduced order basis storage must have > 0 columns!");
   V.resize(2 * max_size_per_excitation * excitation_helper.Size(), Vector());
-  switch (iodata.solver.linear.gs_orthog_type)
-  {
-    case config::LinearSolverData::OrthogType::MGS:
-      orthog_type = GmresSolverBase::OrthogType::MGS;
-      break;
-    case config::LinearSolverData::OrthogType::CGS:
-      orthog_type = GmresSolverBase::OrthogType::CGS;
-      break;
-    case config::LinearSolverData::OrthogType::CGS2:
-      orthog_type = GmresSolverBase::OrthogType::CGS2;
-      break;
-  }
+
   // Set up MRI.
   for (const auto &[excitation_idx, data] : excitation_helper)
   {

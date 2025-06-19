@@ -312,21 +312,21 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                                                          type);
   switch (iodata.solver.transient.type)
   {
-    case config::TransientSolverData::Type::GEN_ALPHA:
+    case TimeSteppingScheme::GEN_ALPHA:
       {
         constexpr double rho_inf = 1.0;
         use_mfem_integrator = true;
         ode = std::make_unique<mfem::GeneralizedAlphaSolver>(rho_inf);
       }
       break;
-    case config::TransientSolverData::Type::RUNGE_KUTTA:
+    case TimeSteppingScheme::RUNGE_KUTTA:
       {
         constexpr int gamma_opt = 2;
         use_mfem_integrator = true;
         ode = std::make_unique<mfem::SDIRK23Solver>(gamma_opt);
       }
       break;
-    case config::TransientSolverData::Type::ARKODE:
+    case TimeSteppingScheme::ARKODE:
       {
 #if defined(MFEM_USE_SUNDIALS)
         // SUNDIALS ARKODE solver.
@@ -351,7 +351,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 #endif
       }
       break;
-    case config::TransientSolverData::Type::CVODE:
+    case TimeSteppingScheme::CVODE:
       {
 #if defined(MFEM_USE_SUNDIALS)
         // SUNDIALS CVODE solver.

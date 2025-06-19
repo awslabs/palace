@@ -66,14 +66,14 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   // Store the type of flux.
   switch (data.type)
   {
-    case config::SurfaceFluxData::Type::ELECTRIC:
-      type = SurfaceFluxType::ELECTRIC;
+    case SurfaceFlux::ELECTRIC:
+      type = SurfaceFlux::ELECTRIC;
       break;
-    case config::SurfaceFluxData::Type::MAGNETIC:
-      type = SurfaceFluxType::MAGNETIC;
+    case SurfaceFlux::MAGNETIC:
+      type = SurfaceFlux::MAGNETIC;
       break;
-    case config::SurfaceFluxData::Type::POWER:
-      type = SurfaceFluxType::POWER;
+    case SurfaceFlux::POWER:
+      type = SurfaceFlux::POWER;
       break;
   }
 
@@ -109,17 +109,17 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 {
   switch (type)
   {
-    case SurfaceFluxType::ELECTRIC:
+    case SurfaceFlux::ELECTRIC:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>>(
           attr_list, E, nullptr, mat_op, two_sided, center);
-    case SurfaceFluxType::MAGNETIC:
+    case SurfaceFlux::MAGNETIC:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>>(
           attr_list, nullptr, B, mat_op, two_sided, center);
-    case SurfaceFluxType::POWER:
+    case SurfaceFlux::POWER:
       return std::make_unique<
-          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>>>(
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>>(
           attr_list, E, B, mat_op, two_sided, center);
   }
   return {};
@@ -140,17 +140,17 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   //                       p * E_elec = 1/2 t Re{∫ (ε E)ᴴ E_m dS} .
   switch (data.type)
   {
-    case config::InterfaceDielectricData::Type::DEFAULT:
-      type = InterfaceDielectricType::DEFAULT;
+    case InterfaceDielectric::DEFAULT:
+      type = InterfaceDielectric::DEFAULT;
       break;
-    case config::InterfaceDielectricData::Type::MA:
-      type = InterfaceDielectricType::MA;
+    case InterfaceDielectric::MA:
+      type = InterfaceDielectric::MA;
       break;
-    case config::InterfaceDielectricData::Type::MS:
-      type = InterfaceDielectricType::MS;
+    case InterfaceDielectric::MS:
+      type = InterfaceDielectric::MS;
       break;
-    case config::InterfaceDielectricData::Type::SA:
-      type = InterfaceDielectricType::SA;
+    case InterfaceDielectric::SA:
+      type = InterfaceDielectric::SA;
       break;
   }
   t = data.t;
@@ -164,22 +164,22 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 {
   switch (type)
   {
-    case InterfaceDielectricType::DEFAULT:
+    case InterfaceDielectric::DEFAULT:
       return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>>>(
+          InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
           attr_list, E, mat_op, t, epsilon);
-    case InterfaceDielectricType::MA:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::MA>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
-    case InterfaceDielectricType::MS:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::MS>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
-    case InterfaceDielectricType::SA:
-      return std::make_unique<RestrictedCoefficient<
-          InterfaceDielectricCoefficient<InterfaceDielectricType::SA>>>(attr_list, E,
-                                                                        mat_op, t, epsilon);
+    case InterfaceDielectric::MA:
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(
+          attr_list, E, mat_op, t, epsilon);
+    case InterfaceDielectric::MS:
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
+          attr_list, E, mat_op, t, epsilon);
+    case InterfaceDielectric::SA:
+      return std::make_unique<
+          RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(
+          attr_list, E, mat_op, t, epsilon);
   }
   return {};  // For compiler warning
 }
@@ -207,12 +207,12 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   // Surface flux postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
   {
-    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::ELECTROSTATIC ||
-                    data.type == config::SurfaceFluxData::Type::ELECTRIC,
+    MFEM_VERIFY(iodata.problem.type != ProblemType::ELECTROSTATIC ||
+                    data.type == SurfaceFlux::ELECTRIC,
                 "Magnetic field or power surface flux postprocessing are not available "
                 "for electrostatic problems!");
-    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC ||
-                    data.type == config::SurfaceFluxData::Type::MAGNETIC,
+    MFEM_VERIFY(iodata.problem.type != ProblemType::MAGNETOSTATIC ||
+                    data.type == SurfaceFlux::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
                 "for magnetostatic problems!");
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
@@ -220,7 +220,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
 
   // Interface dielectric postprocessing.
   MFEM_VERIFY(iodata.boundaries.postpro.dielectric.empty() ||
-                  iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC,
+                  iodata.problem.type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
@@ -250,7 +250,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
                                   mat_op);
     double doti = GetLocalSurfaceIntegral(*f, attr_marker);
-    if (it->second.type == SurfaceFluxType::POWER)
+    if (it->second.type == SurfaceFlux::POWER)
     {
       dot += doti;
     }

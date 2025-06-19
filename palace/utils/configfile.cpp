@@ -51,20 +51,115 @@
     return os;                                                                      \
   }
 
+using json = nlohmann::json;
+namespace palace
+{
+// Helpers for converting enums specified in labels.hpp. Must be done in palace scope rather
+// than palace::config scope to ensure argument-dependent-lookup succeeds in json.
+
+// Helper for converting string keys to enum for CoordinateSystem.
+PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
+                           {{CoordinateSystem::CARTESIAN, "Cartesian"},
+                            {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
+
+// Helper for converting string keys to enum for ProblemType.
+PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
+                                         {ProblemType::EIGENMODE, "Eigenmode"},
+                                         {ProblemType::ELECTROSTATIC, "Electrostatic"},
+                                         {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
+                                         {ProblemType::TRANSIENT, "Transient"}})
+
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
+                                                {EigenSolverBackend::SLEPC, "SLEPc"},
+                                                {EigenSolverBackend::ARPACK, "ARPACK"}})
+
+// Helper for converting string keys to enum for SurfaceFlux.
+PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
+                                         {SurfaceFlux::MAGNETIC, "Magnetic"},
+                                         {SurfaceFlux::POWER, "Power"}})
+
+// Helper for converting string keys to enum for InterfaceDielectric.
+PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric, {{InterfaceDielectric::DEFAULT, "Default"},
+                                                 {InterfaceDielectric::MA, "MA"},
+                                                 {InterfaceDielectric::MS, "MS"},
+                                                 {InterfaceDielectric::SA, "SA"}})
+
+// Helper for converting string keys to enum for FrequencySampling.
+PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Default"},
+                                               {FrequencySampling::LINEAR, "Linear"},
+                                               {FrequencySampling::LOG, "Log"},
+                                               {FrequencySampling::POINT, "Point"}})
+
+// Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
+PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
+                           {{TimeSteppingScheme::DEFAULT, "Default"},
+                            {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
+                            {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
+                            {TimeSteppingScheme::CVODE, "CVODE"},
+                            {TimeSteppingScheme::ARKODE, "ARKODE"}})
+PALACE_JSON_SERIALIZE_ENUM(Excitation,
+                           {{Excitation::SINUSOIDAL, "Sinusoidal"},
+                            {Excitation::GAUSSIAN, "Gaussian"},
+                            {Excitation::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
+                            {Excitation::MOD_GAUSSIAN, "ModulatedGaussian"},
+                            {Excitation::RAMP_STEP, "Ramp"},
+                            {Excitation::SMOOTH_STEP, "SmoothStep"}})
+
+// Helper for converting string keys to enum for LinearSolver, KrylovSolver, and
+// MultigridCoarsening
+PALACE_JSON_SERIALIZE_ENUM(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
+                                          {LinearSolver::AMS, "AMS"},
+                                          {LinearSolver::BOOMER_AMG, "BoomerAMG"},
+                                          {LinearSolver::MUMPS, "MUMPS"},
+                                          {LinearSolver::SUPERLU, "SuperLU"},
+                                          {LinearSolver::STRUMPACK, "STRUMPACK"},
+                                          {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
+                                          {LinearSolver::JACOBI, "Jacobi"}})
+PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
+                                          {KrylovSolver::CG, "CG"},
+                                          {KrylovSolver::MINRES, "MINRES"},
+                                          {KrylovSolver::GMRES, "GMRES"},
+                                          {KrylovSolver::FGMRES, "FGMRES"},
+                                          {KrylovSolver::BICGSTAB, "BiCGSTAB"}})
+PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening,
+                           {{MultigridCoarsening::LINEAR, "Linear"},
+                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
+
+// Helpers for converting string keys to enum for PreconditionerSide, SymbolicFactorization,
+// SparseCompression, and Orthogonalization.
+PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
+                                                {PreconditionerSide::RIGHT, "Right"},
+                                                {PreconditionerSide::LEFT, "Left"}})
+PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization,
+                           {{SymbolicFactorization::DEFAULT, "Default"},
+                            {SymbolicFactorization::METIS, "METIS"},
+                            {SymbolicFactorization::PARMETIS, "ParMETIS"},
+                            {SymbolicFactorization::SCOTCH, "Scotch"},
+                            {SymbolicFactorization::PTSCOTCH, "PTScotch"},
+                            {SymbolicFactorization::PORD, "PORD"},
+                            {SymbolicFactorization::AMD, "AMD"},
+                            {SymbolicFactorization::RCM, "RCM"}})
+PALACE_JSON_SERIALIZE_ENUM(SparseCompression,
+                           {{SparseCompression::NONE, "None"},
+                            {SparseCompression::BLR, "BLR"},
+                            {SparseCompression::HSS, "HSS"},
+                            {SparseCompression::HODLR, "HODLR"},
+                            {SparseCompression::ZFP, "ZFP"},
+                            {SparseCompression::BLR_HODLR, "BLR-HODLR"},
+                            {SparseCompression::ZFP_BLR_HODLR, "ZFP-BLR-HODLR"}})
+PALACE_JSON_SERIALIZE_ENUM(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
+                                               {Orthogonalization::CGS, "CGS"},
+                                               {Orthogonalization::CGS2, "CGS2"}})
+
+// Helpers for converting string keys to enum for Device.
+PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
+                                    {Device::GPU, "GPU"},
+                                    {Device::DEBUG, "Debug"}})
+}  // namespace palace
+
 namespace palace::config
 {
-
-using json = nlohmann::json;
-
-namespace internal
-{
-
-// Helper for converting string keys to enum for ElementData::CoordinateSystem.
-PALACE_JSON_SERIALIZE_ENUM(ElementData::CoordinateSystem,
-                           {{ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
-                            {ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
-
-}  // namespace internal
 
 namespace
 {
@@ -145,7 +240,7 @@ void ParseElementData(json &elem, const std::string &name, bool required,
                       << name << "\" in the configuration file!");
       data.direction[0] =
           (direction.length() == 1 || direction[xpos - 1] == '+') ? 1.0 : -1.0;
-      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+      data.coordinate_system = CoordinateSystem::CARTESIAN;
     }
     if (yfound)
     {
@@ -158,7 +253,7 @@ void ParseElementData(json &elem, const std::string &name, bool required,
                       << name << "\" in the configuration file!");
       data.direction[1] =
           direction.length() == 1 || direction[ypos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+      data.coordinate_system = CoordinateSystem::CARTESIAN;
     }
     if (zfound)
     {
@@ -171,7 +266,7 @@ void ParseElementData(json &elem, const std::string &name, bool required,
                       << name << "\" in the configuration file!");
       data.direction[2] =
           direction.length() == 1 || direction[zpos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+      data.coordinate_system = CoordinateSystem::CARTESIAN;
     }
     if (rfound)
     {
@@ -186,11 +281,10 @@ void ParseElementData(json &elem, const std::string &name, bool required,
           direction.length() == 1 || direction[rpos - 1] == '+' ? 1.0 : -1.0;
       data.direction[1] = 0.0;
       data.direction[2] = 0.0;
-      data.coordinate_system = internal::ElementData::CoordinateSystem::CYLINDRICAL;
+      data.coordinate_system = CoordinateSystem::CYLINDRICAL;
     }
   }
-  MFEM_VERIFY(data.coordinate_system !=
-                      internal::ElementData::CoordinateSystem::CYLINDRICAL ||
+  MFEM_VERIFY(data.coordinate_system != CoordinateSystem::CYLINDRICAL ||
                   (data.direction[1] == 0.0 && data.direction[2] == 0.0),
               "Parsing azimuthal and longitudinal directions for cylindrical coordinate "
               "system directions from the configuration file is not currently supported!");
@@ -231,14 +325,6 @@ constexpr bool JSON_DEBUG = false;
 
 }  // namespace
 
-// Helper for converting string keys to enum for ProblemData::Type.
-PALACE_JSON_SERIALIZE_ENUM(ProblemData::Type,
-                           {{ProblemData::Type::DRIVEN, "Driven"},
-                            {ProblemData::Type::EIGENMODE, "Eigenmode"},
-                            {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
-                            {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
-                            {ProblemData::Type::TRANSIENT, "Transient"}})
-
 void ProblemData::SetUp(json &config)
 {
   auto problem = config.find("Problem");
@@ -253,33 +339,33 @@ void ProblemData::SetUp(json &config)
   // Check for provided solver configuration data (not required for electrostatics or
   // magnetostatics since defaults can be used for every option).
   auto solver = config.find("Solver");
-  if (type == ProblemData::Type::DRIVEN)
+  if (type == ProblemType::DRIVEN)
   {
     MFEM_VERIFY(solver->find("Driven") != solver->end(),
                 "config[\"Problem\"][\"Type\"] == \"Driven\" should be accompanied by a "
                 "config[\"Solver\"][\"Driven\"] configuration!");
   }
-  else if (type == ProblemData::Type::EIGENMODE)
+  else if (type == ProblemType::EIGENMODE)
   {
     MFEM_VERIFY(solver->find("Eigenmode") != solver->end(),
                 "config[\"Problem\"][\"Type\"] == \"Eigenmode\" should be accompanied by a "
                 "config[\"Solver\"][\"Eigenmode\"] configuration!");
   }
-  else if (type == ProblemData::Type::ELECTROSTATIC)
+  else if (type == ProblemType::ELECTROSTATIC)
   {
     // MFEM_VERIFY(
     //     solver->find("Electrostatic") != solver->end(),
     //     "config[\"Problem\"][\"Type\"] == \"Electrostatic\" should be accompanied by a "
     //     "config[\"Solver\"][\"Electrostatic\"] configuration!");
   }
-  else if (type == ProblemData::Type::MAGNETOSTATIC)
+  else if (type == ProblemType::MAGNETOSTATIC)
   {
     // MFEM_VERIFY(
     //     solver->find("Magnetostatic") != solver->end(),
     //     "config[\"Problem\"][\"Type\"] == \"Magnetostatic\" should be accompanied by a "
     //     "config[\"Solver\"][\"Magnetostatic\"] configuration!");
   }
-  else if (type == ProblemData::Type::TRANSIENT)
+  else if (type == ProblemType::TRANSIENT)
   {
     MFEM_VERIFY(solver->find("Transient") != solver->end(),
                 "config[\"Problem\"][\"Type\"] == \"Transient\" should be accompanied by a "
@@ -1154,12 +1240,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
   }
 }
 
-// Helper for converting string keys to enum for WavePortData::EigenSolverType.
-PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
-                           {{WavePortData::EigenSolverType::DEFAULT, "Default"},
-                            {WavePortData::EigenSolverType::SLEPC, "SLEPc"},
-                            {WavePortData::EigenSolverType::ARPACK, "ARPACK"}})
-
 void WavePortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("WavePort");
@@ -1186,7 +1266,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(data.mode_idx > 0,
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
-    data.eigen_type = it->value("SolverType", data.eigen_type);
+    data.eigen_solver = it->value("SolverType", data.eigen_solver);
 
     data.excitation = ParsePortExcitation(it, data.excitation);
     data.active = it->value("Active", data.active);
@@ -1218,7 +1298,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "Attributes: " << data.attributes << '\n';
       std::cout << "Mode: " << data.mode_idx << '\n';
       std::cout << "Offset: " << data.d_offset << '\n';
-      std::cout << "SolverType: " << data.eigen_type << '\n';
+      std::cout << "SolverType: " << data.eigen_solver << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
@@ -1304,12 +1384,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
 }
 
-// Helper for converting string keys to enum for SurfaceFluxPostData::Type.
-PALACE_JSON_SERIALIZE_ENUM(SurfaceFluxData::Type,
-                           {{SurfaceFluxData::Type::ELECTRIC, "Electric"},
-                            {SurfaceFluxData::Type::MAGNETIC, "Magnetic"},
-                            {SurfaceFluxData::Type::POWER, "Power"}})
-
 void SurfaceFluxPostData::SetUp(json &postpro)
 {
   auto flux = postpro.find("SurfaceFlux");
@@ -1363,13 +1437,6 @@ void SurfaceFluxPostData::SetUp(json &postpro)
     }
   }
 }
-
-// Helper for converting string keys to enum for InterfaceDielectricData::Type.
-PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricData::Type,
-                           {{InterfaceDielectricData::Type::DEFAULT, "Default"},
-                            {InterfaceDielectricData::Type::MA, "MA"},
-                            {InterfaceDielectricData::Type::MS, "MS"},
-                            {InterfaceDielectricData::Type::SA, "SA"}})
 
 void InterfaceDielectricPostData::SetUp(json &postpro)
 {
@@ -1644,12 +1711,6 @@ auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
   return vec.end();
 }
 
-// Helper for converting string keys to enum for DrivenSolverData::FrequencySampleType.
-PALACE_JSON_SERIALIZE_ENUM(DrivenSolverData::FrequencySampleType,
-                           {{DrivenSolverData::FrequencySampleType::DEFAULT, "Default"},
-                            {DrivenSolverData::FrequencySampleType::LINEAR, "Linear"},
-                            {DrivenSolverData::FrequencySampleType::LOG, "Log"},
-                            {DrivenSolverData::FrequencySampleType::POINT, "Point"}})
 void DrivenSolverData::SetUp(json &solver)
 {
   auto driven = solver.find("Driven");
@@ -1684,13 +1745,13 @@ void DrivenSolverData::SetUp(json &solver)
   {
     for (auto &r : *freq_samples)
     {
-      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampleType::POINT
-                                                            : FrequencySampleType::DEFAULT);
+      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampling::POINT
+                                                            : FrequencySampling::DEFAULT);
       auto f = [&]()
       {
         switch (type)
         {
-          case FrequencySampleType::LINEAR:
+          case FrequencySampling::LINEAR:
             {
               auto min_f = r.at("MinFreq");
               auto max_f = r.at("MaxFreq");
@@ -1708,14 +1769,14 @@ void DrivenSolverData::SetUp(json &solver)
                 return ConstructLinearRange(min_f, max_f, n_sample);
               }
             }
-          case FrequencySampleType::LOG:
+          case FrequencySampling::LOG:
             {
               auto min_f = r.at("MinFreq");
               auto max_f = r.at("MaxFreq");
               auto n_sample = r.at("NSample");
               return ConstructLogRange(min_f, max_f, n_sample);
             }
-          case FrequencySampleType::POINT:
+          case FrequencySampling::POINT:
             return r.at("Freq").get<std::vector<double>>();
         }
       }();
@@ -1961,23 +2022,6 @@ void MagnetostaticSolverData::SetUp(json &solver)
   }
 }
 
-// Helper for converting string keys to enum for TransientSolverData::Type and
-// TransientSolverData::ExcitationType.
-PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
-                           {{TransientSolverData::Type::DEFAULT, "Default"},
-                            {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TransientSolverData::Type::RUNGE_KUTTA, "RungeKutta"},
-                            {TransientSolverData::Type::CVODE, "CVODE"},
-                            {TransientSolverData::Type::ARKODE, "ARKODE"}})
-PALACE_JSON_SERIALIZE_ENUM(
-    TransientSolverData::ExcitationType,
-    {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
-     {TransientSolverData::ExcitationType::GAUSSIAN, "Gaussian"},
-     {TransientSolverData::ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
-     {TransientSolverData::ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
-     {TransientSolverData::ExcitationType::RAMP_STEP, "Ramp"},
-     {TransientSolverData::ExcitationType::SMOOTH_STEP, "SmoothStep"}})
-
 void TransientSolverData::SetUp(json &solver)
 {
   auto transient = solver.find("Transient");
@@ -2004,7 +2048,7 @@ void TransientSolverData::SetUp(json &solver)
   abs_tol = transient->value("AbsTol", abs_tol);
   MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
 
-  if (type == Type::GEN_ALPHA || type == Type::RUNGE_KUTTA)
+  if (type == TimeSteppingScheme::GEN_ALPHA || type == TimeSteppingScheme::RUNGE_KUTTA)
   {
     if (transient->contains("Order"))
     {
@@ -2059,57 +2103,6 @@ void TransientSolverData::SetUp(json &solver)
   }
 }
 
-// Helpers for converting string keys to enum for LinearSolverData::Type,
-// LinearSolverData::KspType, LinearSolverData::SideType,
-// LinearSolverData::MultigridCoarsenType, LinearSolverData::SymFactType,
-// LinearSolverData::CompressionType, and LinearSolverData::OrthogType.
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
-                           {{LinearSolverData::Type::DEFAULT, "Default"},
-                            {LinearSolverData::Type::AMS, "AMS"},
-                            {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
-                            {LinearSolverData::Type::MUMPS, "MUMPS"},
-                            {LinearSolverData::Type::SUPERLU, "SuperLU"},
-                            {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
-                            {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"},
-                            {LinearSolverData::Type::JACOBI, "Jacobi"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
-                           {{LinearSolverData::KspType::DEFAULT, "Default"},
-                            {LinearSolverData::KspType::CG, "CG"},
-                            {LinearSolverData::KspType::MINRES, "MINRES"},
-                            {LinearSolverData::KspType::GMRES, "GMRES"},
-                            {LinearSolverData::KspType::FGMRES, "FGMRES"},
-                            {LinearSolverData::KspType::BICGSTAB, "BiCGSTAB"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SideType,
-                           {{LinearSolverData::SideType::DEFAULT, "Default"},
-                            {LinearSolverData::SideType::RIGHT, "Right"},
-                            {LinearSolverData::SideType::LEFT, "Left"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::MultigridCoarsenType,
-                           {{LinearSolverData::MultigridCoarsenType::LINEAR, "Linear"},
-                            {LinearSolverData::MultigridCoarsenType::LOGARITHMIC,
-                             "Logarithmic"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
-                           {{LinearSolverData::SymFactType::DEFAULT, "Default"},
-                            {LinearSolverData::SymFactType::METIS, "METIS"},
-                            {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
-                            {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
-                            {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"},
-                            {LinearSolverData::SymFactType::PORD, "PORD"},
-                            {LinearSolverData::SymFactType::AMD, "AMD"},
-                            {LinearSolverData::SymFactType::RCM, "RCM"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
-                           {{LinearSolverData::CompressionType::NONE, "None"},
-                            {LinearSolverData::CompressionType::BLR, "BLR"},
-                            {LinearSolverData::CompressionType::HSS, "HSS"},
-                            {LinearSolverData::CompressionType::HODLR, "HODLR"},
-                            {LinearSolverData::CompressionType::ZFP, "ZFP"},
-                            {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
-                            {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
-                             "ZFP-BLR-HODLR"}})
-PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
-                           {{LinearSolverData::OrthogType::MGS, "MGS"},
-                            {LinearSolverData::OrthogType::CGS, "CGS"},
-                            {LinearSolverData::OrthogType::CGS2, "CGS2"}})
-
 void LinearSolverData::SetUp(json &solver)
 {
   auto linear = solver.find("Linear");
@@ -2118,7 +2111,7 @@ void LinearSolverData::SetUp(json &solver)
     return;
   }
   type = linear->value("Type", type);
-  ksp_type = linear->value("KSPType", ksp_type);
+  krylov_solver = linear->value("KSPType", krylov_solver);
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
   max_size = linear->value("MaxSize", max_size);
@@ -2126,7 +2119,7 @@ void LinearSolverData::SetUp(json &solver)
 
   // Options related to multigrid.
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
-  mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
+  mg_coarsening = linear->value("MGCoarsenType", mg_coarsening);
   mg_use_mesh = linear->value("MGUseMesh", mg_use_mesh);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
@@ -2140,8 +2133,8 @@ void LinearSolverData::SetUp(json &solver)
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
-  pc_side_type = linear->value("PCSide", pc_side_type);
-  sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
+  pc_side = linear->value("PCSide", pc_side);
+  sym_factorization = linear->value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
       linear->value("STRUMPACKCompressionType", strumpack_compression_type);
   strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
@@ -2159,7 +2152,7 @@ void LinearSolverData::SetUp(json &solver)
   estimator_tol = linear->value("EstimatorTol", estimator_tol);
   estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
   estimator_mg = linear->value("EstimatorMG", estimator_mg);
-  gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
+  gs_orthog = linear->value("GSOrthogonalization", gs_orthog);
 
   // Cleanup
   linear->erase("Type");
@@ -2208,14 +2201,14 @@ void LinearSolverData::SetUp(json &solver)
   if constexpr (JSON_DEBUG)
   {
     std::cout << "Type: " << type << '\n';
-    std::cout << "KSPType: " << ksp_type << '\n';
+    std::cout << "KSPType: " << krylov_solver << '\n';
     std::cout << "Tol: " << tol << '\n';
     std::cout << "MaxIts: " << max_it << '\n';
     std::cout << "MaxSize: " << max_size << '\n';
     std::cout << "InitialGuess: " << initial_guess << '\n';
 
     std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
-    std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
+    std::cout << "MGCoarsenType: " << mg_coarsening << '\n';
     std::cout << "MGUseMesh: " << mg_use_mesh << '\n';
     std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
     std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
@@ -2228,8 +2221,8 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "PCMatReal: " << pc_mat_real << '\n';
     std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
     std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
-    std::cout << "PCSide: " << pc_side_type << '\n';
-    std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
+    std::cout << "PCSide: " << pc_side << '\n';
+    std::cout << "ColumnOrdering: " << sym_factorization << '\n';
     std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
     std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
     std::cout << "STRUMPACKLossyPrecision: " << strumpack_lossy_precision << '\n';
@@ -2244,14 +2237,9 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "EstimatorTol: " << estimator_tol << '\n';
     std::cout << "EstimatorMaxIts: " << estimator_max_it << '\n';
     std::cout << "EstimatorMG: " << estimator_mg << '\n';
-    std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
+    std::cout << "GSOrthogonalization: " << gs_orthog << '\n';
   }
 }
-
-// Helpers for converting string keys to enum for SolverData::Device.
-PALACE_JSON_SERIALIZE_ENUM(SolverData::Device, {{SolverData::Device::CPU, "CPU"},
-                                                {SolverData::Device::GPU, "GPU"},
-                                                {SolverData::Device::DEBUG, "Debug"}})
 
 void SolverData::SetUp(json &config)
 {

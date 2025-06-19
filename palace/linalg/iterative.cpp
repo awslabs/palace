@@ -249,12 +249,12 @@ inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y,
 }
 
 template <typename OperType, typename VecType>
-inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
+inline void InitialResidual(PreconditionerSide side, const OperType *A,
                             const Solver<OperType> *B, const VecType &b, VecType &x,
                             VecType &r, VecType &z, bool initial_guess,
                             bool use_timer = true)
 {
-  if (B && side == GmresSolverBase::PrecSide::LEFT)
+  if (B && side == PreconditionerSide::LEFT)
   {
     if (initial_guess)
     {
@@ -268,7 +268,7 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
       x = 0.0;
     }
   }
-  else  // !B || side == PrecSide::RIGHT
+  else  // !B || side == PreconditionerSide::RIGHT
   {
     if (initial_guess)
     {
@@ -284,16 +284,15 @@ inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
 }
 
 template <typename OperType, typename VecType>
-inline void ApplyBA(GmresSolverBase::PrecSide side, const OperType *A,
-                    const Solver<OperType> *B, const VecType &x, VecType &y, VecType &z,
-                    bool use_timer = true)
+inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<OperType> *B,
+                    const VecType &x, VecType &y, VecType &z, bool use_timer = true)
 {
-  if (B && side == GmresSolverBase::PrecSide::LEFT)
+  if (B && side == PreconditionerSide::LEFT)
   {
     A->Mult(x, z);
     ApplyB(B, z, y, use_timer);
   }
-  else if (B && side == GmresSolverBase::PrecSide::RIGHT)
+  else if (B && side == PreconditionerSide::RIGHT)
   {
     ApplyB(B, x, z, use_timer);
     A->Mult(z, y);
@@ -305,20 +304,20 @@ inline void ApplyBA(GmresSolverBase::PrecSide side, const OperType *A,
 }
 
 template <typename VecType, typename ScalarType>
-inline void OrthogonalizeIteration(GmresSolverBase::OrthogType type, MPI_Comm comm,
+inline void OrthogonalizeIteration(Orthogonalization type, MPI_Comm comm,
                                    const std::vector<VecType> &V, VecType &w,
                                    ScalarType *Hj, int j)
 {
   // Orthogonalize w against the leading j + 1 columns of V.
   switch (type)
   {
-    case GmresSolverBase::OrthogType::MGS:
+    case Orthogonalization::MGS:
       linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
       break;
-    case GmresSolverBase::OrthogType::CGS:
+    case Orthogonalization::CGS:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
       break;
-    case GmresSolverBase::OrthogType::CGS2:
+    case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
       break;
   }
@@ -557,12 +556,12 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       if (this->initial_guess)
       {
         RealType beta_rhs;
-        if (B && pc_side == PrecSide::LEFT)
+        if (B && pc_side == PreconditionerSide::LEFT)
         {
           ApplyB(B, b, V[0], this->use_timer);
           beta_rhs = linalg::Norml2(comm, V[0]);
         }
-        else  // !B || pc_side == PrecSide::RIGHT
+        else  // !B || pc_side == PreconditionerSide::RIGHT
         {
           beta_rhs = linalg::Norml2(comm, b);
         }
@@ -612,7 +611,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
+      OrthogonalizeIteration(gs_orthog, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 
@@ -644,14 +643,14 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         s[k] -= Hi[k] * s[i];
       }
     }
-    if (!B || pc_side == PrecSide::LEFT)
+    if (!B || pc_side == PreconditionerSide::LEFT)
     {
       for (int k = 0; k <= j; k++)
       {
         x.Add(s[k], V[k]);
       }
     }
-    else  // B && pc_side == PrecSide::RIGHT
+    else  // B && pc_side == PreconditionerSide::RIGHT
     {
       r = 0.0;
       for (int k = 0; k <= j; k++)
@@ -736,7 +735,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(PrecSide::RIGHT, A, B, b, x, Z[0], V[0],
+    InitialResidual(PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
                     (this->initial_guess || restart > 0), this->use_timer);
     true_beta = linalg::Norml2(comm, Z[0]);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
@@ -788,10 +787,10 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(PrecSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
+      ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
+      OrthogonalizeIteration(gs_orthog, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 

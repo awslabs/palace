@@ -12,6 +12,7 @@
 #include "fem/gridfunction.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
+#include "utils/labels.hpp"
 
 // XX TODO: Add bulk element Eval() overrides to speed up postprocessing (also needed in
 //          mfem::DataCollection classes.
@@ -145,18 +146,10 @@ public:
   }
 };
 
-// Helper for BdrSurfaceFluxCoefficient.
-enum class SurfaceFluxType
-{
-  ELECTRIC,
-  MAGNETIC,
-  POWER
-};
-
 // Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.
-template <SurfaceFluxType Type>
+template <SurfaceFlux Type>
 class BdrSurfaceFluxCoefficient : public mfem::Coefficient,
                                   public BdrGridFunctionCoefficient
 {
@@ -176,10 +169,9 @@ public:
                                                         : *B->ParFESpace()->GetParMesh()),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
   {
-    MFEM_VERIFY(
-        (E || (Type != SurfaceFluxType::ELECTRIC && Type != SurfaceFluxType::POWER)) &&
-            (B || (Type != SurfaceFluxType::MAGNETIC && Type != SurfaceFluxType::POWER)),
-        "Missing E or B field grid function for surface flux coefficient!");
+    MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
+                    (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
+                "Missing E or B field grid function for surface flux coefficient!");
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
@@ -238,7 +230,7 @@ public:
 };
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux D.
@@ -249,7 +241,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
 }
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>::GetLocalFlux(
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux B.
@@ -257,8 +249,9 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>::GetLocalFlux(
 }
 
 template <>
-inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
-    mfem::ElementTransformation &T, mfem::Vector &V) const
+inline void
+BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransformation &T,
+                                                            mfem::Vector &V) const
 {
   // Flux E x H = E x μ⁻¹ B.
   double W1_data[3], W2_data[3];
@@ -270,15 +263,6 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
   Cross3(W1, W2, V);
 }
 
-// Helper for InterfaceDielectricCoefficient.
-enum class InterfaceDielectricType
-{
-  DEFAULT,
-  MA,
-  MS,
-  SA
-};
-
 // Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
 // Uses the neighbor element on a user specified side to compute a single-sided value for
 // potentially discontinuous solutions for an interior boundary element. The four cases
@@ -286,7 +270,7 @@ enum class InterfaceDielectricType
 // and subtrate-air interfaces following:
 //   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
 //     resonators, Appl. Phys. Lett. (2011).
-template <InterfaceDielectricType Type>
+template <InterfaceDielectric Type>
 class InterfaceDielectricCoefficient : public mfem::Coefficient,
                                        public BdrGridFunctionCoefficient
 {
@@ -355,7 +339,7 @@ public:
 };
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution. Don't use lightspeed detection for differentiating side.
@@ -387,7 +371,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on air (vacuum) side and neighboring element attribute.
@@ -413,7 +397,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on substrate side and neighboring element attribute.
@@ -442,7 +426,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
 }
 
 template <>
-inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on air side and neighboring element attribute.

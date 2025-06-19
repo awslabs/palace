@@ -34,8 +34,8 @@ int GetNpDep(int np, bool use_3d)
 
 }  // namespace
 
-SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
-                             bool use_3d, int print)
+SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
+                             int print)
   : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
@@ -57,20 +57,20 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
   solver.SetReplaceTinyPivot(false);
   switch (reorder)
   {
-    case config::LinearSolverData::SymFactType::METIS:
+    case SymbolicFactorization::METIS:
       solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
       break;
-    case config::LinearSolverData::SymFactType::PARMETIS:
+    case SymbolicFactorization::PARMETIS:
       solver.SetColumnPermutation(mfem::superlu::PARMETIS);
       break;
-    case config::LinearSolverData::SymFactType::AMD:
-    case config::LinearSolverData::SymFactType::RCM:
+    case SymbolicFactorization::AMD:
+    case SymbolicFactorization::RCM:
       solver.SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
       break;
-    case config::LinearSolverData::SymFactType::SCOTCH:
-    case config::LinearSolverData::SymFactType::PTSCOTCH:
-    case config::LinearSolverData::SymFactType::PORD:
-    case config::LinearSolverData::SymFactType::DEFAULT:
+    case SymbolicFactorization::SCOTCH:
+    case SymbolicFactorization::PTSCOTCH:
+    case SymbolicFactorization::PORD:
+    case SymbolicFactorization::DEFAULT:
       // Should have good default.
       break;
   }

@@ -35,67 +35,66 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
-// Statically map solver (config::ProblemData::Type) to finite element operator.
+// Statically map solver (ProblemType) to finite element operator.
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 struct fem_op_map_type
 {
   using type = SpaceOperator;
 };
 template <>
-struct fem_op_map_type<config::ProblemData::Type::ELECTROSTATIC>
+struct fem_op_map_type<ProblemType::ELECTROSTATIC>
 {
   using type = LaplaceOperator;
 };
 template <>
-struct fem_op_map_type<config::ProblemData::Type::MAGNETOSTATIC>
+struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
 {
   using type = CurlCurlOperator;
 };
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 using fem_op_t = typename fem_op_map_type<solver_t>::type;
 
 // Statically specify if solver uses real or complex fields.
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 constexpr bool HasComplexGridFunction()
 {
-  return solver_t == config::ProblemData::Type::DRIVEN ||
-         solver_t == config::ProblemData::Type::EIGENMODE;
+  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE;
 }
 
 // Statically specify what fields a solver uses
 // TODO(C++20): Change these to inline consteval and use with requires.
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 constexpr bool HasVGridFunction()
 {
-  return solver_t == config::ProblemData::Type::ELECTROSTATIC;
+  return solver_t == ProblemType::ELECTROSTATIC;
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 constexpr bool HasAGridFunction()
 {
-  return solver_t == config::ProblemData::Type::MAGNETOSTATIC;
+  return solver_t == ProblemType::MAGNETOSTATIC;
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 constexpr bool HasEGridFunction()
 {
-  return solver_t != config::ProblemData::Type::MAGNETOSTATIC;
+  return solver_t != ProblemType::MAGNETOSTATIC;
 }
 
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 constexpr bool HasBGridFunction()
 {
-  return solver_t != config::ProblemData::Type::ELECTROSTATIC;
+  return solver_t != ProblemType::ELECTROSTATIC;
 }
 
 //
 // A class to handle solution postprocessing for all solvers.
 //
-template <config::ProblemData::Type solver_t>
+template <ProblemType solver_t>
 class PostOperator
 {
 private:
@@ -157,9 +156,9 @@ private:
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto InitializeParaviewDataCollection(int ex_idx)
-      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, void>;
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
 private:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
@@ -199,7 +198,7 @@ private:
   {
     int idx;                   // Surface index
     std::complex<double> Phi;  // Integrated flux
-    SurfaceFluxType type;
+    SurfaceFlux type;
   };
 
   struct InterfaceData
@@ -325,7 +324,7 @@ private:
   //
   // TODO(C++20): Switch SFINAE to requires.
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
@@ -338,7 +337,7 @@ private:
     }
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
@@ -349,7 +348,7 @@ private:
     }
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
@@ -362,7 +361,7 @@ private:
     }
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
@@ -373,7 +372,7 @@ private:
     }
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasVGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
@@ -384,7 +383,7 @@ private:
     }
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasAGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
@@ -420,29 +419,29 @@ public:
   // just write `MeasureAndPrintAll(...) requires (solver_t == Type::A)` without extra
   // template.
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
                           const ComplexVector &b, std::complex<double> omega)
-      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
+      -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                           std::complex<double> omega, double error_abs, double error_bkwd,
                           int num_conv)
-      -> std::enable_if_t<U == config::ProblemData::Type::EIGENMODE, double>;
+      -> std::enable_if_t<U == ProblemType::EIGENMODE, double>;
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
-      -> std::enable_if_t<U == config::ProblemData::Type::ELECTROSTATIC, double>;
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, double>;
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
-      -> std::enable_if_t<U == config::ProblemData::Type::MAGNETOSTATIC, double>;
+      -> std::enable_if_t<U == ProblemType::MAGNETOSTATIC, double>;
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double t,
                           double J_coef)
-      -> std::enable_if_t<U == config::ProblemData::Type::TRANSIENT, double>;
+      -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.
@@ -453,9 +452,9 @@ public:
   // the error indicator, but no other measurement / printing should be done.
   //
   // TODO(C++20): SFINAE to requires.
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b)
-      -> std::enable_if_t<U == config::ProblemData::Type::DRIVEN, double>;
+      -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The
   // electrostatics / magnetostatics solver do measurements of the capacitance/ inductance
@@ -466,25 +465,25 @@ public:
   // Would need to store vector of V,A.
   //
   // TODO(C++20): Switch SFINAE to requires.
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto GetEGridFunction() -> std::enable_if_t<HasEGridFunction<U>(), decltype(*E) &>
   {
     return *E;
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto GetBGridFunction() -> std::enable_if_t<HasBGridFunction<U>(), decltype(*B) &>
   {
     return *B;
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto GetVGridFunction() -> std::enable_if_t<HasVGridFunction<U>(), decltype(*V) &>
   {
     return *V;
   }
 
-  template <config::ProblemData::Type U = solver_t>
+  template <ProblemType U = solver_t>
   auto GetAGridFunction() -> std::enable_if_t<HasAGridFunction<U>(), decltype(*A) &>
   {
     return *A;
