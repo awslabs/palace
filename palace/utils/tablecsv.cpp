@@ -9,6 +9,8 @@
 #include <fmt/format.h>
 #include <fmt/os.h>
 #include <fmt/ranges.h>
+#include <scn/scan.h>
+#include <mfem/general/error.hpp>
 
 namespace palace
 {
@@ -178,6 +180,100 @@ void Table::append_row(T &buf, size_t row_j) const
     append_row(buf, j);
   }
   return {buf.data(), buf.size()};
+}
+
+// Helper class to parse split view between delimiters. Not a proper view, but same idea.
+class sv_split_r
+{
+  std::string_view full_view;
+  std::string_view delimiters;
+  std::size_t row_cursor_start = 0;
+  std::size_t row_cursor_end = 0;
+
+public:
+  sv_split_r(std::string_view full_view_, std::string_view delimiters_)
+    : full_view(full_view_), delimiters(delimiters_)
+  {
+  }
+
+  std::string_view next()
+  {
+    row_cursor_end = full_view.find_first_of(delimiters, row_cursor_start);
+    auto out = full_view.substr(row_cursor_start, row_cursor_end - row_cursor_start);
+    row_cursor_start =
+        (row_cursor_end == std::string_view::npos) ? row_cursor_end : row_cursor_end + 1;
+    return out;
+  }
+
+  bool at_end() const
+  {
+    return (row_cursor_start == full_view.size()) ||
+           (row_cursor_start == std::string_view::npos);
+  }
+};
+
+std::string_view trim_space(std::string_view str_v)
+{
+  auto prefix = str_v.find_first_not_of(" \t\f\v");
+  str_v.remove_prefix(std::min(prefix, str_v.size()));
+  auto suffix = str_v.find_last_not_of(" \t\f\v");  // suffix also counts from 0
+  str_v.remove_prefix(std::min(str_v.size() - 1 - suffix, str_v.size()));
+  return str_v;
+}
+
+Table::Table(std::string_view table_str,
+             std::optional<std::string_view> print_col_separator_,
+             std::optional<std::string_view> print_row_separator_)
+{
+  using namespace std::literals;
+  if (table_str.empty())
+  {
+    return;
+  }
+  try
+  {
+    print_col_separator = print_col_separator_.value_or(print_col_separator);
+    print_row_separator = print_row_separator_.value_or(print_row_separator);
+
+    std::string_view table_full_view{table_str};
+    sv_split_r row_split(table_full_view, print_row_separator);
+    // Handle first row separately since it defines header & cols.
+    {
+      sv_split_r entries(row_split.next(), print_col_separator);
+      std::size_t col_i = 0;
+      while (!entries.at_end())
+      {
+        std::string entry_trim_str{trim_space(entries.next())};
+        this->insert(fmt::format("col_{}", col_i), entry_trim_str);
+        col_i++;
+      }
+    }
+    // Loop over other rows
+    while (!row_split.at_end())
+    {
+      sv_split_r entries(row_split.next(), print_col_separator);
+      std::size_t col_i = 0;
+      while (!entries.at_end())
+      {
+        auto entry_trim = trim_space(entries.next());
+        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.size() == 0))
+        {
+        }
+        else
+        {
+          auto result = scn::scan<double>(entry_trim, "{}");
+          MFEM_VERIFY(result, fmt::format("Could not parse CSV entry \"{}\" as double",
+                                          entry_trim));
+          (*this)[col_i] << result->value();
+        }
+        col_i++;
+      }
+    }
+  }
+  catch (const std::exception &e)
+  {
+    MFEM_ABORT("Could not parse CSV table from string!\n  " << e.what());
+  }
 }
 
 // explicit instantiation to avoid fmt inclusion.
