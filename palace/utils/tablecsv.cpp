@@ -4,6 +4,7 @@
 #include "tablecsv.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <iterator>
 #include <utility>
 #include <fmt/format.h>
@@ -280,12 +281,23 @@ Table::Table(std::string_view table_str,
 template void Table::append_header(fmt::memory_buffer &) const;
 template void Table::append_row(fmt::memory_buffer &, size_t) const;
 
-TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath)
+TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file)
   : csv_file_fullpath_{std::move(csv_file_fullpath)}
 {
-  // Validate.
-  auto file_buf = fmt::output_file(
-      csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+  if (!load_existing_file)
+  {
+    return;
+  }
+
+  std::ifstream file_buffer(csv_file_fullpath_, std::ios_base::in);
+  if (!file_buffer.good())
+  {
+    return;
+  }
+  std::stringstream file_buffer_str;
+  file_buffer_str << file_buffer.rdbuf();
+  file_buffer.close();
+  table = Table(file_buffer_str.str());
 }
 
 void TableWithCSVFile::WriteFullTableTrunc()
