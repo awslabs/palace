@@ -203,7 +203,6 @@ class PostOperatorCSV
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>;
 
   // Driven
-  int driven_source_index = -1;
   std::optional<TableWithCSVFile> port_S;
 
   template <ProblemType U = solver_t>
