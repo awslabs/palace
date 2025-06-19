@@ -39,13 +39,13 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(excitation_helper);
 
   auto omega = iodata.solver.driven.sample_f;
-  if (iodata.solver.driven.rst > 0)
+  if (iodata.solver.driven.restart > 0)
   {
-    MFEM_VERIFY(iodata.solver.driven.rst <= static_cast<int>(omega.size()),
-                "\"Restart\": (" << iodata.solver.driven.rst
+    MFEM_VERIFY(iodata.solver.driven.restart <= static_cast<int>(omega.size()),
+                "\"Restart\": (" << iodata.solver.driven.restart
                                  << ") is greater than the number of samples ("
                                  << omega.size() << ")!");
-    omega.erase(omega.begin(), omega.begin() + iodata.solver.driven.rst - 1);
+    omega.erase(omega.begin(), omega.begin() + iodata.solver.driven.restart - 1);
   }
 
   bool adaptive = (iodata.solver.driven.adaptive_tol > 0.0);
@@ -127,7 +127,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op,
     post_op.InitializeParaviewDataCollection(excitation_idx);
 
     // Frequency loop.
-    int step0 = std::max(iodata.solver.driven.rst - 1, 0), step = step0;
+    int step0 = std::max(iodata.solver.driven.restart - 1, 0), step = step0;
     for (auto omega : omega_sample)
     {
       // Assemble frequency dependent matrices and initialize operators in linear solver.
@@ -356,7 +356,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     post_op.InitializeParaviewDataCollection(excitation_idx);
 
     // Frequency loop.
-    int step0 = std::max(iodata.solver.driven.rst - 1, 0), step = step0;
+    int step0 = std::max(iodata.solver.driven.restart - 1, 0), step = step0;
     for (auto omega : omega_sample)
     {
       const double freq = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
