@@ -15,9 +15,11 @@ namespace palace
 
 struct ColumnOptions
 {
-  std::size_t min_left_padding = 8;
-  std::size_t float_precision = 12;  // Full-double precision by default
   std::string empty_cell_val = {"NULL"};
+
+  // Options that individual cols can overwrite.
+  std::size_t min_left_padding = 8;
+  std::size_t float_precision = 12;
   std::string fmt_sign = {"+"};
 };
 
@@ -28,10 +30,10 @@ class Column
   // View to default options in table class, will be set when columns are added to Table.
   ColumnOptions *defaults = nullptr;
 
+public:
   // Map-like index, to interface via Table class.
   std::string name;
 
-public:
   [[nodiscard]] std::size_t col_width() const;
 
   [[nodiscard]] auto format_header(const std::optional<std::size_t> &width = {}) const;
@@ -39,18 +41,24 @@ public:
   [[nodiscard]] auto format_row(std::size_t i,
                                 const std::optional<std::size_t> &width = {}) const;
 
-  Column(std::string name, std::string header_text = "",
+  Column(std::string name, std::string header_text = "", long column_group_idx = 0,
          std::optional<std::size_t> min_left_padding = {},
          std::optional<std::size_t> float_precision = {},
-         std::optional<std::string> empty_cell_val = {},
          std::optional<std::string> fmt_sign = {});
 
+  // Actual Data in Column.
   std::vector<double> data;
+
+  // Pretty text to print in file for column header.
   std::string header_text;
 
+  // Index to group column into blocks, to verify common cursor.
+  // We assume that column groups are contiguous in table.
+  long column_group_idx = 0;
+
+  // Column-wise printing options that overwrite default.
   std::optional<std::size_t> min_left_padding;
   std::optional<std::size_t> float_precision;
-  std::optional<std::string> empty_cell_val;
   std::optional<std::string> fmt_sign;
 
   // Quick-fix since leading column of eig is int stored as double (rather then implementing
@@ -60,7 +68,7 @@ public:
   [[nodiscard]] inline std::size_t n_rows() const { return data.size(); }
 
   // Convenience operator at higher level.
-  inline auto operator<<(double val)
+  inline auto &operator<<(double val)
   {
     data.emplace_back(val);
     return *this;
@@ -86,6 +94,7 @@ public:
 
   // Table properties.
 
+  [[nodiscard]] bool empty() const { return cols.empty(); }
   [[nodiscard]] std::size_t n_cols() const { return cols.size(); }
   [[nodiscard]] std::size_t n_rows() const;
 
@@ -122,15 +131,11 @@ public:
   [[nodiscard]] std::string format_table() const;
 };
 
-// Wrapper for storing Table to csv file wish row wise updates.
+// Wrapper for storing Table to csv file.
 
 class TableWithCSVFile
 {
   std::string csv_file_fullpath_;
-
-  // Index to keep track of which row we are currently at the beginning of / printing. Row
-  // [-1, 0) is the header, row [0, 1) the first numeric row, etc.
-  long file_append_cursor = -1;
 
 public:
   Table table = {};
@@ -139,12 +144,6 @@ public:
   explicit TableWithCSVFile(std::string csv_file_fullpath);
 
   void WriteFullTableTrunc();
-
-  void AppendHeader();
-
-  void AppendRow();
-
-  [[nodiscard]] auto GetAppendRowCursor() const { return file_append_cursor; }
 };
 
 }  // namespace palace

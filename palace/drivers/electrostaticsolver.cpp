@@ -154,7 +154,7 @@ void ElectrostaticSolver::PostprocessTerminals(
                                                const mfem::DenseMatrix &mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
-    output.table.insert(Column("i", "i", 0, 2, {}, ""));
+    output.table.insert(Column("i", "i", 0, 0, 2, ""));
     int j = 0;
     for (const auto &[idx2, data2] : terminal_sources)
     {
@@ -179,7 +179,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   // Also write out a file with terminal voltage excitations.
   {
     TableWithCSVFile terminal_V(post_dir / "terminal-V.csv");
-    terminal_V.table.insert(Column("i", "i", 0, 2, {}, ""));
+    terminal_V.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_V.table.insert("Vinc", "V_inc[i] (V)");
     for (const auto &[idx, data] : terminal_sources)
     {
