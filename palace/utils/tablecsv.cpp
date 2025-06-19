@@ -58,18 +58,15 @@ namespace palace
       return fmt::format(fmt::runtime(fmt_str), val);
     }
   }
-  auto empty_cell = empty_cell_val.value_or(defaults->empty_cell_val);
-  return fmt::format("{0:>{1}s}", empty_cell, width_);
+  return fmt::format("{0:>{1}s}", defaults->empty_cell_val, width_);
 }
 
-Column::Column(std::string name, std::string header_text,
-               std::optional<size_t> min_left_padding,
-               std::optional<size_t> float_precision,
-               std::optional<std::string> empty_cell_val,
-               std::optional<std::string> fmt_sign)
-  : name(std::move(name)), header_text(std::move(header_text)),
-    min_left_padding(min_left_padding), float_precision(float_precision),
-    empty_cell_val(std::move(empty_cell_val)), fmt_sign(std::move(fmt_sign))
+Column::Column(std::string name_, std::string header_text_, long column_group_idx_,
+               std::optional<size_t> min_left_padding_,
+               std::optional<size_t> float_precision_, std::optional<std::string> fmt_sign_)
+  : name(std::move(name_)), header_text(std::move(header_text_)),
+    column_group_idx(column_group_idx_), min_left_padding(min_left_padding_),
+    float_precision(float_precision_), fmt_sign(std::move(fmt_sign_))
 {
 }
 
@@ -197,34 +194,9 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath)
 
 void TableWithCSVFile::WriteFullTableTrunc()
 {
-  auto file_buf = fmt::output_file(
+  auto file_buffer = fmt::output_file(
       csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-  file_buf.print("{}", table.format_table());
-  file_append_cursor = table.n_rows();
-}
-
-void TableWithCSVFile::AppendHeader()
-{
-  if (file_append_cursor != -1)
-  {
-    WriteFullTableTrunc();
-  }
-  auto file_buf =
-      fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-  file_buf.print("{}", table.format_header());
-  file_append_cursor++;
-}
-
-void TableWithCSVFile::AppendRow()
-{
-  if (file_append_cursor < 0)
-  {
-    WriteFullTableTrunc();
-  }
-  auto file_buf =
-      fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-  file_buf.print("{}", table.format_row(file_append_cursor));
-  file_append_cursor++;
+  file_buffer.print("{}", table.format_table());
 }
 
 }  // namespace palace
