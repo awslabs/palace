@@ -949,8 +949,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
     table.col_options = {6, 6};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
-    table.insert(Column("f_re", "Re{f} (GHz)") << omega.real());
-    table.insert(Column("f_im", "Im{f} (GHz)") << omega.imag());
+    table.insert(Column("f_re", "Re{f} (GHz)")
+                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()));
+    table.insert(Column("f_im", "Im{f} (GHz)")
+                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag()));
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);

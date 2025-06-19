@@ -15,9 +15,8 @@ namespace palace
 template <ProblemType solver_t>
 class PostOperator;
 
-// Results of measurements on fields. All values here should be in SI units (i.e. we call
-// Dimensionalize<units>(value) on the results before storage here). Not all measurements
-// are sensible to define for all solvers.
+// Results of measurements on fields. Not all measurements are sensible to define for all
+// solvers.
 struct Measurement
 {
   // Mini storage structs for data measurements.

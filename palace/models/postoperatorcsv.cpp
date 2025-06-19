@@ -18,11 +18,11 @@ Measurement Measurement::Dimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq);
-  measurement_cache.Jcoeff_excitation =
-      nondim_measurement_cache.Jcoeff_excitation;                        // NONE // ????
-  measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;  // NONE
-  measurement_cache.error_abs = nondim_measurement_cache.error_abs;      // NONE
-  measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;    // NONE
+  measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
+  measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
+  measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
+  measurement_cache.error_abs = nondim_measurement_cache.error_abs;                  // NONE
+  measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;                // NONE
 
   measurement_cache.domain_E_field_energy_all =
       units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -71,6 +71,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+      dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
     return dim;
@@ -119,6 +120,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq);
+  measurement_cache.ex_idx = dim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
@@ -171,6 +173,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+      dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
     return dim;
