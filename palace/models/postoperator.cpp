@@ -129,7 +129,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   InitializeParaviewDataCollection();
 
   // Initialize CSV files for measurements.
-  post_op_csv.InitializeCSVDataCollection();
+  post_op_csv.SetUpAndInitialize(iodata);
 }
 
 template <ProblemType solver_t>
