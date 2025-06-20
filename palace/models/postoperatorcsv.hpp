@@ -5,11 +5,13 @@
 #include <optional>
 #include "fem/errorindicator.hpp"
 #include "utils/configfile.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/units.hpp"
 
 namespace palace
 {
+class IoData;
 
 // Advance declaration.
 template <ProblemType solver_t>
@@ -124,26 +126,36 @@ template <ProblemType solver_t>
 class PostOperatorCSV
 {
   PostOperator<solver_t> *post_op = nullptr;
-  int nr_expected_measurement_rows = 1;
 
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
 
-  // Current measurement step index being written.
-  int m_idx_row;
+  // Cursor location & curse value (TODO: rename variables).
 
-  // Current measurement index values for printing of primary "index" column; assumed
-  // dimensionful like all measurements.
-  double m_idx_value;
+  std::size_t m_idx_row = 0;  // row_i: Plain count of current row  (measurement index)
+  std::size_t ex_idx_i = 0;   // Plain count of current column group (excitation)
 
-  // List of all excitations (column blocks). Single "0" default for solvers that don't
-  // support excitations.
-  std::vector<int> excitation_idx_all = {int(0)};
+  double m_idx_value;  // row_idx_v: Value of row index (time, freq..); must be dimensionful
+  std::size_t m_ex_idx = 0;  // ex_idx_v: Excitation index value (= ex_idx_v_all[ex_idx_i])
+
+  // Required in validation of re-loaded table (driven), otherwise just to reserve space.
+  // Transient (adaptive time-stepping) or eigenvalue (converged eigenvalues) solver output
+  // may differ from expectation.
+  std::size_t nr_expected_measurement_rows = 1;
+
+  // Stored column groups (excitations). Default single "0" for solvers without excitations.
+  // Rename ex_idx_v_all & SingleExIdx
+  std::vector<std::size_t> excitation_idx_all = {std::size_t(0)};
   bool SingleColBlock() const { return excitation_idx_all.size() == 1; }
 
-  // Current measurement excitation index.
-  int m_ex_idx = 0;
+  // Functions dealing with reloading an already existing table via "Restart".
 
+  constexpr static bool may_reload_table() { return solver_t == ProblemType::DRIVEN; }
+
+  void MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref);
+
+  // Data tables.
+  //
   // These are all std::optional since: (a) should only be instantiated on the root mpi
   // process, (b) they should only be written if the data is non-empty.
 
@@ -234,10 +246,10 @@ class PostOperatorCSV
   template <ProblemType U = solver_t>
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
-public:
   // Set-up all files to be called from post_op.
   void InitializeCSVDataCollection();
 
+public:
   // Print all data from nondim_measurement_cache.
   void PrintAllCSVData(const Measurement &nondim_measurement_cache,
                        double idx_value_dimensionful, int step);
@@ -255,9 +267,11 @@ public:
   // Special case of global indicator — init and print all at once.
   void PrintErrorIndicator(const ErrorIndicator::SummaryStatistics &indicator_stats);
 
+  // "Delayed ctor" so that PostOperator can call it once it is fully constructed.
+  void SetUpAndInitialize(const IoData &iodata);
+
   PostOperatorCSV() = delete;
-  PostOperatorCSV(PostOperator<solver_t> *post_op_, int nr_expected_measurement_rows_ = 1)
-    : post_op(post_op_), nr_expected_measurement_rows(nr_expected_measurement_rows_) {};
+  explicit PostOperatorCSV(PostOperator<solver_t> *post_op_) : post_op(post_op_) {};
 };
 
 }  // namespace palace
