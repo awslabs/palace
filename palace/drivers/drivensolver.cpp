@@ -337,17 +337,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       prom_op.SolveHDM(excitation_idx, omega_star, E);
       prom_op.SolvePROM(excitation_idx, omega_star, Eh);
       linalg::AXPY(-1.0, E, Eh);
+
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
       memory = max_errors.back() < offline_tol ? memory + 1 : 0;
 
       Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
-                 "{:.3e}{}\n",
+                 "{:.3e}, memory = {:d}/{:d}\n",
                  it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
-                 omega_star, max_errors.back(),
-                 (memory == 0)
-                     ? ""
-                     : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
+                 omega_star, max_errors.back(), memory, convergence_memory);
       UpdatePROM(excitation_idx, omega_star);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
