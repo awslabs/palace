@@ -76,6 +76,7 @@ public:
     STOAR,
     QARNOLDI,
     JD,
+    LINEAR,//test for PEPLINEAR
     NLEIGS, // for NEP
     RII, // try Jacobian based ones too?
     SLP,
@@ -98,13 +99,18 @@ protected:
   PetscScalar sigma;
   bool sinvert, region;
 
+  // linearization point for A2?
+  PetscScalar l0;
+
+  bool has_A2;
+
   // Storage for computed residual norms and eigenvector normalizations.
   std::unique_ptr<PetscReal[]> res, xscale;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  /*const*/ ComplexKspSolver *opInv;
+  ///*const*/ ComplexKspSolver *opInv; //moved to public just as a test
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -142,6 +148,8 @@ public:
   // eigenvalue problem.
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
@@ -152,6 +160,7 @@ public:
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
   void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) override;
+  void SetIoData(const IoData &iodata) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
@@ -165,7 +174,7 @@ public:
   PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> l, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -200,10 +209,13 @@ public:
   virtual operator PetscObject() const = 0;
 
     // Test for linearized A2 matrix?
-  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ;  //
+  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ, opA2_pc, opA_pc, opP_pc;  //test
 
   // Reference to space operator so we recompute A2
   SpaceOperator *space_op; // TEST???
+
+  ComplexKspSolver *opInv; //moved to public just as a test
+  const IoData *opIodata;
 
     // Test for RII correction for nonlinear eigenproblem
   std::vector<std::complex<double>> eigen_values;
@@ -224,7 +236,7 @@ protected:
 
   void Customize() override;
 
-  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> l, bool precond = false) override;
 
 public:
   //
@@ -277,10 +289,12 @@ public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInv;
+  //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEigenvalueSolver::has_A2;
 
   // References to matrices defining the linear eigenvalue problem (not owned).
   const ComplexOperator *opK, *opC, *opM;
@@ -375,10 +389,12 @@ public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInv;
+  //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEigenvalueSolver::has_A2;
 
   // References to matrices defining the generalized eigenvalue problem (not owned).
   const ComplexOperator *opK, *opM;
@@ -399,6 +415,8 @@ public:
   using SlepcEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 };
@@ -411,10 +429,12 @@ public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInv;
+  //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEigenvalueSolver::has_A2;
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
@@ -506,6 +526,8 @@ public:
   }
 
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(pep); };
+
+  void RationalA2(int degree, double tol); //test
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
@@ -515,10 +537,12 @@ public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInv;
+  //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
+  using SlepcEigenvalueSolver::has_A2;
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).

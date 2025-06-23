@@ -116,7 +116,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         Mpi::Print("Using SLEPc PEP solver\n");
         slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+        //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR); //gives many wrong eigenvalues in addition to correct ones
+        //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::LINEAR); // doesn't support region, but otherwise works fine
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::QARNOLDI); // seems to work fine
       }
       else
       {
@@ -146,9 +148,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (nonlinear || C)
+  if (nonlinear || C) //test force this
   {
-    Mpi::Print("SetOperators with space_op\n");
+    Mpi::Print("SetOperators with space_op, K, C, M\n");
     eigen->SetOperators(space_op, *K, *C, *M, scale);
     // set NLEIGS numdegrees?
   }
@@ -158,7 +160,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    eigen->SetOperators(*K, *M, scale);
+    Mpi::Print("SetOperators with space_op, K, M\n");
+    eigen->SetOperators(space_op, *K, *M, scale);
+    //eigen->SetOperators(*K, *M, scale);
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
   eigen->SetTol(iodata.solver.eigenmode.tol);
@@ -244,11 +248,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
+  const double l0 = target * 1.0;
+  {
+    const double f_l0 =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(l0);
+    Mpi::Print(" Extra system matrix ;inearization point = {:.3e} GHz ({:.3e})\n", f_l0, l0);
+  }
   if (C || nonlinear)
   {
     // Search for eigenvalues closest to λ = iσ.
-    Mpi::Print("SetShiftInvert i*target\n");
-    eigen->SetShiftInvert(1i * target);
+    Mpi::Print("SetShiftInvert i*target and linearization point\n");
+    eigen->SetShiftInvert(1i * target, 1i * l0);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
@@ -266,7 +276,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else
   {
     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target);
+    eigen->SetShiftInvert(target * target, l0); // not sure l0 makes sense for linear EVP
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
@@ -284,8 +294,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
-
+  // linearize A2 around l0
+  const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
+  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
+  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get(), A2.get());
   // Test to see waveport mode at difference frequencies
   /*
   std::vector<double> facs = {1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0};
@@ -296,12 +309,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   */
   // TEST DIVIDED DIFFERENCE JACOBIAN -- ONLY WORKS IF A2 is not null
   /*
-  const auto eps = 1.0e-6;//std::sqrt(std::numeric_limits<double>::epsilon());
   std::vector<double> facs = {0.9999, 0.999, 0.99, 0.9, 0.5};
   for (auto c : facs)
   {
-    double linearization_point = target * c;
-    Mpi::Print("target: {}, linearization point: {}\n", target, linearization_point);
+    double linearization_point = l0 * c;
+    Mpi::Print("l0: {}, linearization point: {}\n", l0, linearization_point);
     auto A20 = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point, Operator::DIAG_ZERO);
     auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point * (1.0 + eps), Operator::DIAG_ZERO);
     auto A2m = space_op.GetExtraSystemMatrix<ComplexOperator>(linearization_point * (1.0 - eps), Operator::DIAG_ZERO);
@@ -317,27 +329,87 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
     double res = linalg::Norml2(space_op.GetComm(), diff);
     Mpi::Print("Order 0 res: {}, res/normx1: {}, \n\n", res, res/normx1);
-    A2jac->AddMult(tt, x2, (target - linearization_point));
+    A2jac->AddMult(tt, x2, (l0 - linearization_point));
     diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
     res = linalg::Norml2(space_op.GetComm(), diff);
     Mpi::Print("Order 1 res: {}, res/normx1: {}, \n\n", res, res/normx1);
-    A2jac2->AddMult(tt, x2, 0.5 * pow(target - linearization_point, 2));
+    A2jac2->AddMult(tt, x2, 0.5 * pow(l0 - linearization_point, 2));
     diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
     res = linalg::Norml2(space_op.GetComm(), diff);
     Mpi::Print("Order 2 res: {}, res/normx1: {}, \n\n", res, res/normx1);
   }
   */
+  /*
+  // Test Rational/Newton Interpolation
+  // Interpolation points: (or low-discrepancy sequence like Sobol?)
+  double sigma0 = target, sigma1 = target*3.0, sigma2 = target*6.0;
+  // Test points
+  std::vector<double> test_p = {target*1.01, target*1.1, target*1.5, target*2, target*3.01, target*5, target*6.01, target*9};
+  // fn(sigma) = T0 + (T1-T0)/(s1-s0)*(l-s0) + ((T2-T1)/(s2-s1) + (T1-T0)/(s1-s0))/(s2-s0)*(l-s0)*(l-s1)
+  auto A20 = space_op.GetExtraSystemMatrix<ComplexOperator>(sigma0, Operator::DIAG_ZERO);
+  auto A21 = space_op.GetExtraSystemMatrix<ComplexOperator>(sigma1, Operator::DIAG_ZERO);
+  auto A22 = space_op.GetExtraSystemMatrix<ComplexOperator>(sigma2, Operator::DIAG_ZERO);
+  auto A2d10 = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>((sigma1-sigma0), 1, A21.get(), A20.get());
+  auto A2d21 = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>((sigma2-sigma1), 1, A22.get(), A21.get());
+  for (auto l : test_p)
+  {
+    auto A2_l = space_op.GetExtraSystemMatrix<ComplexOperator>(l, Operator::DIAG_ZERO);
+    ComplexVector tt(A2->Height());
+    tt = std::complex<double>(1.23, 1.23);
+    ComplexVector x1(A2->Height()), x2(A2->Height()), diff(A2->Height());
+    x1 = 0.0; x2 = 0.0;
+    A2_l->Mult(tt, x1);
+    double normx1 = linalg::Norml2(space_op.GetComm(), x1);
+    Mpi::Print("test lambda: {}, with interpolation points {}, {}, and {}\n", l, sigma0, sigma1, sigma2);
+    // Order 0
+    A20->Mult(tt, x2);
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    double res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 0 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    // Order 1
+    A2d10->AddMult(tt, x2, (l - sigma0));
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 1 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    // Order 2
+    A2d21->AddMult(tt, x2, (l - sigma0) * (l - sigma1) / (sigma2-sigma0));
+    A2d10->AddMult(tt, x2, -(l - sigma0) * (l - sigma1) / (sigma2-sigma0));
+    diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    res = linalg::Norml2(space_op.GetComm(), diff);
+    Mpi::Print("Order 2 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    //// Order 1
+    //A21->AddMult(tt, x2, (l - sigma0) / (sigma1 - sigma0));
+    //A20->AddMult(tt, x2, -(l - sigma0) / (sigma1 - sigma0));
+    //diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    //res = linalg::Norml2(space_op.GetComm(), diff);
+    //Mpi::Print("Order 1 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+    // Order 2
+    //A22->AddMult(tt, x2, (l - sigma0) * (l - sigma1) / ((sigma2-sigma1)*(sigma2-sigma0)));
+    //A21->AddMult(tt, x2, -(l - sigma0) * (l - sigma1) / ((sigma2-sigma1)*(sigma2-sigma0)));
+    //A21->AddMult(tt, x2, -(l - sigma0) * (l - sigma1) / ((sigma1-sigma0)*(sigma2-sigma0)));
+    //A20->AddMult(tt, x2, (l - sigma0) * (l - sigma1) / ((sigma1-sigma0)*(sigma2-sigma0)));
+    //diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+    //res = linalg::Norml2(space_op.GetComm(), diff);
+    //Mpi::Print("Order 2 res: {}, res/normx1: {}, \n\n", res, res/normx1);
+  }
+  std::exit(0);
+  */
+
   Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
+  auto Atest = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+                                    std::complex<double>(-target * target, 0.0), - 1i * l0, K.get(),
+                                    C.get(), M.get(), A2.get(), A2j.get());
   //auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target, target);
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
-  ksp->SetOperators(*A, *P);
+  ksp->SetOperators(*Atest, *P);
   eigen->SetLinearSolver(*ksp);
+  eigen->SetIoData(iodata);
 
   // Initialize structures for storing and reducing the results of error estimation.
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(

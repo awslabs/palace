@@ -177,7 +177,7 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType>
   GetExtraSystemMatrixJacobian(double eps, int order, const OperType *A2p,
-                  const OperType *A2, const OperType *A2m);
+                  const OperType *A2, const OperType *A2m = nullptr);
 
 
   // Construct the complete frequency or time domain system matrix using the provided
@@ -189,6 +189,10 @@ public:
   std::unique_ptr<OperType>
   GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
                   const OperType *C, const OperType *M, const OperType *A2 = nullptr);
+
+  std::unique_ptr<ComplexOperator>
+  GetSystemMatrix(std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, std::complex<double> l0, const ComplexOperator *K,
+                  const ComplexOperator *C, const ComplexOperator *M, const ComplexOperator *A2 = nullptr, const ComplexOperator *A2J = nullptr);
 
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
   //                           B = a0 Kr + a2 Mr .

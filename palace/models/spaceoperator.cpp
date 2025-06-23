@@ -613,8 +613,160 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
 }
 
+
+auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<double> a1,
+                         std::complex<double> a2, std::complex<double> l0, const ComplexParOperator *K,
+                         const ComplexParOperator *C, const ComplexParOperator *M,
+                         const ComplexParOperator *A2, const ComplexParOperator *A2J, const FiniteElementSpace &fespace)
+{
+  // Block 2 x 2 equivalent-real formulation for each term in the sum:
+  //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
+  //                    [ sumi ]      [ ai   ar ] [ Ai ] .
+  auto sumr = std::make_unique<SumOperator>(h, w);
+  auto sumi = std::make_unique<SumOperator>(h, w);
+  if (K)
+  {
+    if (a0.real() != 0.0)
+    {
+      if (K->LocalOperator().Real())
+      {
+        sumr->AddOperator(*K->LocalOperator().Real(), a0.real());
+      }
+      if (K->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*K->LocalOperator().Imag(), a0.real());
+      }
+    }
+    if (a0.imag() != 0.0)
+    {
+      if (K->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*K->LocalOperator().Imag(), -a0.imag());
+      }
+      if (K->LocalOperator().Real())
+      {
+        sumi->AddOperator(*K->LocalOperator().Real(), a0.imag());
+      }
+    }
+  }
+  if (C && a1 != 0.0)
+  {
+    if (a1.real() != 0.0)
+    {
+      if (C->LocalOperator().Real())
+      {
+        sumr->AddOperator(*C->LocalOperator().Real(), a1.real());
+      }
+      if (C->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*C->LocalOperator().Imag(), a1.real());
+      }
+    }
+    if (a1.imag() != 0.0)
+    {
+      if (C->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*C->LocalOperator().Imag(), -a1.imag());
+      }
+      if (C->LocalOperator().Real())
+      {
+        sumi->AddOperator(*C->LocalOperator().Real(), a1.imag());
+      }
+    }
+  }
+  if (A2J && a1 != 0.0)
+  {
+    if (a1.real() != 0.0)
+    {
+      if (A2J->LocalOperator().Real())
+      {
+        sumr->AddOperator(*A2J->LocalOperator().Real(), a1.real());
+      }
+      if (A2J->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*A2J->LocalOperator().Imag(), a1.real());
+      }
+    }
+    if (a1.imag() != 0.0)
+    {
+      if (A2J->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*A2J->LocalOperator().Imag(), -a1.imag());
+      }
+      if (A2J->LocalOperator().Real())
+      {
+        sumi->AddOperator(*A2J->LocalOperator().Real(), a1.imag());
+      }
+    }
+  }
+  if (M && a2 != 0.0)
+  {
+    if (a2.real() != 0.0)
+    {
+      if (M->LocalOperator().Real())
+      {
+        sumr->AddOperator(*M->LocalOperator().Real(), a2.real());
+      }
+      if (M->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*M->LocalOperator().Imag(), a2.real());
+      }
+    }
+    if (a2.imag() != 0.0)
+    {
+      if (M->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*M->LocalOperator().Imag(), -a2.imag());
+      }
+      if (M->LocalOperator().Real())
+      {
+        sumi->AddOperator(*M->LocalOperator().Real(), a2.imag());
+      }
+    }
+  }
+  if (A2)
+  {
+    if (A2->LocalOperator().Real())
+    {
+      sumr->AddOperator(*A2->LocalOperator().Real(), 1.0);
+    }
+    if (A2->LocalOperator().Imag())
+    {
+      sumi->AddOperator(*A2->LocalOperator().Imag(), 1.0);
+    }
+  }
+
+  if (A2J && l0 != 0.0)
+  {
+    if (l0.real() != 0.0)
+    {
+      if (A2J->LocalOperator().Real())
+      {
+        sumr->AddOperator(*A2J->LocalOperator().Real(), l0.real());
+      }
+      if (A2J->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*A2J->LocalOperator().Imag(), l0.real());
+      }
+    }
+    if (l0.imag() != 0.0)
+    {
+      if (A2J->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*A2J->LocalOperator().Imag(), -l0.imag());
+      }
+      if (A2J->LocalOperator().Real())
+      {
+        sumi->AddOperator(*A2J->LocalOperator().Real(), l0.imag());
+      }
+    }
+  }
+  return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+}
+
 }  // namespace
 
+// rename this GetDividedDifferenceMatrix?
 template <typename OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrixJacobian(double eps, int order,
@@ -636,14 +788,20 @@ SpaceOperator::GetExtraSystemMatrixJacobian(double eps, int order,
   //std::vector<std::unique_ptr<OperType>> linear_ops;
   if (order == 1)
   {
-    return BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+    //return BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+    auto J = BuildParSumOperator(height, width, std::complex<double>(1.0 / eps, 0.0), std::complex<double>(-1.0 / eps), std::complex<double>(0.0, 0.0), PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+    J->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO); //do this here or outside?
+    return J;
     //linear_ops.push_back(BuildParSumOperator(height, width, 1.0 + 1.0/eps, -1.0/eps, 0.0, PtAP_A2, PtAP_A2p, nullptr, nullptr, GetNDSpace()));
     //linear_ops.push_back(BuildParSumOperator(height, width, -1.0/(eps * omega), 1.0/(eps * omega), 0.0, PtAP_A2, PtAP_A2p, nullptr, nullptr, GetNDSpace()));
   }
-  else if (order == 2)
+  else if (order == 2 && PtAP_A2m)
   {
     const auto eps2 = eps * eps;
-    return BuildParSumOperator(height, width, 1.0 / eps2, -2.0 / eps2, 1.0 / eps2, PtAP_A2p, PtAP_A2, PtAP_A2m, nullptr, GetNDSpace());
+    //return BuildParSumOperator(height, width, 1.0 / eps2, -2.0 / eps2, 1.0 / eps2, PtAP_A2p, PtAP_A2, PtAP_A2m, nullptr, GetNDSpace());
+    auto J = BuildParSumOperator(height, width, std::complex<double>(1.0 / eps2, 0.0), std::complex<double>(-2.0 / eps2, 0.0), std::complex<double>(1.0 / eps2, 0.0), PtAP_A2p, PtAP_A2, PtAP_A2m, nullptr, GetNDSpace());
+    J->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO);  //do this here or outside?
+    return J;
     //double omega2 = omega * omega;
     //linear_ops.push_back(BuildParSumOperator(height, width, 1.0 + 1.0/eps - 1.0/eps2, -1.0/eps + 1.0/(2.0 * eps2), 1.0/(2.0 * eps2), PtAP_A2, PtAP_A2p, PtAP_A2m, nullptr, GetNDSpace()));
     //linear_ops.push_back(BuildParSumOperator(height, width, -1.0/(eps * omega) + 2.0/(eps2 * omega), 1.0/(eps * omega) - 1.0/(eps2 * omega), -1.0/(eps2 * omega), PtAP_A2, PtAP_A2p, PtAP_A2m, nullptr, GetNDSpace()));
@@ -697,6 +855,56 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
 
   auto A = BuildParSumOperator(height, width, a0, a1, a2, PtAP_K, PtAP_C, PtAP_M, PtAP_A2,
                                GetNDSpace());
+  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
+  return A;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetSystemMatrix(std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, std::complex<double> l0,
+                               const ComplexOperator *K, const ComplexOperator *C, const ComplexOperator *M,
+                               const ComplexOperator *A2, const ComplexOperator *A2J)
+{
+  using ParOperType = ComplexParOperator;
+
+  const auto *PtAP_K = (K) ? dynamic_cast<const ParOperType *>(K) : nullptr;
+  const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;
+  const auto *PtAP_M = (M) ? dynamic_cast<const ParOperType *>(M) : nullptr;
+  const auto *PtAP_A2 = (A2) ? dynamic_cast<const ParOperType *>(A2) : nullptr;
+  const auto *PtAP_A2J = (A2J) ? dynamic_cast<const ParOperType *>(A2J) : nullptr;
+  MFEM_VERIFY((!K || PtAP_K) && (!C || PtAP_C) && (!M || PtAP_M) && (!A2 || PtAP_A2) && (!A2J || PtAP_A2J),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+
+  int height = -1, width = -1;
+  if (PtAP_K)
+  {
+    height = PtAP_K->LocalOperator().Height();
+    width = PtAP_K->LocalOperator().Width();
+  }
+  else if (PtAP_C)
+  {
+    height = PtAP_C->LocalOperator().Height();
+    width = PtAP_C->LocalOperator().Width();
+  }
+  else if (PtAP_M)
+  {
+    height = PtAP_M->LocalOperator().Height();
+    width = PtAP_M->LocalOperator().Width();
+  }
+  else if (PtAP_A2)
+  {
+    height = PtAP_A2->LocalOperator().Height();
+    width = PtAP_A2->LocalOperator().Width();
+  }
+  else if (PtAP_A2J)
+  {
+    height = PtAP_A2J->LocalOperator().Height();
+    width = PtAP_A2J->LocalOperator().Width();
+  }
+  MFEM_VERIFY(height >= 0 && width >= 0,
+              "At least one argument to GetSystemMatrix must not be empty!");
+
+  auto A = BuildParSumOperator(height, width, a0, a1, a2, l0, PtAP_K, PtAP_C, PtAP_M, PtAP_A2, PtAP_A2J, GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
 }
@@ -1204,8 +1412,8 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
-template std::unique_ptr<Operator>
-SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const Operator *, const Operator *, const Operator *);
+//template std::unique_ptr<Operator>
+//SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const Operator *, const Operator *, const Operator *);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const ComplexOperator *, const ComplexOperator *, const ComplexOperator *);
 

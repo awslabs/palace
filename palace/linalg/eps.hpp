@@ -58,16 +58,19 @@ public:
   // eigenvalue problem.
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                             ScaleType type) = 0;
+  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                            const ComplexOperator &M, ScaleType type) = 0;
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type) = 0;
   virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                              const ComplexOperator &C, const ComplexOperator &M,
-                              ScaleType type) = 0;
+                            const ComplexOperator &C, const ComplexOperator &M,
+                            ScaleType type) = 0;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
   virtual void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) = 0;
+  virtual void SetIoData(const IoData &iodata) = 0; // test
 
   // Set the projection operator for enforcing the divergence-free constraint.
   virtual void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) = 0;
@@ -94,7 +97,7 @@ public:
   virtual void SetWhichEigenpairs(WhichType type) = 0;
 
   // Set shift-and-invert spectral transformation.
-  virtual void SetShiftInvert(std::complex<double> s, bool precond = false) = 0;
+  virtual void SetShiftInvert(std::complex<double> s, std::complex<double> l, bool precond = false) = 0; //test
 
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
