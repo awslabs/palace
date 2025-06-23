@@ -6,11 +6,15 @@
 
 #include <complex>
 #include <memory>
+#include <string>
+#include <tuple>
 #include <vector>
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -70,6 +74,8 @@ private:
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
   Eigen::VectorXcd RHS1r;
   Eigen::VectorXcd RHSr;
+  Eigen::VectorXd voltage_norm_H;
+  std::vector<std::string> v_node_label;
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
@@ -101,7 +107,7 @@ public:
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add field configuration to the reduced-order basis and update the PROM.
-  void UpdatePROM(const ComplexVector &u);
+  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
@@ -120,6 +126,9 @@ public:
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+
+  // Print PROM matrices to file include in input (SI) units.
+  void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
 };
 
 }  // namespace palace
