@@ -411,7 +411,7 @@ jobs:
              [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
             source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
           fi
-          if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             export OMP_NUM_THREADS=2
           else
             export OMP_NUM_THREADS=1
@@ -446,7 +446,7 @@ jobs:
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
-          if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
             export OMP_NUM_THREADS=2
           else

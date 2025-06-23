@@ -17,6 +17,12 @@ else
     numprocs = num_physical_cores()
 end
 
+if "OMP_NUM_THREADS" in keys(ENV)
+    numthreads = parse(Int, ENV["OMP_NUM_THREADS"])
+else
+    numthreads = 1
+end
+
 if "TEST_CASES" in keys(ENV)
     cases = String.(split(ENV["TEST_CASES"], ' '))
 else
@@ -36,7 +42,7 @@ else
     ]
 end
 
-@info "Starting regression tests using `$palace` on $numprocs core$(numprocs > 1 ? "s" : "")"
+@info "Starting regression tests using `$palace` on $numprocs core$(numprocs > 1 ? "s" : "") $(numthreads > 1 ? "with $(numthreads) threads" : "")"
 
 reltol = 1.0e-4
 abstol = 1.0e-16
