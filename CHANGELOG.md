@@ -105,6 +105,9 @@ The format of this changelog is based on
   - Refactor `PostOperator` usage of `Measurement` to be entirely non-dimensional, until
     `PostOperatorCSV` which dimensionalizes all measurements before writing to file. Reduces
     the risk of mixed unit bugs throughout `PostOperator`.
+  - Fix bug in using `"MakeSimplex"` which would cause undefined behaviour for higher order
+    meshes.
+  - Fix bug when combining OpenMP and GPU builds in reduction operations over `Vector`.
 
 ## [0.13.0] - 2024-05-20
 
