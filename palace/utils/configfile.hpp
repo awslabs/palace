@@ -661,6 +661,9 @@ public:
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;
 
+  // Return circuit matrices from port with port excitation vectors
+  bool adaptive_circuit_synthesis = false;
+
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };

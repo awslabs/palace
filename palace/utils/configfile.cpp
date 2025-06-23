@@ -1052,6 +1052,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_tol = driven.value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven.value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
+  adaptive_circuit_synthesis =
+      driven.value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
