@@ -247,6 +247,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(true);
 
+  // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     auto &lumped_port_op = space_op.GetLumpedPortOp();
@@ -355,6 +356,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Printing PROM Matrices to disk.\n");
+    if (root)
+    {
+      prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
+    }
+  }
+
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
   // in the general case with wave ports, etc.?)
 
@@ -406,65 +417,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
-  post_op.MeasureFinalize(indicator, prom_op);
+  post_op.MeasureFinalize(indicator);
   return indicator;
 }
 
-void PostprocessPROM(const IoData &iodata, const RomOperator &prom_op)
-{
-  if (!do_measurement_ || !root_)
-  {
-    return;
-  }
-  Mpi::Print("Post-process synthesized circuit");
-  using VT = IoData::ValueType;
-
-  // Don't use structured binding for lambda below: captured structured bindings are C++20
-  const auto &prom_mat = prom_op.GetReducedMatrices();
-  const auto &Kr = std::get<0>(prom_mat);
-  const auto &Mr = std::get<1>(prom_mat);
-  const auto &Cr = std::get<2>(prom_mat);
-  const auto &v_norms = std::get<3>(prom_mat);
-  const auto &v_label = std::get<4>(prom_mat);
-
-  auto prom_size = Kr.rows();
-  MFEM_VERIFY((Mr.rows() == prom_size) && ((Cr.rows() == prom_size) || (Cr.rows() == 0)) &&
-                  (v_norms.rows() == prom_size) && (v_label.size() == prom_size),
-              "Inconsisten PROM size!");
-
-  auto print_table = [&](const Eigen::MatrixXd &mat, std::string_view filename)
-  {
-    auto out = TableWithCSVFile(post_dir_ / filename);
-    out.table.col_options.float_precision = 17;
-    for (int i = 0; i < prom_size; i++)
-    {
-      out.table.insert_column(v_label[i], v_label[i]);
-      for (int j = 0; j < prom_size; j++)
-      {
-        out.table[v_label[i]] << mat(i, j);
-      }
-    }
-    out.WriteFullTableTrunc();
-  };
-
-  // De-normalize all volltages
-  auto v_d = v_norms.asDiagonal();
-
-  // PROM matrices should be real
-  auto unit_H = iodata.DimensionalizeValue(VT::INDUCTANCE, 1.0);
-  Eigen::MatrixXd m_Linv = (1.0 / unit_H * v_d) * Kr.real() * v_d;
-  print_table(m_Linv, "prom-Linv.csv");
-
-  auto unit_F = iodata.DimensionalizeValue(VT::CAPACITANCE, 1.0);
-  Eigen::MatrixXd m_C = (unit_F * v_d) * Mr.real() * v_d;
-  print_table(m_C, "prom-C.csv");
-
-  // In principle, Cr need not exist
-  if (Cr.size() > 0)
-  {
-    auto unit_ohm = iodata.DimensionalizeValue(VT::IMPEDANCE, 1.0);
-    Eigen::MatrixXd m_Rinv = (1.0 / unit_ohm * v_d) * Cr.real() * v_d;
-    print_table(m_Rinv, "prom-Rinv.csv");
-  }
-}
 }  // namespace palace

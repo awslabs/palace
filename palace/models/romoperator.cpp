@@ -9,6 +9,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
@@ -540,6 +541,88 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   // XX TODO: Not yet implemented
   MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
   return {};
+}
+
+void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
+{
+  auto prom_size = Kr.rows();
+  MFEM_VERIFY((Mr.rows() == prom_size) && ((Cr.rows() == prom_size) || (Cr.rows() == 0)) &&
+                  (voltage_norm_H.rows() == prom_size) &&
+                  (v_node_label.size() == prom_size),
+              "Inconsisten PROM size!");
+
+  auto print_table = [prom_size, &post_dir, &v_node_label = this->v_node_label](
+                         const Eigen::MatrixXd &mat, std::string_view filename)
+  {
+    auto out = TableWithCSVFile(post_dir / filename);
+    out.table.col_options.float_precision = 17;
+    for (long i = 0; i < prom_size; i++)
+    {
+      out.table.insert(v_node_label[i], v_node_label[i]);
+      auto &col = out.table[v_node_label[i]];
+      for (long j = 0; j < prom_size; j++)
+      {
+        col << mat(i, j);
+      }
+    }
+    out.WriteFullTableTrunc();
+  };
+
+  // TODO(C++23): Replace this with std::ranges::starts_with instead.
+  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
+  {
+    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
+  };
+
+  // De-normalize port voltages. Define so that 1.0 on port i corresponds to full
+  // (un-normalized solution).
+  Eigen::VectorXd v_conc(prom_size);
+  for (long j = 0; j < prom_size; j++)
+  {
+    if (starts_with(v_node_label[j], "port"))
+    {
+      v_conc[j] = voltage_norm_H[j];
+    }
+    else
+    {
+      v_conc[j] = 1.0;
+    }
+  }
+  // Lazy diagonal representation of inverse.
+  auto v_d = v_conc.cwiseInverse().asDiagonal();
+
+  // Note: When checking if to print imaginary part below, it is better to to this for K,C,M
+  // since we can check if the imag operator is a nullptr. Kr, Mr, Cr are dense complex
+  // Eigen matrices and so would need to do a == 0.0 numerical check on all elements.
+
+  auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  auto m_Linv = (1.0 / unit_henry * v_d) * Kr * v_d;
+  print_table(m_Linv.real(), "prom-Linv-re.csv");
+  if (K->Imag())
+  {
+    print_table(m_Linv.imag(), "prom-Linv-im.csv");
+  }
+
+  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  auto m_C = (unit_farad * v_d) * Mr * v_d;
+  print_table(m_C.real(), "prom-C-re.csv");
+  if (C->Imag())
+  {
+    print_table(m_C.imag(), "prom-C-im.csv");
+  }
+
+  // Cr need not exist, if no dissipation. Currently, Cr always exists since we need
+  // dissipative ports for a  driven response, but this may change in the future.
+  if (Cr.size() > 0)
+  {
+    auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    auto m_Rinv = (1.0 / unit_ohm * v_d) * Cr * v_d;
+    print_table(m_Rinv.real(), "prom-Rinv-re.csv");
+    if (M->Imag())
+    {
+      print_table(m_Rinv.imag(), "prom-Rinv-im.csv");
+    }
+  }
 }
 
 }  // namespace palace

@@ -13,6 +13,8 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -98,14 +100,6 @@ public:
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
-  // Get matrices from PROM construction.
-  std::tuple<const Eigen::MatrixXcd &, const Eigen::MatrixXcd &, const Eigen::MatrixXcd &,
-             const Eigen::VectorXd &, const std::vector<std::string> &>
-  GetReducedMatrices() const
-  {
-    return std::tie(Kr, Mr, Cr, voltage_norm_H, v_node_label);
-  }
-
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
 
@@ -132,6 +126,9 @@ public:
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+
+  // Print PROM matrices to file include in input (SI) units.
+  void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
 };
 
 }  // namespace palace
