@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "tablecsv.hpp"
+#include "utils/filesystem.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -16,16 +17,16 @@
 namespace palace
 {
 
-[[nodiscard]] size_t Column::col_width() const
+[[nodiscard]] size_t Column::col_width(const ColumnOptions &defaults) const
 {
   // Quickfix to specify full column width in integer case to match current formatting.
   if (print_as_int)
   {
-    return std::max(min_left_padding.value_or(defaults->min_left_padding),
+    return std::max(min_left_padding.value_or(defaults.min_left_padding),
                     header_text.size());
   }
-  size_t pad = min_left_padding.value_or(defaults->min_left_padding);
-  size_t prec = float_precision.value_or(defaults->float_precision);
+  size_t pad = min_left_padding.value_or(defaults.min_left_padding);
+  size_t prec = float_precision.value_or(defaults.float_precision);
 
   // Normal float in our exponent format needs float_precision + 7 ("+" , leading digit,
   // ".", "e", "+", +2 exponent. Sometimes exponent maybe +3 if very small or large; see
@@ -34,15 +35,17 @@ namespace palace
   return std::max(pad + prec + 7, header_text.size());
 }
 
-[[nodiscard]] auto Column::format_header(const std::optional<size_t> &width) const
+[[nodiscard]] auto Column::format_header(const ColumnOptions &defaults,
+                                         const std::optional<size_t> &width) const
 {
-  auto w = width.value_or(col_width());
+  auto w = width.value_or(col_width(defaults));
   return fmt::format("{0:>{1}s}", header_text, w);
 }
 
-[[nodiscard]] auto Column::format_row(size_t i, const std::optional<size_t> &width) const
+[[nodiscard]] auto Column::format_row(size_t i, const ColumnOptions &defaults,
+                                      const std::optional<size_t> &width) const
 {
-  auto width_ = width.value_or(col_width());
+  auto width_ = width.value_or(col_width(defaults));
   // If data available format double.
   if ((i >= 0) && (i < data.size()))
   {
@@ -54,14 +57,14 @@ namespace palace
     }
     else
     {
-      auto sign = fmt_sign.value_or(defaults->fmt_sign);
-      auto prec = float_precision.value_or(defaults->float_precision);
+      auto sign = fmt_sign.value_or(defaults.fmt_sign);
+      auto prec = float_precision.value_or(defaults.float_precision);
       auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
                                  fmt::arg("width", width_), fmt::arg("prec", prec));
       return fmt::format(fmt::runtime(fmt_str), val);
     }
   }
-  return fmt::format("{0:>{1}s}", defaults->empty_cell_val, width_);
+  return fmt::format("{0:>{1}s}", defaults.empty_cell_val, width_);
 }
 
 Column::Column(std::string name_, std::string header_text_, long column_group_idx_,
@@ -104,7 +107,6 @@ bool Table::insert(Column &&column)
     return false;
   }
   auto &col = cols.emplace_back(std::move(column));
-  col.defaults = &col_options;
   if (reserve_n_rows > 0)
   {
     col.data.reserve(reserve_n_rows);
@@ -127,35 +129,29 @@ Column &Table::operator[](std::string_view name)
 template <typename T>
 void Table::append_header(T &buf) const
 {
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
-
   for (size_t i = 0; i < n_cols(); i++)
   {
     if (i > 0)
     {
-      to("{:s}", print_col_separator);
+      fmt::format_to(std::back_inserter(buf), "{:s}", print_col_separator);
     }
-    to("{:s}", cols[i].format_header());
+    fmt::format_to(std::back_inserter(buf), "{:s}", cols[i].format_header(col_options));
   }
-  to("{:s}", print_row_separator);
+  fmt::format_to(std::back_inserter(buf), "{:s}", print_row_separator);
 }
 
 template <typename T>
 void Table::append_row(T &buf, size_t row_j) const
 {
-  auto to = [&buf](auto f, auto &&...a)
-  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
-
   for (size_t i = 0; i < n_cols(); i++)
   {
     if (i > 0)
     {
-      to("{:s}", print_col_separator);
+      fmt::format_to(std::back_inserter(buf), "{:s}", print_col_separator);
     }
-    to("{:s}", cols[i].format_row(row_j));
+    fmt::format_to(std::back_inserter(buf), "{:s}", cols[i].format_row(row_j, col_options));
   }
-  to("{:s}", print_row_separator);
+  fmt::format_to(std::back_inserter(buf), "{:s}", print_row_separator);
 }
 
 [[nodiscard]] std::string Table::format_header() const
@@ -285,6 +281,10 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   : csv_file_fullpath_{std::move(csv_file_fullpath)}
 {
   if (!load_existing_file)
+  {
+    return;
+  }
+  if (!fs::exists(csv_file_fullpath_))
   {
     return;
   }
