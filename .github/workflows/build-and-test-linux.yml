@@ -132,7 +132,7 @@ jobs:
           math-libs: armpl
           build-shared: shared
           with-64bit-int: int32
-          with-openmp: openmp
+          with-openmp: serial # openmp -- mumps 5.8.0 introduces hang possibility
           with-eigensolver: arpack
           with-solver: mumps
         - arch: arm
