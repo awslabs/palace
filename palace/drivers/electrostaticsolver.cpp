@@ -163,7 +163,7 @@ void ElectrostaticSolver::PostprocessTerminals(
       output.table["i"] << idx2;
 
       auto &col = output.table[format("i2{}", idx2)];
-      for (int i = 0; i < terminal_sources.size(); i++)
+      for (std::size_t i = 0; i < terminal_sources.size(); i++)
       {
         col << mat(i, j) * scale;
       }

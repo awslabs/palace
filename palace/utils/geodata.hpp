@@ -187,7 +187,7 @@ inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  return GetDistanceFromPoint(mesh, marker, bdr, dir);
+  return GetDistanceFromPoint(mesh, marker, bdr, dir, max);
 }
 
 // Helper function to compute the average surface normal for all elements with the given
