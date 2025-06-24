@@ -28,18 +28,16 @@ class Column
 {
   friend class Table;
 
-  // View to default options in table class, will be set when columns are added to Table.
-  ColumnOptions *defaults = nullptr;
-
 public:
   // Map-like index, to interface via Table class.
   std::string name;
 
-  [[nodiscard]] std::size_t col_width() const;
+  [[nodiscard]] std::size_t col_width(const ColumnOptions &defaults = {}) const;
 
-  [[nodiscard]] auto format_header(const std::optional<std::size_t> &width = {}) const;
+  [[nodiscard]] auto format_header(const ColumnOptions &defaults = {},
+                                   const std::optional<std::size_t> &width = {}) const;
 
-  [[nodiscard]] auto format_row(std::size_t i,
+  [[nodiscard]] auto format_row(std::size_t i, const ColumnOptions &defaults = {},
                                 const std::optional<std::size_t> &width = {}) const;
 
   Column(std::string name, std::string header_text = "", long column_group_idx = 0,
