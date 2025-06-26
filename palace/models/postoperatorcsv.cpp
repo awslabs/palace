@@ -291,6 +291,22 @@ void CheckAppendIndex(Column &idx_col, double idx_value, size_t m_idx_row)
 
 }  // namespace
 
+std::vector<std::size_t> _impl::table_expected_filling(std::size_t m_idx_row,
+                                                       std::size_t ex_idx_i,
+                                                       std::size_t nr_rows,
+                                                       std::size_t nr_col_blocks)
+{
+  // Expected column group filling pattern. Include leading index (freq, ...)
+  std::vector<std::size_t> filling_pattern(nr_col_blocks + 1, 0);
+  filling_pattern.at(0) = (ex_idx_i == 0) ? m_idx_row : nr_rows;  // index column
+  for (std::size_t i = 1; i < ex_idx_i + 1; i++)
+  {
+    filling_pattern.at(i) = nr_rows;
+  }
+  filling_pattern.at(ex_idx_i + 1) = m_idx_row;
+  return filling_pattern;
+}
+
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_base,
                                                         Table &&t_ref)
@@ -349,7 +365,7 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
     t_base_i.print_as_int = t_ref_i.print_as_int;
 
     // Check that columns in same group have the same row number. Assumes that column groups
-    // are contiguous.
+    // are contiguous. If no error, save row number to compare to expected pattern.
     if (t_base_i.column_group_idx != current_ex_idx_v)
     {
       current_ex_idx_v = t_base_i.column_group_idx;
@@ -365,23 +381,12 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
     }
   }
   // Match expected column group pattern.
-  std::vector<std::size_t> expected_ex_idx_nrows;
-  expected_ex_idx_nrows.reserve(excitation_idx_all.size());
-  for (std::size_t i = 0; i < excitation_idx_all.size(); i++)
-  {
-    if (i < ex_idx_i)
-    {
-      expected_ex_idx_nrows.emplace_back(nr_expected_measurement_rows);
-    }
-    else if (i == ex_idx_i)
-    {
-      expected_ex_idx_nrows.emplace_back(m_idx_row);
-    }
-    else
-    {
-      expected_ex_idx_nrows.emplace_back(0);
-    }
-  }
+  auto expected_ex_idx_nrows = _impl::table_expected_filling(
+      m_idx_row, ex_idx_i, nr_expected_measurement_rows, excitation_idx_all.size());
+
+  // Copy over other options from reference table, since we dont't recover them on load.
+  t_csv_base.table.col_options = t_ref.col_options;
+
   MFEM_VERIFY(base_ex_idx_nrows == expected_ex_idx_nrows,
               fmt::format("{} [Specified restart position is incompatible with reloaded "
                           "file. Row filling by excitation expected {}, got {}]",
