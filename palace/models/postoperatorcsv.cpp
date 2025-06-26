@@ -1213,21 +1213,21 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::SetUpAndInitialize(const IoData &iodata,
-                                                   const PostOperator<solver_t> &post_op)
+PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
+                                           const fem_op_t<solver_t> &fem_op)
 {
-  if (!Mpi::Root(post_op.fem_op->GetComm()))
+  if (!Mpi::Root(fem_op.GetComm()))
   {
     return;
   }
 
-  post_dir = post_op.post_dir;
+  post_dir = iodata.problem.output;
 
   // Initialize multi-excitation column group index. Only driven or transient support
   // excitations; for other solvers this is default to a single idx=0.
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
-    auto excitation_helper = post_op.fem_op->GetPortExcitations();
+    auto excitation_helper = fem_op.GetPortExcitations();
     excitation_idx_all.clear();
     excitation_idx_all.reserve(excitation_helper.Size());
     std::transform(excitation_helper.begin(), excitation_helper.end(),
@@ -1268,8 +1268,6 @@ void PostOperatorCSV<solver_t>::SetUpAndInitialize(const IoData &iodata,
     nr_expected_measurement_rows =
         std::size_t(iodata.solver.transient.max_t / iodata.solver.transient.delta_t) + 1;
   }
-
-  InitializeCSVDataCollection(post_op);
 }
 
 // Explicit template instantiation.

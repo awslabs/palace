@@ -48,6 +48,7 @@ std::string ParaviewFoldername(const ProblemType solver_t)
 template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
+    post_op_csv(iodata, fem_op_),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
@@ -128,7 +129,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   InitializeParaviewDataCollection();
 
   // Initialize CSV files for measurements.
-  post_op_csv.SetUpAndInitialize(iodata, *this);
+  post_op_csv.InitializeCSVDataCollection(*this);
 }
 
 template <ProblemType solver_t>

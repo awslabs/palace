@@ -4,6 +4,8 @@
 #include <memory>
 #include <optional>
 #include "fem/errorindicator.hpp"
+#include "models/curlcurloperator.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
@@ -22,6 +24,27 @@ class LumpedPortOperator;
 // Advance declaration.
 template <ProblemType solver_t>
 class PostOperator;
+
+// Statically map solver (ProblemType) to finite element operator.
+
+template <ProblemType solver_t>
+struct fem_op_map_type
+{
+  using type = SpaceOperator;
+};
+template <>
+struct fem_op_map_type<ProblemType::ELECTROSTATIC>
+{
+  using type = LaplaceOperator;
+};
+template <>
+struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
+{
+  using type = CurlCurlOperator;
+};
+
+template <ProblemType solver_t>
+using fem_op_t = typename fem_op_map_type<solver_t>::type;
 
 // Results of measurements on fields. Not all measurements are sensible to define for all
 // solvers.
@@ -131,6 +154,7 @@ struct Measurement
 template <ProblemType solver_t>
 class PostOperatorCSV
 {
+protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
 
@@ -248,9 +272,6 @@ class PostOperatorCSV
   template <ProblemType U = solver_t>
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
-  // Set-up all files to be called from post_op.
-  void InitializeCSVDataCollection(const PostOperator<solver_t> &post_op);
-
 public:
   // Print all data from nondim_measurement_cache.
   void PrintAllCSVData(const PostOperator<solver_t> &post_op,
@@ -273,7 +294,10 @@ public:
                            const ErrorIndicator::SummaryStatistics &indicator_stats);
 
   // "Delayed ctor" so that PostOperator can call it once it is fully constructed.
-  void SetUpAndInitialize(const IoData &iodata, const PostOperator<solver_t> &post_op);
+  // Set-up all files to be called from post_op.
+  void InitializeCSVDataCollection(const PostOperator<solver_t> &post_op);
+
+  explicit PostOperatorCSV(const IoData &iodata, const fem_op_t<solver_t> &fem_op);
 };
 
 }  // namespace palace
