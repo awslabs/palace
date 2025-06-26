@@ -234,3 +234,5 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
   CHECK(table_parse[1].header_text == table_expected[1].header_text);
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
+
+// TODO: TEST CASE: LOAD RESTART MEASUREMENT FROM CSV FILE.

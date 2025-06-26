@@ -91,8 +91,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
-  // TODO: Check IO state matches restart location
-
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogeneous, no special elimination is required on
@@ -221,8 +219,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
-
-  // TODO: Check IO state matches restart location
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;

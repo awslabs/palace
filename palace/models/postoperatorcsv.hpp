@@ -147,6 +147,16 @@ struct Measurement
   static double Phase(std::complex<double> x) { return std::arg(x) * 180.0 / M_PI; }
 };
 
+namespace _impl
+{
+// Filling pattern of rows of column groups — needed to validate reload position of
+// previous data. Make it public in an _impl namespace for testing.
+std::vector<std::size_t> table_expected_filling(std::size_t m_idx_row, std::size_t ex_idx_i,
+                                                std::size_t nr_rows,
+                                                std::size_t nr_col_blocks);
+
+}  // namespace _impl
+
 // Helper class to PostOperator to collect csv tables and printers for measurement that will
 // be saved to file. This class contains a pointer to the corresponding PostOperator class
 // and is a friend to a PostOperator class; this is equivalent to having these members
@@ -161,7 +171,7 @@ protected:
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
 
-  // Cursor location & curse value (TODO: rename variables).
+  // Cursor location & curse value (TODO:(phdum) rename variables).
 
   std::size_t m_idx_row = 0;  // row_i: Plain count of current row  (measurement index)
   std::size_t ex_idx_i = 0;   // Plain count of current column group (excitation)
@@ -215,8 +225,8 @@ protected:
   void InitializeProbeB(const InterpolationOperator &interp_op);
   void PrintProbeB(const InterpolationOperator &interp_op);
 
-  // TODO: Upgrade SFINAE to C++20 concepts to simplify static selection since we can just
-  // use `void Function(...) requires (solver_t == Type::A);`.
+  // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
+  // just use `void Function(...) requires (solver_t == Type::A);`.
 
   // Driven + Transient
   std::optional<TableWithCSVFile> surface_I;
