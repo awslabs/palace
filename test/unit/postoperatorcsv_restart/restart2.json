@@ -1,0 +1,35 @@
+{
+  "Problem": {"Type": "Driven", "Verbose": 2, "Output": "postoperatorcsv_restart/restart2_c13"},
+  "Model": {"Mesh": "mesh/fichera-tet.mesh", "L0": 1.0e-6, "Refinement": {}},
+  "Domains": {
+    "Materials": [ { "Attributes": [1], "Permeability": 1.0, "Permittivity": 1.0, "LossTan": 0.0 } ],
+    "Postprocessing": {
+      "Energy": [ { "Index": 1, "Attributes": [1] }                                                     ],
+      "Probe" : [ { "Index": 1, "Center": [0.1, 0.1, 0.1] }, { "Index": 2, "Center": [0.1, 0.1, -0.1] } ]
+    }
+  },
+  "Boundaries": {
+    "LumpedPort": [
+      { "Index": 1, "R": 1.0, "Excitation": 1, "Attributes": [1, 2, 3], "Direction": "+Y" },
+      { "Index": 2, "R": 1.0, "Excitation": 2, "Attributes": [22, 23, 24], "Direction": "-Y" },
+      { "Index": 3, "L": 5.0e-6, "C": 1.0e-6, "Attributes": [15, 16, 17], "Direction": "+Y" }
+    ],
+    "Postprocessing": {
+      "SurfaceFlux": [
+        { "Index": 1, "Attributes": [1], "Type": "Electric", "TwoSided": true },
+        { "Index": 2, "Attributes": [2], "Type": "Power"                      }
+      ],
+      "Dielectric": [
+        { "Index": 1, "Attributes": [1], "Type": "SA", "Thickness": 0.002, "Permittivity": 10, "LossTan": 1 },
+        { "Index": 2, "Attributes": [2], "Type": "MS", "Thickness": 0.002, "Permittivity": 10, "LossTan": 1 },
+        { "Index": 3, "Attributes": [3], "Type": "MA", "Thickness": 0.002, "Permittivity": 10, "LossTan": 1 }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Driven": { "Samples": [ {"Type": "Linear", "MinFreq": 2.0, "MaxFreq": 32.0, "FreqStep": 6.0} ] },
+    "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 200}
+  }
+}
