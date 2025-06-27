@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
 using namespace palace;
@@ -235,4 +236,28 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-// TODO: TEST CASE: LOAD RESTART MEASUREMENT FROM CSV FILE.
+TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
+{
+  SECTION("Empty File")
+  {
+    auto no_file = fs::path(PALACE_TEST_DIR) /
+                   "postoperatorcsv_restart/restart1_all/does-not-exists.csv";
+    REQUIRE(!fs::exists(no_file));
+    TableWithCSVFile table_w(no_file, true);
+    CHECK(table_w.table.empty());
+  }
+
+  SECTION("Normal File")
+  {
+    auto test_file =
+        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
+    REQUIRE(fs::exists(test_file));
+
+    TableWithCSVFile table_w(test_file, true);
+
+    CHECK(table_w.table.n_rows() == 6);
+    CHECK(table_w.table.n_cols() == 8);
+    CHECK(table_w.table[0].data == std::vector<double>{2, 8, 14, 20, 26, 32});
+    CHECK(table_w.table[1].data == std::vector<double>{1, 1, 1, 1, 1, 1});
+  }
+}
