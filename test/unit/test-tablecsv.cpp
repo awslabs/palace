@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -238,6 +239,11 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
 
 TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
 {
+  // Make these tests serial to avoid duplicate file access.
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
   SECTION("Empty File")
   {
     auto no_file = fs::path(PALACE_TEST_DIR) /
