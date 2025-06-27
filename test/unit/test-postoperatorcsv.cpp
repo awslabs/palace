@@ -10,6 +10,7 @@
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
+#include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -80,36 +81,40 @@ public:
     // No restart, no previous file to load.
     {
       REQUIRE(iodata.solver.driven.restart == 1);  // Restart is 1 Indexed.
-
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 0);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.HasSingleExIdx());
-      CHECK(post_op_csv.MayReloadTable());
-
-      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
-      REQUIRE(post_op_csv.port_V.has_value());
-      REQUIRE(post_op_csv.port_I.has_value());
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 0);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.HasSingleExIdx());
+        CHECK(post_op_csv.MayReloadTable());
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_I.has_value());
+      }
     }
+
     // Finite restart should fail to init table.
     {
       iodata.solver.driven.restart = 3 + 1;
-
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 3);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 3);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
-      CHECK_THROWS_WITH(
-          post_op_csv.InitializePortVI(space_op),
-          Catch::Matchers::ContainsSubstring("simulation expects a non-trivial restart"));
+        CHECK_THROWS_WITH(
+            post_op_csv.InitializePortVI(space_op),
+            Catch::Matchers::ContainsSubstring("simulation expects a non-trivial restart"));
+      }
     }
   }
 
@@ -124,38 +129,42 @@ public:
       iodata.solver.driven.restart = 3 + 1;  // Restart is 1 Indexed.
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 3);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.HasSingleExIdx());
-      CHECK(post_op_csv.MayReloadTable());
-
-      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
-      REQUIRE(post_op_csv.port_V.has_value());
-      REQUIRE(post_op_csv.port_I.has_value());
-
-      CHECK(post_op_csv.port_V->table.n_rows() == 3);
-      REQUIRE(post_op_csv.port_V->table.n_cols() == 8);
-
-      // Validate column names copied from reference table.
-      CHECK(post_op_csv.port_V->table[0].name == "idx");
-      CHECK(post_op_csv.port_V->table[1].name == "inc1_1");
-      CHECK(post_op_csv.port_V->table[2].name == "re1_1");
-      CHECK(post_op_csv.port_V->table[3].name == "im1_1");
-
-      // Validate properties copied form reference table.
-      CHECK(post_op_csv.port_V->table[0].column_group_idx == -1);  // idx is column block -1
-      CHECK(post_op_csv.port_V->table[0].min_left_padding == 0);
-      CHECK(post_op_csv.port_V->table[0].float_precision == 8);  // set by PrecIndexCol
-      CHECK(post_op_csv.port_V->table[0].fmt_sign == "");
-      CHECK(post_op_csv.port_V->table[0].print_as_int == false);
-
-      // Rest of columns should all be in column group 1 (matches excitation idx).
-      for (std::size_t i = 1; i < post_op_csv.port_V->table.n_cols(); i++)
+      if (Mpi::Root(Mpi::World()))
       {
-        CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 3);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.HasSingleExIdx());
+        CHECK(post_op_csv.MayReloadTable());
+
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_I.has_value());
+
+        CHECK(post_op_csv.port_V->table.n_rows() == 3);
+        REQUIRE(post_op_csv.port_V->table.n_cols() == 8);
+
+        // Validate column names copied from reference table.
+        CHECK(post_op_csv.port_V->table[0].name == "idx");
+        CHECK(post_op_csv.port_V->table[1].name == "inc1_1");
+        CHECK(post_op_csv.port_V->table[2].name == "re1_1");
+        CHECK(post_op_csv.port_V->table[3].name == "im1_1");
+
+        // Validate properties copied form reference table.
+        CHECK(post_op_csv.port_V->table[0].column_group_idx ==
+              -1);  // idx is column block -1
+        CHECK(post_op_csv.port_V->table[0].min_left_padding == 0);
+        CHECK(post_op_csv.port_V->table[0].float_precision == 8);  // set by PrecIndexCol
+        CHECK(post_op_csv.port_V->table[0].fmt_sign == "");
+        CHECK(post_op_csv.port_V->table[0].print_as_int == false);
+
+        // Rest of columns should all be in column group 1 (matches excitation idx).
+        for (std::size_t i = 1; i < post_op_csv.port_V->table.n_cols(); i++)
+        {
+          CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
+        }
       }
     }
     // Different restart should fail to init table.
@@ -163,30 +172,35 @@ public:
       iodata.solver.driven.restart = 0 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 0);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 0);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
     // Different restart should fail to init table.
     {
       iodata.solver.driven.restart = 5 + 1;  // Note: 1 <= restart < nr_total_samples
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 5);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 5);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
-
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
   }
 
@@ -200,30 +214,34 @@ public:
     {
       REQUIRE(iodata.solver.driven.restart == 1);  // Restart is 1 Indexed.
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 0);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.HasSingleExIdx());
+        CHECK(post_op_csv.MayReloadTable());
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 0);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.HasSingleExIdx());
-      CHECK(post_op_csv.MayReloadTable());
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_I.has_value());
 
-      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
-      REQUIRE(post_op_csv.port_V.has_value());
-      REQUIRE(post_op_csv.port_I.has_value());
-
-      CHECK(post_op_csv.port_V->table.n_rows() == 0);
-      REQUIRE(post_op_csv.port_V->table.n_cols() == 8);
+        CHECK(post_op_csv.port_V->table.n_rows() == 0);
+        REQUIRE(post_op_csv.port_V->table.n_cols() == 8);
+      }
     }
     // Finite restart should fail to init table.
     {
       iodata.solver.driven.restart = 3 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
   }
 
@@ -235,9 +253,11 @@ public:
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-
-    CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                      Catch::Matchers::ContainsSubstring("Mismatched number of columns"));
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                        Catch::Matchers::ContainsSubstring("Mismatched number of columns"));
+    }
   }
 
   void restart1_mismatch_col_headers()
@@ -246,8 +266,11 @@ public:
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_colswap";
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-    CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                      Catch::Matchers::ContainsSubstring("Mismatched column header"));
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                        Catch::Matchers::ContainsSubstring("Mismatched column header"));
+    }
   }
 
   void restart1_bad_col_alignment()
@@ -256,8 +279,11 @@ public:
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_badcols";
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-    CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                      Catch::Matchers::ContainsSubstring("Mismatched rows"));
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                        Catch::Matchers::ContainsSubstring("Mismatched rows"));
+    }
   }
 
   void restart2_restart_in_middle_ex1()
@@ -271,77 +297,85 @@ public:
       iodata.solver.driven.restart = 3 + 1;  // Restart is 1 Indexed.
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 3);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
-      CHECK(!post_op_csv.HasSingleExIdx());
-      CHECK(post_op_csv.MayReloadTable());
-
-      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
-      REQUIRE(post_op_csv.port_V.has_value());
-      REQUIRE(post_op_csv.port_I.has_value());
-
-      CHECK(post_op_csv.port_V->table.n_rows() == 3);
-      REQUIRE(post_op_csv.port_V->table.n_cols() == 15);
-
-      // Validate column names copied from reference table.
-      CHECK(post_op_csv.port_V->table[0].name == "idx");
-      CHECK(post_op_csv.port_V->table[1].name == "inc1_1");  // Port 1 hosts Excitation 1
-      CHECK(post_op_csv.port_V->table[2].name == "re1_1");
-      CHECK(post_op_csv.port_V->table[3].name == "im1_1");
-      CHECK(post_op_csv.port_V->table[8].name == "inc2_2");  // Port 2 hosts Excitation 2
-      CHECK(post_op_csv.port_V->table[9].name == "re1_2");
-      CHECK(post_op_csv.port_V->table[10].name == "im1_2");
-
-      // Validate properties copied form reference table.
-      CHECK(post_op_csv.port_V->table[0].column_group_idx == -1);  // idx is column block -1
-      CHECK(post_op_csv.port_V->table[0].min_left_padding == 0);
-      CHECK(post_op_csv.port_V->table[0].float_precision == 8);  // set by PrecIndexCol
-      CHECK(post_op_csv.port_V->table[0].fmt_sign == "");
-      CHECK(post_op_csv.port_V->table[0].print_as_int == false);
-
-      for (std::size_t i = 1; i < 8; i++)
+      if (Mpi::Root(Mpi::World()))
       {
-        CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
-        CHECK(post_op_csv.port_V->table[i].n_rows() == 3);
-      }
-      for (std::size_t i = 8; i < post_op_csv.port_V->table.n_cols(); i++)
-      {
-        CHECK(post_op_csv.port_V->table[i].column_group_idx == 2);
-        CHECK(post_op_csv.port_V->table[i].n_rows() == 0);
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 3);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(!post_op_csv.HasSingleExIdx());
+        CHECK(post_op_csv.MayReloadTable());
+
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_I.has_value());
+
+        CHECK(post_op_csv.port_V->table.n_rows() == 3);
+        REQUIRE(post_op_csv.port_V->table.n_cols() == 15);
+
+        // Validate column names copied from reference table.
+        CHECK(post_op_csv.port_V->table[0].name == "idx");
+        CHECK(post_op_csv.port_V->table[1].name == "inc1_1");  // Port 1 hosts Excitation 1
+        CHECK(post_op_csv.port_V->table[2].name == "re1_1");
+        CHECK(post_op_csv.port_V->table[3].name == "im1_1");
+        CHECK(post_op_csv.port_V->table[8].name == "inc2_2");  // Port 2 hosts Excitation 2
+        CHECK(post_op_csv.port_V->table[9].name == "re1_2");
+        CHECK(post_op_csv.port_V->table[10].name == "im1_2");
+
+        // Validate properties copied form reference table.
+        CHECK(post_op_csv.port_V->table[0].column_group_idx ==
+              -1);  // idx is column block -1
+        CHECK(post_op_csv.port_V->table[0].min_left_padding == 0);
+        CHECK(post_op_csv.port_V->table[0].float_precision == 8);  // set by PrecIndexCol
+        CHECK(post_op_csv.port_V->table[0].fmt_sign == "");
+        CHECK(post_op_csv.port_V->table[0].print_as_int == false);
+
+        for (std::size_t i = 1; i < 8; i++)
+        {
+          CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
+          CHECK(post_op_csv.port_V->table[i].n_rows() == 3);
+        }
+        for (std::size_t i = 8; i < post_op_csv.port_V->table.n_cols(); i++)
+        {
+          CHECK(post_op_csv.port_V->table[i].column_group_idx == 2);
+          CHECK(post_op_csv.port_V->table[i].n_rows() == 0);
+        }
       }
     }
     // Different restart should fail to init table.
     {
       iodata.solver.driven.restart = 0 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 0);
+        CHECK(post_op_csv.ex_idx_i == 0);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 0);
-      CHECK(post_op_csv.ex_idx_i == 0);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
-
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
     // Different restart should fail to init table.
     {
       iodata.solver.driven.restart = 7 + 1;  // Note: 1 <= restart < nr_total_samples
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 1);
+        CHECK(post_op_csv.ex_idx_i == 1);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
 
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 1);
-      CHECK(post_op_csv.ex_idx_i == 1);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
-
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
   }
 
@@ -355,48 +389,57 @@ public:
     {
       iodata.solver.driven.restart = 6 + 4 + 1;  // Restart is 1 Indexed.
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-
-      // Check cursor is at zero.
-      CHECK(post_op_csv.row_i == 4);
-      CHECK(post_op_csv.ex_idx_i == 1);
-      CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
-      CHECK(!post_op_csv.HasSingleExIdx());
-      CHECK(post_op_csv.MayReloadTable());
-
-      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
-      REQUIRE(post_op_csv.port_V.has_value());
-      REQUIRE(post_op_csv.port_I.has_value());
-
-      CHECK(post_op_csv.port_V->table.n_rows() == 6);
-      REQUIRE(post_op_csv.port_V->table.n_cols() == 15);
-
-      for (std::size_t i = 1; i < 8; i++)
+      if (Mpi::Root(Mpi::World()))
       {
-        CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
-        CHECK(post_op_csv.port_V->table[i].n_rows() == 6);
-      }
-      for (std::size_t i = 8; i < post_op_csv.port_V->table.n_cols(); i++)
-      {
-        CHECK(post_op_csv.port_V->table[i].column_group_idx == 2);
-        CHECK(post_op_csv.port_V->table[i].n_rows() == 4);
+
+        // Check cursor is at zero.
+        CHECK(post_op_csv.row_i == 4);
+        CHECK(post_op_csv.ex_idx_i == 1);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(!post_op_csv.HasSingleExIdx());
+        CHECK(post_op_csv.MayReloadTable());
+
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_I.has_value());
+
+        CHECK(post_op_csv.port_V->table.n_rows() == 6);
+        REQUIRE(post_op_csv.port_V->table.n_cols() == 15);
+
+        for (std::size_t i = 1; i < 8; i++)
+        {
+          CHECK(post_op_csv.port_V->table[i].column_group_idx == 1);
+          CHECK(post_op_csv.port_V->table[i].n_rows() == 6);
+        }
+        for (std::size_t i = 8; i < post_op_csv.port_V->table.n_cols(); i++)
+        {
+          CHECK(post_op_csv.port_V->table[i].column_group_idx == 2);
+          CHECK(post_op_csv.port_V->table[i].n_rows() == 4);
+        }
       }
     }
     // Different restart should fail to init table.
     {
       iodata.solver.driven.restart = 0 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
     // Different restart should fail to init table.
     {
       iodata.solver.driven.restart = 3 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
-      CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                        Catch::Matchers::ContainsSubstring(
-                            "Specified restart position is incompatible with reloaded"));
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
     }
   }
 };
