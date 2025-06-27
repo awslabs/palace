@@ -2129,11 +2129,11 @@ double b_coeff(double lambda, int j, std::vector<double> &sigma_vec, std::vector
 {
   if (j == 0)
   {
-    return 1.0 / beta[0];
+    return 1.0; // / beta[0];
   }
   else
   {
-    return (lambda - sigma_vec[j-1]) * b_coeff(lambda, j-1, sigma_vec, beta) / beta[j];
+    return (lambda - sigma_vec[j-1]) * b_coeff(lambda, j-1, sigma_vec, beta);// / beta[j];
   }
 }
 
@@ -2158,6 +2158,7 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
     nrs[j] = 1.0;
   }
 
+  /*
   int ddmaxit = max_points;
   s[0] = sigma_vec[0];
   beta[0] = 1.0;
@@ -2176,6 +2177,7 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
     beta[k] = maxnrs;
     Mpi::Print("beta[{}]: {}\n", k, beta[k]);
   }
+  */
 
   Mpi::Print("Computing A2 with sigma_0: {}\n", sigma_0);
   auto A2_0 = space_op->GetExtraSystemMatrix<ComplexOperator>(sigma_0, palace::Operator::DIAG_ZERO);
@@ -2185,8 +2187,11 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
   std::vector<std::unique_ptr<ComplexOperator>> D_j;
   std::vector<std::unique_ptr<ComplexOperator>> R_j;
   std::vector<std::unique_ptr<ComplexOperator>> A2_j; //needed?
-  //D_j.push_back(std::move(A2_0));
-  D_j.emplace_back(std::move(A2_0));
+  D_j.reserve(max_points);//not sure needed
+  R_j.reserve(max_points);//not sure needed
+  A2_j.reserve(max_points);//not sure needed
+  D_j.push_back(std::move(A2_0));
+  //D_j.emplace_back(std::move(A2_0));
   Mpi::Print("Computing norm_D0 using D_j\n");
   norm_0 = linalg::SpectralNorm(GetComm(), *D_j[0]);
   Mpi::Print("norm_D0 using D_j: {}\n", norm_0);
@@ -2197,8 +2202,8 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
     Mpi::Print("Computed b[{}]: {}\n", j, b_j);
     auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(sigma_vec[j], palace::Operator::DIAG_ZERO);
     Mpi::Print("Computed A2\n");
-    //A2_j.push_back(std::move(A2));
-    A2_j.emplace_back(std::move(A2));
+    A2_j.push_back(std::move(A2));
+    //A2_j.emplace_back(std::move(A2));
     Mpi::Print("Moved A2 into A2_j\n");
     auto sumr = std::make_unique<SumOperator>(h, w);
     auto sumi = std::make_unique<SumOperator>(h, w);
@@ -2222,15 +2227,15 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
     Mpi::Print("Computed sumr, sumi\n");
     auto R = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), space_op->GetNDSpace());
     Mpi::Print("Built R\n");
-    //R_j.push_back(std::move(R));
-    R_j.emplace_back(std::move(R));
+    R_j.push_back(std::move(R));
+    //R_j.emplace_back(std::move(R));
     Mpi::Print("Moved R into R_j\n");
     auto D = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(b_j, 1, A2_j[j-1].get(), R_j[j-1].get());
     Mpi::Print("Computed D\n");
     double norm = linalg::SpectralNorm(GetComm(), *D);
     Mpi::Print("Norm D: {}\n", norm);
-    //D_j.push_back(std::move(D));
-    D_j.emplace_back(std::move(D));
+    D_j.push_back(std::move(D));
+    //D_j.emplace_back(std::move(D));
     Mpi::Print("Moved D into D_j\n");
   }
   std::exit(0);

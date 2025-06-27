@@ -179,6 +179,13 @@ public:
   GetExtraSystemMatrixJacobian(double eps, int order, const OperType *A2p,
                   const OperType *A2, const OperType *A2m = nullptr);
 
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetExtraSystemMatrixSum(double a0, double a1, const OperType *A20, const OperType *A21);
+
+  //template <typename OperType>
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

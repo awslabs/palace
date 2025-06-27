@@ -394,6 +394,172 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::exit(0);
   */
+  // Further rational interpolation tests
+  double target_min = target, target_max = 10.0*target;
+  int max_npoints = 6;//10;
+  std::vector<double> res_vec(max_npoints, 0.0);
+  for (int npoints = 2; npoints <= max_npoints; npoints++)
+  {
+  // interpolation points
+  std::vector<double> xs(npoints);
+  for (int j = 0; j < npoints; j++) xs[j] = target_min + j * (target_max - target_min) / (npoints - 1);
+  // Divided difference matrices (order 0 -> A2, order > 0 divided differences)
+  std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j(npoints);
+  for (int k = 0; k < npoints; k++) // Order
+  {
+    for (int j = 0; j < npoints - k; j++)
+    {
+      if (k == 0)
+      {
+        auto A2i = space_op.GetExtraSystemMatrix<ComplexOperator>(xs[j], Operator::DIAG_ZERO);
+        D_j[k].push_back(std::move(A2i));
+      }
+      else
+      {
+        auto A2dd = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>((xs[j+k]-xs[j]), 1, D_j[k-1][j+1].get(), D_j[k-1][j].get());
+        D_j[k].push_back(std::move(A2dd));
+      }
+    }
+  }
+  Mpi::Print("\n Done building Dj operators\n");
+  // Polynomial coefficients
+  std::vector<std::vector<std::unique_ptr<ComplexOperator>>> C_j(npoints);
+  // Initialize Cj
+  // While this "works", the Cj operators get very expensive to use for high-order polynomials
+  // probably because they are a sum of sum of operators
+  // maybe we can find a way to express the coefficients as functions of the A2 matrices directly?
+  //for (int i = 0; i < npoints; i++)
+  //{
+  //  C_j[i].push_back(std::move(D_j[i][0]));
+  //}
+  //for (int j = 0; j < npoints - 1; j++)
+  //{
+  //  for (int i = npoints - 2; i >= j; i--)
+  //  {
+  //    auto C_jnew = space_op.GetExtraSystemMatrixSum<ComplexOperator>(1.0, -xs[i-j], C_j[i][C_j[i].size()-1].get(), C_j[i+1][C_j[i+1].size()-1].get());
+  //    C_j[i].push_back(std::move(C_jnew));//C_j[i] - xs[i-j] * C_j[i+1];
+  //  }
+  //}
+  //Mpi::Print("\n Now building Cj operators\n");
+  // test for n = 4
+  // c0 = a0, c1 = a1, c2 = a2, c3 = a3
+  // j = 0
+  //   i = 2: c2 = a2 - x2 a3
+  //   i = 1: c1 = a1 - x1 (a2 - x2 * a3) = a1 - a2 x1 + a3 x1 x2
+  //   i = 0: c0 = a0 - x0 (a1 - a2 x1 + a3 x1 x2) = a0 - a1 x0 + a2 x0 x1 - a3 x0 x1 x2
+  // j = 1
+  //   i = 2: c2 = (a2 - x2 a3) - x1 a3
+  //   i = 1: c1 = (a1 - a2 x1 + a3 x1 x2) - x0 (a2 - a3 x2 - a3 x1) = a1 - a2 x1 + a3 x1 x2 - a2 x0 + a3 x0 x2 + a3 x0 x1
+  // j = 2
+  //   i = 2: c2 = (a2 - a3 x2 - a3 x1) - x0 a3 = a2 - a3 x0 - a3 x1 - a3 x2
+
+  //
+  // Test points
+  std::vector<double> test_p = {target*1.01, target*1.1, target*1.5, target*2, target*3.01, target*5, target*6.01, target*9};
+  double total_res = 0.0;
+  for (auto l : test_p)
+  {
+    auto A2_l = space_op.GetExtraSystemMatrix<ComplexOperator>(l, Operator::DIAG_ZERO);
+    ComplexVector tt(A2->Height());
+    tt = std::complex<double>(1.23, 1.23);
+    ComplexVector x1(A2->Height()), x2(A2->Height()), diff(A2->Height());
+    x1 = 0.0; x2 = 0.0;
+    A2_l->Mult(tt, x1);
+    double normx1 = linalg::Norml2(space_op.GetComm(), x1);
+    Mpi::Print("test lambda: {}, with {} interpolation points\n", l, npoints);
+    //for (int k = 0; k < npoints; k++)
+    int k = npoints-1;
+    {
+      x2 = 0.0;
+      double coeff = 1.0;
+      for(int j = 0; j <= k; j++)
+      {
+        D_j[j][0]->AddMult(tt, x2, coeff);
+        coeff *= (l - xs[j]);
+        //Mpi::Print("adding order {} polynomial term with coeff: {}\n", j, coeff);
+        //C_j[j][C_j[j].size()-1]->AddMult(tt, x2, coeff);
+        //coeff *= l;
+      }
+      diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+      double res = linalg::Norml2(space_op.GetComm(), diff);
+      Mpi::Print("Order {} res: {}, res/normx1: {}, \n\n", k, res, res/normx1);
+      total_res += res/normx1;
+    }
+  }
+  Mpi::Print("Order {}, total_res: {}\n", npoints-1, total_res / test_p.size());
+  res_vec[npoints] = total_res / test_p.size();
+  }
+  for (int i = 2; i <= max_npoints; i++)
+  {
+    Mpi::Print("Order {}, total_res: {}\n", i-1, res_vec[i]);
+  }
+  //std::exit(0);
+
+  // Test Chebyshev interpolation
+  Mpi::Print("\n\n Now testing Chebyshev interpolation!\n\n");
+  int d = 4;
+  double a = target_min, b = target_max;
+  std::vector<double> nodes(d+1);
+  for (int i = 0; i <= d; i++)
+  {
+    nodes[i] = 0.5 * (a + b) + 0.5 * (b - a) * std::cos((i + 0.5) * M_PI / (d + 1.0));
+    Mpi::Print("Chebyshev node[{}]: {}\n", i, nodes[i]);
+  }
+  std::vector<std::unique_ptr<ComplexOperator>> A2_i(d+1);
+  for (std::size_t i = 0; i <= d; i++)
+  {
+    auto A2i = space_op.GetExtraSystemMatrix<ComplexOperator>(nodes[i], Operator::DIAG_ZERO);
+    A2_i[i] = std::move(A2i);
+  }
+  std::vector<std::vector<double>> P_coeffs(d+1);
+  for (std::size_t i = 0; i <= d; i++)
+  {
+    const double p = (i > 0) ? 2.0 : 1.0;
+    for (std::size_t j = 0; j <= d; j++)
+    {
+      const double xj = (2.0 * (nodes[j] - a) / (b - a)) - 1.0;
+      const double coeff = p / (d + 1.0) * std::cos(i * std::acos(xj));
+      P_coeffs[i].push_back(coeff);
+      Mpi::Print("Polynomial coeff {}, {}: {}\n", i, j, coeff);
+      //P[i] += (p / (d + 1.0) * std::cos(i * std::acos(xj))) * T[j];
+    }
+  }
+  std::vector<std::unique_ptr<ComplexOperator>> Pi(d+1);
+  for (int i = 0; i <= d; i++)
+  {
+    auto cheb = space_op.GetExtraSystemMatrixSum2(P_coeffs[i], A2_i);
+    Pi[i] = std::move(cheb);
+  }
+
+  std::vector<double> test_p = {target*1.01, target*1.1, target*1.5, target*2, target*3.01, target*5, target*6.01, target*9};
+  double total_res = 0.0;
+  for (auto l : test_p)
+  {
+    auto A2_l = space_op.GetExtraSystemMatrix<ComplexOperator>(l, Operator::DIAG_ZERO);
+    ComplexVector tt(A2->Height());
+    tt = std::complex<double>(1.23, 1.23);
+    ComplexVector x1(A2->Height()), x2(A2->Height()), diff(A2->Height());
+    x1 = 0.0; x2 = 0.0;
+    A2_l->Mult(tt, x1);
+    double normx1 = linalg::Norml2(space_op.GetComm(), x1);
+    Mpi::Print("test lambda: {}, with {} interpolation points\n", l, d+1);
+    for (int k = 0; k <= d; k++)
+    {
+      x2 = 0.0;
+      double coeff = 1.0;
+      for(int j = 0; j <= k; j++)
+      {
+        Pi[j]->AddMult(tt, x2, coeff); // WHAT IS THE COEFF??
+        //coeff *= l;
+      }
+      diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+      double res = linalg::Norml2(space_op.GetComm(), diff);
+      Mpi::Print("Order {} res: {}, res/normx1: {}, \n\n", k, res, res/normx1);
+      total_res += res/normx1;
+    }
+  }
+  Mpi::Print("Cheb Order {}, total_res: {}\n", d, total_res / test_p.size());
+  std::exit(0);
 
   Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,

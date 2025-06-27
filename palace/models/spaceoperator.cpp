@@ -789,7 +789,7 @@ SpaceOperator::GetExtraSystemMatrixJacobian(double eps, int order,
   if (order == 1)
   {
     //return BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
-    auto J = BuildParSumOperator(height, width, std::complex<double>(1.0 / eps, 0.0), std::complex<double>(-1.0 / eps), std::complex<double>(0.0, 0.0), PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+    auto J = BuildParSumOperator(height, width, std::complex<double>(1.0 / eps, 0.0), std::complex<double>(-1.0 / eps, 0.0), std::complex<double>(0.0, 0.0), PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
     J->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO); //do this here or outside?
     return J;
     //linear_ops.push_back(BuildParSumOperator(height, width, 1.0 + 1.0/eps, -1.0/eps, 0.0, PtAP_A2, PtAP_A2p, nullptr, nullptr, GetNDSpace()));
@@ -810,6 +810,57 @@ SpaceOperator::GetExtraSystemMatrixJacobian(double eps, int order,
   //return linear_ops;
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetExtraSystemMatrixSum(double a0, double a1, const OperType *A20, const OperType *A21)
+{
+  using ParOperType =
+    typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                              ComplexParOperator, ParOperator>::type;
+  const auto *PtAP_A20 = (A20) ? dynamic_cast<const ParOperType *>(A20) : nullptr;
+  const auto *PtAP_A21 = (A21) ? dynamic_cast<const ParOperType *>(A21) : nullptr;
+  MFEM_VERIFY((!A20 || PtAP_A20) && (!A21 || PtAP_A21),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+  int height = PtAP_A20->LocalOperator().Height(), width = PtAP_A20->LocalOperator().Width();
+
+  auto S = BuildParSumOperator(height, width, std::complex<double>(a0, 0.0), std::complex<double>(a1, 0.0), std::complex<double>(0.0, 0.0), PtAP_A20, PtAP_A21, nullptr, nullptr, GetNDSpace());
+  S->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO); //do this here or outside?
+  return S;
+}
+
+//template <typename OperType>
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops)
+{
+  using ParOperType = ComplexParOperator;
+  //  typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+  //                            ComplexParOperator, ParOperator>::type;
+  MFEM_VERIFY(coeffs.size() == ops.size(), "coeffs and ops must have the same size!");
+  MFEM_VERIFY(ops.size() > 0,  "empty operator vector supplied");
+  const auto *PtAP_op0 = (ops[0].get()) ? dynamic_cast<const ParOperType *>(ops[0].get()) : nullptr;
+  int height = PtAP_op0->LocalOperator().Height(), width = PtAP_op0->LocalOperator().Width();
+  auto sumr = std::make_unique<SumOperator>(height, width);
+  auto sumi = std::make_unique<SumOperator>(height, width);
+  for (int i = 0; i < ops.size(); i++)
+  {
+    const auto *PtAP_op = (ops[i].get()) ? dynamic_cast<const ParOperType *>(ops[i].get()) : nullptr;
+    if (coeffs[i] != 0.0)
+    {
+      if (PtAP_op->LocalOperator().Real())
+      {
+        sumr->AddOperator(*PtAP_op->LocalOperator().Real(), coeffs[i]);
+      }
+      if (PtAP_op->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*PtAP_op->LocalOperator().Imag(), coeffs[i]);
+      }
+    }
+  }
+  auto S = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), GetNDSpace());
+  S->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO); //do this here or outside?
+  return S;
+}
 
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
@@ -1416,6 +1467,10 @@ SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 //SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const Operator *, const Operator *, const Operator *);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrixJacobian(double, int, const ComplexOperator *, const ComplexOperator *, const ComplexOperator *);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrixSum(double, double, const ComplexOperator *, const ComplexOperator *);
+//template std::unique_ptr<ComplexOperator>
+//SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double>, std::vector<std::unique_ptr<ComplexOperator>>);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
