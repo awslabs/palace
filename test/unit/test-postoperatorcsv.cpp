@@ -70,7 +70,7 @@ public:
   {
   }
 
-  void test_excitation_single_no_postpro_to_load()
+  void restart1_fresh_folder()
   {
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_test_tmp";
@@ -84,12 +84,12 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 0);
+      CHECK(post_op_csv.row_i == 0);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.SingleColBlock());
-      CHECK(post_op_csv.may_reload_table());
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.HasSingleExIdx());
+      CHECK(post_op_csv.MayReloadTable());
 
       REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
       REQUIRE(post_op_csv.port_V.has_value());
@@ -102,10 +102,10 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 3);
+      CHECK(post_op_csv.row_i == 3);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
       CHECK_THROWS_WITH(
           post_op_csv.InitializePortVI(space_op),
@@ -113,7 +113,7 @@ public:
     }
   }
 
-  void test_excitation_single_restart_reload_middle()
+  void restart1_restart_in_middle()
   {
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_c3";
@@ -125,12 +125,12 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 3);
+      CHECK(post_op_csv.row_i == 3);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.SingleColBlock());
-      CHECK(post_op_csv.may_reload_table());
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.HasSingleExIdx());
+      CHECK(post_op_csv.MayReloadTable());
 
       REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
       REQUIRE(post_op_csv.port_V.has_value());
@@ -164,10 +164,10 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 0);
+      CHECK(post_op_csv.row_i == 0);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
       CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                         Catch::Matchers::ContainsSubstring(
@@ -179,10 +179,10 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 5);
+      CHECK(post_op_csv.row_i == 5);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
       CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                         Catch::Matchers::ContainsSubstring(
@@ -190,7 +190,7 @@ public:
     }
   }
 
-  void test_excitation_single_restart_reload_empty_headers()
+  void restart1_restart_with_empty()
   {
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_empty";
@@ -202,12 +202,12 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 0);
+      CHECK(post_op_csv.row_i == 0);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1});
-      CHECK(post_op_csv.SingleColBlock());
-      CHECK(post_op_csv.may_reload_table());
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+      CHECK(post_op_csv.HasSingleExIdx());
+      CHECK(post_op_csv.MayReloadTable());
 
       REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
       REQUIRE(post_op_csv.port_V.has_value());
@@ -227,7 +227,7 @@ public:
     }
   }
 
-  void test_reload_mismatch_col_nr()
+  void restart1_mismatch_col_nr()
   {
     // Try and load wrong table with incorrect width.
     iodata.problem.output =
@@ -240,7 +240,7 @@ public:
                       Catch::Matchers::ContainsSubstring("Mismatched number of columns"));
   }
 
-  void test_reload_mismatch_col_headers()
+  void restart1_mismatch_col_headers()
   {
     iodata.solver.driven.restart = 3 + 1;
     iodata.problem.output =
@@ -250,7 +250,7 @@ public:
                       Catch::Matchers::ContainsSubstring("Mismatched column header"));
   }
 
-  void test_reload_bad_col_alignment1()
+  void restart1_bad_col_alignment()
   {
     iodata.solver.driven.restart = 3 + 1;
     iodata.problem.output =
@@ -260,7 +260,7 @@ public:
                       Catch::Matchers::ContainsSubstring("Mismatched rows"));
   }
 
-  void test_excitation_two_restart_reload_middle_1()
+  void restart2_restart_in_middle_ex1()
   {
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c03";
@@ -272,12 +272,12 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 3);
+      CHECK(post_op_csv.row_i == 3);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1, 2});
-      CHECK(!post_op_csv.SingleColBlock());
-      CHECK(post_op_csv.may_reload_table());
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+      CHECK(!post_op_csv.HasSingleExIdx());
+      CHECK(post_op_csv.MayReloadTable());
 
       REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
       REQUIRE(post_op_csv.port_V.has_value());
@@ -319,10 +319,10 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 0);
+      CHECK(post_op_csv.row_i == 0);
       CHECK(post_op_csv.ex_idx_i == 0);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1, 2});
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
 
       CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                         Catch::Matchers::ContainsSubstring(
@@ -334,10 +334,10 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 1);
+      CHECK(post_op_csv.row_i == 1);
       CHECK(post_op_csv.ex_idx_i == 1);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1, 2});
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
 
       CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                         Catch::Matchers::ContainsSubstring(
@@ -345,7 +345,7 @@ public:
     }
   }
 
-  void test_excitation_two_restart_reload_middle_2()
+  void restart2_restart_in_middle_ex2()
   {
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c14";
@@ -357,12 +357,12 @@ public:
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
 
       // Check cursor is at zero.
-      CHECK(post_op_csv.m_idx_row == 4);
+      CHECK(post_op_csv.row_i == 4);
       CHECK(post_op_csv.ex_idx_i == 1);
       CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-      CHECK(post_op_csv.excitation_idx_all == std::vector<size_t>{1, 2});
-      CHECK(!post_op_csv.SingleColBlock());
-      CHECK(post_op_csv.may_reload_table());
+      CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+      CHECK(!post_op_csv.HasSingleExIdx());
+      CHECK(post_op_csv.MayReloadTable());
 
       REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
       REQUIRE(post_op_csv.port_V.has_value());
@@ -417,30 +417,30 @@ TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv]")
 // inheriting from it, so friendship assignment works.
 TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv]")
 {
-  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+  PostOperatorCSVFixture reload_fixture{"postoperatorcsv_restart/restart1.json"};
   SECTION("Driven solver, single excitation: no reload")
   {
-    fixture.test_excitation_single_no_postpro_to_load();
+    reload_fixture.restart1_fresh_folder();
   }
   SECTION("Driven solver, single excitation: load with restart")
   {
-    fixture.test_excitation_single_restart_reload_middle();
+    reload_fixture.restart1_restart_in_middle();
   }
   SECTION("Driven solver, single excitation: load empty table")
   {
-    fixture.test_excitation_single_restart_reload_empty_headers();
+    reload_fixture.restart1_restart_with_empty();
   }
   SECTION("Driven solver, single excitation: load mismatch table col nr")
   {
-    fixture.test_reload_mismatch_col_nr();
+    reload_fixture.restart1_mismatch_col_nr();
   }
   SECTION("Driven solver, single excitation: load mismatch table header")
   {
-    fixture.test_reload_mismatch_col_headers();
+    reload_fixture.restart1_mismatch_col_headers();
   }
   SECTION("Driven solver, single excitation: bad column data in csv file")
   {
-    fixture.test_reload_bad_col_alignment1();
+    reload_fixture.restart1_bad_col_alignment();
   }
 }
 TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv]")
@@ -449,12 +449,12 @@ TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv]")
 
   SECTION("Driven solver, two excitations: load with restart in ex 1")
   {
-    fixture.test_excitation_two_restart_reload_middle_1();
+    fixture.restart2_restart_in_middle_ex1();
   }
 
   SECTION("Driven solver, two excitations: load with restart in ex 2")
   {
-    fixture.test_excitation_two_restart_reload_middle_2();
+    fixture.restart2_restart_in_middle_ex2();
   }
 }
 
