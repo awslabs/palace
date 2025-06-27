@@ -171,12 +171,12 @@ protected:
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
 
-  // Cursor location & curse value (TODO:(phdum) rename variables).
+  // Cursor location & cursor value.
 
-  std::size_t m_idx_row = 0;  // row_i: Plain count of current row  (measurement index)
-  std::size_t ex_idx_i = 0;   // Plain count of current column group (excitation)
+  std::size_t row_i = 0;     // Plain count of current row  (measurement index)
+  std::size_t ex_idx_i = 0;  // Plain count of current column group (excitation)
 
-  double m_idx_value;  // row_idx_v: Value of row index (time, freq..); must be dimensionful
+  double row_idx_v;          // Value of row index (time, freq..); must be dimensionful
   std::size_t m_ex_idx = 0;  // ex_idx_v: Excitation index value (= ex_idx_v_all[ex_idx_i])
 
   // Required in validation of re-loaded table (driven), otherwise just to reserve space.
@@ -185,13 +185,12 @@ protected:
   std::size_t nr_expected_measurement_rows = 1;
 
   // Stored column groups (excitations). Default single "0" for solvers without excitations.
-  // Rename ex_idx_v_all & SingleExIdx
-  std::vector<std::size_t> excitation_idx_all = {std::size_t(0)};
-  bool SingleColBlock() const { return excitation_idx_all.size() == 1; }
+  std::vector<std::size_t> ex_idx_v_all = {std::size_t(0)};
+  bool HasSingleExIdx() const { return ex_idx_v_all.size() == 1; }
 
   // Functions dealing with reloading an already existing table via "Restart".
 
-  constexpr static bool may_reload_table() { return solver_t == ProblemType::DRIVEN; }
+  constexpr static bool MayReloadTable() { return solver_t == ProblemType::DRIVEN; }
 
   void MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref);
 
