@@ -5,6 +5,7 @@
 #define PALACE_UTILS_VIEW_HELPER_HPP
 
 #include <cstddef>
+#include <functional>
 #include <iterator>
 #include <utility>
 
@@ -60,7 +61,7 @@ public:
     {
     }
 
-    reference operator*() { return std::tie(counter_, *it_); }
+    reference operator*() { return std::make_pair(counter_, std::ref(*it_)); }
 
     // Increment counter and range iterator.
     auto &operator++()
