@@ -8,7 +8,7 @@
 # Force build order
 set(PALACE_DEPENDENCIES mfem)
 if(PALACE_BUILD_EXTERNAL_DEPS)
-  list(APPEND PALACE_DEPENDENCIES libCEED json fmt eigen)
+  list(APPEND PALACE_DEPENDENCIES libCEED json fmt eigen scn)
   if(PALACE_WITH_SLEPC)
     list(APPEND PALACE_DEPENDENCIES slepc)
   endif()
