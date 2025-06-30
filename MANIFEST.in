@@ -1,0 +1,78 @@
+# Include the README and license files
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+include NOTICE
+
+# Include configuration schema and validation scripts
+include scripts/schema/config-schema.json
+recursive-include scripts/schema/config *.json
+
+# Include example configurations and meshes
+recursive-include examples *.json
+recursive-include examples *.msh
+recursive-include examples *.jl
+
+# Include documentation source files
+recursive-include docs *.md
+recursive-include docs *.toml
+recursive-include docs *.jl
+recursive-include docs/src *.png
+recursive-include docs/src *.gif
+recursive-include docs/src *.ico
+
+# Include test configuration files
+recursive-include test/unit/config *.json
+recursive-include test/unit/mesh *.mesh
+
+# Include CMake files needed for building
+include CMakeLists.txt
+recursive-include cmake *.cmake
+recursive-include cmake *.cmake.in
+recursive-include palace/cmake *.cmake
+recursive-include palace/cmake *.cmake.in
+
+# Include Spack packaging files
+recursive-include spack *.py
+recursive-include spack *.yaml
+
+# Include Singularity container definition
+recursive-include singularity *.def
+recursive-include singularity *.md
+
+# Include utility scripts
+include scripts/palace
+include scripts/format-source
+include scripts/update-submodules
+include scripts/validate-config
+
+# Exclude build artifacts and temporary files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.dll
+global-exclude .DS_Store
+global-exclude .git*
+global-exclude *.tmp
+global-exclude *.swp
+global-exclude *~
+
+# Exclude build directories
+prune build/
+prune dist/
+prune .eggs/
+prune extern/
+prune palace/drivers/
+prune palace/fem/
+prune palace/linalg/
+prune palace/models/
+prune palace/utils/
+prune palace/main.cpp
+
+# Exclude test reference data (too large)
+prune test/examples/ref/
