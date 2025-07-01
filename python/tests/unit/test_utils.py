@@ -2,20 +2,26 @@
 Unit tests for Palace utility functions.
 """
 
-import pytest
 import json
 import os
-import numpy as np
-from unittest.mock import patch, mock_open
 
 # Import the modules to test
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from palace.utils import (
-    load_config, save_config, create_basic_config,
-    read_csv_results, find_mesh_files, get_example_configs,
-    validate_mesh_file
+    create_basic_config,
+    find_mesh_files,
+    get_example_configs,
+    load_config,
+    read_csv_results,
+    save_config,
+    validate_mesh_file,
 )
 
 
@@ -25,7 +31,7 @@ class TestConfigFunctions:
     def test_load_config(self, temp_dir, sample_config):
         """Test loading configuration from JSON file."""
         config_file = os.path.join(temp_dir, "test_config.json")
-        with open(config_file, 'w') as f:
+        with open(config_file, "w") as f:
             json.dump(sample_config, f)
 
         loaded_config = load_config(config_file)
@@ -34,7 +40,7 @@ class TestConfigFunctions:
     def test_load_config_invalid_json(self, temp_dir):
         """Test loading invalid JSON configuration."""
         config_file = os.path.join(temp_dir, "invalid_config.json")
-        with open(config_file, 'w') as f:
+        with open(config_file, "w") as f:
             f.write("{ invalid json")
 
         with pytest.raises(json.JSONDecodeError):
@@ -53,7 +59,7 @@ class TestConfigFunctions:
 
         # Verify file was created and contains correct data
         assert os.path.exists(config_file)
-        with open(config_file, 'r') as f:
+        with open(config_file) as f:
             loaded_config = json.load(f)
         assert loaded_config == sample_config
 
@@ -93,7 +99,7 @@ class TestCSVFunctions:
 
     def test_read_csv_results_valid_file(self, sample_csv_data):
         """Test reading valid CSV results file."""
-        csv_file = sample_csv_data['s_params']
+        csv_file = sample_csv_data["s_params"]
 
         freq, data = read_csv_results(csv_file)
 
@@ -104,9 +110,11 @@ class TestCSVFunctions:
 
     def test_read_csv_results_single_column(self, temp_dir):
         """Test reading CSV with single data column."""
-        data = np.column_stack([np.linspace(1, 10, 10), np.sin(np.linspace(0, np.pi, 10))])
+        data = np.column_stack(
+            [np.linspace(1, 10, 10), np.sin(np.linspace(0, np.pi, 10))]
+        )
         csv_file = os.path.join(temp_dir, "single_col.csv")
-        np.savetxt(csv_file, data, delimiter=',', header='X,Y')
+        np.savetxt(csv_file, data, delimiter=",", header="X,Y")
 
         x, y = read_csv_results(csv_file)
 
@@ -123,7 +131,7 @@ class TestCSVFunctions:
     def test_read_csv_results_invalid_format(self, temp_dir):
         """Test reading CSV with invalid format."""
         csv_file = os.path.join(temp_dir, "invalid.csv")
-        with open(csv_file, 'w') as f:
+        with open(csv_file, "w") as f:
             f.write("invalid,csv,format\nwith,mixed,types\n")
 
         with pytest.raises(ValueError, match="Error reading CSV file"):
@@ -140,7 +148,7 @@ class TestMeshFunctions:
         other_files = ["data.txt", "config.json", "results.csv"]
 
         for fname in mesh_files + other_files:
-            with open(os.path.join(temp_dir, fname), 'w') as f:
+            with open(os.path.join(temp_dir, fname), "w") as f:
                 f.write("dummy content")
 
         found_files = find_mesh_files(temp_dir)
@@ -157,10 +165,10 @@ class TestMeshFunctions:
         other_files = ["test.msh", "test.txt"]
 
         for fname in custom_files + other_files:
-            with open(os.path.join(temp_dir, fname), 'w') as f:
+            with open(os.path.join(temp_dir, fname), "w") as f:
                 f.write("dummy content")
 
-        found_files = find_mesh_files(temp_dir, extensions=['.e', '.exo'])
+        found_files = find_mesh_files(temp_dir, extensions=[".e", ".exo"])
 
         # Should find only files with custom extensions
         assert len(found_files) == len(custom_files)
@@ -183,7 +191,7 @@ class TestMeshFunctions:
     def test_validate_mesh_file_invalid_extension(self, temp_dir):
         """Test validating file with invalid extension."""
         invalid_file = os.path.join(temp_dir, "test.txt")
-        with open(invalid_file, 'w') as f:
+        with open(invalid_file, "w") as f:
             f.write("some content")
 
         assert validate_mesh_file(invalid_file) is False
@@ -191,7 +199,7 @@ class TestMeshFunctions:
     def test_validate_mesh_file_too_small(self, temp_dir):
         """Test validating mesh file that's too small."""
         small_file = os.path.join(temp_dir, "small.msh")
-        with open(small_file, 'w') as f:
+        with open(small_file, "w") as f:
             f.write("x")  # Very small file
 
         assert validate_mesh_file(small_file) is False
@@ -202,7 +210,7 @@ class TestExampleConfigs:
 
     def test_get_example_configs_no_examples(self):
         """Test getting example configs when examples directory doesn't exist."""
-        with patch('os.path.exists', return_value=False):
+        with patch("os.path.exists", return_value=False):
             examples = get_example_configs()
             assert examples == {}
 
@@ -231,7 +239,7 @@ class TestUtilityIntegration:
 
     def test_csv_processing_pipeline(self, sample_csv_data):
         """Test complete CSV processing pipeline."""
-        csv_file = sample_csv_data['s_params']
+        csv_file = sample_csv_data["s_params"]
 
         # Read data
         freq, data = read_csv_results(csv_file)

@@ -7,7 +7,8 @@ management, and result analysis.
 
 import json
 import os
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
 
 
@@ -21,7 +22,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
     Returns:
         Configuration dictionary
     """
-    with open(config_file, 'r') as f:
+    with open(config_file) as f:
         return json.load(f)
 
 
@@ -33,11 +34,13 @@ def save_config(config: Dict[str, Any], config_file: str) -> None:
         config: Configuration dictionary
         config_file: Path to output file
     """
-    with open(config_file, 'w') as f:
+    with open(config_file, "w") as f:
         json.dump(config, f, indent=2)
 
 
-def create_basic_config(mesh_file: str, problem_type: str = "Eigenmode") -> Dict[str, Any]:
+def create_basic_config(
+    mesh_file: str, problem_type: str = "Eigenmode"
+) -> Dict[str, Any]:
     """
     Create a basic Palace configuration.
 
@@ -49,14 +52,11 @@ def create_basic_config(mesh_file: str, problem_type: str = "Eigenmode") -> Dict
         Basic configuration dictionary
     """
     config = {
-        "Problem": {
-            "Type": problem_type,
-            "Verbose": 1
-        },
+        "Problem": {"Type": problem_type, "Verbose": 1},
         "Model": {
             "Mesh": mesh_file,
-            "L0": 1e-3  # Length scale in meters
-        }
+            "L0": 1e-3,  # Length scale in meters
+        },
     }
 
     if problem_type == "Eigenmode":
@@ -65,23 +65,19 @@ def create_basic_config(mesh_file: str, problem_type: str = "Eigenmode") -> Dict
                 "Target": 5.0e9,  # Target frequency in Hz
                 "Tol": 1e-9,
                 "MaxIts": 1000,
-                "MaxSize": 50
+                "MaxSize": 50,
             }
         }
     elif problem_type == "Driven":
         config["Solver"] = {
-            "Driven": {
-                "MinFreq": 1.0e9,
-                "MaxFreq": 10.0e9,
-                "FreqStep": 1.0e8
-            }
+            "Driven": {"MinFreq": 1.0e9, "MaxFreq": 10.0e9, "FreqStep": 1.0e8}
         }
     elif problem_type == "Transient":
         config["Solver"] = {
             "Transient": {
                 "MaxTime": 5.0e-9,  # 5 ns simulation time
                 "TimeStep": 1.0e-12,  # 1 ps time step
-                "Order": 2
+                "Order": 2,
             }
         }
 
@@ -99,7 +95,7 @@ def read_csv_results(csv_file: str) -> Tuple[np.ndarray, np.ndarray]:
         Tuple of (frequency/time array, data array)
     """
     try:
-        data = np.loadtxt(csv_file, delimiter=',', skiprows=1)
+        data = np.loadtxt(csv_file, delimiter=",", skiprows=1)
         if data.ndim == 1:
             data = data.reshape(1, -1)
         return data[:, 0], data[:, 1:]
@@ -119,7 +115,7 @@ def find_mesh_files(directory: str, extensions: List[str] = None) -> List[str]:
         List of mesh file paths
     """
     if extensions is None:
-        extensions = ['.msh', '.mesh', '.vtk', '.vtu', '.exo']
+        extensions = [".msh", ".mesh", ".vtk", ".vtu", ".exo"]
 
     mesh_files = []
     for root, dirs, files in os.walk(directory):
@@ -138,7 +134,9 @@ def get_example_configs() -> Dict[str, str]:
         Dictionary mapping example names to config file paths
     """
     package_dir = os.path.dirname(__file__)
-    examples_dir = os.path.join(os.path.dirname(os.path.dirname(package_dir)), "examples")
+    examples_dir = os.path.join(
+        os.path.dirname(os.path.dirname(package_dir)), "examples"
+    )
 
     examples = {}
     if os.path.exists(examples_dir):
@@ -147,7 +145,7 @@ def get_example_configs() -> Dict[str, str]:
             if os.path.isdir(item_path):
                 # Look for JSON config files
                 for file in os.listdir(item_path):
-                    if file.endswith('.json'):
+                    if file.endswith(".json"):
                         examples[f"{item}_{file[:-5]}"] = os.path.join(item_path, file)
 
     return examples
@@ -171,7 +169,7 @@ def validate_mesh_file(mesh_file: str) -> bool:
         return False
 
     # Check file extension
-    valid_extensions = ['.msh', '.mesh', '.vtk', '.vtu', '.exo', '.e']
+    valid_extensions = [".msh", ".mesh", ".vtk", ".vtu", ".exo", ".e"]
     return any(mesh_file.lower().endswith(ext) for ext in valid_extensions)
 
 
@@ -182,5 +180,5 @@ __all__ = [
     "read_csv_results",
     "find_mesh_files",
     "get_example_configs",
-    "validate_mesh_file"
+    "validate_mesh_file",
 ]

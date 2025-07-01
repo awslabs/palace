@@ -8,6 +8,7 @@ through the Python API.
 
 import os
 import sys
+
 import numpy as np
 
 # Add the parent directory to the path to import palace
@@ -15,15 +16,16 @@ try:
     # Try relative import first
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from palace import PalaceSolver, run_palace
-    from palace.utils import create_basic_config, save_config, read_csv_results
+    from palace.utils import create_basic_config, read_csv_results, save_config
 except ImportError:
     # Fallback for installed package
     from palace import PalaceSolver, run_palace
-    from palace.utils import create_basic_config, save_config, read_csv_results
+    from palace.utils import create_basic_config, read_csv_results, save_config
 
 # Try to import matplotlib, handle gracefully if not available
 try:
     import matplotlib.pyplot as plt
+
     HAS_MATPLOTLIB = True
 except ImportError:
     print("Warning: matplotlib not available. Plotting will be disabled.")
@@ -34,36 +36,49 @@ except ImportError:
         @staticmethod
         def figure(*args, **kwargs):
             pass
+
         @staticmethod
         def plot(*args, **kwargs):
             pass
+
         @staticmethod
         def xlabel(*args, **kwargs):
             pass
+
         @staticmethod
         def ylabel(*args, **kwargs):
             pass
+
         @staticmethod
         def title(*args, **kwargs):
             pass
+
         @staticmethod
         def grid(*args, **kwargs):
             pass
+
         @staticmethod
         def legend(*args, **kwargs):
             pass
+
         @staticmethod
         def show(*args, **kwargs):
             print("(Plot would be displayed here if matplotlib was available)")
+
         @staticmethod
         def savefig(*args, **kwargs):
-            print(f"(Plot would be saved as {args[0] if args else 'plot.png'} if matplotlib was available)")
+            print(
+                f"(Plot would be saved as {args[0] if args else 'plot.png'} if matplotlib was available)"
+            )
+
         @staticmethod
         def close(*args, **kwargs):
             pass
+
         @staticmethod
         def subplot(*args, **kwargs):
             pass
+
         @staticmethod
         def tight_layout(*args, **kwargs):
             pass
@@ -125,15 +140,11 @@ def example_2_solver_class():
 
         # Run simulation with custom settings
         print("Running simulation with custom output directory...")
-        result = solver.run(
-            config_file,
-            output_dir="./output_rings",
-            num_procs=1
-        )
+        result = solver.run(config_file, output_dir="./output_rings", num_procs=1)
 
         if result.returncode == 0:
             print("✓ Simulation completed successfully!")
-            print(f"Results saved to: ./output_rings")
+            print("Results saved to: ./output_rings")
         else:
             print(f"✗ Simulation failed: {result.stderr}")
 
@@ -151,7 +162,7 @@ def example_3_create_config():
     mesh_files = [
         "../../examples/coaxial/mesh/coaxial.msh",
         "../../examples/cpw/mesh/cpw_coax.msh",
-        "../../test/unit/mesh/star-tri.mesh"
+        "../../test/unit/mesh/star-tri.mesh",
     ]
 
     mesh_file = None
@@ -181,8 +192,8 @@ def example_3_create_config():
             "Material": {
                 "Permeability": 1.0,
                 "Permittivity": 4.0,  # Relative permittivity
-                "LossTan": 1e-4      # Loss tangent
-            }
+                "LossTan": 1e-4,  # Loss tangent
+            },
         }
     ]
 
@@ -195,11 +206,11 @@ def example_3_create_config():
         # Show key settings
         if "Eigenmode" in config.get("Solver", {}):
             target_freq = config["Solver"]["Eigenmode"]["Target"]
-            print(f"  Target frequency: {target_freq/1e9:.1f} GHz")
+            print(f"  Target frequency: {target_freq / 1e9:.1f} GHz")
         elif "Driven" in config.get("Solver", {}):
             min_freq = config["Solver"]["Driven"]["MinFreq"]
             max_freq = config["Solver"]["Driven"]["MaxFreq"]
-            print(f"  Frequency range: {min_freq/1e9:.1f} - {max_freq/1e9:.1f} GHz")
+            print(f"  Frequency range: {min_freq / 1e9:.1f} - {max_freq / 1e9:.1f} GHz")
 
 
 def example_4_postprocess_results():
@@ -212,7 +223,7 @@ def example_4_postprocess_results():
     result_dirs = [
         "../../test/examples/ref/coaxial/matched",
         "../../test/examples/ref/cpw/lumped_uniform",
-        "./output_rings"
+        "./output_rings",
     ]
 
     found_results = False
@@ -222,7 +233,7 @@ def example_4_postprocess_results():
             print(f"Processing results from: {result_dir}")
 
             # Look for CSV files
-            csv_files = [f for f in os.listdir(result_dir) if f.endswith('.csv')]
+            csv_files = [f for f in os.listdir(result_dir) if f.endswith(".csv")]
 
             for csv_file in csv_files[:2]:  # Process first 2 CSV files
                 csv_path = os.path.join(result_dir, csv_file)
@@ -231,23 +242,30 @@ def example_4_postprocess_results():
                     print(f"  ✓ {csv_file}: {len(freq)} data points")
 
                     if len(data.shape) > 1 and data.shape[1] > 0:
-                        print(f"    Frequency range: {freq[0]/1e9:.2f} - {freq[-1]/1e9:.2f} GHz")
+                        print(
+                            f"    Frequency range: {freq[0] / 1e9:.2f} - {freq[-1] / 1e9:.2f} GHz"
+                        )
                         print(f"    Data columns: {data.shape[1]}")
 
                         # Simple plot if matplotlib is available
                         try:
                             plt.figure(figsize=(10, 6))
-                            for i in range(min(3, data.shape[1])):  # Plot first 3 columns
-                                plt.plot(freq/1e9, np.abs(data[:, i]),
-                                        label=f'Column {i+1}')
-                            plt.xlabel('Frequency (GHz)')
-                            plt.ylabel('Magnitude')
-                            plt.title(f'Results from {csv_file}')
+                            for i in range(
+                                min(3, data.shape[1])
+                            ):  # Plot first 3 columns
+                                plt.plot(
+                                    freq / 1e9,
+                                    np.abs(data[:, i]),
+                                    label=f"Column {i + 1}",
+                                )
+                            plt.xlabel("Frequency (GHz)")
+                            plt.ylabel("Magnitude")
+                            plt.title(f"Results from {csv_file}")
                             plt.legend()
                             plt.grid(True)
 
                             output_plot = f"plot_{csv_file.replace('.csv', '.png')}"
-                            plt.savefig(output_plot, dpi=150, bbox_inches='tight')
+                            plt.savefig(output_plot, dpi=150, bbox_inches="tight")
                             plt.close()
                             print(f"    ✓ Plot saved: {output_plot}")
 
@@ -271,29 +289,33 @@ def example_4_postprocess_results():
 
         # Save example data
         data = np.column_stack([freq, s11_mag, s11_phase])
-        np.savetxt('example_s11.csv', data, delimiter=',',
-                   header='Frequency(Hz),S11_Magnitude,S11_Phase(rad)')
+        np.savetxt(
+            "example_s11.csv",
+            data,
+            delimiter=",",
+            header="Frequency(Hz),S11_Magnitude,S11_Phase(rad)",
+        )
 
         # Plot example data
         try:
             plt.figure(figsize=(12, 5))
 
             plt.subplot(1, 2, 1)
-            plt.plot(freq/1e9, 20*np.log10(s11_mag))
-            plt.xlabel('Frequency (GHz)')
-            plt.ylabel('|S11| (dB)')
-            plt.title('S11 Magnitude')
+            plt.plot(freq / 1e9, 20 * np.log10(s11_mag))
+            plt.xlabel("Frequency (GHz)")
+            plt.ylabel("|S11| (dB)")
+            plt.title("S11 Magnitude")
             plt.grid(True)
 
             plt.subplot(1, 2, 2)
-            plt.plot(freq/1e9, s11_phase * 180/np.pi)
-            plt.xlabel('Frequency (GHz)')
-            plt.ylabel('S11 Phase (degrees)')
-            plt.title('S11 Phase')
+            plt.plot(freq / 1e9, s11_phase * 180 / np.pi)
+            plt.xlabel("Frequency (GHz)")
+            plt.ylabel("S11 Phase (degrees)")
+            plt.title("S11 Phase")
             plt.grid(True)
 
             plt.tight_layout()
-            plt.savefig('example_s11_plot.png', dpi=150, bbox_inches='tight')
+            plt.savefig("example_s11_plot.png", dpi=150, bbox_inches="tight")
             plt.close()
             print("✓ Example plot saved: example_s11_plot.png")
 

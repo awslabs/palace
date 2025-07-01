@@ -25,3 +25,8 @@ docs:
 tests:
 	$(JULIA) --project=test/examples -e 'using Pkg; Pkg.instantiate()'
 	$(JULIA) --project=test/examples --color=yes test/examples/runtests.jl
+
+build: ## Build python package
+	rm -rf dist
+	pip install build
+	python -m build

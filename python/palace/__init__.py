@@ -21,9 +21,13 @@ __email__ = "palace-maint@amazon.com"
 # Import main classes and functions
 from .core import PalaceSolver, run_palace
 from .utils import (
-    load_config, save_config, create_basic_config,
-    read_csv_results, find_mesh_files, get_example_configs,
-    validate_mesh_file
+    create_basic_config,
+    find_mesh_files,
+    get_example_configs,
+    load_config,
+    read_csv_results,
+    save_config,
+    validate_mesh_file,
 )
 
 __all__ = [
@@ -38,5 +42,5 @@ __all__ = [
     "read_csv_results",
     "find_mesh_files",
     "get_example_configs",
-    "validate_mesh_file"
+    "validate_mesh_file",
 ]

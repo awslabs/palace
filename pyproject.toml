@@ -98,7 +98,6 @@ target-version = "py38"
 indent-style = "space"
 line-ending = "auto"
 quote-style = "double"
-skip-string-normalization = false
 
 [tool.ruff.lint]
 ignore = [

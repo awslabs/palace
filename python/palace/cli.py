@@ -3,10 +3,11 @@ Command line interface for Palace Python package.
 """
 
 import argparse
-import sys
 import os
-from .core import PalaceSolver, run_palace
-from .utils import load_config, save_config, create_basic_config, get_example_configs
+import sys
+
+from .core import PalaceSolver
+from .utils import create_basic_config, get_example_configs, load_config, save_config
 
 
 def main():
@@ -21,32 +22,45 @@ Examples:
   palace-py run config.json -o results/     # Specify output directory
   palace-py create-config mesh.msh          # Create basic config
   palace-py list-examples                   # List available examples
-        """
+        """,
     )
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Run command
-    run_parser = subparsers.add_parser('run', help='Run Palace simulation')
-    run_parser.add_argument('config', help='Configuration file')
-    run_parser.add_argument('-o', '--output-dir', help='Output directory')
-    run_parser.add_argument('-np', '--num-procs', type=int, help='Number of MPI processes')
-    run_parser.add_argument('--palace-exe', help='Path to palace executable')
-    run_parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
+    run_parser = subparsers.add_parser("run", help="Run Palace simulation")
+    run_parser.add_argument("config", help="Configuration file")
+    run_parser.add_argument("-o", "--output-dir", help="Output directory")
+    run_parser.add_argument(
+        "-np", "--num-procs", type=int, help="Number of MPI processes"
+    )
+    run_parser.add_argument("--palace-exe", help="Path to palace executable")
+    run_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Verbose output"
+    )
 
     # Create config command
-    config_parser = subparsers.add_parser('create-config', help='Create basic configuration')
-    config_parser.add_argument('mesh_file', help='Mesh file path')
-    config_parser.add_argument('-t', '--type', choices=['Eigenmode', 'Driven', 'Transient'],
-                              default='Eigenmode', help='Problem type')
-    config_parser.add_argument('-o', '--output', help='Output config file name')
+    config_parser = subparsers.add_parser(
+        "create-config", help="Create basic configuration"
+    )
+    config_parser.add_argument("mesh_file", help="Mesh file path")
+    config_parser.add_argument(
+        "-t",
+        "--type",
+        choices=["Eigenmode", "Driven", "Transient"],
+        default="Eigenmode",
+        help="Problem type",
+    )
+    config_parser.add_argument("-o", "--output", help="Output config file name")
 
     # List examples command
-    subparsers.add_parser('list-examples', help='List available example configurations')
+    subparsers.add_parser("list-examples", help="List available example configurations")
 
     # Validate command
-    validate_parser = subparsers.add_parser('validate', help='Validate configuration file')
-    validate_parser.add_argument('config', help='Configuration file to validate')
+    validate_parser = subparsers.add_parser(
+        "validate", help="Validate configuration file"
+    )
+    validate_parser.add_argument("config", help="Configuration file to validate")
 
     args = parser.parse_args()
 
@@ -55,13 +69,13 @@ Examples:
         return 1
 
     try:
-        if args.command == 'run':
+        if args.command == "run":
             return run_simulation(args)
-        elif args.command == 'create-config':
+        elif args.command == "create-config":
             return create_config_file(args)
-        elif args.command == 'list-examples':
+        elif args.command == "list-examples":
             return list_examples()
-        elif args.command == 'validate':
+        elif args.command == "validate":
             return validate_config(args)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -81,9 +95,7 @@ def run_simulation(args):
         print(f"  Output directory: {args.output_dir}")
 
     result = solver.run(
-        args.config,
-        output_dir=args.output_dir,
-        num_procs=args.num_procs
+        args.config, output_dir=args.output_dir, num_procs=args.num_procs
     )
 
     if args.verbose or result.returncode != 0:
@@ -142,9 +154,9 @@ def validate_config(args):
         print(f"Configuration file {args.config} is valid JSON.")
 
         # Basic validation
-        if 'Problem' not in config:
+        if "Problem" not in config:
             print("Warning: Missing 'Problem' section")
-        if 'Model' not in config:
+        if "Model" not in config:
             print("Warning: Missing 'Model' section")
 
         print("Basic validation passed.")
@@ -155,5 +167,5 @@ def validate_config(args):
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

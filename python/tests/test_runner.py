@@ -5,10 +5,10 @@ Test runner script for Palace Python package.
 This script can be used to run tests independently of pytest command line.
 """
 
-import sys
+import argparse
 import os
 import subprocess
-import argparse
+import sys
 
 
 def run_unit_tests():
@@ -110,8 +110,12 @@ def main():
     """Main test runner."""
     parser = argparse.ArgumentParser(description="Palace Python Test Runner")
     parser.add_argument("--unit", action="store_true", help="Run unit tests only")
-    parser.add_argument("--integration", action="store_true", help="Run integration tests only")
-    parser.add_argument("--examples", action="store_true", help="Run example verification only")
+    parser.add_argument(
+        "--integration", action="store_true", help="Run integration tests only"
+    )
+    parser.add_argument(
+        "--examples", action="store_true", help="Run example verification only"
+    )
     parser.add_argument("--all", action="store_true", help="Run all tests (default)")
 
     args = parser.parse_args()
@@ -133,33 +137,33 @@ def main():
         print("Running comprehensive test suite...")
 
         # First run example verification (fastest)
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("1. Example Verification")
-        print("="*60)
+        print("=" * 60)
         exit_code = run_example_verification()
 
         if exit_code == 0:
             # Then run unit tests
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("2. Unit Tests")
-            print("="*60)
+            print("=" * 60)
             exit_code = run_unit_tests()
 
         if exit_code == 0:
             # Finally run integration tests
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("3. Integration Tests")
-            print("="*60)
+            print("=" * 60)
             exit_code = run_integration_tests()
 
         if exit_code == 0:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("🎉 ALL TESTS PASSED!")
-            print("="*60)
+            print("=" * 60)
         else:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("❌ SOME TESTS FAILED!")
-            print("="*60)
+            print("=" * 60)
 
     return exit_code
 
