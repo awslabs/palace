@@ -105,13 +105,20 @@ python time_domain_simulation.py
 
 ## Quick Start
 
-1. **Install Palace** following the [official documentation](https://awslabs.github.io/palace/dev/install/)
+1. **Install the Python package**:
 
-2. **Install the Python package**:
+   For regular use:
+   ```bash
+   pip install palace-fem
+   ```
+
+   For development:
    ```bash
    cd /path/to/palace
    pip install -e .
    ```
+
+2. **Optional: Install Palace** from source following the [official documentation](https://awslabs.github.io/palace/dev/install/) for advanced use cases
 
 3. **Run a basic example**:
    ```bash

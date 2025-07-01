@@ -45,7 +45,15 @@ the frequency or time domain, using the
 
 ## Getting started
 
-*Palace* can be installed using the [Spack HPC package manager](https://spack.io/), with the
+For Python users, *Palace* can be installed directly from PyPI:
+
+```bash
+pip install palace-fem
+```
+
+This provides the Python interface to *Palace* along with all the core functionality needed for electromagnetic simulations.
+
+Alternatively, *Palace* can be installed using the [Spack HPC package manager](https://spack.io/), with the
 command `spack install palace`. Run `spack info palace` to get more information about the
 available configuration options and dependencies.
 
