@@ -79,12 +79,12 @@ def sample_csv_data(temp_dir):
     s11_imag = 0.1 * np.sin(2 * np.pi * freq / 5e9)
     s21_real = 0.9 * np.cos(2 * np.pi * freq / 5e9 + np.pi/4)
     s21_imag = 0.1 * np.sin(2 * np.pi * freq / 5e9 + np.pi/4)
-    
+
     s_param_data = np.column_stack([freq, s11_real, s11_imag, s21_real, s21_imag])
     s_param_file = os.path.join(temp_dir, "test_s_params.csv")
     np.savetxt(s_param_file, s_param_data, delimiter=',',
                header='Frequency(Hz),Re(S11),Im(S11),Re(S21),Im(S21)')
-    
+
     # Eigenmode data
     eigenfreqs = np.array([4.87e9, 5.23e9, 6.14e9, 7.89e9, 8.76e9])
     q_factors = np.array([15000, 12000, 18000, 8500, 11000])
@@ -92,7 +92,7 @@ def sample_csv_data(temp_dir):
     eigen_file = os.path.join(temp_dir, "test_eigenmodes.csv")
     np.savetxt(eigen_file, eigen_data, delimiter=',',
                header='Frequency(Hz),Q_Factor')
-    
+
     # Time domain data
     t = np.linspace(0, 5e-9, 5000)
     pulse = np.exp(-((t - 1e-9) / 200e-12)**2)  # Gaussian pulse
@@ -100,12 +100,12 @@ def sample_csv_data(temp_dir):
     delay_samples = int(0.5e-9 / (t[1] - t[0]))  # 0.5 ns delay
     if delay_samples < len(transmitted):
         transmitted[delay_samples:] = 0.8 * pulse[:len(transmitted)-delay_samples]
-    
+
     time_data = np.column_stack([t, pulse, transmitted])
     time_file = os.path.join(temp_dir, "test_time_domain.csv")
     np.savetxt(time_file, time_data, delimiter=',',
                header='Time(s),Input_Signal,Output_Signal')
-    
+
     return {
         's_params': s_param_file,
         'eigenmodes': eigen_file,
@@ -117,7 +117,7 @@ def sample_csv_data(temp_dir):
 def mock_palace_executable(temp_dir):
     """Create a mock Palace executable for testing."""
     mock_exe = os.path.join(temp_dir, "palace")
-    
+
     # Create a simple script that mimics Palace behavior
     script_content = '''#!/bin/bash
 # Mock Palace executable for testing
@@ -125,10 +125,10 @@ echo "Palace Mock - Processing: $1"
 echo "Simulation completed successfully"
 exit 0
 '''
-    
+
     with open(mock_exe, 'w') as f:
         f.write(script_content)
-    
+
     os.chmod(mock_exe, 0o755)  # Make executable
     return mock_exe
 

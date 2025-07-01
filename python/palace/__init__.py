@@ -6,7 +6,7 @@ for full-wave 3D electromagnetic simulations in the frequency or time domain.
 
 Key features:
 - Eigenmode calculations with material/radiative loss
-- Frequency domain driven simulations  
+- Frequency domain driven simulations
 - Time domain transient analysis
 - Lumped parameter extraction
 - Adaptive mesh refinement
@@ -28,12 +28,12 @@ from .utils import (
 
 __all__ = [
     "__version__",
-    "__author__", 
+    "__author__",
     "__email__",
     "PalaceSolver",
     "run_palace",
     "load_config",
-    "save_config", 
+    "save_config",
     "create_basic_config",
     "read_csv_results",
     "find_mesh_files",

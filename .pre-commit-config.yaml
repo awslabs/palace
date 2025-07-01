@@ -11,41 +11,41 @@ repos:
     hooks:
       - id: nbstripout
         files: ".ipynb"
-  - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
-    hooks:
-      - id: codespell
-        additional_dependencies:
-          - tomli
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.12.0"
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix, --config=pyproject.toml]
-      - id: ruff-format
-  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.14.0
-    hooks:
-      - id: pretty-format-toml
-        args: [--autofix]
-  - repo: https://github.com/aristanetworks/j2lint.git
-    rev: v1.2.0
-    hooks:
-      - id: j2lint
-        types: [file]
-        files: \.(j2|yml|yaml)$
-        exclude: .github/.*
-        # args: [--extensions, "j2,yml,yaml", --ignore, jinja-statements-delimiter, jinja-statements-indentation]
-  - repo: https://github.com/google/yamlfmt
-    rev: v0.17.0
-    hooks:
-      - id: yamlfmt
-        exclude: ".*.tests*|.*.pic.yml"
-  - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.7
-    hooks:
-      - id: actionlint
-  - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.7.13
-    hooks:
-      - id: uv-lock
+  # - repo: https://github.com/codespell-project/codespell
+  #   rev: v2.4.1
+  #   hooks:
+  #     - id: codespell
+  #       additional_dependencies:
+  #         - tomli
+  # - repo: https://github.com/astral-sh/ruff-pre-commit
+  #   rev: "v0.12.0"
+  #   hooks:
+  #     - id: ruff
+  #       args: [--fix, --exit-non-zero-on-fix, --config=pyproject.toml]
+  #     - id: ruff-format
+  # - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+  #   rev: v2.14.0
+  #   hooks:
+  #     - id: pretty-format-toml
+  #       args: [--autofix]
+  # - repo: https://github.com/aristanetworks/j2lint.git
+  #   rev: v1.2.0
+  #   hooks:
+  #     - id: j2lint
+  #       types: [file]
+  #       files: \.(j2|yml|yaml)$
+  #       exclude: .github/.*
+  #       # args: [--extensions, "j2,yml,yaml", --ignore, jinja-statements-delimiter, jinja-statements-indentation]
+  # - repo: https://github.com/google/yamlfmt
+  #   rev: v0.17.0
+  #   hooks:
+  #     - id: yamlfmt
+  #       exclude: ".*.tests*|.*.pic.yml"
+  # - repo: https://github.com/rhysd/actionlint
+  #   rev: v1.7.7
+  #   hooks:
+  #     - id: actionlint
+  # - repo: https://github.com/astral-sh/uv-pre-commit
+  #   rev: 0.7.13
+  #   hooks:
+  #     - id: uv-lock

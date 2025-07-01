@@ -1,9 +1,7 @@
 name: Documentation Preview Cleanup
-
 on:
   pull_request:
     types: [closed]
-
 jobs:
   cleanup-preview-docs:
     runs-on: ubuntu-latest
@@ -11,7 +9,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: gh-pages
-
       - name: Delete preview and history
         env:
           PRNUM: ${{ github.event.number }}

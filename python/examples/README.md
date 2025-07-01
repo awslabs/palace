@@ -141,7 +141,7 @@ save_config(config, "cavity_eigenmode.json")
 config = create_basic_config("filter.msh", "Driven")
 config["Solver"]["Driven"] = {
     "MinFreq": 1e9,   # 1 GHz
-    "MaxFreq": 10e9,  # 10 GHz  
+    "MaxFreq": 10e9,  # 10 GHz
     "FreqStep": 0.1e9 # 100 MHz steps
 }
 
@@ -152,7 +152,7 @@ config["Model"]["Boundary"] = [
 ]
 ```
 
-### Time Domain Simulation  
+### Time Domain Simulation
 ```python
 config = create_basic_config("line.msh", "Transient")
 config["Solver"]["Transient"] = {
@@ -210,7 +210,7 @@ plt.show()
 
 ### Eigenmode Analysis
 ```python
-# Read eigenfrequency results  
+# Read eigenfrequency results
 freq, data = read_csv_results("results/domain-E.csv")
 eigenfreqs = data[:, 0]  # Eigenfrequencies
 q_factors = data[:, 1]   # Q factors
@@ -275,7 +275,7 @@ for mat, eps in zip(materials, permittivities):
     config = create_basic_config(f"{mat}_device.msh", "Eigenmode")
     config["Model"]["Domain"][0]["Material"]["Permittivity"] = eps
     save_config(config, f"sweep_{mat}.json")
-    
+
     # Run simulation
     result = run_palace(f"sweep_{mat}.json", output_dir=f"results_{mat}/")
 ```
@@ -299,11 +299,11 @@ with mp.Pool(processes=3) as pool:
 def analyze_filter_response(s_param_file):
     freq, data = read_csv_results(s_param_file)
     s21_mag = np.sqrt(data[:, 4]**2 + data[:, 5]**2)  # S21 magnitude
-    
+
     # Find passband
     max_transmission = np.max(s21_mag)
     passband_3db = s21_mag >= max_transmission / np.sqrt(2)
-    
+
     return {
         'center_freq': freq[np.argmax(s21_mag)],
         'bandwidth_3db': freq[passband_3db][-1] - freq[passband_3db][0],

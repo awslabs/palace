@@ -17,12 +17,12 @@ def get_version():
     """Extract version from CMakeLists.txt."""
     with open('CMakeLists.txt', 'r') as f:
         content = f.read()
-    
+
     # Look for version pattern in CMakeLists.txt
     version_match = re.search(r'project\s*\(\s*[Pp]alace\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)', content)
     if version_match:
         return version_match.group(1)
-    
+
     # Fallback version if not found
     return "0.1.0"
 

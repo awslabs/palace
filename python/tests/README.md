@@ -7,7 +7,7 @@ This directory contains comprehensive tests for the Palace Python interface, ens
 ```
 tests/
 ├── conftest.py              # Pytest configuration and shared fixtures
-├── pytest.ini               # Pytest settings  
+├── pytest.ini               # Pytest settings
 ├── test_runner.py           # Standalone test runner script
 ├── unit/                    # Unit tests for core functionality
 │   ├── test_core.py        # Tests for palace.core module
@@ -30,7 +30,7 @@ python tests/test_runner.py --examples
 # Run unit tests only
 python tests/test_runner.py --unit
 
-# Run integration tests only  
+# Run integration tests only
 python tests/test_runner.py --integration
 
 # Run all tests (default)
@@ -143,10 +143,10 @@ def test_my_function(temp_dir, sample_config):
     config_file = os.path.join(temp_dir, "test.json")
     with open(config_file, 'w') as f:
         json.dump(sample_config, f)
-    
+
     # Test
     result = my_function(config_file)
-    
+
     # Assert
     assert result is not None
     assert result['status'] == 'success'
@@ -221,7 +221,7 @@ pytest --collect-only
 
 The test suite is optimized for speed:
 - **Example verification**: ~5 seconds
-- **Unit tests**: ~10 seconds  
+- **Unit tests**: ~10 seconds
 - **Integration tests**: ~15 seconds
 - **Full suite**: ~30 seconds
 

@@ -1,5 +1,4 @@
 name: Singularity
-
 on:
   push:
     branches:
@@ -7,27 +6,21 @@ on:
     tags: '*'
   pull_request:
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   CONTAINER_NAME: palace.sif
-
 jobs:
   build-and-test-singularity:
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
-
       - uses: singularityhub/install-singularity@main
-
       - name: Build container
         run: |
           sudo singularity build --bind ${{ github.workspace }}:/opt/palace-src:ro \
                                  $CONTAINER_NAME singularity/singularity.def
-
       - name: Run tests
         env:
           NUM_PROC_TEST_MAX: '8'
@@ -42,7 +35,6 @@ jobs:
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
-
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.CONTAINER_NAME }}
