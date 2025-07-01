@@ -12,6 +12,7 @@ Manifest.toml
 *.json
 *.pyc
 *.png
+*.csv
 __pycache__
 .mypy_cache/
 .pyre/
