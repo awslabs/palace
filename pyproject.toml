@@ -41,10 +41,8 @@ dependencies = [
 dev = [
     "pytest>=6.0",
     "pytest-cov",
-    "black",
-    "flake8",
+    "ruff",
     "mypy",
-    "isort",
 ]
 docs = [
     "sphinx>=4.0",
@@ -79,29 +77,37 @@ version_scheme = "no-guess-dev"
 local_scheme = "node-and-date"
 write_to = "python/palace/_version.py"
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py38']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
+target-version = "py38"
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["palace"]
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "W191",  # indentation contains tabs
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*" = ["E501", "F401", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-string-normalization = false
+line-ending = "auto"
+
 
 [tool.mypy]
 python_version = "3.8"
