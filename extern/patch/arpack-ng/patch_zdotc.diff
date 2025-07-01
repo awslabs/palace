@@ -258,11 +258,11 @@ index afc48c0..d8ad395 100644
 +++ b/SRC/Makefile.am
 @@ -12,7 +12,7 @@ CSRC = cnaitr.f cnapps.f cnaup2.f cnaupd.f cneigh.f cneupd.f cngets.f cstatn.f \
         cgetv0.f csortc.f ccdotc.f
- 
+
  ZSRC = znaitr.f znapps.f znaup2.f znaupd.f zneigh.f zneupd.f zngets.f zstatn.f \
 -       zgetv0.f zsortc.f zzdotc.f
 +       zgetv0.f zsortc.f zzdotc10.f
- 
+
  if ICB
  SSRC += icbass.F90 icbasn.F90
 diff --git a/SRC/zgetv0.f b/SRC/zgetv0.f

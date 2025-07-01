@@ -3,7 +3,7 @@ index f28caed..4feb2cd 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -48,13 +48,10 @@ find_package(Threads)
- 
+
  if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
 -  if(NOT DEFINED ENV{MKLROOT} AND NOT LAPACK_VENDOR MATCHES "^MKL" OR NOT MUMPS_scalapack)
@@ -12,7 +12,7 @@ index f28caed..4feb2cd 100644
 -  endif()
 +  include(cmake/lapack.cmake)
    set(NUMERIC_LIBS LAPACK::LAPACK)
- 
+
 -  if(MUMPS_scalapack)
 +  if(scalapack)
      include(cmake/scalapack.cmake) # this will also create the LAPACK::LAPACK target
@@ -21,16 +21,16 @@ index f28caed..4feb2cd 100644
 @@ -63,7 +60,7 @@ if(MUMPS_parallel)
    set(NUMERIC_INC ${MPI_Fortran_INCLUDE_DIRS})
    list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
- 
+
 -  if(MUMPS_openmp)
 +  if(openmp)
      find_package(OpenMP COMPONENTS C Fortran REQUIRED)
      list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
    endif()
 @@ -99,14 +96,6 @@ endif()
- 
+
  list(APPEND ORDERING_LIBS pord)
- 
+
 -install(FILES
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindLAPACK.cmake
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindSCALAPACK.cmake
@@ -623,16 +623,16 @@ index d1880b7..d2ea331 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
 @@ -62,8 +62,6 @@ References
- 
+
  include(CheckSourceCompiles)
- 
+
 -set(SCALAPACK_LIBRARY)  # avoids appending to prior FindScalapack
 -
  #===== functions
- 
+
  function(scalapack_check)
 @@ -74,11 +72,8 @@ find_package(Threads)
- 
+
  set(CMAKE_REQUIRED_FLAGS)
  set(CMAKE_REQUIRED_LINK_OPTIONS)
 -set(CMAKE_REQUIRED_INCLUDES ${SCALAPACK_INCLUDE_DIR} ${LAPACK_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_DIRS})
@@ -643,10 +643,10 @@ index d1880b7..d2ea331 100644
 +set(CMAKE_REQUIRED_INCLUDES ${SCALAPACK_INCLUDE_DIRS} ${LAPACK_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_DIRS})
 +set(CMAKE_REQUIRED_LIBRARIES ${SCALAPACK_LIBRARIES})
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
- 
+
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
 @@ -285,20 +280,13 @@ endif()
- 
+
  if(SCALAPACK_FOUND)
    # need if _FOUND guard as can't overwrite imported target even if bad
 -  set(SCALAPACK_LIBRARIES ${SCALAPACK_LIBRARY})
@@ -658,13 +658,13 @@ index d1880b7..d2ea331 100644
 -
    message(VERBOSE "Scalapack libraries: ${SCALAPACK_LIBRARIES}
  Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
- 
+
    if(NOT TARGET SCALAPACK::SCALAPACK)
      add_library(SCALAPACK::SCALAPACK INTERFACE IMPORTED)
      set_property(TARGET SCALAPACK::SCALAPACK PROPERTY INTERFACE_LINK_LIBRARIES "${SCALAPACK_LIBRARIES}")
 -    set_property(TARGET SCALAPACK::SCALAPACK PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${SCALAPACK_INCLUDE_DIR}")
 +    set_property(TARGET SCALAPACK::SCALAPACK PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${SCALAPACK_INCLUDE_DIRS}")
- 
+
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
 @@ -306,5 +294,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
@@ -679,7 +679,7 @@ index 98cece3..14ebbe6 100644
 +++ b/cmake/lapack.cmake
 @@ -1,11 +1,3 @@
  # Handle options for finding LAPACK
- 
+
 -if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -  set(LAPACK_VENDOR MKL)
 -endif()
@@ -695,9 +695,9 @@ index 4903fc8..57161c2 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
 @@ -3,39 +3,7 @@ include(GNUInstallDirs)
- 
+
  if(MUMPS_find_SCALAPACK AND NOT TARGET SCALAPACK::SCALAPACK)
- 
+
 -# Make SCALAPACK_VENDOR match LAPACK_VENDOR
 -
 -if(NOT DEFINED SCALAPACK_VENDOR)
@@ -732,6 +732,5 @@ index 4903fc8..57161c2 100644
 -
 -find_package(SCALAPACK COMPONENTS ${SCALAPACK_VENDOR})
 +find_package(SCALAPACK)
- 
+
  endif()
- 

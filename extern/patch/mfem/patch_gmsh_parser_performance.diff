@@ -8,7 +8,7 @@ index 1acabc8f03..55f719ae35 100644
     // starting from 1, not 0)
 -   map<int, int> vertices_map;
 +   unordered_map<int, int> vertices_map;
- 
+
     // A map containing names of physical curves, surfaces, and volumes.
     // The first index is the dimension of the physical manifold, the second
 @@ -1567,9 +1567,10 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
@@ -22,7 +22,7 @@ index 1acabc8f03..55f719ae35 100644
 +   constexpr real_t bb_tol = 1e-14;
 +   real_t bb_min[gmsh_dim];
 +   real_t bb_max[gmsh_dim];
- 
+
     // Mesh order
     int mesh_order = 1;
 @@ -1590,7 +1591,6 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
@@ -34,7 +34,7 @@ index 1acabc8f03..55f719ae35 100644
           for (int ver = 0; ver < NumOfVertices; ++ver)
           {
 @@ -1652,7 +1652,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
- 
+
           // number of nodes for each type of Gmsh elements, type is the index of
           // the array + 1
 -         int nodes_of_gmsh_element[] =
@@ -43,7 +43,7 @@ index 1acabc8f03..55f719ae35 100644
              2,   // 2-node line.
              3,   // 3-node triangle.
 @@ -1862,97 +1862,324 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
- 
+
               This corresponds to the quad9 mapping below.
           */
 -         int lin3[] = {0,2,1};                // 2nd order segment
@@ -140,14 +140,14 @@ index 1acabc8f03..55f719ae35 100644
 -         elements_1D.reserve(num_of_all_elements);
 -         elements_2D.reserve(num_of_all_elements);
 -         elements_3D.reserve(num_of_all_elements);
- 
+
           // Temporary storage for high order vertices, if present
 -         vector<Array<int>*> ho_verts_1D, ho_verts_2D, ho_verts_3D;
 -         ho_verts_1D.reserve(num_of_all_elements);
 -         ho_verts_2D.reserve(num_of_all_elements);
 -         ho_verts_3D.reserve(num_of_all_elements);
 +         vector<vector<int>> ho_verts_1D, ho_verts_2D, ho_verts_3D;
- 
+
 -         // Temporary storage for order of elements
 +         // Temporary storage for high order element orders, if present
           vector<int> ho_el_order_1D, ho_el_order_2D, ho_el_order_3D;
@@ -172,10 +172,10 @@ index 1acabc8f03..55f719ae35 100644
 -         ho_hex[2] = hex27; ho_hex[3] = hex64;
 -         ho_wdg[2] = wdg18; ho_wdg[3] = wdg40;
 -         ho_pyr[2] = pyr14; ho_pyr[3] = pyr30;
- 
+
           bool has_nonpositive_phys_domain = false;
           bool has_positive_phys_domain = false;
- 
+
 +         auto AddElement = [&](int type_of_element,
 +                               std::vector<int> &vert_indices,
 +                               int phys_domain)
@@ -895,11 +895,11 @@ index 1acabc8f03..55f719ae35 100644
 +               AddElement(type_of_element, vert_indices, phys_domain);
              } // el (all elements)
           } // if ASCII
- 
+
 @@ -2534,81 +2377,106 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
              Nodes_gf.SetSpace(nfes);
              Nodes_gf.MakeOwner(nfec);
- 
+
 +            // Vertex order mappings
 +            Array<const int*> ho_lin(11); ho_lin = NULL;
 +            Array<const int*> ho_tri(11); ho_tri = NULL;
@@ -1060,7 +1060,7 @@ index 1acabc8f03..55f719ae35 100644
 -         {
 -            delete ho_verts_3D[el];
 -         }
- 
+
 -         // Delete dynamically allocated high vertex order mappings
 -         for (int ord=4; ord<ho_lin.Size(); ord++)
 -         {
@@ -1119,7 +1119,7 @@ index 1acabc8f03..55f719ae35 100644
 +               delete [] ho_pyr[ord];
 +            }
           }
- 
+
           // Suppress warnings (MFEM_CONTRACT_VAR does not work here with nvcc):
 @@ -2809,7 +2662,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                 v[j] = v2v[v[j]];
@@ -1128,5 +1128,5 @@ index 1acabc8f03..55f719ae35 100644
 -      }
 +      } // section '$Periodic'
     } // we reach the end of the file
- 
+
     // Process set names

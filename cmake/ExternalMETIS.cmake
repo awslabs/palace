@@ -130,4 +130,3 @@ if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   "List of library files for ParMETIS"
 )
 endif()
-
