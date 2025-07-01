@@ -101,10 +101,13 @@ quote-style = "double"
 
 [tool.ruff.lint]
 ignore = [
-  "E501",  # line too long, handled by black
+  "E501",  # line too long, handled by ruff format
   "B008",  # do not perform function calls in argument defaults
   "C901",  # too complex
-  "W191"  # indentation contains tabs
+  "W191",  # indentation contains tabs
+  "F841",  # local variable assigned but never used
+  "B007",  # loop control variable not used within loop body
+  "B904"   # within except clause, raise exceptions with raise ... from err
 ]
 select = [
   "E",  # pycodestyle errors

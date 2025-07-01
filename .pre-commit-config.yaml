@@ -18,11 +18,13 @@ repos:
   #       additional_dependencies:
   #         - tomli
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.12.0"
+    rev: "v0.9.10"
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix, --config=pyproject.toml]
+        args: [--fix]
+        files: ^python/
       - id: ruff-format
+        files: ^python/
   # - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
   #   rev: v2.14.0
   #   hooks:
