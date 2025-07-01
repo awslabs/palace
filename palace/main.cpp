@@ -220,6 +220,7 @@ int main(int argc, char *argv[])
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
                "Options:\n"
                "  -h, --help           Show this help message and exit\n"
+               "  --version            Show version information and exit\n"
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
@@ -229,6 +230,18 @@ int main(int argc, char *argv[])
     if ((argv_i == "-h") || (argv_i == "--help"))
     {
       Help();
+      return 0;
+    }
+    if (argv_i == "--version")
+    {
+      if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+      {
+        Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
+      }
+      else
+      {
+        Mpi::Print(world_comm, "Palace version: UNKNOWN\n");
+      }
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
