@@ -234,14 +234,7 @@ int main(int argc, char *argv[])
     }
     if (argv_i == "--version")
     {
-      if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
-      {
-        Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
-      }
-      else
-      {
-        Mpi::Print(world_comm, "Palace version: UNKNOWN\n");
-      }
+      Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
