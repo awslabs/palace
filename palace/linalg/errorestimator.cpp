@@ -233,6 +233,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
                                         estimates_vec, CEED_REQUEST_IMMEDIATE));
     if constexpr (std::is_same<VecType, ComplexVector>::value)
     {
+      // Ensure that F_gf_vec and G_gf_vec passive vectors are not changed for integ_op
+      // before the Real evaluation is completed.
+      PalacePragmaOmp(barrier)
       ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
       ceed::InitCeedVector(G_gf.Imag(), ceed, &G_gf_vec, false);
       PalaceCeedCall(ceed,
