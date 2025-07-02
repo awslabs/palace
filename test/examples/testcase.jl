@@ -14,7 +14,8 @@ function testcase(
     rtol=1.0e-6,
     atol=1.0e-18,
     excluded_columns=[],
-    skip_rowcount=false
+    skip_rowcount=false,
+    generate_data=true
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
@@ -27,35 +28,37 @@ function testcase(
     postprodir    = joinpath(exampledir, "postpro", testpostpro)
     logdir        = joinpath(exampledir, "log")
 
-    # Cleanup
-    rm(postprodir; force=true, recursive=true)
-    rm(logdir; force=true, recursive=true)
-    mkdir(logdir)
     cd(exampledir)
+    if generate_data
+        # Cleanup
+        rm(postprodir; force=true, recursive=true)
+        rm(logdir; force=true, recursive=true)
+        mkdir(logdir)
 
-    @testset "Simulation" begin
-        # Run the example simulation
-        logfile = "log.out"
-        errfile = "err.out"
-        proc = run(
-            pipeline(
-                ignorestatus(`$palace -np $np $testconfig`);
-                stdout=joinpath(logdir, logfile),
-                stderr=joinpath(logdir, errfile)
+        @testset "Simulation" begin
+            # Run the example simulation
+            logfile = "log.out"
+            errfile = "err.out"
+            proc = run(
+                pipeline(
+                    ignorestatus(`$palace -np $np $testconfig`);
+                    stdout=joinpath(logdir, logfile),
+                    stderr=joinpath(logdir, errfile)
+                )
             )
-        )
-        if proc.exitcode != 0
-            @warn "Simulation exited with a nonzero exit code"
-            if isfile(joinpath(exampledir, logdir, logfile))
-                @warn "Contents of stdout:"
-                println(String(read(joinpath(exampledir, logdir, logfile))))
+            if proc.exitcode != 0
+                @warn "Simulation exited with a nonzero exit code"
+                if isfile(joinpath(exampledir, logdir, logfile))
+                    @warn "Contents of stdout:"
+                    println(String(read(joinpath(exampledir, logdir, logfile))))
+                end
+                if isfile(joinpath(exampledir, logdir, errfile))
+                    @warn "Contents of stderr:"
+                    println(String(read(joinpath(exampledir, logdir, errfile))))
+                end
             end
-            if isfile(joinpath(exampledir, logdir, errfile))
-                @warn "Contents of stderr:"
-                println(String(read(joinpath(exampledir, logdir, errfile))))
-            end
+            @test proc.exitcode == 0
         end
-        @test proc.exitcode == 0
     end
 
     @testset "Results" begin
