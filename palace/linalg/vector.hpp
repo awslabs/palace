@@ -186,6 +186,16 @@ void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 // Calculate the local inner product yᴴ x or yᵀ x.
 double LocalDot(const Vector &x, const Vector &y);
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
+std::complex<double> LocalTransposeDot(const ComplexVector &x, const ComplexVector &y);
+
+// Calculate the parallel inner product yᴴ x or yᵀ x.
+template <typename VecType>
+inline auto TransposeDot(MPI_Comm comm, const VecType &x, const VecType &y)
+{
+  auto dot = LocalTransposeDot(x, y);
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
 
 // Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>

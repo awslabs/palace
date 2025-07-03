@@ -684,6 +684,21 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
   }
 }
 
+
+std::complex<double> LocalTransposeDot(const ComplexVector &x, const ComplexVector &y)
+{
+  if (&x == &y)
+  {
+    return {LocalDot(x.Real(), y.Real()) - LocalDot(x.Imag(), y.Imag()),
+            2.0 * LocalDot(x.Imag(), y.Real())};
+  }
+  else
+  {
+    return {LocalDot(x.Real(), y.Real()) - LocalDot(x.Imag(), y.Imag()),
+            LocalDot(x.Imag(), y.Real()) + LocalDot(x.Real(), y.Imag())};
+  }
+}
+
 double LocalSum(const Vector &x)
 {
   static hypre::HypreVector X;
