@@ -1,7 +1,16 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index f28caed..4feb2cd 100644
+index 4e0bb93..19db918 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
+@@ -12,7 +12,7 @@ endif()
+ 
+ project(MUMPS
+ LANGUAGES C Fortran
+-VERSION 5.7.3.2
++VERSION 5.7.3.1
+ DESCRIPTION "Sparse direct parallel solver"
+ HOMEPAGE_URL "http://mumps-solver.org/"
+ )
 @@ -48,13 +48,10 @@ find_package(Threads)
  
  if(MUMPS_parallel)
@@ -44,7 +53,7 @@ index f28caed..4feb2cd 100644
  message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index f5a0c64..0000000
+index 56dde6f..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
 @@ -1,570 +0,0 @@
@@ -93,9 +102,9 @@ index f5a0c64..0000000
 -
 -
 -``AOCL``
--  AMD LAPACK fork of Netlib LAPACK.
+-  AMD ScaLAPACK fork of Netlib ScaLAPACK.
 -  Requires LAPACK AOCL
--  https://www.amd.com/en/developer/aocl/dense.html
+-  https://www.amd.com/en/developer/aocl/scalapack.html
 -``AOCL64``
 -  AOCL 64-bit integers  (default is 32-bit integers)
 -
@@ -319,7 +328,7 @@ index f5a0c64..0000000
 -endif()
 -
 -set(_s "LP64")
--if(AOCL64 IN_LIST LAPACK_FIND_COMPONENTS)
+-if(AOCL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  string(PREPEND _s "I")
 -endif()
 -
@@ -437,9 +446,9 @@ index f5a0c64..0000000
 -
 -# MKL_THREADING default: "intel_thread" which is Intel OpenMP
 -# some systems have messed up OpenMP, so sequential unless requested
--if(TBB IN_LIST LAPACK_FIND_COMPONENTS)
+-if(TBB IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  set(MKL_THREADING "tbb_thread")
--elseif(OpenMP IN_LIST LAPACK_FIND_COMPONENTS)
+-elseif(OpenMP IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  set(MKL_THREADING "intel_thread")
 -else()
 -  set(MKL_THREADING "sequential")
@@ -674,7 +683,7 @@ index d1880b7..d2ea331 100644
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 98cece3..14ebbe6 100644
+index 3f0997e..14ebbe6 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
 @@ -1,11 +1,3 @@
@@ -684,19 +693,19 @@ index 98cece3..14ebbe6 100644
 -  set(LAPACK_VENDOR MKL)
 -endif()
 -
--if(MUMPS_find_static)
+-if(find_static)
 -  list(APPEND LAPACK_VENDOR STATIC)
 -endif()
 -
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 4903fc8..57161c2 100644
+index 8727508..2132c73 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
 @@ -3,39 +3,7 @@ include(GNUInstallDirs)
  
- if(MUMPS_find_SCALAPACK AND NOT TARGET SCALAPACK::SCALAPACK)
+ if(find AND NOT TARGET SCALAPACK::SCALAPACK)
  
 -# Make SCALAPACK_VENDOR match LAPACK_VENDOR
 -
@@ -721,12 +730,12 @@ index 4903fc8..57161c2 100644
 -endif()
 -
 -if(MKL IN_LIST SCALAPACK_VENDOR AND NOT MKL64 IN_LIST SCALAPACK_VENDOR)
--  if(MUMPS_intsize64)
+-  if(intsize64)
 -    list(APPEND SCALAPACK_VENDOR MKL64)
 -  endif()
 -endif()
 -
--if(MUMPS_find_static)
+-if(find_static)
 -  list(APPEND SCALAPACK_VENDOR STATIC)
 -endif()
 -
