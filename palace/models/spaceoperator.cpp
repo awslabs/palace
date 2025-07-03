@@ -494,6 +494,7 @@ auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
                          const ParOperator *K, const ParOperator *C, const ParOperator *M,
                          const ParOperator *A2, const FiniteElementSpace &fespace)
 {
+  Mpi::Print("BuildParSumOperator L497\n");
   auto sum = std::make_unique<SumOperator>(h, w);
   if (K && a0 != 0.0)
   {
@@ -519,6 +520,7 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
                          const ComplexParOperator *C, const ComplexParOperator *M,
                          const ComplexParOperator *A2, const FiniteElementSpace &fespace)
 {
+  Mpi::Print("BuildParSumOperator L523\n");
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
   //                    [ sumi ]      [ ai   ar ] [ Ai ] .
@@ -619,6 +621,7 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
                          const ComplexParOperator *C, const ComplexParOperator *M,
                          const ComplexParOperator *A2, const ComplexParOperator *A2J, const FiniteElementSpace &fespace)
 {
+  Mpi::Print("BuildParSumOperator L624\n");
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
   //                    [ sumi ]      [ ai   ar ] [ Ai ] .

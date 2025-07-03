@@ -76,7 +76,7 @@ public:
     STOAR,
     QARNOLDI,
     JD,
-    LINEAR,//test for PEPLINEAR
+    LINEAR,//test for PEP
     NLEIGS, // for NEP
     RII, // try Jacobian based ones too?
     SLP,
@@ -96,7 +96,7 @@ protected:
   PetscReal gamma, delta;
 
   // Parameters defining the spectral transformation.
-  PetscScalar sigma;
+  PetscScalar sigma, sigma_max;
   bool sinvert, region;
 
   // linearization point for A2?
@@ -174,7 +174,7 @@ public:
   PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(std::complex<double> s, std::complex<double> l, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> s_max, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -210,6 +210,12 @@ public:
 
     // Test for linearized A2 matrix?
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ, opA2_pc, opA_pc, opP_pc;  //test
+  std::vector<std::unique_ptr<ComplexOperator>> opA2_sample;
+  std::vector<std::unique_ptr<ComplexOperator>> opA2_cheb;
+
+  // Test for rational interpolation
+  std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j;
+  std::vector<PetscScalar> xs;
 
   // Reference to space operator so we recompute A2
   SpaceOperator *space_op; // TEST???
@@ -236,7 +242,7 @@ protected:
 
   void Customize() override;
 
-  void SetShiftInvert(std::complex<double> s, std::complex<double> l, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> s_max, bool precond = false) override;
 
 public:
   //
@@ -292,6 +298,7 @@ public:
   //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sigma_max;
   using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
   using SlepcEigenvalueSolver::has_A2;
@@ -392,6 +399,7 @@ public:
   //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sigma_max;
   using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
   using SlepcEigenvalueSolver::has_A2;
@@ -432,6 +440,7 @@ public:
   //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sigma_max;
   using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
   using SlepcEigenvalueSolver::has_A2;
@@ -480,7 +489,7 @@ protected:
   PEP pep;
 
   // Shell matrices for the quadratic polynomial eigenvalue problem.
-  Mat A0, A1, A2;
+  Mat A0, A1, A2, *AN;
 
   void Customize() override;
 
@@ -528,6 +537,8 @@ public:
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(pep); };
 
   void RationalA2(int degree, double tol); //test
+  void RationalA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
+  void ChebyshevA2(int degree, double min_target, double max_target); // test
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
@@ -540,6 +551,7 @@ public:
   //using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sigma_max;
   using SlepcEigenvalueSolver::l0;
   using SlepcEigenvalueSolver::sinvert;
   using SlepcEigenvalueSolver::has_A2;
@@ -568,6 +580,8 @@ public:
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
   void SetBMat(const Operator &B) override;
+  //void GetEigenvector(int i, ComplexVector &x) const override; // test
+  int Solve() override; // test
 };
 
 }  // namespace slepc

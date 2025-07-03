@@ -117,8 +117,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
         //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR); //gives many wrong eigenvalues in addition to correct ones
-        //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::LINEAR); // doesn't support region, but otherwise works fine
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::QARNOLDI); // seems to work fine
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::LINEAR); // seems to work fine
+        //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::QARNOLDI); // seems to work fine, but only available for monomial?
+        //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::JD); // only works with precond
       }
       else
       {
@@ -258,7 +259,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     Mpi::Print("SetShiftInvert i*target and linearization point\n");
-    eigen->SetShiftInvert(1i * target, 1i * l0);
+    eigen->SetShiftInvert(1i * target, 1i * target * 10.0);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
@@ -276,7 +277,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else
   {
     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target, l0); // not sure l0 makes sense for linear EVP
+    eigen->SetShiftInvert(target * target, target * target * 10.0); // not sure l0 makes sense for linear EVP
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
@@ -295,10 +296,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
   // linearize A2 around l0
+  //const bool has_A2 = true;//false;
+  //if (has_A2)
+  //{
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
-  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
-  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get(), A2.get());
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO); // or target??
+  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(target * (1.0 + eps), Operator::DIAG_ZERO);
+  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * target, 1, A2p.get(), A2.get());
+  //}
   // Test to see waveport mode at difference frequencies
   /*
   std::vector<double> facs = {1.0, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0};
@@ -394,6 +399,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::exit(0);
   */
+
+  /*
   // Further rational interpolation tests
   double target_min = target, target_max = 10.0*target;
   int max_npoints = 6;//10;
@@ -494,10 +501,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("Order {}, total_res: {}\n", i-1, res_vec[i]);
   }
   //std::exit(0);
+  */
 
+  /*
   // Test Chebyshev interpolation
   Mpi::Print("\n\n Now testing Chebyshev interpolation!\n\n");
-  int d = 4;
+  double target_min = target, target_max = 10.0*target;
+  int d = 5;
   double a = target_min, b = target_max;
   std::vector<double> nodes(d+1);
   for (int i = 0; i <= d; i++)
@@ -542,15 +552,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     x1 = 0.0; x2 = 0.0;
     A2_l->Mult(tt, x1);
     double normx1 = linalg::Norml2(space_op.GetComm(), x1);
-    Mpi::Print("test lambda: {}, with {} interpolation points\n", l, d+1);
+    const double xj = (2.0 * (l - a) / (b - a)) - 1.0;
+    Mpi::Print("test lambda: {} ({} in [-1,1]), with {} interpolation points\n", l, xj, d+1);
+
     for (int k = 0; k <= d; k++)
     {
       x2 = 0.0;
-      double coeff = 1.0;
       for(int j = 0; j <= k; j++)
       {
-        Pi[j]->AddMult(tt, x2, coeff); // WHAT IS THE COEFF??
-        //coeff *= l;
+        // Need to define T(x) for arbitrary order!
+        Pi[j]->AddMult(tt, x2, std::cos(j * std::acos(xj)));
       }
       diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
       double res = linalg::Norml2(space_op.GetComm(), diff);
@@ -559,7 +570,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   Mpi::Print("Cheb Order {}, total_res: {}\n", d, total_res / test_p.size());
-  std::exit(0);
+  //std::exit(0);
+  */
 
   Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
@@ -573,7 +585,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                     std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
-  ksp->SetOperators(*Atest, *P);
+  //ksp->SetOperators(*Atest, *P);
+  ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
   eigen->SetIoData(iodata);
 
