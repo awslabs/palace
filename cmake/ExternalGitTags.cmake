@@ -260,6 +260,12 @@ set(EXTERN_FMT_URL
   "URL for external fmt build"
 )
 
+# scn
+set(EXTERN_SCN_URL
+  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v4.0.1.zip" CACHE STRING
+  "URL for external scn build"
+)
+
 # Eigen
 set(EXTERN_EIGEN_URL
   "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
