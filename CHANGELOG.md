@@ -13,6 +13,7 @@ The format of this changelog is based on
 
 ## In progress
 
+  - Added `--version` command line flag for displaying Palace version information.
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
   - Added an improvement to numeric wave ports to avoid targetting evanescent modes at
