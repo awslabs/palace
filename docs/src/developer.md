@@ -38,6 +38,13 @@ and `ANALYZE_SOURCES_CPPCHECK` to `ON` will turn on static analysis using
 [`cppcheck`](https://cppcheck.sourceforge.io/), respectively, during the build step. This
 requires the executables to be installed and findable by CMake on your system.
 
+## Coverage
+
+During the `cmake` configuration step, setting the variable `PALACE_BUILD_WITH_COVERAGE` to `ON`
+will turn on coverage reporting. For LLVM-based compilers (Clang, AppleClang, IntelLLVM) this uses
+the "[source-based code coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)". For
+gcc, it uses [`gcov`](https://gcc.gnu.org/onlinedocs/gcc/Gcov.html).
+
 ## JSON Schema for configuration files
 
 A JSON format [configuration file](config/config.md), for example named `config.json`, can
