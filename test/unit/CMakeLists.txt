@@ -27,7 +27,14 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
-target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
+target_link_libraries(unit-tests 
+  PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2
+          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>)
+
+# LLVM coverage output won't report all files unless we explicitly load full static library libpalace.a
+set(LIB_PALACE_FILE "$<TARGET_FILE:${LIB_TARGET_NAME}>")
+target_link_options(
+  unit-tests PRIVATE $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:LINKER:SHELL:-force_load ${LIB_PALACE_FILE}>)
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
