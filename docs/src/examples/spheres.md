@@ -6,7 +6,7 @@
 # Capacitance Matrix for Two Spheres
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/spheres/`](https://github.com/awslabs/palace/blob/main/examples/spheres)
     directory of the *Palace* source code.

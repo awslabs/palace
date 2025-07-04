@@ -4,9 +4,9 @@ index f2f3d2806b..8f6fda3a7a 100644
 +++ b/mesh/mesh.cpp
 @@ -3029,6 +3029,7 @@ void Mesh::DoNodeReorder(DSTable *old_v_to_v, Table *old_elem_vert)
     const int num_edge_dofs = old_dofs.Size();
- 
+
     // Save the original nodes
 +   Nodes->HostReadWrite(); // for "(*Nodes)() = "
     const Vector onodes = *Nodes;
- 
+
     // vertex dofs do not need to be moved

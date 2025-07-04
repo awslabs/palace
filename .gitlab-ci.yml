@@ -2,16 +2,14 @@ stages:
   - build
   - check
   - deploy
-
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
   CMAKE_BUILD_TYPE: Release
   NUM_PROC_BUILD_MAX: '32'
   NUM_PROC_TEST_MAX: '8'
-
 default:
   interruptible: true
-  image: public.ecr.aws/lts/ubuntu:latest  # Ubuntu 22.04
+  image: public.ecr.aws/lts/ubuntu:latest # Ubuntu 22.04
   tags:
     - arch:amd64
     - size:2xlarge
@@ -36,16 +34,12 @@ default:
     - |
       curl -fsSL https://install.julialang.org | sh -s -- -y
       export PATH=~/.juliaup/bin:$PATH
-
 test-build:
   stage: build
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DPALACE_WITH_STRUMPACK=ON
-        -DPALACE_WITH_MUMPS=ON
-        -DPALACE_WITH_ARPACK=ON
+    - cmake .. -DPALACE_WITH_STRUMPACK=ON -DPALACE_WITH_MUMPS=ON -DPALACE_WITH_ARPACK=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
@@ -55,85 +49,62 @@ test-build:
     paths:
       - build
     expire_in: 1 day
-
 test-build-clang:
   stage: build
   script:
     - apt-get install -y clang lld libmpich-dev libopenblas-serial-dev
     - export LDFLAGS='-fuse-ld=lld'
     - mkdir build && cd build
-    - cmake ..
-        -DCMAKE_CXX_COMPILER=clang++
-        -DCMAKE_C_COMPILER=clang
-        -DPALACE_WITH_STRUMPACK=ON
-        -DPALACE_WITH_MUMPS=ON
-        -DPALACE_WITH_ARPACK=ON
+    - cmake .. -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DPALACE_WITH_STRUMPACK=ON -DPALACE_WITH_MUMPS=ON -DPALACE_WITH_ARPACK=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-mpicc:
   stage: build
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DCMAKE_CXX_COMPILER=mpicxx
-        -DCMAKE_C_COMPILER=mpicc
-        -DCMAKE_Fortran_COMPILER=mpif90
-        -DPALACE_WITH_STRUMPACK=ON
-        -DPALACE_WITH_MUMPS=ON
-        -DPALACE_WITH_ARPACK=ON
+    - cmake .. -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DCMAKE_Fortran_COMPILER=mpif90 -DPALACE_WITH_STRUMPACK=ON -DPALACE_WITH_MUMPS=ON -DPALACE_WITH_ARPACK=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-shared:
   stage: build
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DBUILD_SHARED_LIBS=ON
-        -DPALACE_WITH_STRUMPACK=ON
-        -DPALACE_WITH_MUMPS=ON
-        -DPALACE_WITH_ARPACK=ON
+    - cmake .. -DBUILD_SHARED_LIBS=ON -DPALACE_WITH_STRUMPACK=ON -DPALACE_WITH_MUMPS=ON -DPALACE_WITH_ARPACK=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-openmp:
   stage: build
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DPALACE_WITH_OPENMP=ON
+    - cmake .. -DPALACE_WITH_OPENMP=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-bigint:
   stage: build
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DPALACE_WITH_64BIT_INT=ON
+    - cmake .. -DPALACE_WITH_64BIT_INT=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-openmpi:
   stage: build
   script:
@@ -147,22 +118,18 @@ test-build-openmpi:
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-intel-oneapi:
   stage: build
-  image: intel/oneapi-hpckit:latest  # Intel oneAPI image from Docker Hub
+  image: intel/oneapi-hpckit:latest # Intel oneAPI image from Docker Hub
   script:
     # Image has MKLROOT and environment configured by default
     - mkdir build && cd build
-    - cmake ..
-        -DCMAKE_CXX_COMPILER=icpx
-        -DCMAKE_C_COMPILER=icx
+    - cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-aocl:
   stage: build
   script:
@@ -180,7 +147,6 @@ test-build-aocl:
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-arm64:
   stage: build
   tags:
@@ -195,7 +161,6 @@ test-build-arm64:
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-arm64-shared:
   stage: build
   tags:
@@ -204,14 +169,12 @@ test-build-arm64-shared:
   script:
     - apt-get install -y libmpich-dev libopenblas-serial-dev
     - mkdir build && cd build
-    - cmake ..
-        -DBUILD_SHARED_LIBS=ON
+    - cmake .. -DBUILD_SHARED_LIBS=ON
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-build-arm64-armpl:
   stage: build
   tags:
@@ -232,7 +195,6 @@ test-build-arm64-armpl:
     - export PATH=$(pwd)/build/bin:$PATH
     - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test/examples --color=yes test/examples/runtests.jl
-
 test-format:
   stage: check
   tags:
@@ -262,7 +224,6 @@ test-format:
         exit 0
       fi
   dependencies: []
-
 test-config:
   stage: check
   tags:
@@ -282,7 +243,6 @@ test-config:
         exit 0
       fi
   dependencies: []
-
 pages:
   stage: deploy
   tags:

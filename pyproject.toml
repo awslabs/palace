@@ -1,0 +1,138 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+
+[project]
+authors = [
+  {name = "AWS Center for Quantum Computing", email = "palace-maint@amazon.com"}
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Topic :: Scientific/Engineering :: Physics"
+]
+dependencies = [
+  "numpy>=1.20.0",
+  "scipy>=1.7.0"
+]
+description = "3D Finite Element Solver for Computational Electromagnetics"
+dynamic = ["version"]
+keywords = ["finite element", "electromagnetics", "simulation", "physics"]
+license = {text = "Apache-2.0"}
+maintainers = [
+  {name = "AWS Center for Quantum Computing", email = "palace-maint@amazon.com"}
+]
+name = "palace-fem"
+readme = "README.md"
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=6.0",
+  "pytest-cov",
+  "ruff",
+  "mypy"
+]
+docs = [
+  "sphinx>=4.0",
+  "sphinx-rtd-theme",
+  "myst-parser"
+]
+visualization = [
+  "matplotlib>=3.3.0",
+  "paraview>=5.9.0"
+]
+
+[project.scripts]
+palace-py = "palace.cli:main"
+
+[project.urls]
+"Bug Tracker" = "https://github.com/awslabs/palace/issues"
+Documentation = "https://awslabs.github.io/palace/"
+Homepage = "https://github.com/awslabs/palace"
+Repository = "https://github.com/awslabs/palace"
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+python_version = "3.8"
+strict_equality = true
+warn_no_return = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+addopts = [
+  "--cov=palace",
+  "--cov-report=term-missing",
+  "--cov-report=html",
+  "--cov-report=xml"
+]
+python_classes = ["Test*"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.format]
+indent-style = "space"
+line-ending = "auto"
+quote-style = "double"
+
+[tool.ruff.lint]
+ignore = [
+  "E501",  # line too long, handled by ruff format
+  "B008",  # do not perform function calls in argument defaults
+  "C901",  # too complex
+  "W191",  # indentation contains tabs
+  "F841",  # local variable assigned but never used
+  "B007",  # loop control variable not used within loop body
+  "B904"   # within except clause, raise exceptions with raise ... from err
+]
+select = [
+  "E",  # pycodestyle errors
+  "W",  # pycodestyle warnings
+  "F",  # pyflakes
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP"  # pyupgrade
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*" = ["E501", "F401", "F811"]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.package-data]
+palace = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools_scm]
+local_scheme = "node-and-date"
+version_scheme = "no-guess-dev"
+write_to = "python/palace/_version.py"

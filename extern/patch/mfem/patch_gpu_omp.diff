@@ -5,17 +5,17 @@ index 5cc1a6b62d..164582d80b 100644
 @@ -23,9 +23,6 @@
  #include <_hypre_utilities.h>
  #endif
- 
+
 -#include "array.hpp"
 -#include "reducers.hpp"
 -
  namespace mfem
  {
- 
+
 @@ -853,159 +850,6 @@ inline MemoryClass GetHypreForallMemoryClass()
- 
+
  #endif // MFEM_USE_MPI
- 
+
 -namespace internal
 -{
 -/**
@@ -170,7 +170,7 @@ index 5cc1a6b62d..164582d80b 100644
 -}
 -
  } // namespace mfem
- 
+
  #endif // MFEM_FORALL_HPP
 diff --git a/general/reducers.hpp b/general/reducers.hpp
 index 2b77fcbf1a..dde3bd4e5d 100644
@@ -179,20 +179,20 @@ index 2b77fcbf1a..dde3bd4e5d 100644
 @@ -12,11 +12,10 @@
  #ifndef MFEM_REDUCERS_HPP
  #define MFEM_REDUCERS_HPP
- 
+
 +#include "array.hpp"
  #include "forall.hpp"
- 
+
 -#include <climits>
  #include <cmath>
 -#include <cstdint>
  #include <limits>
  #include <type_traits>
- 
+
 @@ -439,6 +438,160 @@ template <class I> struct ArgMinMaxReducer<double, I>
     }
  };
- 
+
 -} // namespace mfem
 +namespace internal
 +{
@@ -236,7 +236,7 @@ index 2b77fcbf1a..dde3bd4e5d 100644
 +      return res;
 +#endif
 +   }
- 
+
 +   MFEM_HOST_DEVICE void operator()(int work_idx) const
 +   {
 +      MFEM_SHARED value_type buffer[max_blocksize()];
@@ -356,26 +356,26 @@ index 87b063c025..defdb74232 100644
 --- a/linalg/vector.cpp
 +++ b/linalg/vector.cpp
 @@ -11,19 +11,18 @@
- 
+
  // Implementation of data type vector
- 
+
 -#include "kernels.hpp"
 -#include "vector.hpp"
  #include "../general/forall.hpp"
 +#include "../general/reducers.hpp"
 +#include "../general/hash.hpp"
 +#include "vector.hpp"
- 
+
  #ifdef MFEM_USE_OPENMP
  #include <omp.h>
  #endif
- 
+
  #include <iostream>
 -#include <iomanip>
  #include <cmath>
  #include <ctime>
 -#include <limits>
- 
+
  namespace mfem
  {
 @@ -207,7 +206,7 @@ Vector &Vector::operator=(const Vector &v)
@@ -388,7 +388,7 @@ index 87b063c025..defdb74232 100644
     v.UseDevice(use_dev);
     // keep 'data' where it is, unless 'use_dev' is true
 @@ -249,8 +248,8 @@ Vector &Vector::operator*=(const Vector &v)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int N = size;
 +   const auto x = v.Read(use_dev);
@@ -398,7 +398,7 @@ index 87b063c025..defdb74232 100644
     return *this;
  }
 @@ -271,8 +270,8 @@ Vector &Vector::operator/=(const Vector &v)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int N = size;
 +   const auto x = v.Read(use_dev);
@@ -408,7 +408,7 @@ index 87b063c025..defdb74232 100644
     return *this;
  }
 @@ -292,8 +291,8 @@ Vector &Vector::operator-=(const Vector &v)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int N = size;
 +   const auto x = v.Read(use_dev);
@@ -418,7 +418,7 @@ index 87b063c025..defdb74232 100644
     return *this;
  }
 @@ -313,8 +312,8 @@ Vector &Vector::operator+=(const Vector &v)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int N = size;
 +   const auto x = v.Read(use_dev);
@@ -438,7 +438,7 @@ index 87b063c025..defdb74232 100644
     }
     return *this;
 @@ -340,7 +339,7 @@ Vector &Vector::Set(const real_t a, const Vector &Va)
- 
+
     const bool use_dev = UseDevice() || Va.UseDevice();
     const int N = size;
 -   auto x = Va.Read(use_dev);
@@ -447,7 +447,7 @@ index 87b063c025..defdb74232 100644
     mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { y[i] = a * x[i]; });
     return *this;
 @@ -352,9 +351,9 @@ void Vector::SetVector(const Vector &v, int offset)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int vs = v.Size();
 -   const real_t *vp = v.Read(use_dev);
@@ -457,9 +457,9 @@ index 87b063c025..defdb74232 100644
 +   auto p = ReadWrite(use_dev) + offset;
     mfem::forall_switch(use_dev, vs, [=] MFEM_HOST_DEVICE (int i) { p[i] = vp[i]; });
  }
- 
+
 @@ -364,8 +363,8 @@ void Vector::AddSubVector(const Vector &v, int offset)
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
     const int vs = v.Size();
 -   const real_t *vp = v.Read(use_dev);
@@ -468,7 +468,7 @@ index 87b063c025..defdb74232 100644
 +   auto p = ReadWrite(use_dev) + offset;
     mfem::forall_switch(use_dev, vs, [=] MFEM_HOST_DEVICE (int i) { p[i] += vp[i]; });
  }
- 
+
 @@ -394,8 +393,8 @@ void add(const Vector &v1, const Vector &v2, Vector &v)
     const bool use_dev = v1.UseDevice() || v2.UseDevice() || v.UseDevice();
     const int N = v.size;
@@ -559,7 +559,7 @@ index 87b063c025..defdb74232 100644
     {
        const int dof_i = d_dofs[i];
 @@ -664,7 +663,7 @@ void Vector::GetSubVector(const Array<int> &dofs, Vector &elemvect) const
- 
+
  void Vector::GetSubVector(const Array<int> &dofs, real_t *elem_data) const
  {
 -   data.Read(MemoryClass::HOST, size);
@@ -597,7 +597,7 @@ index 87b063c025..defdb74232 100644
     for (int i = 0; i < n; i++)
     {
 @@ -764,9 +763,9 @@ void Vector::AddElementVector(const Array<int> &dofs, const Vector &elemvect)
- 
+
     const bool use_dev = dofs.UseDevice() || elemvect.UseDevice();
     const int n = dofs.Size();
 -   auto d_y = elemvect.Read(use_dev);
@@ -609,7 +609,7 @@ index 87b063c025..defdb74232 100644
     {
        const int j = d_dofs[i];
 @@ -783,7 +782,7 @@ void Vector::AddElementVector(const Array<int> &dofs, const Vector &elemvect)
- 
+
  void Vector::AddElementVector(const Array<int> &dofs, real_t *elem_data)
  {
 -   data.ReadWrite(MemoryClass::HOST, size);
@@ -618,7 +618,7 @@ index 87b063c025..defdb74232 100644
     for (int i = 0; i < n; i++)
     {
 @@ -808,9 +807,9 @@ void Vector::AddElementVector(const Array<int> &dofs, const real_t a,
- 
+
     const bool use_dev = dofs.UseDevice() || elemvect.UseDevice();
     const int n = dofs.Size();
 +   const auto d_x = elemvect.Read(use_dev);
@@ -657,7 +657,7 @@ index 87b063c025..defdb74232 100644
  }
  #endif
 @@ -928,10 +927,7 @@ void Vector::PrintHash(std::ostream &os) const
- 
+
  void Vector::Randomize(int seed)
  {
 -   if (seed == 0)
@@ -665,9 +665,9 @@ index 87b063c025..defdb74232 100644
 -      seed = (int)time(0);
 -   }
 +   if (seed == 0) { seed = (int)time(0); }
- 
+
     srand((unsigned)seed);
- 
+
 @@ -947,20 +943,15 @@ real_t Vector::Norml2() const
     // Scale entries of Vector on the fly, using algorithms from
     // std::hypot() and LAPACK's drm2. This scaling ensures that the
@@ -677,7 +677,7 @@ index 87b063c025..defdb74232 100644
 -      return 0.0;
 -   }
 +   if (size == 0) { return 0.0; }
- 
+
 -   auto m_data = Read(UseDevice());
 +   const auto m_data = Read(UseDevice());
     using value_type = DevicePair<real_t, real_t>;
@@ -695,7 +695,7 @@ index 87b063c025..defdb74232 100644
 @@ -987,11 +978,12 @@ real_t Vector::Normlinf() const
  {
     if (size == 0) { return 0; }
- 
+
 -   auto m_data = Read(UseDevice());
     real_t res = 0;
 -   reduce(
@@ -712,7 +712,7 @@ index 87b063c025..defdb74232 100644
 @@ -1000,11 +992,12 @@ real_t Vector::Norml1() const
  {
     if (size == 0) { return 0.0; }
- 
+
 -   auto m_data = Read(UseDevice());
     real_t res = 0;
 -   reduce(
@@ -729,7 +729,7 @@ index 87b063c025..defdb74232 100644
 @@ -1013,33 +1006,24 @@ real_t Vector::Normlp(real_t p) const
  {
     MFEM_ASSERT(p > 0.0, "Vector::Normlp");
- 
+
 -   if (p == 1.0)
 -   {
 -      return Norml1();
@@ -752,7 +752,7 @@ index 87b063c025..defdb74232 100644
 -         return 0.0;
 -      }
 +      if (size == 0) { return 0.0; }
- 
+
 -      auto m_data = Read(UseDevice());
        using value_type = DevicePair<real_t, real_t>;
        value_type res;
@@ -773,10 +773,10 @@ index 87b063c025..defdb74232 100644
     MFEM_ASSERT(size == v.size, "incompatible Vectors!");
 +
     if (size == 0) { return 0.0; }
- 
+
     const bool use_dev = UseDevice() || v.UseDevice();
 +   const auto m_data = Read(use_dev), v_data = v.Read(use_dev);
- 
+
 -   auto m_data = Read(use_dev);
 -   auto v_data = v.Read(use_dev);
 +   // If OCCA is enabled, it handles all selected backends
@@ -787,7 +787,7 @@ index 87b063c025..defdb74232 100644
 +                OccaMemoryRead(data, size), OccaMemoryRead(v.data, size));
 +   }
 +#endif
- 
+
 -   if (use_dev)
 +   const auto compute_dot = [&]()
     {
@@ -806,7 +806,7 @@ index 87b063c025..defdb74232 100644
 +      SumReducer<real_t> {}, use_dev, vector_workspace());
 +      return res;
 +   };
- 
+
 +   // Device backends have top priority
 +   if (Device::Allows(Backend::DEVICE_MASK)) { return compute_dot(); }
 +
@@ -878,7 +878,7 @@ index 87b063c025..defdb74232 100644
 +#endif // MFEM_USE_OPENMP_DETERMINISTIC_DOT
     }
 +#endif // MFEM_USE_OPENMP
- 
+
 -   // normal path for everything else (cuda, hip, debug, cpu)
 -   real_t res = 0;
 -   reduce(
@@ -889,16 +889,16 @@ index 87b063c025..defdb74232 100644
 +   // All other CPU backends
 +   return compute_dot();
  }
- 
+
  real_t Vector::Min() const
  {
     if (size == 0) { return infinity(); }
- 
+
 -   const bool use_dev = UseDevice();
 -   auto m_data = Read(use_dev);
 +   const auto use_dev = UseDevice();
 +   const auto m_data = Read(use_dev);
- 
+
 -   if (use_dev)
 +#ifdef MFEM_USE_OCCA
 +   if (use_dev && DeviceCanUseOcca())
@@ -907,7 +907,7 @@ index 87b063c025..defdb74232 100644
 +      return occa::linalg::min<real_t,real_t>(OccaMemoryRead(data, size));
 +   }
 +#endif
- 
+
 -#ifdef MFEM_USE_OCCA
 -      if (DeviceCanUseOcca())
 +   const auto compute_min = [&]()
@@ -923,7 +923,7 @@ index 87b063c025..defdb74232 100644
 +      MinReducer<real_t> {}, use_dev, vector_workspace());
 +      return res;
 +   };
- 
+
 +   // Device backends have top priority
 +   if (Device::Allows(Backend::DEVICE_MASK)) { return compute_min(); }
 +
@@ -949,7 +949,7 @@ index 87b063c025..defdb74232 100644
 +      return minimum;
     }
 +#endif
- 
+
 -   // normal path for everything else (cuda, hip, debug, cpu)
 -   real_t res = infinity();
 -   reduce(
@@ -960,16 +960,16 @@ index 87b063c025..defdb74232 100644
 +   // All other CPU backends
 +   return compute_min();
  }
- 
+
  real_t Vector::Max() const
  {
     if (size == 0) { return -infinity(); }
- 
+
 -   const bool use_dev = UseDevice();
 -   auto m_data = Read(use_dev);
 +   const auto use_dev = UseDevice();
 +   const auto m_data = Read(use_dev);
- 
+
 -   if (use_dev)
 -   {
 -      // special cases where OCCA or OenMP are used
@@ -983,7 +983,7 @@ index 87b063c025..defdb74232 100644
 +      return occa::linalg::max<real_t, real_t>(OccaMemoryRead(data, size));
 +   }
  #endif
- 
+
 +   const auto compute_max = [&]()
 +   {
 +      real_t res = -infinity();
@@ -1020,7 +1020,7 @@ index 87b063c025..defdb74232 100644
 +      return maximum;
     }
 +#endif
- 
+
 -   // normal path for everything else (cuda, hip, debug, cpu)
 -   real_t res = -infinity();
 -   reduce(
@@ -1031,11 +1031,11 @@ index 87b063c025..defdb74232 100644
 +   // All other CPU backends
 +   return compute_max();
  }
- 
+
  real_t Vector::Sum() const
  {
     if (size == 0) { return 0.0; }
- 
+
 -   auto m_data = Read(UseDevice());
     real_t res = 0;
 -   reduce(
@@ -1048,7 +1048,7 @@ index 87b063c025..defdb74232 100644
     SumReducer<real_t> {}, UseDevice(), vector_workspace());
     return res;
  }
- 
+
 -}
 +} // namespace mfem
 diff --git a/tests/unit/general/test_reduction.cpp b/tests/unit/general/test_reduction.cpp
@@ -1058,21 +1058,20 @@ index 13b9077381..ad12cdb62d 100644
 @@ -9,15 +9,14 @@
  // terms of the BSD-3 license. We welcome feedback and contributions, see file
  // CONTRIBUTING.md for details.
- 
+
 -#include "mfem.hpp"
 -
 -// must be included after mfem.hpp
 -#include "general/forall.hpp"
 +#include <algorithm>
 +#include <limits>
- 
+
 +#include "mfem.hpp"
  #include "unit_tests.hpp"
- 
+
 -#include <algorithm>
 -#include <limits>
 +// must be included after mfem.hpp
 +#include "general/reducers.hpp"
- 
+
  using namespace mfem;
- 

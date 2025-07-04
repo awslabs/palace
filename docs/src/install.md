@@ -5,13 +5,33 @@
 
 # Installation
 
-*Palace* can be built and installed using the
+For users who want to use *Palace* primarily through Python, the easiest installation method is described in
+[Install using pip](#Install-using-pip). *Palace* can also be built and installed using the
 [Spack HPC package manager](https://spack.io/), following the instructions in
 the [Build using Spack](#Build-using-Spack) section. Containerized builds are possible with
 Singularity/Apptainer, described in
 [Build using Singularity/Apptainer](#Build-using-Singularity/Apptainer). Alternatively,
 compiling from source using [CMake](https://cmake.org/download) is described in
 [Build from source](#Build-from-source).
+
+## Install using pip
+
+For users who want to use *Palace* primarily through Python, the easiest installation method is via pip:
+
+```bash
+pip install palace-fem
+```
+
+This installs the Python interface along with pre-compiled binaries for most platforms. The Python interface provides:
+
+- Configuration file management and validation
+- Simulation execution and control
+- Result analysis and visualization tools
+- Integration with the Python scientific ecosystem
+
+See the [Python examples](https://github.com/awslabs/palace/tree/main/python/examples) for getting started with the Python interface.
+
+Note: The pip installation includes the Palace solver executable, but for advanced use cases or custom builds, consider the other installation methods below.
 
 ## Build using Spack
 
@@ -156,7 +176,7 @@ and LAPACK libraries depending on the system architecture according to the follo
 procedure:
 
   - For `x86_64` systems:
-    
+
       + If the `MKLROOT` environment variable is set, looks for an
         [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
@@ -167,7 +187,7 @@ procedure:
         which is permissively licensed and available from most package managers.
 
   - For `aarch64`/`arm64` systems:
-    
+
       + If the `ARMPL_DIR` environment variable is set, looks for an
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.

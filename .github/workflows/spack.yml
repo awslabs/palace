@@ -1,23 +1,19 @@
 name: Spack
-
 on:
   push:
     branches:
       - main
   pull_request:
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   # Note that each spack version needs it's own registry
   SPACK_VERSION: develop
   REGISTRY: ghcr.io/awslabs/palace
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   build-and-test-spack:
     strategy:
@@ -28,21 +24,15 @@ jobs:
         blas: [openblas] # ,intel-oneapi-mkl]
         spack_version: [develop] # ,v0.23.1]
         mpi: [openmpi] #, mpich, mvapich]
-
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure Clang compiler
         if: matrix.compiler == 'clang'
         run: sudo apt-get install -y clang lld
-
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
-        run:
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
-          intel-oneapi-compiler-fortran=2024.2.1-1079
-
+        run: sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \ intel-oneapi-compiler-fortran=2024.2.1-1079
       - name: Setup Spack
         uses: spack/setup-spack@v2
         with:
@@ -52,7 +42,6 @@ jobs:
           # This seems unecessary, but otherwise we clone into ./spack
           # This then would override the spack local repo dir, and break CI
           path: spack-path
-
       - name: Setup Environment
         run: |
           # Configure GPU variant
@@ -106,7 +95,6 @@ jobs:
                   id_variable: GITHUB_USER
                   secret_variable: GITHUB_TOKEN
           EOF
-
       - name: Configure External Packages
         run: |
           # These cause build issues if built as externals
@@ -121,18 +109,14 @@ jobs:
             --exclude bzip2 \
             --exclude xz \
             --exclude curl
-
       - name: Configure Compilers
         run: spack -e . compiler find && spack -e . compiler list
-
       - name: Configure Binary Mirror Keys
         run: |
           # If we cached these, that would be faster and safer
           spack -e . buildcache keys --install --trust
-
       - name: Bootstrap
         run: spack -e . bootstrap now
-
       - name: Concretize
         # In theory we can re-use a concretization and pin a spack to speed this up.
         # Unfortunately it then becomes difficult to know when to re-concretize.
@@ -140,16 +124,13 @@ jobs:
           # Using `spack develop` in order to have an in-source build
           spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
           spack -e . concretize -f
-
       - name: Build Dependencies
         run: |
           spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
-
       - name: Build Palace
         # Build palace from source using this current directory
         # We use `--no-cache` in order to force a rebuild
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
-
       # Should we run unit tests as well here?
       - name: Run Integration Tests
         if: matrix.gpu == 'none' # Skip tests for GPU builds

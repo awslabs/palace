@@ -10,7 +10,7 @@ index e29c492f..1a211b7a 100644
 +  "f7488153ba60dd9aeacf17f1494bdb6a59881ae6" CACHE STRING  # main after https://github.com/CEED/libCEED/pull/1464
    "Git tag for external libCEED build"
  )
- 
+
 diff --git a/cmake/ExternalLibCEED.cmake b/cmake/ExternalLibCEED.cmake
 index fdffcd9e..14e468ad 100644
 --- a/cmake/ExternalLibCEED.cmake
@@ -18,7 +18,7 @@ index fdffcd9e..14e468ad 100644
 @@ -119,11 +119,6 @@ endif()
  string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
  message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
- 
+
 -# Add OpenMP support to libCEED
 -set(LIBCEED_PATCH_FILES
 -  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_gpu_restriction_dev.diff"

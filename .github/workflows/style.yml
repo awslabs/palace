@@ -1,21 +1,17 @@
 name: Style
-
 on:
   push:
     branches:
       - main
   pull_request:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   check-style:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       # Install more recent clang-format from LLVM (match Homebrew v16)
       - name: Install clang-format
         run: |
@@ -23,7 +19,6 @@ jobs:
           sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
           sudo apt-get update -q
           sudo apt-get install -y clang-format-19
-
       - name: Check style
         run: |
           ./scripts/format-source --clang-format clang-format-19
@@ -39,12 +34,10 @@ jobs:
             echo 'Commit is correctly formatted'
             exit 0
           fi
-
   check-config:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Check JSON Schema
         run: |
           OUTPUT=$(find examples -name *.json -maxdepth 2 -print0 | xargs -0 -n1 ./scripts/validate-config)

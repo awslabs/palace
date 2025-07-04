@@ -13,7 +13,7 @@ index 690cad4..e238b8f 100644
  endfunction(pexamples)
 @@ -390,13 +390,11 @@ endif()
  add_library(arpack ${arpackutil_STAT_SRCS} ${arpacksrc_STAT_SRCS} ${arpacksrc_ICB})
- 
+
  target_link_libraries(arpack
 -  PUBLIC
 -  $<INSTALL_INTERFACE:$<IF:$<BOOL:${BUILD_SHARED_LIBS}>,,LAPACK::LAPACK>>
@@ -42,13 +42,13 @@ index 690cad4..e238b8f 100644
      set_target_properties(parpack PROPERTIES OUTPUT_NAME parpack${LIBSUFFIX}${ITF64SUFFIX})
 @@ -674,7 +673,7 @@ function(build_tests)
      set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/PARPACK/TESTS/MPI)
- 
+
      add_executable(issue46 PARPACK/TESTS/MPI/issue46.f)
 -    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS})
 +    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS} MPI::MPI_Fortran)
      add_test(issue46_tst mpiexec -n 2 ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/issue46)
    endif()
- 
+
 diff --git a/cmake/arpackng-config.cmake.in b/cmake/arpackng-config.cmake.in
 index bafa3fe..fe2fa53 100644
 --- a/cmake/arpackng-config.cmake.in
@@ -56,7 +56,7 @@ index bafa3fe..fe2fa53 100644
 @@ -12,25 +12,25 @@
  #   target_include_directories(main INTERFACE PARPACK::PARPACK)
  #   target_link_libraries(main PARPACK::PARPACK)
- 
+
 -if (NOT @BUILD_SHARED_LIBS@)
 -	include(CMakeFindDependencyMacro)
 -	# Find dependencies
@@ -95,6 +95,5 @@ index bafa3fe..fe2fa53 100644
 +#		endif()
 +#	endif()
 +#endif()
- 
+
  include("${CMAKE_CURRENT_LIST_DIR}/arpackngTargets.cmake")
- 

@@ -1,12 +1,10 @@
 name: Documentation
-
 on:
   push:
     branches:
       - main
     tags: '*'
   pull_request:
-
 jobs:
   build-docs:
     permissions:
@@ -14,14 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           julia --project=docs -e 'using Pkg; Pkg.instantiate()'
           julia --project=docs --color=yes docs/make.jl
-
       - uses: actions/upload-artifact@v4
         with:
           name: docs
