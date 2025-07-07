@@ -1,5 +1,5 @@
 diff --git a/fem/datacollection.cpp b/fem/datacollection.cpp
-index 44f8359f4d..90f8066ea1 100644
+index 10e8b77b55..e37f6ce184 100644
 --- a/fem/datacollection.cpp
 +++ b/fem/datacollection.cpp
 @@ -310,9 +310,9 @@ void DataCollection::SaveField(const std::string &field_name)
@@ -26,7 +26,7 @@ index 44f8359f4d..90f8066ea1 100644
  void ParaViewDataCollectionBase::SetCompressionLevel(int compression_level_)
  {
     MFEM_ASSERT(compression_level_ >= -1 && compression_level_ <= 9,
-@@ -940,16 +945,19 @@ void ParaViewDataCollection::Save()
+@@ -935,16 +940,19 @@ void ParaViewDataCollection::Save()
     std::string vtu_prefix = col_path + "/" + GenerateVTUPath() + "/";
  
     // Save the local part of the mesh and grid functions fields to the local
@@ -48,7 +48,7 @@ index 44f8359f4d..90f8066ea1 100644
        const std::string &field_name = qfield.first;
        std::ofstream os(vtu_prefix + GenerateVTUFileName(field_name, myid));
        qfield.second->SaveVTU(os, pv_data_format, GetCompressionLevel(), field_name);
-@@ -965,7 +973,7 @@ void ParaViewDataCollection::Save()
+@@ -960,7 +968,7 @@ void ParaViewDataCollection::Save()
           std::ofstream pvtu_out(vtu_prefix + GeneratePVTUFileName("data"));
           WritePVTUHeader(pvtu_out);
  
@@ -57,7 +57,7 @@ index 44f8359f4d..90f8066ea1 100644
           pvtu_out << "<PPointData>\n";
           for (auto &field_it : field_map)
           {
-@@ -976,7 +984,24 @@ void ParaViewDataCollection::Save()
+@@ -971,7 +979,24 @@ void ParaViewDataCollection::Save()
                       << VTKComponentLabels(vec_dim) << " "
                       << "format=\"" << GetDataFormatString() << "\" />\n";
           }
@@ -82,7 +82,7 @@ index 44f8359f4d..90f8066ea1 100644
           // Element attributes
           pvtu_out << "<PCellData>\n";
           pvtu_out << "\t<PDataArray type=\"Int32\" Name=\"" << "attribute"
-@@ -1074,7 +1099,8 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
+@@ -1069,7 +1094,8 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     }
     os << " version=\"2.2\" byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -92,7 +92,7 @@ index 44f8359f4d..90f8066ea1 100644
  
     // dump out the grid functions as point data
     os << "<PointData >\n";
-@@ -1082,8 +1108,21 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
+@@ -1077,8 +1103,21 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     // iterate over all grid functions
     for (FieldMapIterator it=field_map.begin(); it!=field_map.end(); ++it)
     {
@@ -114,7 +114,7 @@ index 44f8359f4d..90f8066ea1 100644
     os << "</PointData>\n";
     // close the mesh
     os << "</Piece>\n"; // close the piece open in the PrintVTU method
-@@ -1106,7 +1145,6 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
+@@ -1101,7 +1140,6 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
        << "format=\"" << GetDataFormatString() << "\" >" << '\n';
     if (vec_dim == 1)
     {
@@ -122,7 +122,7 @@ index 44f8359f4d..90f8066ea1 100644
        for (int i = 0; i < mesh->GetNE(); i++)
        {
           RefG = GlobGeometryRefiner.Refine(
-@@ -1136,11 +1174,131 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
+@@ -1131,11 +1169,131 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
           }
        }
     }
@@ -258,7 +258,7 @@ index 44f8359f4d..90f8066ea1 100644
     os << "</DataArray>" << std::endl;
  }
 diff --git a/fem/datacollection.hpp b/fem/datacollection.hpp
-index 9e4c3cb968..0b9642f670 100644
+index a4a376f8b1..e82830304d 100644
 --- a/fem/datacollection.hpp
 +++ b/fem/datacollection.hpp
 @@ -133,6 +133,7 @@ private:
@@ -334,7 +334,7 @@ index 9e4c3cb968..0b9642f670 100644
  public:
     ParaViewDataCollectionBase(const std::string &name, Mesh *mesh);
  
-@@ -550,6 +553,10 @@ public:
+@@ -543,6 +546,10 @@ public:
     /// Reading high-order data requires ParaView 5.5 or later.
     void SetHighOrderOutput(bool high_order_output_);
  
@@ -345,7 +345,7 @@ index 9e4c3cb968..0b9642f670 100644
     /// If compression is enabled, return the compression level, else return 0.
     int GetCompressionLevel() const;
  
-@@ -571,8 +578,6 @@ public:
+@@ -564,8 +571,6 @@ public:
     ///
     /// If restart is enabled, new writes will preserve timestep metadata for any
     /// solutions prior to the currently defined time.
@@ -354,7 +354,7 @@ index 9e4c3cb968..0b9642f670 100644
     void UseRestartMode(bool restart_mode_);
  };
  
-@@ -582,11 +587,23 @@ class ParaViewDataCollection : public ParaViewDataCollectionBase
+@@ -575,11 +580,23 @@ class ParaViewDataCollection : public ParaViewDataCollectionBase
  private:
     std::fstream pvd_stream;
  
@@ -378,7 +378,7 @@ index 9e4c3cb968..0b9642f670 100644
     const char *GetDataFormatString() const;
     const char *GetDataTypeString() const;
  
-@@ -605,6 +622,25 @@ public:
+@@ -598,6 +615,25 @@ public:
     ParaViewDataCollection(const std::string& collection_name,
                            Mesh *mesh_ = nullptr);
  
@@ -405,10 +405,10 @@ index 9e4c3cb968..0b9642f670 100644
     /// cycle value
     void Save() override;
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 515358b1e5..dd25a4775b 100644
+index 67eb8524d4..da98594ca2 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -12132,7 +12132,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -12079,7 +12079,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -417,7 +417,7 @@ index 515358b1e5..dd25a4775b 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -12146,7 +12146,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -12093,7 +12093,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -427,10 +427,10 @@ index 515358b1e5..dd25a4775b 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 11a90994e6..43b6ede00d 100644
+index 9301a0ad25..2d6f7288dc 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2492,7 +2492,7 @@ public:
+@@ -2522,7 +2522,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,
@@ -440,10 +440,10 @@ index 11a90994e6..43b6ede00d 100644
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 28773139f7..ef69cb9393 100644
+index 69dfd298cc..770b9fd41a 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -6403,7 +6403,7 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6404,7 +6404,7 @@ void ParMesh::PrintVTU(std::string pathname,
                         VTKFormat format,
                         bool high_order_output,
                         int compression_level,
@@ -452,7 +452,7 @@ index 28773139f7..ef69cb9393 100644
  {
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
-@@ -6463,7 +6463,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6464,7 +6464,8 @@ void ParMesh::PrintVTU(std::string pathname,
  
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);
