@@ -94,12 +94,15 @@ if(PALACE_BUILD_WITH_COVERAGE)
     INTERFACE 
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
+        $<$<CXX_COMPILER_ID:GNU>:-fprofile-abs-path>
   )
   target_link_options(
     coverage_flags
     INTERFACE 
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
   )
 endif()
 
