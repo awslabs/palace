@@ -99,7 +99,6 @@ jobs:
                 url: https://binaries.spack.io/${SPACK_VERSION}
               local-buildcache:
                 binary: true
-                autopush: true
                 url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
                 signed: false
                 access_pair:
@@ -150,7 +149,7 @@ jobs:
         # We use `--no-cache` in order to force a rebuild
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
-      # Should we run unit tests as well here?
+      # TODO: Should we run unit tests as well here?
       - name: Run Integration Tests
         if: matrix.gpu == 'none' # Skip tests for GPU builds
         env:
@@ -160,3 +159,11 @@ jobs:
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
+
+      # Push built binaries, even if the build fails
+      # NOTE: This might fail as external fork PRs can't push to GHCR.
+      - name: Push to GHCR cache
+        if: |
+          !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
