@@ -38,7 +38,7 @@ private:
   std::vector<double> z;
 
 public:
-  MinimalRationalInterpolation(int max_size);
+  MinimalRationalInterpolation(std::size_t max_size);
   void AddSolutionSample(double omega, const ComplexVector &u,
                          const SpaceOperator &space_op, Orthogonalization orthog_type);
   std::vector<double> FindMaxError(int N) const;
@@ -86,7 +86,8 @@ private:
   std::map<int, MinimalRationalInterpolation> mri;
 
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);
+  RomOperator(const IoData &iodata, SpaceOperator &space_op,
+              std::size_t max_size_per_excitation);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
