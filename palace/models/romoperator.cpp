@@ -187,7 +187,7 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
+MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
 {
   Q.resize(max_size, ComplexVector());
 }
@@ -313,7 +313,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
 }
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         int max_size_per_excitation)
+                         std::size_t max_size_per_excitation)
   : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -354,6 +354,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
+  // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
+  // expiation index, so this is triggered the first time it is called in drivensolver.
+  if (excitation_idx_cache == excitation_idx)
+  {
+    return;
+  }
+
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
@@ -376,10 +383,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
+
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -479,10 +484,7 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
