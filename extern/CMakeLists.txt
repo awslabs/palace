@@ -69,6 +69,10 @@ include(ExternalJSON)
 message(STATUS "====================== Configuring fmt dependency ======================")
 include(ExternalFmt)
 
+# Add scn
+message(STATUS "====================== Configuring scn dependency ======================")
+include(ExternalScn)
+
 # Add Eigen
 message(STATUS "===================== Configuring Eigen dependency =====================")
 include(ExternalEigen)

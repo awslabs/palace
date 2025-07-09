@@ -1719,7 +1719,7 @@ void DrivenSolverData::SetUp(json &solver)
     return;
   }
 
-  rst = driven->value("Restart", rst);
+  restart = driven->value("Restart", restart);
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
@@ -1899,7 +1899,7 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "PROMSamples: " << prom_f << '\n';
     std::cout << "SaveIndices: " << save_indices << '\n';
     std::cout << "PromIndices: " << prom_indices << '\n';
-    std::cout << "Restart: " << rst << '\n';
+    std::cout << "Restart: " << restart << '\n';
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
     std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
