@@ -1,0 +1,2253 @@
+diff --git a/REDIST/SRC/pcgemr.c b/REDIST/SRC/pcgemr.c
+index 8383cdf..205fac5 100644
+--- a/REDIST/SRC/pcgemr.c
++++ b/REDIST/SRC/pcgemr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pcgemr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -155,11 +156,11 @@
+ #define ccopy_ ccopy
+ #define clacpy_ clacpy
+ #endif
+-#define Clacpy Ccgelacpy
+-void  Clacpy();
+ typedef struct {
+   float r, i;
+ }     complex;
++#define Clacpy Ccgelacpy
++void  Clacpy( Int m, Int n, complex *a, Int lda, complex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -187,35 +188,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Ccgesd2d();
+-extern void Ccgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Ccgesd2d( Int context, Int m, Int n, complex* A, Int lda, Int rdest, Int cdest );
++extern void Ccgerv2d( Int context, Int m, Int n, complex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  clacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 cgescanD0
+ #define dispmat cgedispmat
+@@ -224,11 +225,11 @@ extern void paramcheck();
+ #define scan_intervals cgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpcgemr2do();
+-extern void Cpcgemr2d();
++extern void setmemory( complex** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpcgemr2do( Int m, Int n, complex *ptrmyblock, Int ia, Int ja, MDESC *ma, complex *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpcgemr2d( Int m, Int n, complex *ptrmyblock, Int ia, Int ja, MDESC *ma, complex *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpcgemr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -259,11 +260,11 @@ fortran_mr2dnew(Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *ptra, MDESC *ma, complex *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *buff, complex *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpcgemr2do(m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pcgemr2.c b/REDIST/SRC/pcgemr2.c
+index c6b20c8..a1a1e66 100644
+--- a/REDIST/SRC/pcgemr2.c
++++ b/REDIST/SRC/pcgemr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pcgemr2.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+  * 
+  * some functions used by the pcgemr2d routine see file pcgemr.c for more
+@@ -20,11 +21,11 @@
+ #define ccopy_ ccopy
+ #define clacpy_ clacpy
+ #endif
+-#define Clacpy Ccgelacpy
+-void  Clacpy();
+ typedef struct {
+   float r, i;
+ }     complex;
++#define Clacpy Ccgelacpy
++void  Clacpy( Int m, Int n, complex *a, Int lda, complex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -52,35 +53,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Ccgesd2d();
+-extern void Ccgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Ccgesd2d( Int context, Int m, Int n, complex* A, Int lda, Int rdest, Int cdest );
++extern void Ccgerv2d( Int context, Int m, Int n, complex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  clacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 cgescanD0
+ #define dispmat cgedispmat
+@@ -89,9 +90,9 @@ extern void paramcheck();
+ #define scan_intervals cgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( complex** ptr, Int size );
++extern void freememory( complex* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpcgemr2do();
+ extern void Cpcgemr2d();
+ /* some defines for Cpcgemr2do */
+diff --git a/REDIST/SRC/pctrmr.c b/REDIST/SRC/pctrmr.c
+index 5a91ad1..67ad8ab 100644
+--- a/REDIST/SRC/pctrmr.c
++++ b/REDIST/SRC/pctrmr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pctrmr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -170,11 +171,11 @@
+ #define ccopy_ ccopy
+ #define clacpy_ clacpy
+ #endif
+-#define Clacpy Cctrlacpy
+-void  Clacpy();
+ typedef struct {
+   float r, i;
+ }     complex;
++#define Clacpy Cctrlacpy
++void  Clacpy( Int m, Int n, complex *a, Int lda, complex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -202,48 +203,48 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Ccgesd2d();
+-extern void Ccgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Ccgesd2d( Int context, Int m, Int n, complex* A, Int lda, Int rdest, Int cdest );
++extern void Ccgerv2d( Int context, Int m, Int n, complex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  clacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 ctrscanD0
+ #define dispmat ctrdispmat
+ #define setmemory ctrsetmemory
+ #define freememory ctrfreememory
+ #define scan_intervals ctrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, complex* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, complex* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpctrmr2do();
+-extern void Cpctrmr2d();
++extern void setmemory( complex** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpctrmr2do( char* uplo, char* diag, Int m, Int n, complex *ptrmyblock, Int ia, Int ja, MDESC *ma, complex *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpctrmr2d( char* uplo, char* diag, Int m, Int n, complex *ptrmyblock, Int ia, Int ja, MDESC *ma, complex *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpctrmr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -274,11 +275,11 @@ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, complex *A, Int *ia, Int
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
+ static2 Int inter_len();
+ static2 Int block2buff();
+ static2 void buff2block();
+-static2 void gridreshape();
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpctrmr2do(uplo, diag, m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pctrmr2.c b/REDIST/SRC/pctrmr2.c
+index 30f196a..bdef7be 100644
+--- a/REDIST/SRC/pctrmr2.c
++++ b/REDIST/SRC/pctrmr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pctrmr2.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+  * 
+  * some functions used by the pctrmr2d routine see file pctrmr.c for more
+@@ -20,11 +21,11 @@
+ #define ccopy_ ccopy
+ #define clacpy_ clacpy
+ #endif
+-#define Clacpy Cctrlacpy
+-void  Clacpy();
+ typedef struct {
+   float r, i;
+ }     complex;
++#define Clacpy Cctrlacpy
++void  Clacpy( Int m, Int n, complex *a, Int lda, complex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -52,46 +53,46 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Ccgesd2d();
+-extern void Ccgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Ccgesd2d( Int context, Int m, Int n, complex* A, Int lda, Int rdest, Int cdest );
++extern void Ccgerv2d( Int context, Int m, Int n, complex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  clacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 ctrscanD0
+ #define dispmat ctrdispmat
+ #define setmemory ctrsetmemory
+ #define freememory ctrfreememory
+ #define scan_intervals ctrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, complex* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, complex* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( complex** ptr, Int size );
++extern void freememory( complex* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpctrmr2do();
+ extern void Cpctrmr2d();
+ /* some defines for Cpctrmr2do */
+diff --git a/REDIST/SRC/pdgemr.c b/REDIST/SRC/pdgemr.c
+index 516d05b..448d4f1 100644
+--- a/REDIST/SRC/pdgemr.c
++++ b/REDIST/SRC/pdgemr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pdgemr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -156,7 +157,7 @@
+ #define dlacpy_ dlacpy
+ #endif
+ #define Clacpy Cdgelacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, double *a, Int lda, double *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -184,35 +185,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cdgesd2d();
+-extern void Cdgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cdgesd2d( Int context, Int m, Int n, double* A, Int lda, Int rdest, Int cdest );
++extern void Cdgerv2d( Int context, Int m, Int n, double* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  dlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 dgescanD0
+ #define dispmat dgedispmat
+@@ -221,11 +222,11 @@ extern void paramcheck();
+ #define scan_intervals dgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpdgemr2do();
+-extern void Cpdgemr2d();
++extern void setmemory( double** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpdgemr2do( Int m, Int n, double *ptrmyblock, Int ia, Int ja, MDESC *ma, double *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpdgemr2d( Int m, Int n, double *ptrmyblock, Int ia, Int ja, MDESC *ma, double *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpdgemr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -256,11 +257,11 @@ fortran_mr2dnew(Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN]
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, double *ptra, MDESC *ma, double *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, double *buff, double *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpdgemr2do(m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pdgemr2.c b/REDIST/SRC/pdgemr2.c
+index a030570..d6d7756 100644
+--- a/REDIST/SRC/pdgemr2.c
++++ b/REDIST/SRC/pdgemr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pdgemr2.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+  * 
+  * some functions used by the pdgemr2d routine see file pdgemr.c for more
+@@ -21,7 +22,7 @@
+ #define dlacpy_ dlacpy
+ #endif
+ #define Clacpy Cdgelacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, double *a, Int lda, double *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -49,35 +50,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cdgesd2d();
+-extern void Cdgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cdgesd2d( Int context, Int m, Int n, double* A, Int lda, Int rdest, Int cdest );
++extern void Cdgerv2d( Int context, Int m, Int n, double* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  dlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 dgescanD0
+ #define dispmat dgedispmat
+@@ -86,9 +87,9 @@ extern void paramcheck();
+ #define scan_intervals dgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( double** ptr, Int size );
++extern void freememory( double* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpdgemr2do();
+ extern void Cpdgemr2d();
+ /* some defines for Cpdgemr2do */
+diff --git a/REDIST/SRC/pdtrmr.c b/REDIST/SRC/pdtrmr.c
+index 92298ef..9d12b64 100644
+--- a/REDIST/SRC/pdtrmr.c
++++ b/REDIST/SRC/pdtrmr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pdtrmr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -171,7 +172,7 @@
+ #define dlacpy_ dlacpy
+ #endif
+ #define Clacpy Cdtrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, double *a, Int lda, double *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -199,48 +200,48 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cdgesd2d();
+-extern void Cdgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cdgesd2d( Int context, Int m, Int n, double* A, Int lda, Int rdest, Int cdest );
++extern void Cdgerv2d( Int context, Int m, Int n, double* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  dlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 dtrscanD0
+ #define dispmat dtrdispmat
+ #define setmemory dtrsetmemory
+ #define freememory dtrfreememory
+ #define scan_intervals dtrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, double* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, double* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpdtrmr2do();
+-extern void Cpdtrmr2d();
++extern void setmemory( double** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpdtrmr2do( char* uplo, char* diag, Int m, Int n, double *ptrmyblock, Int ia, Int ja, MDESC *ma, double *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpdtrmr2d( char* uplo, char* diag, Int m, Int n, double *ptrmyblock, Int ia, Int ja, MDESC *ma, double *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpdtrmr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -271,11 +272,11 @@ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, double *A, Int *ia, Int
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
+ static2 Int inter_len();
+ static2 Int block2buff();
+ static2 void buff2block();
+-static2 void gridreshape();
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpdtrmr2do(uplo, diag, m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pdtrmr2.c b/REDIST/SRC/pdtrmr2.c
+index e252fce..07e2075 100644
+--- a/REDIST/SRC/pdtrmr2.c
++++ b/REDIST/SRC/pdtrmr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pdtrmr2.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+  * 
+  * some functions used by the pdtrmr2d routine see file pdtrmr.c for more
+@@ -21,7 +22,7 @@
+ #define dlacpy_ dlacpy
+ #endif
+ #define Clacpy Cdtrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, double *a, Int lda, double *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -49,46 +50,46 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cdgesd2d();
+-extern void Cdgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cdgesd2d( Int context, Int m, Int n, double* A, Int lda, Int rdest, Int cdest );
++extern void Cdgerv2d( Int context, Int m, Int n, double* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  dlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 dtrscanD0
+ #define dispmat dtrdispmat
+ #define setmemory dtrsetmemory
+ #define freememory dtrfreememory
+ #define scan_intervals dtrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, double* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, double* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( double** ptr, Int size );
++extern void freememory( double* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpdtrmr2do();
+ extern void Cpdtrmr2d();
+ /* some defines for Cpdtrmr2do */
+diff --git a/REDIST/SRC/pgemraux.c b/REDIST/SRC/pgemraux.c
+index 5f1bbb4..7f2967c 100644
+--- a/REDIST/SRC/pgemraux.c
++++ b/REDIST/SRC/pgemraux.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pgemraux.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+  * 
+  * some functions used by the pigemr2d routine see file pigemr.c for more
+@@ -49,35 +50,33 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
+ /* lapack */
+ void  ilacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 igescanD0
+ #define dispmat igedispmat
+diff --git a/REDIST/SRC/pigemr.c b/REDIST/SRC/pigemr.c
+index aa25300..174138f 100644
+--- a/REDIST/SRC/pigemr.c
++++ b/REDIST/SRC/pigemr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pigemr.c,v 1.1.1.1 2000/02/15 18:04:08 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -156,7 +157,7 @@
+ #define ilacpy_ ilacpy
+ #endif
+ #define Clacpy Cigelacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, Int *a, Int lda, Int *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -184,35 +185,33 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
+ /* lapack */
+ void  ilacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 igescanD0
+ #define dispmat igedispmat
+@@ -221,11 +220,11 @@ extern void paramcheck();
+ #define scan_intervals igescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpigemr2do();
+-extern void Cpigemr2d();
++extern void setmemory( Int** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char rc, Int i0, Int i1, Int len, MDESC *m0, MDESC *m1, Int p0, Int p1, Int myp, Int otherp, IDESC *inter );
++extern void Cpigemr2do( Int m, Int n, Int *ptrmyblock, Int ia, Int ja, MDESC *ma, Int *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpigemr2d( Int m, Int n, Int *ptrmyblock, Int ia, Int ja, MDESC *ma, Int *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpigemr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -256,11 +255,11 @@ fortran_mr2dnew(Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *ptra, MDESC *ma, Int *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *buff, Int *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpigemr2do(m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pigemr2.c b/REDIST/SRC/pigemr2.c
+index 4d3f9f9..6fbdd88 100644
+--- a/REDIST/SRC/pigemr2.c
++++ b/REDIST/SRC/pigemr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pigemr2.c,v 1.1.1.1 2000/02/15 18:04:08 susan Exp $
+  * 
+  * some functions used by the pigemr2d routine see file pigemr.c for more
+@@ -71,13 +72,13 @@ extern void Cigerv2d();
+ /* lapack */
+ void  ilacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 igescanD0
+ #define dispmat igedispmat
+@@ -86,9 +87,9 @@ extern void paramcheck();
+ #define scan_intervals igescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( Int** ptr, Int size );
++extern void freememory( Int* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpigemr2do();
+ extern void Cpigemr2d();
+ /* some defines for Cpigemr2do */
+diff --git a/REDIST/SRC/pitrmr.c b/REDIST/SRC/pitrmr.c
+index 17c2dd7..87e5dc2 100644
+--- a/REDIST/SRC/pitrmr.c
++++ b/REDIST/SRC/pitrmr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pitrmr.c,v 1.1.1.1 2000/02/15 18:04:08 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -171,7 +172,7 @@
+ #define ilacpy_ ilacpy
+ #endif
+ #define Clacpy Citrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, Int *a, Int lda, Int *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -199,48 +200,46 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
+ /* lapack */
+ void  ilacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 itrscanD0
+ #define dispmat itrdispmat
+ #define setmemory itrsetmemory
+ #define freememory itrfreememory
+ #define scan_intervals itrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, Int* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, Int* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpitrmr2do();
+-extern void Cpitrmr2d();
++extern void setmemory( Int** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char rc, Int i0, Int i1, Int len, MDESC *m0, MDESC *m1, Int p0, Int p1, Int myp, Int otherp, IDESC *inter );
++extern void Cpitrmr2do( char* uplo, char* diag, Int m, Int n, Int *ptrmyblock, Int ia, Int ja, MDESC *ma, Int *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpitrmr2d( char* uplo, char* diag, Int m, Int n, Int *ptrmyblock, Int ia, Int ja, MDESC *ma, Int *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpitrmr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -271,11 +270,11 @@ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, Int *A, Int *ia, Int *ja
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *ptra, MDESC *ma, Int *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *buff, Int *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpitrmr2do(uplo, diag, m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pitrmr2.c b/REDIST/SRC/pitrmr2.c
+index f3fa95a..ff30abf 100644
+--- a/REDIST/SRC/pitrmr2.c
++++ b/REDIST/SRC/pitrmr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pitrmr2.c,v 1.1.1.1 2000/02/15 18:04:08 susan Exp $
+  * 
+  * some functions used by the pitrmr2d routine see file pitrmr.c for more
+@@ -21,7 +22,7 @@
+ #define ilacpy_ ilacpy
+ #endif
+ #define Clacpy Citrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, Int *a, Int lda, Int *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -49,46 +50,44 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
+ /* lapack */
+ void  ilacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 itrscanD0
+ #define dispmat itrdispmat
+ #define setmemory itrsetmemory
+ #define freememory itrfreememory
+ #define scan_intervals itrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, Int* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, Int* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( Int** ptr, Int size );
++extern void freememory( Int* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpitrmr2do();
+ extern void Cpitrmr2d();
+ /* some defines for Cpitrmr2do */
+diff --git a/REDIST/SRC/psgemr.c b/REDIST/SRC/psgemr.c
+index 3199bcd..84bdd67 100644
+--- a/REDIST/SRC/psgemr.c
++++ b/REDIST/SRC/psgemr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: psgemr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -156,7 +157,7 @@
+ #define slacpy_ slacpy
+ #endif
+ #define Clacpy Csgelacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, float *a, Int lda, float *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -184,35 +185,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Csgesd2d();
+-extern void Csgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Csgesd2d( Int context, Int m, Int n, float* A, Int lda, Int rdest, Int cdest );
++extern void Csgerv2d( Int context, Int m, Int n, float* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  slacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 sgescanD0
+ #define dispmat sgedispmat
+@@ -221,11 +222,11 @@ extern void paramcheck();
+ #define scan_intervals sgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpsgemr2do();
+-extern void Cpsgemr2d();
++extern void setmemory( float** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpsgemr2do( Int m, Int n, float *ptrmyblock, Int ia, Int ja, MDESC *ma, float *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpsgemr2d( Int m, Int n, float *ptrmyblock, Int ia, Int ja, MDESC *ma, float *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpsgemr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -256,11 +257,11 @@ fortran_mr2dnew(Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *ptra, MDESC *ma, float *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *buff, float *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpsgemr2do(m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/psgemr2.c b/REDIST/SRC/psgemr2.c
+index 55442db..8d68c9e 100644
+--- a/REDIST/SRC/psgemr2.c
++++ b/REDIST/SRC/psgemr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: psgemr2.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+  * 
+  * some functions used by the psgemr2d routine see file psgemr.c for more
+@@ -21,7 +22,7 @@
+ #define slacpy_ slacpy
+ #endif
+ #define Clacpy Csgelacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, float *a, Int lda, float *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -49,35 +50,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Csgesd2d();
+-extern void Csgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Csgesd2d( Int context, Int m, Int n, float* A, Int lda, Int rdest, Int cdest );
++extern void Csgerv2d( Int context, Int m, Int n, float* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  slacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 sgescanD0
+ #define dispmat sgedispmat
+@@ -86,9 +87,9 @@ extern void paramcheck();
+ #define scan_intervals sgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( float** ptr, Int size );
++extern void freememory( float* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpsgemr2do();
+ extern void Cpsgemr2d();
+ /* some defines for Cpsgemr2do */
+diff --git a/REDIST/SRC/pstrmr.c b/REDIST/SRC/pstrmr.c
+index ec39e25..04c9515 100644
+--- a/REDIST/SRC/pstrmr.c
++++ b/REDIST/SRC/pstrmr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pstrmr.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -171,7 +172,7 @@
+ #define slacpy_ slacpy
+ #endif
+ #define Clacpy Cstrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, float *a, Int lda, float *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -199,48 +200,48 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Csgesd2d();
+-extern void Csgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Csgesd2d( Int context, Int m, Int n, float* A, Int lda, Int rdest, Int cdest );
++extern void Csgerv2d( Int context, Int m, Int n, float* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  slacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 strscanD0
+ #define dispmat strdispmat
+ #define setmemory strsetmemory
+ #define freememory strfreememory
+ #define scan_intervals strscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, float* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, float* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpstrmr2do();
+-extern void Cpstrmr2d();
++extern void setmemory( float** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpstrmr2do( char* uplo, char* diag, Int m, Int n, float *ptrmyblock, Int ia, Int ja, MDESC *ma, float *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpstrmr2d( char* uplo, char* diag, Int m, Int n, float *ptrmyblock, Int ia, Int ja, MDESC *ma, float *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpstrmr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -271,11 +272,11 @@ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, float *A, Int *ia, Int *
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
+ static2 Int inter_len();
+ static2 Int block2buff();
+ static2 void buff2block();
+-static2 void gridreshape();
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpstrmr2do(uplo, diag, m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pstrmr2.c b/REDIST/SRC/pstrmr2.c
+index fa5b026..e88f69c 100644
+--- a/REDIST/SRC/pstrmr2.c
++++ b/REDIST/SRC/pstrmr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pstrmr2.c,v 1.1.1.1 2000/02/15 18:04:09 susan Exp $
+  * 
+  * some functions used by the pstrmr2d routine see file pstrmr.c for more
+@@ -21,7 +22,7 @@
+ #define slacpy_ slacpy
+ #endif
+ #define Clacpy Cstrlacpy
+-void  Clacpy();
++void  Clacpy( Int m, Int n, float *a, Int lda, float *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -49,46 +50,46 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Csgesd2d();
+-extern void Csgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Csgesd2d( Int context, Int m, Int n, float* A, Int lda, Int rdest, Int cdest );
++extern void Csgerv2d( Int context, Int m, Int n, float* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  slacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 strscanD0
+ #define dispmat strdispmat
+ #define setmemory strsetmemory
+ #define freememory strfreememory
+ #define scan_intervals strscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, float* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, float* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( float** ptr, Int size );
++extern void freememory( float* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpstrmr2do();
+ extern void Cpstrmr2d();
+ /* some defines for Cpstrmr2do */
+diff --git a/REDIST/SRC/pzgemr.c b/REDIST/SRC/pzgemr.c
+index 4640b0e..66728ff 100644
+--- a/REDIST/SRC/pzgemr.c
++++ b/REDIST/SRC/pzgemr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pzgemr.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -155,11 +156,11 @@
+ #define zcopy_ zcopy
+ #define zlacpy_ zlacpy
+ #endif
+-#define Clacpy Czgelacpy
+-void  Clacpy();
+ typedef struct {
+   double r, i;
+ }     dcomplex;
++#define Clacpy Czgelacpy
++void  Clacpy( Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -187,35 +188,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Czgesd2d();
+-extern void Czgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Czgesd2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rdest, Int cdest );
++extern void Czgerv2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  zlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 zgescanD0
+ #define dispmat zgedispmat
+@@ -224,11 +225,11 @@ extern void paramcheck();
+ #define scan_intervals zgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpzgemr2do();
+-extern void Cpzgemr2d();
++extern void setmemory( dcomplex** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpzgemr2do( Int m, Int n, dcomplex *ptrmyblock, Int ia, Int ja, MDESC *ma, dcomplex *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpzgemr2d( Int m, Int n, dcomplex *ptrmyblock, Int ia, Int ja, MDESC *ma, dcomplex *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpzgemr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -259,11 +260,11 @@ fortran_mr2dnew(Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLE
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *ptra, MDESC *ma, dcomplex *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *buff, dcomplex *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpzgemr2do(m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pzgemr2.c b/REDIST/SRC/pzgemr2.c
+index 862fdff..0b8add9 100644
+--- a/REDIST/SRC/pzgemr2.c
++++ b/REDIST/SRC/pzgemr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pzgemr2.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+  * 
+  * some functions used by the pzgemr2d routine see file pzgemr.c for more
+@@ -20,11 +21,11 @@
+ #define zcopy_ zcopy
+ #define zlacpy_ zlacpy
+ #endif
+-#define Clacpy Czgelacpy
+-void  Clacpy();
+ typedef struct {
+   double r, i;
+ }     dcomplex;
++#define Clacpy Czgelacpy
++void  Clacpy( Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -52,35 +53,35 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Czgesd2d();
+-extern void Czgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Czgesd2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rdest, Int cdest );
++extern void Czgerv2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  zlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 zgescanD0
+ #define dispmat zgedispmat
+@@ -89,9 +90,9 @@ extern void paramcheck();
+ #define scan_intervals zgescan_intervals
+ extern void scanD0();
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( dcomplex** ptr, Int size );
++extern void freememory( dcomplex* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpzgemr2do();
+ extern void Cpzgemr2d();
+ /* some defines for Cpzgemr2do */
+diff --git a/REDIST/SRC/pztrmr.c b/REDIST/SRC/pztrmr.c
+index 106ec78..4fc3a2e 100644
+--- a/REDIST/SRC/pztrmr.c
++++ b/REDIST/SRC/pztrmr.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /** $Id: pztrmr.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+   ------------------------------------------------------------------------
+ 
+@@ -170,11 +171,11 @@
+ #define zcopy_ zcopy
+ #define zlacpy_ zlacpy
+ #endif
+-#define Clacpy Cztrlacpy
+-void  Clacpy();
+ typedef struct {
+   double r, i;
+ }     dcomplex;
++#define Clacpy Cztrlacpy
++void  Clacpy( Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -202,48 +203,48 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Czgesd2d();
+-extern void Czgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Czgesd2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rdest, Int cdest );
++extern void Czgerv2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  zlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 ztrscanD0
+ #define dispmat ztrdispmat
+ #define setmemory ztrsetmemory
+ #define freememory ztrfreememory
+ #define scan_intervals ztrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, dcomplex* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, dcomplex* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
+-extern void Cpztrmr2do();
+-extern void Cpztrmr2d();
++extern void setmemory( dcomplex** ptr, Int size );
++extern void freememory( char* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
++extern void Cpztrmr2do( char* uplo, char* diag, Int m, Int n, dcomplex *ptrmyblock, Int ia, Int ja, MDESC *ma, dcomplex *ptrmynewblock, Int ib, Int jb, MDESC *mb );
++extern void Cpztrmr2d( char* uplo, char* diag, Int m, Int n, dcomplex *ptrmyblock, Int ia, Int ja, MDESC *ma, dcomplex *ptrmynewblock, Int ib, Int jb, MDESC *mb, Int globcontext );
+ /* some defines for Cpztrmr2do */
+ #define SENDBUFF 0
+ #define RECVBUFF 1
+@@ -274,11 +275,11 @@ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, dcomplex *A, Int *ia, In
+ 	    B, *ib, *jb, (MDESC *) desc_B, *gcontext);
+   return;
+ }
+-static2 void init_chenille();
+-static2 Int inter_len();
+-static2 Int block2buff();
+-static2 void buff2block();
+-static2 void gridreshape();
++static2 void init_chenille( Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang );
++static2 Int inter_len( Int hinb, IDESC *hi, Int vinb, IDESC *vi );
++static2 Int block2buff( IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *ptra, MDESC *ma, dcomplex *buff );
++static2 void buff2block( IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *buff, dcomplex *ptrb, MDESC *mb );
++static2 void gridreshape( Int *ctxtp );
+ void
+ Cpztrmr2do(uplo, diag, m, n,
+ 	   ptrmyblock, ia, ja, ma,
+diff --git a/REDIST/SRC/pztrmr2.c b/REDIST/SRC/pztrmr2.c
+index 7f85a98..d10d843 100644
+--- a/REDIST/SRC/pztrmr2.c
++++ b/REDIST/SRC/pztrmr2.c
+@@ -1,4 +1,5 @@
+ #include "redist.h"
++#include <stddef.h>
+ /* $Id: pztrmr2.c,v 1.1.1.1 2000/02/15 18:04:10 susan Exp $
+  * 
+  * some functions used by the pztrmr2d routine see file pztrmr.c for more
+@@ -20,11 +21,11 @@
+ #define zcopy_ zcopy
+ #define zlacpy_ zlacpy
+ #endif
+-#define Clacpy Cztrlacpy
+-void  Clacpy();
+ typedef struct {
+   double r, i;
+ }     dcomplex;
++#define Clacpy Cztrlacpy
++void  Clacpy( Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb );
+ typedef struct {
+   Int   desctype;
+   Int   ctxt;
+@@ -52,46 +53,46 @@ typedef struct {
+ #define realloc myrealloc
+ #endif
+ /* Cblacs */
+-extern void Cblacs_pcoord();
+-extern Int Cblacs_pnum();
++extern void Cblacs_pcoord( Int context, Int pnum, Int* prow, Int* pcol );
++extern Int Cblacs_pnum( Int context, Int prow, Int pcol );
+ extern void Csetpvmtids();
+-extern void Cblacs_get();
+-extern void Cblacs_pinfo();
+-extern void Cblacs_gridinfo();
+-extern void Cblacs_gridinit();
+-extern void Cblacs_exit();
+-extern void Cblacs_gridexit();
+-extern void Cblacs_setup();
+-extern void Cigebs2d();
+-extern void Cigebr2d();
+-extern void Cigesd2d();
+-extern void Cigerv2d();
+-extern void Cigsum2d();
+-extern void Cigamn2d();
+-extern void Cigamx2d();
+-extern void Czgesd2d();
+-extern void Czgerv2d();
++extern void Cblacs_get( Int context, Int what, Int* val );
++extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
++extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_exit( Int continue_blacs );
++extern void Cblacs_gridexit( Int context );
++extern void Cblacs_setup( Int* mypnum, Int* nprocs );
++extern void Cigebs2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda );
++extern void Cigebr2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigesd2d( Int context, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigerv2d( Int context, Int m, Int n, Int* A, Int lda, Int rsrc, Int csrc );
++extern void Cigsum2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int rdest, Int cdest );
++extern void Cigamn2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Cigamx2d( Int context, char* scope, char* top, Int m, Int n, Int* A, Int lda, Int* RA, Int* CA, Int rcflag, Int rdest, Int cdest );
++extern void Czgesd2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rdest, Int cdest );
++extern void Czgerv2d( Int context, Int m, Int n, dcomplex* A, Int lda, Int rsrc, Int csrc );
+ /* lapack */
+ void  zlacpy_();
+ /* aux fonctions */
+-extern Int localindice();
+-extern void *mr2d_malloc();
+-extern Int ppcm();
+-extern Int localsize();
+-extern Int memoryblocksize();
+-extern Int changeorigin();
+-extern void paramcheck();
++extern Int localindice( Int ig, Int jg, Int templateheight, Int templatewidth, MDESC *a );
++extern void *mr2d_malloc( size_t n );
++extern Int ppcm( Int a, Int b );
++extern Int localsize( Int myprow, Int p, Int nbrow, Int m );
++extern Int memoryblocksize( MDESC *a );
++extern Int changeorigin( Int myp, Int sp, Int p, Int bs, Int i, Int *decal, Int *newsp );
++extern void paramcheck( MDESC *a, Int i, Int j, Int m, Int n, Int p, Int q, Int gcontext );
+ /* tools and others function */
+ #define scanD0 ztrscanD0
+ #define dispmat ztrdispmat
+ #define setmemory ztrsetmemory
+ #define freememory ztrfreememory
+ #define scan_intervals ztrscan_intervals
+-extern void scanD0();
++extern void scanD0( char* uplo, char* diag, Int action, dcomplex* ptrbuff, Int* ptrsizebuff, Int m, Int n, MDESC* ma, Int ia, Int ja, Int p0, Int q0, MDESC* mb, Int ib, Int jb, Int p1, Int q1, IDESC* v_inter, Int vinter_nb, IDESC* h_inter, Int hinter_nb, dcomplex* ptrblock );
+ extern void dispmat();
+-extern void setmemory();
+-extern void freememory();
+-extern Int scan_intervals();
++extern void setmemory( dcomplex** ptr, Int size );
++extern void freememory( dcomplex* ptr );
++extern Int scan_intervals( char type, Int ja, Int jb, Int n, MDESC *ma, MDESC *mb, Int q0, Int q1, Int col0, Int col1, IDESC *result );
+ extern void Cpztrmr2do();
+ extern void Cpztrmr2d();
+ /* some defines for Cpztrmr2do */
+diff --git a/SRC/getpbbuf.c b/SRC/getpbbuf.c
+index e0fb6ba..9d96860 100644
+--- a/SRC/getpbbuf.c
++++ b/SRC/getpbbuf.c
+@@ -18,7 +18,7 @@ char * getpbbuf( char *mess, Int length )
+ /* ..
+ *  .. External Functions ..
+ */
+-   void        blacs_abort_();
++   void        blacs_abort_( Int *ictxt, Int *errornum );
+ /* ..
+ *  .. Executable Statements ..
+ */
+diff --git a/SRC/pbchkvect.c b/SRC/pbchkvect.c
+index 0acacdc..532a019 100644
+--- a/SRC/pbchkvect.c
++++ b/SRC/pbchkvect.c
+@@ -111,7 +111,7 @@ void pbchkvect( Int n, Int npos0, Int ix, Int jx, Int desc_X[], Int incx, Int dp
+ /* ..
+ *  .. External Functions ..
+ */
+-   F_INTG_FCT  numroc_();
++   F_INTG_FCT  numroc_( Int *n, Int *nb, Int *iproc, Int *isrcproc, Int *nprocs );
+ /*
+ *  .. Executable Statements ..
+ */
+diff --git a/SRC/pcrot.c b/SRC/pcrot.c
+index e07c94d..15b67b4 100644
+--- a/SRC/pcrot.c
++++ b/SRC/pcrot.c
+@@ -181,15 +181,15 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+ /* ..
+ *  .. External Functions ..
+ */
+-   void        blacs_gridinfo_();
+-   void        cgerv2d_();
+-   void        cgesd2d_();
+-   void        pbchkvect();
+-   void        PB_Cabort();
+-   char        * getpbbuf();
+-   F_INTG_FCT  pbctrnv_();
+-   F_INTG_FCT  crot_();
+-   F_INTG_FCT  ilcm_();
++   void        blacs_gridinfo_( Int *ictxt, Int *nprow, Int *npcol, Int *myrow, Int *mycol );
++   void        cgerv2d_( Int *ictxt, Int *m, Int *n, complex *A, Int *lda, Int *rsrc, Int *csrc );
++   void        cgesd2d_( Int *ictxt, Int *m, Int *n, complex *A, Int *lda, Int *rdest, Int *cdest );
++   void        pbchkvect( Int n, Int npos0, Int ix, Int jx, Int desc_X[], Int incx, Int dpos0, Int *iix, Int *jjx, Int *ixrow, Int *ixcol, Int nprow, Int npcol, Int myrow, Int mycol, Int *info );
++   void        PB_Cabort( Int ictxt, char *srname, Int info );
++   char        * getpbbuf( char *mess, Int length );
++   F_INTG_FCT  pbctrnv_( Int *ictxt, char *scope, char *trans, Int *n, Int *nb, Int *nz, complex *A, Int *lda, complex *beta, complex *work, Int *ldwork, Int *prow, Int *pcol, Int *qrow, Int *qcol, complex *buf );
++   F_INTG_FCT  crot_( Int *n, complex *cx, Int *incx, complex *cy, Int *incy, float *c, complex *s );
++   F_INTG_FCT  ilcm_( Int *m, Int *n );
+ /* ..
+ *  .. Executable Statements ..
+ *
+diff --git a/SRC/pzrot.c b/SRC/pzrot.c
+index cc73ddd..c5df6b9 100644
+--- a/SRC/pzrot.c
++++ b/SRC/pzrot.c
+@@ -181,15 +181,15 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+ /* ..
+ *  .. External Functions ..
+ */
+-   void        blacs_gridinfo_();
+-   void        zgerv2d_();
+-   void        zgesd2d_();
+-   void        pbchkvect();
+-   void        PB_Cabort();
+-   char        * getpbbuf();
+-   F_INTG_FCT  pbztrnv_();
+-   F_INTG_FCT  zrot_();
+-   F_INTG_FCT  ilcm_();
++   void        blacs_gridinfo_( Int *ictxt, Int *nprow, Int *npcol, Int *myrow, Int *mycol );
++   void        zgerv2d_( Int *ictxt, Int *m, Int *n, complex16 *A, Int *lda, Int *rsrc, Int *csrc );
++   void        zgesd2d_( Int *ictxt, Int *m, Int *n, complex16 *A, Int *lda, Int *rdest, Int *cdest );
++   void        pbchkvect( Int n, Int npos0, Int ix, Int jx, Int desc_X[], Int incx, Int dpos0, Int *iix, Int *jjx, Int *ixrow, Int *ixcol, Int nprow, Int npcol, Int myrow, Int mycol, Int *info );
++   void        PB_Cabort( Int ictxt, char *srname, Int info );
++   char        * getpbbuf( char *mess, Int length );
++   F_INTG_FCT  pbztrnv_( Int *ictxt, char *scope, char *trans, Int *n, Int *nb, Int *nz, complex16 *A, Int *lda, complex16 *beta, complex16 *work, Int *ldwork, Int *prow, Int *pcol, Int *qrow, Int *qcol, complex16 *buf );
++   F_INTG_FCT  zrot_( Int *n, complex16 *cx, Int *incx, complex16 *cy, Int *incy, double *c, complex16 *s );
++   F_INTG_FCT  ilcm_( Int *m, Int *n );
+ /* ..
+ *  .. Executable Statements ..
+ *
+diff --git a/TOOLS/SL_gridreshape.c b/TOOLS/SL_gridreshape.c
+index aa0c929..2dd7958 100644
+--- a/TOOLS/SL_gridreshape.c
++++ b/TOOLS/SL_gridreshape.c
+@@ -7,7 +7,7 @@
+ 
+ Int SL_Cgridreshape(Int ctxt, Int pstart, Int row_major_in, Int row_major_out, Int P, Int Q)
+ {
+-   Int Cblacs_pnum();
++   Int Cblacs_pnum( Int context, Int prow, Int pcol );
+    Int nctxt, P0, Q0, Np, i, *g;
+ 
+    Cblacs_gridinfo(ctxt, &P0, &Q0, &i, &Np);
+diff --git a/TOOLS/reshape.c b/TOOLS/reshape.c
+index 2e7e401..264cef2 100644
+--- a/TOOLS/reshape.c
++++ b/TOOLS/reshape.c
+@@ -11,11 +11,11 @@ column major (2) in the input and output grids */
+ {
+ 
+    /** called subprograms **/
+-   void proc_inc();
+-   void Cblacs_gridinfo();
+-   Int Cblacs_pnum();
+-   void Cblacs_get();
+-   void Cblacs_gridmap();
++   void proc_inc( Int* myrow, Int* mycol, Int nprow, Int npcol, Int major );
++   void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
++   Int Cblacs_pnum( Int context, Int prow, Int pcol );
++   void Cblacs_get( Int context, Int what, Int* val );
++   void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ 
+    /** variables **/
+    Int i, j;

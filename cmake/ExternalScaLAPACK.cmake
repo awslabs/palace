@@ -36,6 +36,11 @@ endif()
 string(REPLACE ";" "; " SCALAPACK_OPTIONS_PRINT "${SCALAPACK_OPTIONS}")
 message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
+# A number of patches to scalapack for our use cases
+set(SCALAPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_function_declaration_type.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(scalapack
   DEPENDS           ${SCALAPACK_DEPENDENCIES}
@@ -46,6 +51,7 @@ ExternalProject_Add(scalapack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/scalapack-cmake
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
   TEST_COMMAND      ""
 )
