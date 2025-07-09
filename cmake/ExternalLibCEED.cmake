@@ -17,7 +17,7 @@ endif()
 # Note on recommended flags for libCEED (from Makefile, Spack):
 #   OPT: -O3 -g -march=native -ffp-contract=fast [-fopenmp-simd/-qopenmp-simd]
 include(CheckCCompilerFlag)
-set(LIBCEED_OPT_FLAGS "${CMAKE_C_FLAGS}")
+set(LIBCEED_OPT_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${BUILD_TYPE_UPPER}}")
 if(CMAKE_C_COMPILER_ID MATCHES "Intel|IntelLLVM")
   set(OMP_SIMD_FLAG -qopenmp-simd)
 else()
