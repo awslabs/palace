@@ -277,6 +277,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
       prom_op.UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
     }
+    const auto &orth_R = prom_op.GetRomOrthogonalityMatrix();
+    MFEM_VERIFY(orth_R.isDiagonal(), "Lumped port modes should have exactly zero overlap");
+    // TODO(phdum): Test this.
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency
