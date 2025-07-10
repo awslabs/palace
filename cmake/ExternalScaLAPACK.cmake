@@ -11,11 +11,6 @@ set(SCALAPACK_DEPENDENCIES)
 # Silence compiler error
 include(CheckCCompilerFlag)
 set(SCALAPACK_CFLAGS "${CMAKE_C_FLAGS}")
-check_c_compiler_flag(-Wno-implicit-function-declaration SUPPORTS_NOIMPLICITFUNC_WARNING)
-if(SUPPORTS_NOIMPLICITFUNC_WARNING)
-  set(SCALAPACK_CFLAGS "${SCALAPACK_CFLAGS} -Wno-implicit-function-declaration")
-endif()
-
 set(SCALAPACK_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SCALAPACK_OPTIONS
   "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
