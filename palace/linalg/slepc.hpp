@@ -174,7 +174,7 @@ public:
   PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(std::complex<double> s, std::complex<double> s_max, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -242,7 +242,7 @@ protected:
 
   void Customize() override;
 
-  void SetShiftInvert(std::complex<double> s, std::complex<double> s_max, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
 
 public:
   //

@@ -100,11 +100,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("Using SLEPc NEP solver\n");
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with split operators (no callbacks)
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing all Eigs
-      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE
-      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE.
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE. Works-ish when updating pc shell, but kinda slow...
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI); //only works with split operators (no callbacks)
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
       //slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::RATIONAL);//test
@@ -259,7 +259,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     Mpi::Print("SetShiftInvert i*target and linearization point\n");
-    eigen->SetShiftInvert(1i * target, 1i * target * 10.0);
+    eigen->SetShiftInvert(1i * target, 1i * l0, 1i * target * 10.0);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
@@ -277,7 +277,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else
   {
     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target, target * target * 10.0); // not sure l0 makes sense for linear EVP
+    eigen->SetShiftInvert(target * target, l0 * l0, target * target * 10.0); // not sure l0 makes sense for linear EVP
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
@@ -300,9 +300,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //if (has_A2)
   //{
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO); // or target??
-  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(target * (1.0 + eps), Operator::DIAG_ZERO);
-  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * target, 1, A2p.get(), A2.get());
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
+  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
+  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get());
   //}
   // Test to see waveport mode at difference frequencies
   /*
@@ -574,9 +574,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   */
 
   Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
+  // K + i sigma C + sigma^2 M + A2(sigma)
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
+  // K + i sigma C + sigma^2 M + A2(l0) + (sigma - l0) A2J(l0)
   auto Atest = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), - 1i * l0, K.get(),
                                     C.get(), M.get(), A2.get(), A2j.get());
@@ -585,8 +587,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                     std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
-  //ksp->SetOperators(*Atest, *P);
-  ksp->SetOperators(*A, *P);
+  ksp->SetOperators(*Atest, *P);
+  //ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
   eigen->SetIoData(iodata);
 
