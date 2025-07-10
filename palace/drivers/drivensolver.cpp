@@ -225,9 +225,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_indices,
               "Adaptive frequency sweep must sample at least " << nprom_indices
                                                                << " frequency points!");
-  // Maximum size — no more than nr steps needed.
-  max_size_per_excitation =
-      std::min(max_size_per_excitation, static_cast<int>(omega_sample.size()));
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
