@@ -7,7 +7,6 @@
 #include <complex>
 #include <memory>
 #include <string>
-#include <tuple>
 #include <vector>
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
@@ -59,10 +58,16 @@ private:
   // Used for constructing & reuse of RHS1.
   int excitation_idx_cache = 0;
 
-  // HDM system matrices and excitation RHS.
+  // HDM system matrices and excitation:
+  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
+  // - Excitation / drive: = iω RHS1 + RHS2(ω).
+  // - Vector r is internal vector workspace of size RHS
+  // - The non-quadratic operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - Need to recompute RHS1 when excitation index changes.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  // Defaults: will be toggled by SetExcitationIndex & SolveHDM.
+
+  // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
@@ -70,19 +75,23 @@ private:
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
-  // PROM matrices and vectors.
-  Eigen::MatrixXcd Kr, Mr, Cr, Ar;
-  Eigen::VectorXcd RHS1r;
-  Eigen::VectorXcd RHSr;
-  Eigen::VectorXd voltage_norm_H;
-  std::vector<std::string> v_node_label;
+  // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
+  // order basis defined below. Frequency dependant matrix Ar and RHSr are assembled and
+  // used only during SolvePROM.
+  Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
+  Eigen::VectorXcd RHS1r;       // Extend but need to recompute on excitation change
+  Eigen::MatrixXcd Ar;          // Pre-allocation only: assembled and used in SolvePROM
+  Eigen::VectorXcd RHSr;        // Pre-allocation only: assembled and used in SolvePROM
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
   std::size_t dim_V = 0;
   Orthogonalization orthog_type;
+  std::vector<std::string> v_node_label;  // Label to distinguish port modes from solution
+                                          // projection and to print PROM matrices
+  Eigen::MatrixXd orth_R;                 // Upper-triangular R; U = VR with U modes
 
-  // MRIs: one for each excitation index.
+  // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
 
 public:
@@ -100,6 +109,9 @@ public:
   {
     return mri.at(excitation_idx).GetSamplePoints();
   }
+
+  // Return overlap matrix form orthogonalization of vectors in ROM.
+  const auto &GetRomOrthogonalityMatrix() const { return orth_R; }
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
