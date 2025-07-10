@@ -255,6 +255,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
       space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
       prom_op.UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
     }
+    // TODO(phdum): Validate orthogonality
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency
