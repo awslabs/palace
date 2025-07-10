@@ -188,8 +188,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   Vector estimates(mesh.GetNE());
   estimates.UseDevice(true);
   estimates = 0.0;
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
+  // TODO: Fix race condition for OpenMP, issue 405.
+  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  // PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
 
@@ -271,8 +272,9 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is ε E = ε ∇V.
   const auto &mesh = nd_fespace.GetMesh();
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
+  // TODO: Fix race condition for OpenMP, issue 405.
+  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  // PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
@@ -390,8 +392,9 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
+  // TODO: Fix race condition for OpenMP, issue 405.
+  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  // PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
