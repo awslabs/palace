@@ -11,11 +11,6 @@ set(SCALAPACK_DEPENDENCIES)
 # Silence compiler error
 include(CheckCCompilerFlag)
 set(SCALAPACK_CFLAGS "${CMAKE_C_FLAGS}")
-check_c_compiler_flag(-Wno-implicit-function-declaration SUPPORTS_NOIMPLICITFUNC_WARNING)
-if(SUPPORTS_NOIMPLICITFUNC_WARNING)
-  set(SCALAPACK_CFLAGS "${SCALAPACK_CFLAGS} -Wno-implicit-function-declaration")
-endif()
-
 set(SCALAPACK_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SCALAPACK_OPTIONS
   "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
@@ -36,6 +31,11 @@ endif()
 string(REPLACE ";" "; " SCALAPACK_OPTIONS_PRINT "${SCALAPACK_OPTIONS}")
 message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
+# A number of patches to scalapack for our use cases
+set(SCALAPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_function_declaration_type.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(scalapack
   DEPENDS           ${SCALAPACK_DEPENDENCIES}
@@ -46,6 +46,7 @@ ExternalProject_Add(scalapack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/scalapack-cmake
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
   TEST_COMMAND      ""
 )

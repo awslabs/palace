@@ -1,0 +1,1255 @@
+diff --git a/BLACS/SRC/dgamn2d_.c b/BLACS/SRC/dgamn2d_.c
+index 06c9163..522e4ce 100644
+--- a/BLACS/SRC/dgamn2d_.c
++++ b/BLACS/SRC/dgamn2d_.c
+@@ -201,7 +201,7 @@ F_VOID_FUNC dgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -254,7 +254,7 @@ F_VOID_FUNC dgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = MPI_DOUBLE;
+@@ -280,7 +280,7 @@ F_VOID_FUNC dgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -291,7 +291,7 @@ F_VOID_FUNC dgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -370,6 +370,6 @@ F_VOID_FUNC dgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amn array
+  */
+-      if (bp != &BI_AuxBuff) BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/dgamx2d_.c b/BLACS/SRC/dgamx2d_.c
+index 8662ef2..cc57c95 100644
+--- a/BLACS/SRC/dgamx2d_.c
++++ b/BLACS/SRC/dgamx2d_.c
+@@ -201,7 +201,7 @@ F_VOID_FUNC dgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -254,7 +254,7 @@ F_VOID_FUNC dgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = MPI_DOUBLE;
+@@ -280,7 +280,7 @@ F_VOID_FUNC dgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -291,7 +291,7 @@ F_VOID_FUNC dgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -370,6 +370,6 @@ F_VOID_FUNC dgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amx array
+  */
+-      if (bp != &BI_AuxBuff) BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/dgsum2d_.c b/BLACS/SRC/dgsum2d_.c
+index 09fc6bd..e161e7f 100644
+--- a/BLACS/SRC/dgsum2d_.c
++++ b/BLACS/SRC/dgsum2d_.c
+@@ -151,7 +151,7 @@ F_VOID_FUNC dgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(length*2);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_dmvcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+    }
+    bp->dtype = bp2->dtype = MPI_DOUBLE;
+    bp->N = bp2->N = N;
+@@ -164,13 +164,13 @@ F_VOID_FUNC dgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          ierr=MPI_Reduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+                        dest, ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+-	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+       }
+       else
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+ 		          ctxt->scp->comm);
+-	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+       }
+       if (BI_ActiveQ) BI_UpdateBuffs(NULL);
+       return;
+@@ -224,7 +224,7 @@ F_VOID_FUNC dgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+    if (bp != &BI_AuxBuff)
+    {
+       if ( (ctxt->scp->Iam == dest) || (dest == -1) )
+-         BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp->Buff);
+       BI_UpdateBuffs(bp);
+    }
+    else
+diff --git a/BLACS/SRC/igamn2d_.c b/BLACS/SRC/igamn2d_.c
+index 3038784..73281a6 100644
+--- a/BLACS/SRC/igamn2d_.c
++++ b/BLACS/SRC/igamn2d_.c
+@@ -198,7 +198,7 @@ F_VOID_FUNC igamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -251,7 +251,7 @@ F_VOID_FUNC igamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_imvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_imvcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = IntTyp;
+@@ -277,7 +277,7 @@ F_VOID_FUNC igamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -288,7 +288,7 @@ F_VOID_FUNC igamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -367,6 +367,6 @@ F_VOID_FUNC igamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amn array
+  */
+-      if (bp != &BI_AuxBuff) BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/igamx2d_.c b/BLACS/SRC/igamx2d_.c
+index 778208b..ed66ddf 100644
+--- a/BLACS/SRC/igamx2d_.c
++++ b/BLACS/SRC/igamx2d_.c
+@@ -198,7 +198,7 @@ F_VOID_FUNC igamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -251,7 +251,7 @@ F_VOID_FUNC igamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_imvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_imvcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = IntTyp;
+@@ -277,7 +277,7 @@ F_VOID_FUNC igamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -288,7 +288,7 @@ F_VOID_FUNC igamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -367,6 +367,6 @@ F_VOID_FUNC igamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amx array
+  */
+-      if (bp != &BI_AuxBuff) BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/igsum2d_.c b/BLACS/SRC/igsum2d_.c
+index e08ec28..db66ad7 100644
+--- a/BLACS/SRC/igsum2d_.c
++++ b/BLACS/SRC/igsum2d_.c
+@@ -151,7 +151,7 @@ F_VOID_FUNC igsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(length*2);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_imvcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+    }
+ 
+    MPI_Type_match_size(MPI_TYPECLASS_INTEGER, sizeof(Int), &Dtype);
+@@ -166,13 +166,13 @@ F_VOID_FUNC igsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          ierr=MPI_Reduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+                        dest, ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+-	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+       }
+       else
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+ 		          ctxt->scp->comm);
+-	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp2->Buff);
+       }
+       if (BI_ActiveQ) BI_UpdateBuffs(NULL);
+       return;
+@@ -226,7 +226,7 @@ F_VOID_FUNC igsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+    if (bp != &BI_AuxBuff)
+    {
+       if ( (ctxt->scp->Iam == dest) || (dest == -1) )
+-         BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_ivmcopy(Mpval(m), Mpval(n), A, tlda, (Int*)bp->Buff);
+       BI_UpdateBuffs(bp);
+    }
+    else
+diff --git a/BLACS/SRC/sgamn2d_.c b/BLACS/SRC/sgamn2d_.c
+index de33185..0613e3e 100644
+--- a/BLACS/SRC/sgamn2d_.c
++++ b/BLACS/SRC/sgamn2d_.c
+@@ -201,7 +201,7 @@ F_VOID_FUNC sgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -254,7 +254,7 @@ F_VOID_FUNC sgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_smvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_smvcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = MPI_FLOAT;
+@@ -280,7 +280,7 @@ F_VOID_FUNC sgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -291,7 +291,7 @@ F_VOID_FUNC sgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -370,6 +370,6 @@ F_VOID_FUNC sgamn2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amn array
+  */
+-      if (bp != &BI_AuxBuff) BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/sgamx2d_.c b/BLACS/SRC/sgamx2d_.c
+index e30b155..0e363df 100644
+--- a/BLACS/SRC/sgamx2d_.c
++++ b/BLACS/SRC/sgamx2d_.c
+@@ -201,7 +201,7 @@ F_VOID_FUNC sgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(i);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+ /*
+  *    Fill in distance vector
+  */
+@@ -254,7 +254,7 @@ F_VOID_FUNC sgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          bp = BI_GetBuff(length*2);
+          bp2 = &BI_AuxBuff;
+          bp2->Buff = &bp->Buff[length];
+-         BI_smvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_smvcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+       }
+       bp->N = bp2->N = N;
+       bp->dtype = bp2->dtype = MPI_FLOAT;
+@@ -280,7 +280,7 @@ F_VOID_FUNC sgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ 	 	       ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	 {
+-	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+ 	    if (Mpval(ldia) != -1)
+                BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                             (BI_DistType *) &bp2->Buff[idist],
+@@ -291,7 +291,7 @@ F_VOID_FUNC sgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+-	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+          if (Mpval(ldia) != -1)
+             BI_TransDist(ctxt, tscope, Mpval(m), Mpval(n), rA, cA, tldia,
+                          (BI_DistType *) &bp2->Buff[idist],
+@@ -370,6 +370,6 @@ F_VOID_FUNC sgamx2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+ /*
+  *    Unpack the amx array
+  */
+-      if (bp != &BI_AuxBuff) BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      if (bp != &BI_AuxBuff) BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+    }
+ }
+diff --git a/BLACS/SRC/sgsum2d_.c b/BLACS/SRC/sgsum2d_.c
+index f317000..bb43ea2 100644
+--- a/BLACS/SRC/sgsum2d_.c
++++ b/BLACS/SRC/sgsum2d_.c
+@@ -151,7 +151,7 @@ F_VOID_FUNC sgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+       bp = BI_GetBuff(length*2);
+       bp2 = &BI_AuxBuff;
+       bp2->Buff = &bp->Buff[length];
+-      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++      BI_smvcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+    }
+    bp->dtype = bp2->dtype = MPI_FLOAT;
+    bp->N = bp2->N = N;
+@@ -164,13 +164,13 @@ F_VOID_FUNC sgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+          ierr=MPI_Reduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+                        dest, ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+-	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	    BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+       }
+       else
+       {
+          ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
+ 		          ctxt->scp->comm);
+-	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp2->Buff);
++	 BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp2->Buff);
+       }
+       if (BI_ActiveQ) BI_UpdateBuffs(NULL);
+       return;
+@@ -224,7 +224,7 @@ F_VOID_FUNC sgsum2d_(Int *ConTxt, F_CHAR scope, F_CHAR top, Int *m, Int *n,
+    if (bp != &BI_AuxBuff)
+    {
+       if ( (ctxt->scp->Iam == dest) || (dest == -1) )
+-         BI_svmcopy(Mpval(m), Mpval(n), A, tlda, bp->Buff);
++         BI_svmcopy(Mpval(m), Mpval(n), A, tlda, (float*)bp->Buff);
+       BI_UpdateBuffs(bp);
+    }
+    else
+diff --git a/REDIST/SRC/pcgemr.c b/REDIST/SRC/pcgemr.c
+index 205fac5..f59b643 100644
+--- a/REDIST/SRC/pcgemr.c
++++ b/REDIST/SRC/pcgemr.c
+@@ -195,6 +195,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -244,7 +245,7 @@ extern void Cpcgemr2d( Int m, Int n, complex *ptrmyblock, Int ia, Int ja, MDESC
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     complex *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -252,7 +253,7 @@ fortran_mr2d(Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		complex *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -565,7 +566,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -636,7 +637,7 @@ Int _m,_n,_lda,_ldb; \
+       _a += _lda; \
+     } \
+ } (void)0
+-static2 Int 
++static2 Int
+ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *ptra, MDESC *ma, complex *buff)
+ {
+   Int   h, v, sizebuff;
+@@ -654,7 +655,7 @@ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *ptra, MDESC *ma, c
+   }
+   return sizebuff;
+ }
+-static2 void 
++static2 void
+ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *buff, complex *ptrb, MDESC *mb)
+ {
+   Int   h, v, sizebuff;
+@@ -671,7 +672,7 @@ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, complex *buff, complex *ptr
+     }
+   }
+ }
+-static2 Int 
++static2 Int
+ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+ {
+   Int   hlen, vlen, h, v;
+@@ -683,7 +684,7 @@ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+     vlen += vi[v].len;
+   return hlen * vlen;
+ }
+-void 
++void
+ Clacpy(Int m, Int n, complex *a, Int lda, complex *b, Int ldb)
+ {
+   Int   i, j;
+@@ -697,7 +698,7 @@ Clacpy(Int m, Int n, complex *a, Int lda, complex *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pctrmr.c b/REDIST/SRC/pctrmr.c
+index 67ad8ab..82074c3 100644
+--- a/REDIST/SRC/pctrmr.c
++++ b/REDIST/SRC/pctrmr.c
+@@ -210,6 +210,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -259,7 +260,7 @@ extern void Cpctrmr2d( char* uplo, char* diag, Int m, Int n, complex *ptrmyblock
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     complex *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -267,7 +268,7 @@ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, complex *A, Int *ia, Int *j
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, complex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		complex *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -587,7 +588,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -641,7 +642,7 @@ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, In
+       assert(nr <= n1);
+     }
+ }
+-void 
++void
+ Clacpy(Int m, Int n, complex *a, Int lda, complex *b, Int ldb)
+ {
+   Int   i, j;
+@@ -655,7 +656,7 @@ Clacpy(Int m, Int n, complex *a, Int lda, complex *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pdgemr.c b/REDIST/SRC/pdgemr.c
+index 448d4f1..2a05413 100644
+--- a/REDIST/SRC/pdgemr.c
++++ b/REDIST/SRC/pdgemr.c
+@@ -192,6 +192,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -241,7 +242,7 @@ extern void Cpdgemr2d( Int m, Int n, double *ptrmyblock, Int ia, Int ja, MDESC *
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     double *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -249,7 +250,7 @@ fortran_mr2d(Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		double *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -562,7 +563,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(mypnum, nprocs, n0, proc0, n1, proc1, psend, precv, myrang)
+   Int   nprocs, mypnum, n0, n1;
+   Int  *proc0, *proc1, **psend, **precv, *myrang;
+@@ -635,7 +636,7 @@ Int _m,_n,_lda,_ldb; \
+       _a += _lda; \
+     } \
+ } (void)0
+-static2 Int 
++static2 Int
+ block2buff(vi, vinb, hi, hinb, ptra, ma, buff)
+   Int   hinb, vinb;
+   IDESC *hi, *vi;
+@@ -657,7 +658,7 @@ block2buff(vi, vinb, hi, hinb, ptra, ma, buff)
+   }
+   return sizebuff;
+ }
+-static2 void 
++static2 void
+ buff2block(vi, vinb, hi, hinb, buff, ptrb, mb)
+   Int   hinb, vinb;
+   IDESC *hi, *vi;
+@@ -678,7 +679,7 @@ buff2block(vi, vinb, hi, hinb, buff, ptrb, mb)
+     }
+   }
+ }
+-static2 Int 
++static2 Int
+ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+ {
+   Int   hlen, vlen, h, v;
+@@ -690,7 +691,7 @@ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+     vlen += vi[v].len;
+   return hlen * vlen;
+ }
+-void 
++void
+ Clacpy(Int m, Int n, double *a, Int lda, double *b, Int ldb)
+ {
+   Int   i, j;
+@@ -704,7 +705,7 @@ Clacpy(Int m, Int n, double *a, Int lda, double *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pdtrmr.c b/REDIST/SRC/pdtrmr.c
+index 9d12b64..c70cdd1 100644
+--- a/REDIST/SRC/pdtrmr.c
++++ b/REDIST/SRC/pdtrmr.c
+@@ -207,6 +207,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -256,7 +257,7 @@ extern void Cpdtrmr2d( char* uplo, char* diag, Int m, Int n, double *ptrmyblock,
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     double *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -264,7 +265,7 @@ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, double *A, Int *ia, Int *ja
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, double *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		double *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -584,7 +585,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -638,7 +639,7 @@ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, In
+       assert(nr <= n1);
+     }
+ }
+-void 
++void
+ Clacpy(Int m, Int n, double *a, Int lda, double *b, Int ldb)
+ {
+   Int   i, j;
+@@ -652,7 +653,7 @@ Clacpy(Int m, Int n, double *a, Int lda, double *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pigemr.c b/REDIST/SRC/pigemr.c
+index 174138f..6681b8a 100644
+--- a/REDIST/SRC/pigemr.c
++++ b/REDIST/SRC/pigemr.c
+@@ -192,6 +192,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -239,7 +240,7 @@ extern void Cpigemr2d( Int m, Int n, Int *ptrmyblock, Int ia, Int ja, MDESC *ma,
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     Int *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -247,7 +248,7 @@ fortran_mr2d(Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		Int *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -560,7 +561,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -631,7 +632,7 @@ Int _m,_n,_lda,_ldb; \
+       _a += _lda; \
+     } \
+ } (void)0
+-static2 Int 
++static2 Int
+ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *ptra, MDESC *ma, Int *buff)
+ {
+   Int   h, v, sizebuff;
+@@ -649,7 +650,7 @@ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *ptra, MDESC *ma, Int *
+   }
+   return sizebuff;
+ }
+-static2 void 
++static2 void
+ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *buff, Int *ptrb, MDESC *mb)
+ {
+   Int   h, v, sizebuff;
+@@ -666,7 +667,7 @@ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, Int *buff, Int *ptrb, MDESC
+     }
+   }
+ }
+-static2 Int 
++static2 Int
+ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+ {
+   Int   hlen, vlen, h, v;
+@@ -678,7 +679,7 @@ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+     vlen += vi[v].len;
+   return hlen * vlen;
+ }
+-void 
++void
+ Clacpy(Int m, Int n, Int *a, Int lda, Int *b, Int ldb)
+ {
+   Int   i, j;
+@@ -692,7 +693,7 @@ Clacpy(Int m, Int n, Int *a, Int lda, Int *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pitrmr.c b/REDIST/SRC/pitrmr.c
+index 87e5dc2..4a40f6b 100644
+--- a/REDIST/SRC/pitrmr.c
++++ b/REDIST/SRC/pitrmr.c
+@@ -207,6 +207,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -254,7 +255,7 @@ extern void Cpitrmr2d( char* uplo, char* diag, Int m, Int n, Int *ptrmyblock, In
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     Int *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -262,7 +263,7 @@ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, Int *A, Int *ia, Int *ja, I
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, Int *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		Int *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -582,7 +583,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -636,7 +637,7 @@ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, In
+       assert(nr <= n1);
+     }
+ }
+-void 
++void
+ Clacpy(Int m, Int n, Int *a, Int lda, Int *b, Int ldb)
+ {
+   Int   i, j;
+@@ -650,7 +651,7 @@ Clacpy(Int m, Int n, Int *a, Int lda, Int *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/psgemr.c b/REDIST/SRC/psgemr.c
+index 84bdd67..f70067e 100644
+--- a/REDIST/SRC/psgemr.c
++++ b/REDIST/SRC/psgemr.c
+@@ -192,6 +192,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -241,7 +242,7 @@ extern void Cpsgemr2d( Int m, Int n, float *ptrmyblock, Int ia, Int ja, MDESC *m
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     float *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -249,7 +250,7 @@ fortran_mr2d(Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		float *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -562,7 +563,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -633,7 +634,7 @@ Int _m,_n,_lda,_ldb; \
+       _a += _lda; \
+     } \
+ } (void)0
+-static2 Int 
++static2 Int
+ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *ptra, MDESC *ma, float *buff)
+ {
+   Int   h, v, sizebuff;
+@@ -651,7 +652,7 @@ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *ptra, MDESC *ma, flo
+   }
+   return sizebuff;
+ }
+-static2 void 
++static2 void
+ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *buff, float *ptrb, MDESC *mb)
+ {
+   Int   h, v, sizebuff;
+@@ -668,7 +669,7 @@ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, float *buff, float *ptrb, M
+     }
+   }
+ }
+-static2 Int 
++static2 Int
+ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+ {
+   Int   hlen, vlen, h, v;
+@@ -680,7 +681,7 @@ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+     vlen += vi[v].len;
+   return hlen * vlen;
+ }
+-void 
++void
+ Clacpy(Int m, Int n, float *a, Int lda, float *b, Int ldb)
+ {
+   Int   i, j;
+@@ -694,7 +695,7 @@ Clacpy(Int m, Int n, float *a, Int lda, float *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pstrmr.c b/REDIST/SRC/pstrmr.c
+index 04c9515..283c3a1 100644
+--- a/REDIST/SRC/pstrmr.c
++++ b/REDIST/SRC/pstrmr.c
+@@ -207,6 +207,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -256,7 +257,7 @@ extern void Cpstrmr2d( char* uplo, char* diag, Int m, Int n, float *ptrmyblock,
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     float *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -264,7 +265,7 @@ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, float *A, Int *ia, Int *ja,
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, float *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		float *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -578,7 +579,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -632,7 +633,7 @@ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, In
+       assert(nr <= n1);
+     }
+ }
+-void 
++void
+ Clacpy(Int m, Int n, float *a, Int lda, float *b, Int ldb)
+ {
+   Int   i, j;
+@@ -646,7 +647,7 @@ Clacpy(Int m, Int n, float *a, Int lda, float *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pzgemr.c b/REDIST/SRC/pzgemr.c
+index 66728ff..67c88dc 100644
+--- a/REDIST/SRC/pzgemr.c
++++ b/REDIST/SRC/pzgemr.c
+@@ -195,6 +195,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -244,7 +245,7 @@ extern void Cpzgemr2d( Int m, Int n, dcomplex *ptrmyblock, Int ia, Int ja, MDESC
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     dcomplex *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -252,7 +253,7 @@ fortran_mr2d(Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		dcomplex *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -565,7 +566,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -636,7 +637,7 @@ Int _m,_n,_lda,_ldb; \
+       _a += _lda; \
+     } \
+ } (void)0
+-static2 Int 
++static2 Int
+ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *ptra, MDESC *ma, dcomplex *buff)
+ {
+   Int   h, v, sizebuff;
+@@ -654,7 +655,7 @@ block2buff(IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *ptra, MDESC *ma,
+   }
+   return sizebuff;
+ }
+-static2 void 
++static2 void
+ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *buff, dcomplex *ptrb, MDESC *mb)
+ {
+   Int   h, v, sizebuff;
+@@ -671,7 +672,7 @@ buff2block(IDESC *vi, Int vinb, IDESC *hi, Int hinb, dcomplex *buff, dcomplex *p
+     }
+   }
+ }
+-static2 Int 
++static2 Int
+ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+ {
+   Int   hlen, vlen, h, v;
+@@ -683,7 +684,7 @@ inter_len(Int hinb, IDESC *hi, Int vinb, IDESC *vi)
+     vlen += vi[v].len;
+   return hlen * vlen;
+ }
+-void 
++void
+ Clacpy(Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb)
+ {
+   Int   i, j;
+@@ -697,7 +698,7 @@ Clacpy(Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/REDIST/SRC/pztrmr.c b/REDIST/SRC/pztrmr.c
+index 4fc3a2e..be0179f 100644
+--- a/REDIST/SRC/pztrmr.c
++++ b/REDIST/SRC/pztrmr.c
+@@ -210,6 +210,7 @@ extern void Cblacs_get( Int context, Int what, Int* val );
+ extern void Cblacs_pinfo( Int* mypnum, Int* nprocs );
+ extern void Cblacs_gridinfo( Int context, Int* nprow, Int* npcol, Int* myrow, Int* mycol );
+ extern void Cblacs_gridinit( Int* context, char* order, Int nprow, Int npcol );
++extern void Cblacs_gridmap( Int* context, Int* usermap, Int ldumap, Int nprow, Int npcol );
+ extern void Cblacs_exit( Int continue_blacs );
+ extern void Cblacs_gridexit( Int context );
+ extern void Cblacs_setup( Int* mypnum, Int* nprocs );
+@@ -259,7 +260,7 @@ extern void Cpztrmr2d( char* uplo, char* diag, Int m, Int n, dcomplex *ptrmybloc
+ #include <stdlib.h>
+ #include <assert.h>
+ #define DESCLEN 9
+-void 
++void
+ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 	     dcomplex *B, Int *ib, Int *jb, Int desc_B[DESCLEN])
+ {
+@@ -267,7 +268,7 @@ fortran_mr2d(char *uplo, char *diag, Int *m, Int *n, dcomplex *A, Int *ia, Int *
+ 	     B, *ib, *jb, (MDESC *) desc_B);
+   return;
+ }
+-void 
++void
+ fortran_mr2dnew(char *uplo, char *diag, Int *m, Int *n, dcomplex *A, Int *ia, Int *ja, Int desc_A[DESCLEN],
+ 		dcomplex *B, Int *ib, Int *jb, Int desc_B[DESCLEN], Int *gcontext)
+ {
+@@ -588,7 +589,7 @@ after_comm:
+   free(h_inter);
+   free(param);
+ }/* distrib */
+-static2 void 
++static2 void
+ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, Int **psend, Int **precv, Int *myrang)
+ {
+   Int   ns, nr, i, tot;
+@@ -642,7 +643,7 @@ init_chenille(Int mypnum, Int nprocs, Int n0, Int *proc0, Int n1, Int *proc1, In
+       assert(nr <= n1);
+     }
+ }
+-void 
++void
+ Clacpy(Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb)
+ {
+   Int   i, j;
+@@ -656,7 +657,7 @@ Clacpy(Int m, Int n, dcomplex *a, Int lda, dcomplex *b, Int ldb)
+     a += lda;
+   }
+ }
+-static2 void 
++static2 void
+ gridreshape(Int *ctxtp)
+ {
+   Int   ori, final;	/* original context, and new context created, with
+diff --git a/SRC/pcrot.c b/SRC/pcrot.c
+index 15b67b4..35415b7 100644
+--- a/SRC/pcrot.c
++++ b/SRC/pcrot.c
+@@ -159,7 +159,7 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+ *          The global increment for the elements of Y. Only two values
+ *          of INCY are supported in this version, namely 1 and M_Y.
+ *
+-*  C       (input) pointer to FLOAT 
++*  C       (input) pointer to FLOAT
+ *  S       (input) pointer COMPLEX
+ *          C and S define a rotation
+ *             [  C          S  ]
+@@ -190,6 +190,7 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+    F_INTG_FCT  pbctrnv_( Int *ictxt, char *scope, char *trans, Int *n, Int *nb, Int *nz, complex *A, Int *lda, complex *beta, complex *work, Int *ldwork, Int *prow, Int *pcol, Int *qrow, Int *qcol, complex *buf );
+    F_INTG_FCT  crot_( Int *n, complex *cx, Int *incx, complex *cy, Int *incy, float *c, complex *s );
+    F_INTG_FCT  ilcm_( Int *m, Int *n );
++   Int         numroc_( Int*, Int*, Int*, Int*, Int* );
+ /* ..
+ *  .. Executable Statements ..
+ *
+@@ -312,7 +313,7 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+       }
+       return;
+    }
+- 
++
+    if( ( *incx == desc_X[M_] ) && ( *incy == desc_Y[M_] ) )
+    {               /* X and Y are both distributed over a process row */
+       nz = (*jx-1) % desc_Y[NB_];
+@@ -406,9 +407,9 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+          tmp1 = np0 / desc_X[MB_];
+          wksz = MYROC0( tmp1, np0, desc_X[MB_], lcmp );
+          wksz = np + wksz;
+- 
++
+          buff = (complex *)getpbbuf( "PCROT", wksz*sizeof(complex) );
+- 
++
+          if( mycol == iycol )
+             jjy -= nz;
+          if( myrow == ixrow )
+@@ -423,8 +424,8 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+                      incx, buff, &ione, c, s );
+          }
+          pbctrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+-                   &desc_Y[NB_], &nz, buff, &ione, &zero, 
+-                   &Y[iiy-1+(jjy-1)*desc_Y[LLD_]], &desc_Y[LLD_], 
++                   &desc_Y[NB_], &nz, buff, &ione, &zero,
++                   &Y[iiy-1+(jjy-1)*desc_Y[LLD_]], &desc_Y[LLD_],
+                    &ixrow, &ixcol,  &iyrow, &iycol, buff+np );
+       }
+       else                  /* Y is distributed over a process column */
+@@ -438,9 +439,9 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+          tmp1 = np0 / desc_Y[MB_];
+          wksz = MYROC0( tmp1, np0, desc_Y[MB_], lcmp );
+          wksz = np + wksz;
+- 
++
+          buff = (complex *)getpbbuf( "PCROT", wksz*sizeof(complex) );
+- 
++
+          if( myrow == iyrow )
+             np -= nz;
+          pbctrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+@@ -454,7 +455,7 @@ void pcrot_( Int *n, complex X[], Int *ix, Int *jx, Int desc_X[], Int *incx, com
+          }
+          pbctrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+                    &desc_X[NB_], &nz, buff, &ione, &zero,
+-                   &X[iix-1+(jjx-1)*desc_X[LLD_]], &desc_X[LLD_], 
++                   &X[iix-1+(jjx-1)*desc_X[LLD_]], &desc_X[LLD_],
+                    &iyrow, &iycol, &ixrow, &ixcol, buff+np );
+       }
+    }
+diff --git a/SRC/pzrot.c b/SRC/pzrot.c
+index c5df6b9..bed287b 100644
+--- a/SRC/pzrot.c
++++ b/SRC/pzrot.c
+@@ -159,7 +159,7 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+ *          The global increment for the elements of Y. Only two values
+ *          of INCY are supported in this version, namely 1 and M_Y.
+ *
+-*  C       (input) pointer to DOUBLE 
++*  C       (input) pointer to DOUBLE
+ *  S       (input) pointer COMPLEX
+ *          C and S define a rotation
+ *             [  C          S  ]
+@@ -190,6 +190,7 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+    F_INTG_FCT  pbztrnv_( Int *ictxt, char *scope, char *trans, Int *n, Int *nb, Int *nz, complex16 *A, Int *lda, complex16 *beta, complex16 *work, Int *ldwork, Int *prow, Int *pcol, Int *qrow, Int *qcol, complex16 *buf );
+    F_INTG_FCT  zrot_( Int *n, complex16 *cx, Int *incx, complex16 *cy, Int *incy, double *c, complex16 *s );
+    F_INTG_FCT  ilcm_( Int *m, Int *n );
++   Int         numroc_( Int*, Int*, Int*, Int*, Int* );
+ /* ..
+ *  .. Executable Statements ..
+ *
+@@ -313,7 +314,7 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+       }
+       return;
+    }
+- 
++
+    if( ( *incx == desc_X[M_] ) && ( *incy == desc_Y[M_] ) )
+    {               /* X and Y are both distributed over a process row */
+       nz = (*jx-1) % desc_Y[NB_];
+@@ -407,9 +408,9 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+          tmp1 = np0 / desc_X[MB_];
+          wksz = MYROC0( tmp1, np0, desc_X[MB_], lcmp );
+          wksz = np + wksz;
+- 
++
+          buff = (complex16 *)getpbbuf( "PZROT", wksz*sizeof(complex16) );
+- 
++
+          if( mycol == iycol )
+             jjy -= nz;
+          if( myrow == ixrow )
+@@ -424,8 +425,8 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+                      incx, buff, &ione, c, s );
+          }
+          pbztrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+-                   &desc_Y[NB_], &nz, buff, &ione, &zero, 
+-                   &Y[iiy-1+(jjy-1)*desc_Y[LLD_]], &desc_Y[LLD_], 
++                   &desc_Y[NB_], &nz, buff, &ione, &zero,
++                   &Y[iiy-1+(jjy-1)*desc_Y[LLD_]], &desc_Y[LLD_],
+                    &ixrow, &ixcol,  &iyrow, &iycol, buff+np );
+       }
+       else                  /* Y is distributed over a process column */
+@@ -439,9 +440,9 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+          tmp1 = np0 / desc_Y[MB_];
+          wksz = MYROC0( tmp1, np0, desc_Y[MB_], lcmp );
+          wksz = np + wksz;
+- 
++
+          buff = (complex16 *)getpbbuf( "PZROT", wksz*sizeof(complex16) );
+- 
++
+          if( myrow == iyrow )
+             np -= nz;
+          pbztrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+@@ -455,7 +456,7 @@ void pzrot_( Int *n, complex16 X[], Int *ix, Int *jx, Int desc_X[], Int *incx, c
+          }
+          pbztrnv_( &ictxt, C2F_CHAR( "R" ), C2F_CHAR( "T" ), n,
+                    &desc_X[NB_], &nz, buff, &ione, &zero,
+-                   &X[iix-1+(jjx-1)*desc_X[LLD_]], &desc_X[LLD_], 
++                   &X[iix-1+(jjx-1)*desc_X[LLD_]], &desc_X[LLD_],
+                    &iyrow, &iycol, &ixrow, &ixcol, buff+np );
+       }
+    }
