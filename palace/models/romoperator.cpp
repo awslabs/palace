@@ -374,7 +374,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     // Project RHS1 to RHS1r with current PROM.
     if (dim_V > 0)
     {
-      auto comm = space_op.GetComm();
+      MPI_Comm comm = space_op.GetComm();
       RHS1r.conservativeResize(dim_V);
       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
     }
@@ -422,35 +422,34 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
+
   const double normr = linalg::Norml2(comm, u.Real());
   const double normi = linalg::Norml2(comm, u.Imag());
   const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
   const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
+
+  const std::size_t dim_V_new = dim_V + std::size_t(has_real) + std::size_t(has_imag);
+  MFEM_VERIFY(dim_V_new <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V0 = dim_V;
-  const std::size_t new_dim_V = dim_V + std::size_t(has_real) + std::size_t(has_imag);
-  v_node_label.reserve(new_dim_V);
-  std::vector<double> H(new_dim_V);
-  voltage_norm_H.conservativeResize(new_dim_V);
+  const std::size_t dim_V_old = dim_V;
+  v_node_label.reserve(dim_V_new);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
   if (has_real)
   {
     V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    voltage_norm_H[dim_V] = H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
     v_node_label.emplace_back(fmt::format("{}_re", node_label));
     dim_V++;
   }
   if (has_imag)
   {
     V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    voltage_norm_H[dim_V] = H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
     v_node_label.emplace_back(fmt::format("{}_im", node_label));
     dim_V++;
   }
@@ -459,20 +458,21 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
   if (C)
   {
     Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
   }
   Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  Ar.resize(dim_V, dim_V);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
+  // Placeholder matrices.
+  Ar.resize(dim_V, dim_V);
   RHSr.resize(dim_V);
 }
 
@@ -547,55 +547,30 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
 
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
 {
-  auto prom_size = Kr.rows();
-  MFEM_VERIFY((Mr.rows() == prom_size) && ((Cr.rows() == prom_size) || (Cr.rows() == 0)) &&
-                  (voltage_norm_H.rows() == prom_size) &&
-                  (v_node_label.size() == prom_size),
-              "Inconsisten PROM size!");
-
-  auto print_table = [prom_size, &post_dir, &v_node_label = this->v_node_label](
-                         const Eigen::MatrixXd &mat, std::string_view filename)
+  auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
+                                                             std::string_view filename)
   {
+    MFEM_VERIFY(labels.size() == mat.cols(), "Insonsistent PROM size!");
     auto out = TableWithCSVFile(post_dir / filename);
     out.table.col_options.float_precision = 17;
-    for (long i = 0; i < prom_size; i++)
+    for (long i = 0; i < mat.cols(); i++)
     {
-      out.table.insert(v_node_label[i], v_node_label[i]);
-      auto &col = out.table[v_node_label[i]];
-      for (long j = 0; j < prom_size; j++)
+      out.table.insert(labels[i], labels[i]);
+      auto &col = out.table[labels[i]];
+      for (long j = 0; j < mat.rows(); j++)
       {
-        col << mat(i, j);
+        col << mat(j, i);
       }
     }
     out.WriteFullTableTrunc();
   };
 
-  // TODO(C++23): Replace this with std::ranges::starts_with instead.
-  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
-  {
-    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
-  };
+  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
+  // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
+  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
 
-  // De-normalize port voltages. Define so that 1.0 on port i corresponds to full
-  // (un-normalized solution).
-  Eigen::VectorXd v_conc(prom_size);
-  for (long j = 0; j < prom_size; j++)
-  {
-    if (starts_with(v_node_label[j], "port"))
-    {
-      v_conc[j] = voltage_norm_H[j];
-    }
-    else
-    {
-      v_conc[j] = 1.0;
-    }
-  }
-  // Lazy diagonal representation of inverse.
-  auto v_d = v_conc.cwiseInverse().asDiagonal();
-
-  // Note: When checking if to print imaginary part below, it is better to to this for K,C,M
-  // since we can check if the imag operator is a nullptr. Kr, Mr, Cr are dense complex
-  // Eigen matrices and so would need to do a == 0.0 numerical check on all elements.
+  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
+  // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 
   auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
@@ -613,9 +588,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     print_table(m_C.imag(), "prom-C-im.csv");
   }
 
-  // Cr need not exist, if no dissipation. Currently, Cr always exists since we need
-  // dissipative ports for a  driven response, but this may change in the future.
-  if (Cr.size() > 0)
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
   {
     auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
     auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr * v_d;
@@ -625,6 +600,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       print_table(m_Rinv.imag(), "prom-Rinv-im.csv");
     }
   }
+
+  // Print orth-R. Don't divide by diagonal to keep state normalization info.
+  print_table(orth_R, "prom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
