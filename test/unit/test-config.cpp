@@ -47,7 +47,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
     auto it_bool = boundary_ex_bool.lumpedport.begin();
     for (; it_int != boundary_ex_bool.lumpedport.end(); it_int++, it_bool++)
     {
-      CHECK(it_bool->first == it_int->first);  // Order is same as indicies are
+      CHECK(it_bool->first == it_int->first);  // Order is same as indices are
       CHECK(it_bool->second.excitation == it_int->second.excitation);
     }
   }
