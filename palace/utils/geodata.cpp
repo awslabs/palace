@@ -1131,6 +1131,15 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
+    if constexpr (false)
+    {
+      fmt::print("box.center {}!\n", box.center);
+      fmt::print("v_000 {}!\n", v_000);
+      fmt::print("v_001 {}!\n", v_001);
+      fmt::print("v_011 {}!\n", v_011);
+      fmt::print("v_111 {}!\n", v_111);
+    }
+
     // Compute the box axes. Using the 4 extremal points, we find the first two axes as the
     // edges which are closest to perpendicular. For a perfect rectangular prism point
     // cloud, we could instead compute the axes and length in each direction using the
@@ -1150,7 +1159,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
             {
               for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
               {
-                if (i_1 == i_0 && j_1 == j_0)
+                if ((i_1 == i_0 && j_1 == j_0) || verts[i_0] == verts[j_0] ||
+                    verts[i_1] == verts[j_1])
                 {
                   continue;
                 }
@@ -1159,6 +1169,11 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                 const auto dot = std::abs(e_ij_0.dot(e_ij_1));
                 if (dot < dot_min)
                 {
+                  if constexpr (false)
+                  {
+                    fmt::print("i_0 {} i_1 {} j_0 {} j_1 {}\n", i_0, i_1, j_0, j_1);
+                    fmt::print("e_ij_0 {}, e_ij_1 {}!\n", e_ij_0, e_ij_1);
+                  }
                   dot_min = dot;
                   e_0 = e_ij_0;
                   e_1 = e_ij_1;
@@ -1173,6 +1188,12 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
         }
         return std::make_pair(e_0, e_1);
       }();
+
+      if constexpr (false)
+      {
+        fmt::print("e_0 {}, e_1 {}!\n", e_0, e_1);
+      }
+
       Vector3dMap(box.axes[0].data()) = e_0;
       Vector3dMap(box.axes[1].data()) = e_1;
       Vector3dMap(box.axes[2].data()) =
