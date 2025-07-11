@@ -29,7 +29,7 @@ In particular, lumped ports with nonzero resistance in the model will trigger co
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
 computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will be created
-in the output directory containing these mode qualty factor contributions. For bulk and
+in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
 [Boundary postprocessing](postprocessing.md#Boundary-postprocessing) of this guide.
