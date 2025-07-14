@@ -189,15 +189,14 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
 {
+  z.reserve(max_size);
   Q.resize(max_size, ComplexVector());
 }
 
 void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     const SpaceOperator &space_op,
+                                                     MPI_Comm comm,
                                                      Orthogonalization orthog_type)
 {
-  MPI_Comm comm = space_op.GetComm();
-
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
   // stored by its QR decomposition.
@@ -479,7 +478,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
