@@ -9,6 +9,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
@@ -186,17 +187,16 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
+MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
 {
+  z.reserve(max_size);
   Q.resize(max_size, ComplexVector());
 }
 
 void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     const SpaceOperator &space_op,
+                                                     MPI_Comm comm,
                                                      Orthogonalization orthog_type)
 {
-  MPI_Comm comm = space_op.GetComm();
-
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
   // stored by its QR decomposition.
@@ -312,7 +312,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
 }
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         int max_size_per_excitation)
+                         std::size_t max_size_per_excitation)
   : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -353,6 +353,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
+  // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
+  // expiation index, so this is triggered the first time it is called in drivensolver.
+  if (excitation_idx_cache == excitation_idx)
+  {
+    return;
+  }
+
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
@@ -366,7 +373,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     // Project RHS1 to RHS1r with current PROM.
     if (dim_V > 0)
     {
-      auto comm = space_op.GetComm();
+      MPI_Comm comm = space_op.GetComm();
       RHS1r.conservativeResize(dim_V);
       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
     }
@@ -375,10 +382,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
+
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -409,36 +414,42 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u)
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
 
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
+
   const double normr = linalg::Norml2(comm, u.Real());
   const double normi = linalg::Norml2(comm, u.Imag());
   const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
   const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
+
+  const std::size_t dim_V_new = dim_V + std::size_t(has_real) + std::size_t(has_imag);
+  MFEM_VERIFY(dim_V_new <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
-                        static_cast<std::size_t>(has_imag));
+  const std::size_t dim_V_old = dim_V;
+  v_node_label.reserve(dim_V_new);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
+
   if (has_real)
   {
     V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(fmt::format("{}_re", node_label));
     dim_V++;
   }
   if (has_imag)
   {
     V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(fmt::format("{}_im", node_label));
     dim_V++;
   }
 
@@ -446,35 +457,33 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
   if (C)
   {
     Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
   }
   Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  Ar.resize(dim_V, dim_V);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
+  // Placeholder matrices.
+  Ar.resize(dim_V, dim_V);
   RHSr.resize(dim_V);
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
@@ -533,6 +542,66 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   // XX TODO: Not yet implemented
   MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
   return {};
+}
+
+void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
+{
+  auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
+                                                             std::string_view filename)
+  {
+    MFEM_VERIFY(labels.size() == mat.cols(), "Insonsistent PROM size!");
+    auto out = TableWithCSVFile(post_dir / filename);
+    out.table.col_options.float_precision = 17;
+    for (long i = 0; i < mat.cols(); i++)
+    {
+      out.table.insert(labels[i], labels[i]);
+      auto &col = out.table[labels[i]];
+      for (long j = 0; j < mat.rows(); j++)
+      {
+        col << mat(j, i);
+      }
+    }
+    out.WriteFullTableTrunc();
+  };
+
+  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
+  // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
+  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+
+  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
+  // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
+
+  auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  auto m_Linv = (1.0 / unit_henry * v_d) * Kr * v_d;
+  print_table(m_Linv.real(), "prom-Linv-re.csv");
+  if (K->Imag())
+  {
+    print_table(m_Linv.imag(), "prom-Linv-im.csv");
+  }
+
+  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  auto m_C = (unit_farad * v_d) * Mr * v_d;
+  print_table(m_C.real(), "prom-C-re.csv");
+  if (C->Imag())
+  {
+    print_table(m_C.imag(), "prom-C-im.csv");
+  }
+
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
+  {
+    auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    auto m_Rinv = (1.0 / unit_ohm * v_d) * Cr * v_d;
+    print_table(m_Rinv.real(), "prom-Rinv-re.csv");
+    if (M->Imag())
+    {
+      print_table(m_Rinv.imag(), "prom-Rinv-im.csv");
+    }
+  }
+
+  // Print orth-R. Don't divide by diagonal to keep state normalization info.
+  print_table(orth_R, "prom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
