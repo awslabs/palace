@@ -38,8 +38,8 @@ private:
 
 public:
   MinimalRationalInterpolation(std::size_t max_size);
-  void AddSolutionSample(double omega, const ComplexVector &u,
-                         const SpaceOperator &space_op, Orthogonalization orthog_type);
+  void AddSolutionSample(double omega, const ComplexVector &u, MPI_Comm comm,
+                         Orthogonalization orthog_type);
   std::vector<double> FindMaxError(int N) const;
 
   const auto &GetSamplePoints() const { return z; }
