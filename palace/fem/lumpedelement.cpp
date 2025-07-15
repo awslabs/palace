@@ -50,7 +50,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   direction /= direction.Norml2();
 
   // Compute the length from the most aligned normal direction.
-  constexpr double rel_tol = 1.0e-3;
+  constexpr double rel_tol = 1.0e-6;
   auto l_component =
       std::distance(deviations_deg.begin(),
                     std::min_element(deviations_deg.begin(), deviations_deg.end()));
