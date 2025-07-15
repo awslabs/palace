@@ -415,5 +415,5 @@ ExternalProject_Add(mfem
     git clean -fd &&
     git apply "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
-  TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
+  TEST_COMMAND      make ex1 ex1p
 )
