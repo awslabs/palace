@@ -85,7 +85,7 @@ ExternalProject_Add(libxsmm
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS}
+  BUILD_COMMAND     make ${LIBXSMM_OPTIONS}
   INSTALL_COMMAND
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&
