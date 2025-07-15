@@ -57,7 +57,9 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   l = lengths[l_component];
   MFEM_VERIFY(std::abs(l - mesh::GetProjectedLength(mesh, attr_marker, true, input_dir)) <
                   rel_tol * l,
-              "Bounding box discovered length should match projected length!");
+              "Bounding box discovered length ("
+                  << l << ") should match projected length ("
+                  << mesh::GetProjectedLength(mesh, attr_marker, true, input_dir) << "!");
 
   // Compute the width as area / length. This allows the lumped element to be non-planar,
   // and generalizes nicely to the case for an infinitely thin rectangular lumped element

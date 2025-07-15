@@ -16,10 +16,11 @@ FetchContent_MakeAvailable(Catch2)
 # Add executable target
 add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
 )
 target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
 
