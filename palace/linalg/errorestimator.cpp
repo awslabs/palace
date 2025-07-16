@@ -188,9 +188,17 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   Vector estimates(mesh.GetNE());
   estimates.UseDevice(true);
   estimates = 0.0;
-  // TODO: Fix race condition for OpenMP, issue 405.
-  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  // PalacePragmaOmp(parallel if (nt > 1))
+
+  {
+    auto normG = linalg::Norml2(fespace.GetComm(), G);
+    auto normF = linalg::Norml2(fespace.GetComm(), F);
+    auto normE = linalg::Norml2(fespace.GetComm(), estimates);
+    Mpi::Print(fespace.GetComm(), "{}:{} norm(F) {} norm(G) {} norm(E) {}\n", __FILE__, __LINE__, normF, normG, normE);
+  }
+
+
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
 
@@ -232,22 +240,56 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
     PalaceCeedCall(ceed,
                    CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
                                         estimates_vec, CEED_REQUEST_IMMEDIATE));
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
-    {
-      // Ensure that F_gf_vec and G_gf_vec passive vectors are not changed for integ_op
-      // before the Real evaluation is completed.
-      PalacePragmaOmp(barrier)
-      ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
-      ceed::InitCeedVector(G_gf.Imag(), ceed, &G_gf_vec, false);
-      PalaceCeedCall(ceed,
-                     CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
-                                          estimates_vec, CEED_REQUEST_IMMEDIATE));
-    }
+
+    CeedScalar norm;
+    PalaceCeedCall(ceed, CeedVectorNorm(estimates_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normE " << norm << '\n';
+
+    PalaceCeedCall(ceed, CeedVectorNorm(F_gf_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normF " << norm << '\n';
+
+    PalaceCeedCall(ceed, CeedVectorNorm(G_gf_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normG " << norm << '\n';
+
+  {
+    auto normG = linalg::Norml2(fespace.GetComm(), G);
+    auto normF = linalg::Norml2(fespace.GetComm(), F);
+    auto normE = linalg::Norml2(fespace.GetComm(), estimates);
+    Mpi::Print(fespace.GetComm(), "{}:{} norm(F) {} norm(G) {} norm(E) {}\n", __FILE__, __LINE__, normF, normG, normE);
+  }
+
+    // if constexpr (std::is_same<VecType, ComplexVector>::value)
+    // {
+    //   // Ensure that F_gf_vec and G_gf_vec passive vectors are not changed before the real
+    //   // valued
+    //   PalacePragmaOmp(barrier)
+    //   ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
+    //   ceed::InitCeedVector(G_gf.Imag(), ceed, &G_gf_vec, false);
+    //   PalaceCeedCall(ceed,
+    //                  CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+    //                                       estimates_vec, CEED_REQUEST_IMMEDIATE));
+    // }
+
+    PalacePragmaOmp(barrier)
+    PalaceCeedCall(ceed, CeedVectorNorm(estimates_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normE " << norm << '\n';
+
+    PalaceCeedCall(ceed, CeedVectorNorm(F_gf_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normF " << norm << '\n';
+
+    PalaceCeedCall(ceed, CeedVectorNorm(G_gf_vec, CEED_NORM_2, &norm));
+    std::cout << __FILE__ << ':' << __LINE__ << " Thread " << utils::GetThreadNum() << " normG " << norm << '\n';
 
     // Cleanup.
     PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
   }
 
+  {
+    auto normG = linalg::Norml2(fespace.GetComm(), G);
+    auto normF = linalg::Norml2(fespace.GetComm(), F);
+    auto normE = linalg::Norml2(fespace.GetComm(), estimates);
+    Mpi::Print(fespace.GetComm(), "{}:{} norm(F) {} norm(G) {} norm(E) {}\n", __FILE__, __LINE__, normF, normG, normE);
+  }
   return estimates;
 }
 
@@ -272,9 +314,8 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is ε E = ε ∇V.
   const auto &mesh = nd_fespace.GetMesh();
-  // TODO: Fix race condition for OpenMP, issue 405.
-  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  // PalacePragmaOmp(parallel if (nt > 1))
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
@@ -301,9 +342,16 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
       // Construct mesh element restriction for elements of this element geometry type.
       CeedElemRestriction mesh_elem_restr;
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(data.indices.size()), 1, 1,
-                               mesh.GetNE(), mesh.GetNE(), CEED_MEM_HOST, CEED_USE_POINTER,
-                               data.indices.data(), &mesh_elem_restr));
+                               ceed, // CEED
+                               static_cast<CeedInt>(data.indices.size()), // num_elem
+                               1, // elem_size
+                               1, // num_comp
+                               mesh.GetNE(), // comp_stride
+                               mesh.GetNE(), // l_size
+                               CEED_MEM_HOST, // mem_type
+                               CEED_USE_POINTER, // copy_mode
+                               data.indices.data(),  // offsets
+                               &mesh_elem_restr)); // restriction address
 
       // Element restriction and basis objects for inputs.
       CeedElemRestriction nd_restr =
@@ -392,9 +440,8 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
-  // TODO: Fix race condition for OpenMP, issue 405.
-  // const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  // PalacePragmaOmp(parallel if (nt > 1))
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
@@ -507,11 +554,13 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
       ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
                             grad_estimator.nd_fespace, grad_estimator.rt_fespace,
                             grad_estimator.projector, grad_estimator.integ_op);
+  Mpi::Print("grad_estimates {}\n", linalg::Norml2(grad_estimator.nd_fespace.GetComm(), grad_estimates));
   auto curl_estimates =
       ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;  // Sum of squares
+  Mpi::Print("curl_estimates {}\n", linalg::Norml2(curl_estimator.nd_fespace.GetComm(), curl_estimates));
   linalg::Sqrt(grad_estimates,
                (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(grad_estimates);

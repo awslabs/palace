@@ -83,7 +83,7 @@
       {
         "Index": 2,
         "R": 56.02,
-        "Excitation": 2,
+        // "Excitation": 2,
         "Elements":
         [
           {
@@ -183,16 +183,18 @@
         {
           "Type": "Linear",
           "MinFreq": 2.0,  // GHz
-          "MaxFreq": 32.0,  // GHz
-          "FreqStep": 6.0  // GHz
+          "MaxFreq": 2.0,  // GHz
+          "FreqStep": 6.0,  // GHz
+          // "SaveStep": 1
         },
-        {
-          "Type": "Point",
-          "Freq": [17.0], // GHz
-          "SaveStep": 1
-        }
+        // {
+        //   "Type": "Point",
+        //   "Freq": [17.0], // GHz
+        //   "SaveStep": 1
+        // }
       ],
-      "Save": [2.0, 32.0]
+      // "Save": [2.0, 32.0]
+      // "Save": [2.0, 32.0]
     },
     "Linear":
     {
