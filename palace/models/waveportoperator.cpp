@@ -890,7 +890,7 @@ void WavePortData::Initialize(double omega)
       {
         eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
         num_conv = eigen->Solve();
-        Mpi::Print("\n\n\n COULD NOT FIND A SMALLEST_REAL WAVEPORT MODE WITH SIGMA = {:e}, SWITCHED TO LARGEST_MAGNITUDE\n\n", sigma);
+        //Mpi::Print("\n\n\n COULD NOT FIND A SMALLEST_REAL WAVEPORT MODE WITH SIGMA = {:e}, SWITCHED TO LARGEST_MAGNITUDE\n\n", sigma);
         eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL); // reset
       }
       MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
@@ -906,7 +906,7 @@ void WavePortData::Initialize(double omega)
   // 1 / (-kₙ² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
-  Mpi::Print("Found lambda: {:e}{:+e}i, kn0: {:e}{:+e}i!! \n\n\n", lambda.real(), lambda.imag(), kn0.real(), kn0.imag());
+  //Mpi::Print("Found lambda: {:e}{:+e}i, kn0: {:e}{:+e}i!! \n\n\n", lambda.real(), lambda.imag(), kn0.real(), kn0.imag());
 
   // Separate the computed field out into eₜ and eₙ and and transform back to true
   // electric field variables: Eₜ = eₜ and Eₙ = eₙ / ikₙ.

@@ -312,6 +312,7 @@ public:
   // ComplexOperator *opA, *opA2, *opJ; // need J?
   //  do we need to own A (and A2?) since they will change?
   PetscScalar lambda_test, lambda_J;  // remove this?
+  bool new_lambda = true;
 
   // Reference to space operator so we recompute A
   //SpaceOperator *space_op;

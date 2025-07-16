@@ -356,6 +356,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op,
     }
     std::cout << "\n";
   }
+  exit(0);
 /*
   const auto eigs2 = prom_op.ComputeEigenvalueEstimates2(omega_sample.front(), omega_sample.back());
   if (Mpi::Root(space_op.GetComm()))

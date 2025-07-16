@@ -520,7 +520,6 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
                          const ComplexParOperator *C, const ComplexParOperator *M,
                          const ComplexParOperator *A2, const FiniteElementSpace &fespace)
 {
-  Mpi::Print("BuildParSumOperator L523\n");
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
   //                    [ sumi ]      [ ai   ar ] [ Ai ] .

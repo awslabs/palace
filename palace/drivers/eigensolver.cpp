@@ -13,6 +13,7 @@
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/orthog.hpp" // test for orthog
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -627,42 +628,51 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
+  // Define an eigensolver for refinement?
+  /**/
+  std::unique_ptr<EigenvalueSolver> eigen2;
+  std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc2;
+  Mpi::Print("Using SLEPc NEP solver to refine eigen solution\n");
+  slepc2 = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(), iodata.problem.verbose);
+  //slepc2->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE
+  slepc2->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE
+  slepc2->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
+  eigen2 = std::move(slepc2);
+  eigen2->SetOperators(space_op, *K, *C, *M, scale);
+
+  eigen2->SetNumModes(1, iodata.solver.eigenmode.max_size); // 1 or many??
+  eigen2->SetTol(iodata.solver.eigenmode.tol);
+  eigen2->SetMaxIter(iodata.solver.eigenmode.max_it);
+  Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen2->GetScalingGamma(), eigen2->GetScalingDelta());
+
+  eigen2->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII?
+  eigen2->SetIoData(iodata);
+  /**/
+  std::vector<ComplexVector> eigen_vectors;
   for (int i = 0; i < num_conv; i++)
   {
     /*
     // Test refine eigen solution with RII or SLP?
-    std::unique_ptr<EigenvalueSolver> eigen2;
-    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc2;
-    Mpi::Print("Using SLEPc NEP solver to refine eigen solution\n");
-    slepc2 = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(), iodata.problem.verbose);
-     slepc2->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE
-    // slepc2->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE
-    slepc2->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
-    eigen2 = std::move(slepc2);
-    eigen2->SetOperators(space_op, *K, *C, *M, scale);
-
-    eigen2->SetNumModes(1, iodata.solver.eigenmode.max_size);
-    eigen2->SetTol(iodata.solver.eigenmode.tol);
-    //eigen2->SetTol(1e-4);
-    eigen2->SetMaxIter(iodata.solver.eigenmode.max_it);
-    Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen2->GetScalingGamma(), eigen2->GetScalingDelta());
-
     ComplexVector v0;
     v0.SetSize(Curl.Width());
     v0.UseDevice(true);
     eigen->GetEigenvector(i, v0);
+    // Orthogonalize against previous eigenvectors?
+    if (i > 0)
+    {
+      std::vector<std::complex<double>> Hj(i);
+      linalg::OrthogonalizeColumnMGS(space_op.GetComm(), eigen_vectors, v0, Hj.data(), i);
+      linalg::Normalize(space_op.GetComm(), v0);
+    }
     eigen2->SetInitialSpace(v0);  // Copies the vector
 
     std::complex<double> omega_lin = eigen->GetEigenvalue(i);
-    eigen2->SetShiftInvert(omega_lin);
-    eigen2->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII?
+    eigen2->SetShiftInvert(omega_lin, omega_lin, 10.0 * omega_lin);
 
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(omega_lin.imag()), Operator::DIAG_ZERO);
     A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, K.get(), C.get(), M.get(), A2.get());
-    //P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega_lin.imag(), - omega_lin.imag() * omega_lin.imag(), omega_lin.imag());
     P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, omega_lin.imag());
 
-    ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
     ksp->SetOperators(*A, *P);
     eigen2->SetLinearSolver(*ksp);
 
@@ -758,6 +768,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
     //eigen2->GetEigenvector(0, E);
+    //eigen_vectors.push_back(E);
 
     // Could have something like
     // if (nonlinear && error_abs > iodata.solver.eigenmode.tol)
