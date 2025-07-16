@@ -322,12 +322,10 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
   Table &t_base = t_csv_base.table;
   if (t_base.empty())
   {
-    if ((ex_idx_i != 0) || (row_i != 0))  // Non-trivial restart
-    {
-      MFEM_ABORT(fmt::format("The data table loaded from path {} was empty, but the "
-                             "simulation expects a non-trivial restart!",
-                             file))
-    }
+    MFEM_VERIFY((ex_idx_i == 0) && (row_i == 0),
+                fmt::format("The data table loaded from path {} was empty, but the "
+                            "simulation expects a non-trivial restart!",
+                            file))
     t_base = std::move(t_ref);  // Initializing a new run, resused expected table.
     return;
   }

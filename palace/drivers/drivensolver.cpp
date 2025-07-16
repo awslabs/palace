@@ -66,12 +66,12 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         fmt::format("\"Restart\" ({}) is greater than the number of total samples ({})!",
                     restart, indexing.nr_total_samples));
 
-    Mpi::Print("\nNon-trivial restart: starting at{} frequency step {:d}/{:d}.\n",
+    Mpi::Print("\nRestarting from:{} frequency step {:d}/{:d}.\n",
                (port_excitations.Size() > 1)
                    ? fmt::format(" excitation step {:d}/{:d} and",
                                  indexing.excitation_n0 + 1, port_excitations.Size())
                    : "",
-               indexing.omega_n0 + 1, port_excitations.Size());
+               indexing.omega_n0 + 1, omega_sample.size());
   }
 
   // Main frequency sweep loop.
@@ -132,7 +132,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Main excitation and frequency loop.
   auto t0 = Timer::Now();
-  std::size_t total_step_i = indexing.restart - 1;
+  std::size_t total_solve_i = indexing.restart - 1;
   for (const auto &[exc_step_i, exc_kv] :
        EnumerateView(port_excitations.excitations, indexing.excitation_n0))
   {
@@ -163,7 +163,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega),
                  Timer::Duration(Timer::Now() - t0).count(),
                  (port_excitations.Size() > 1)
-                     ? fmt::format(", total step {:d}/{:d}", total_step_i + 1,
+                     ? fmt::format(", total solve {:d}/{:d}", total_solve_i + 1,
                                    indexing.nr_total_samples)
                      : "");
 
@@ -196,7 +196,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print(" Updating solution error estimates\n");
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
 
-      total_step_i++;  // Increment combined counter.
+      total_solve_i++;  // Increment combined counter.
     }
     indexing.omega_n0 = 0;  // No offset in omega from "Restart" in later excitations.
 
@@ -378,7 +378,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  std::size_t total_step_i = indexing.restart - 1;
+  std::size_t total_solve_i = indexing.restart - 1;
   for (const auto &[exc_step_i, exc_kv] :
        EnumerateView(port_excitations.excitations, indexing.excitation_n0))
   {
@@ -399,7 +399,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega),
                  Timer::Duration(Timer::Now() - t0).count(),
                  (port_excitations.Size() > 1)
-                     ? fmt::format(", total step {:d}/{:d}", total_step_i + 1,
+                     ? fmt::format(", total solve {:d}/{:d}", total_solve_i + 1,
                                    indexing.nr_total_samples)
                      : "");
 
@@ -423,7 +423,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_step_i), E, B, omega);
 
-      total_step_i++;  // Increment combined counter.
+      total_solve_i++;  // Increment combined counter.
     }
     indexing.omega_n0 = 0;  // No offset in omega from "Restart" in later excitations.
 
