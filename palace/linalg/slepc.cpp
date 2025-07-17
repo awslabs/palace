@@ -2129,7 +2129,7 @@ int SlepcPEPSolver::Solve() // test
 
   // Copied from PEPLinearSolve
  // TEST TO REFINE EIGENVALUES WITH QUASI-NEWTON METHOD?
-  int max_outer_it = 100;//100;
+  int max_outer_it = 70;//100;
   int max_inner_it = 5;//20;
   double tol = 1e-6;
   double deflation_tol = 1e-8;//test, no effect if < tol
@@ -2151,12 +2151,7 @@ int SlepcPEPSolver::Solve() // test
   c.UseDevice(true);
   w0.UseDevice(true);
   z.UseDevice(true);
-  // Set arbitrary w0? or set arbitrary c and solve for w0?
-  linalg::SetRandom(space_op->GetComm(), c);
-  //opInv->Mult(c, w0); // do it later and everytime opInv is updated?!
-  std::srand((unsigned int) time(0));
-  Eigen::VectorXcd w0_eig;
-  Eigen::VectorXcd c_eig = Eigen::VectorXcd::Random(num_conv); // should be determined by a solve instead!?!?!?!!?!?!?!?!?!?!?
+
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon()); // TODO: define only once above
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput!
   xscale = std::make_unique<PetscReal[]>(num_conv); // ??
@@ -2174,21 +2169,30 @@ int SlepcPEPSolver::Solve() // test
   std::vector<ComplexVector> X;
   Eigen::VectorXcd u2, z2;
   bool ortho = false;//false;//
-  for (int k = 0; k < num_conv; k++)
+
+  int k = 0;
+  while (k < num_conv)
   {
+    // do we want to check c (defined above) inside the loop so it's random and thus avoids getting stuck on a "BAD" guess?
+    // Set arbitrary c and solve for w0?
+    linalg::SetRandom(space_op->GetComm(), c);
+    std::srand((unsigned int) time(0)); // ?
+    Eigen::VectorXcd c_eig = Eigen::VectorXcd::Random(k);
+    Eigen::VectorXcd w0_eig;
+
     bool deflation = true;//false;
     std::complex<double> eig = GetEigenvalue(k);
+    std::complex<double> eig_update = eig;
     std::complex<double> init_eig = eig;
     xscale.get()[k] = 0.0; // annoying, maybe use rescale eigenvectors??
     GetEigenvector(k, v);
-    //linalg::SetRandom(space_op->GetComm(), v); // TEST USE RANDOM v INSTEAD OF LINEAR EIGENVECTOR?!! DOES NOT WORK WELL...
     Eigen::VectorXcd v2 = Eigen::VectorXcd::Constant(k, 0.0);// how to initialize v2? zero or random?
-    //if (k > 0 && deflation)
-    //{
-    //  std::srand((unsigned int) time(0));
-    //  v2.setRandom();
-    //  std::cout << "random v2: " << v2 << "\n";
-    //}
+    if (k > 0 && deflation)
+    {
+      std::srand((unsigned int) time(0));
+      v2.setRandom();
+      std::cout << "random v2: " << v2 << "\n";
+    }
 
     // Removed RII but we should test what works better when deflation is implemented
     /**/
@@ -2196,6 +2200,7 @@ int SlepcPEPSolver::Solve() // test
     double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
     v *= 1.0 / norm_v;
     v2 *= 1.0 / norm_v;
+    norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm()); // should be 1...
     //std::cout << "v2 normalized: " << v2 << "\n";
     //linalg::Normalize(space_op->GetComm(), v);
 
@@ -2259,51 +2264,49 @@ int SlepcPEPSolver::Solve() // test
     opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
     opInv->Mult(c, w0); // should determine w0_eig too!
-            // update w0_eig
-        if (k > 0 && deflation) //Effenberger
-        {
-        // w0 = T^1 c1 (done above with opInv)
-        // w0_2 = SS^-1 (c2 - A*w0) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
-        // w0_1 = w0 - X*S*w0_2
-
-        w0_eig.conservativeResize(k);
-        for (int j = 0; j < k; j++)
-        {
-          w0_eig(j) = c_eig(j) - linalg::Dot(GetComm(), w0, X[j]);
-        }
-        Eigen::MatrixXcd SS(k, k);
-        for (int i = 0; i < k; i++)
-        {
-          for (int j = 0; j < k; j++)
-          {
-            SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]);
-          }
-        }
-        const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
-        SS = - SS * S;
-        w0_eig = SS.inverse() * w0_eig;
-        // w0_1 = w0 - X*S*w0_eig
-        const auto phi1 = S * w0_eig;
-        ComplexVector phi2; phi2.SetSize(size); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-        phi2 = 0.0;
-        auto *phi2r = phi2.Real().HostWrite();
-        auto *phi2i = phi2.Imag().HostWrite();
-        for (int i = 0; i < size; i++)
-        {
-          for (int j = 0; j < k; j++)
-          {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
-            phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
-            phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-
-          }
-        }
-        linalg::AXPY(-1.0, phi2, w0);
+    // update w0_eig
+    if (k > 0 && deflation) //Effenberger
+    {
+    // w0 = T^1 c1 (done above with opInv)
+    // w0_2 = SS^-1 (c2 - A*w0) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
+    // w0_1 = w0 - X*S*w0_2
+    w0_eig.conservativeResize(k);
+    for (int j = 0; j < k; j++)
+    {
+      w0_eig(j) = c_eig(j) - linalg::Dot(GetComm(), w0, X[j]);
+    }
+    Eigen::MatrixXcd SS(k, k);
+    for (int i = 0; i < k; i++)
+    {
+      for (int j = 0; j < k; j++)
+      {
+        SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]);
       }
-            auto *w0r = w0.Real().Read();
-        auto *w0i = w0.Imag().Read();
-  for (int i = 0; i < size; i++) w0_eigen(i) = std::complex<double>(w0r[i], w0i[i]);
+    }
+    const auto S = (eig_update * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
+    SS = - SS * S;
+    w0_eig = SS.inverse() * w0_eig;
+    // w0_1 = w0 - X*S*w0_eig
+    const auto phi1 = S * w0_eig;
+    ComplexVector phi2; phi2.SetSize(size); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
+    phi2 = 0.0;
+    auto *phi2r = phi2.Real().HostWrite();
+    auto *phi2i = phi2.Imag().HostWrite();
+    for (int j = 0; j < k; j++)
+    {
+      auto *XR = X[j].Real().Read();
+      auto *XI = X[j].Imag().Read();
+      for (int i = 0; i < size; i++)
+      {
+        phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
+        phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
+      }
+    }
+    linalg::AXPY(-1.0, phi2, w0);
+    }
+    auto *w0r = w0.Real().Read();
+    auto *w0i = w0.Imag().Read();
+    for (int i = 0; i < size; i++) w0_eigen(i) = std::complex<double>(w0r[i], w0i[i]);
 
     int update_freq = 4;// SHOULD REVISIT THIS AND FIGURE OUT BEST FREQUENCY around 4-5 seems good?
     // Waveguide adapter (with linearA2)
@@ -2318,7 +2321,6 @@ int SlepcPEPSolver::Solve() // test
     double init_res = 1e6;
     double res = 1e6;
     double prev_res = 1e6;
-    double nondefl_res = 1e6;
     int it = 0;
     while (it < max_outer_it)
     {
@@ -2326,15 +2328,8 @@ int SlepcPEPSolver::Solve() // test
       auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
       auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2n.get());
       A->Mult(v, u);
-      nondefl_res = linalg::Norml2(space_op->GetComm(), u) / linalg::Norml2(space_op->GetComm(), v);
 
-      if (deflation && (k == 0 || nondefl_res < deflation_tol))
-      {
-        // turn off deflation??
-        std::cout << "\n\n TURNING OFF DEFLATION SINCE RES: " << nondefl_res << "\n\n";
-        deflation = false;
-        v2 = Eigen::VectorXcd::Constant(k, 0.0);
-      }
+      deflation = (k > 0); // could add a residual check?!
 
       // Effenberger deflation
       if (deflation)
@@ -2346,16 +2341,14 @@ int SlepcPEPSolver::Solve() // test
         phi2 = 0.0;
         auto *phi2r = phi2.Real().HostWrite();
         auto *phi2i = phi2.Imag().HostWrite();
-        for (int i = 0; i < size; i++)
+        for (int j = 0; j < k; j++)
         {
-          for (int j = 0; j < k; j++)
+          auto *XR = X[j].Real().Read();
+          auto *XI = X[j].Imag().Read();
+          for (int i = 0; i < size; i++)
           {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
             phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
             phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
-            //phi2r[i] += phi1(j).real() * XR[i] + phi1(j).imag() * XI[i];
-            //phi2i[i] += phi1(j).imag() * XR[i] - phi1(j).real() * XI[i];
           }
         }
         // Test using Eigen
@@ -2365,7 +2358,7 @@ int SlepcPEPSolver::Solve() // test
         auto *phi2i2 = phi2.Imag().Read();
         for (int i = 0; i < size; i++) phi2_test1(i) = std::complex<double>(phi2r2[i], phi2i2[i]);
         //std::cout << " diff phi2 eigen/palace: " << (phi2_test - phi2_test1).norm() << "\n";
-        if ((phi2_test - phi2_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi2!!! \n\n\n\n";
+        //if ((phi2_test - phi2_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi2!!! \n\n\n\n";
         //exit(0);
 
         A->AddMult(phi2, u, 1.0);
@@ -2392,7 +2385,7 @@ int SlepcPEPSolver::Solve() // test
         //std::cout << " diff u2_3 eigen/palace: " << (u2_test - u2_3).norm() << "\n";
         // std::cout << " diff u2 eigen/palace: " << (u2_test - u2).norm() << "\n";
         //std::cout << "u2_test: " << u2_test << " u2: " << u2 << "\n";
-        if ((u2_test - u2).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE u2!!! \n\n\n\n";
+        //if ((u2_test - u2).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE u2!!! \n\n\n\n";
         //exit(0);
       }
       auto *ur = u.Real().Read();
@@ -2401,12 +2394,12 @@ int SlepcPEPSolver::Solve() // test
 
       if (deflation)
       {
-        Mpi::Print("L2289 squared norm(u): {}, norm(u2): {}, norm(v): {}, norm(v2): {}\n", linalg::Norml2(GetComm(), u, true), u2.squaredNorm(), linalg::Norml2(GetComm(), v, true), v2.squaredNorm());
+        //Mpi::Print("L2289 squared norm(u): {}, norm(u2): {}, norm(v): {}, norm(v2): {}\n", linalg::Norml2(GetComm(), u, true), u2.squaredNorm(), linalg::Norml2(GetComm(), v, true), v2.squaredNorm());
         res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm()) / norm_v;
         // val test
         double res_eigen = std::sqrt(u_eigen.squaredNorm() + u2.squaredNorm()) / norm_v;
         //std::cout << " diff res eigen/palace: " << (res_eigen - res) << "\n";
-        if (std::abs(res_eigen - res) > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE res!!! \n\n\n\n";
+        //if (std::abs(res_eigen - res) > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE res!!! \n\n\n\n";
       }
       else
       {
@@ -2415,26 +2408,25 @@ int SlepcPEPSolver::Solve() // test
       if (it == 0) init_res = res;
       if (res < min_res){min_res = res; min_it = it;}
       //min_res = std::min(res, min_res);
-      Mpi::Print(space_op->GetComm(), "k: {}, it: {}, eig: {}, {}, res: {}, nondefl_res: {}\n", k, it, eig.real(), eig.imag(), res, nondefl_res);
+      Mpi::Print(space_op->GetComm(), "k: {}, it: {}, eig: {}, {}, res: {}\n", k, it, eig.real(), eig.imag(), res);
 
-      if (res < tol)
+      if (res < tol) // In addition to res < tol, do we also want to check if it's within the range (i.e. greater than the target)???
       {
         // Update the invariant pair with normalization.
+        const auto scale = linalg::Norml2(GetComm(), v);
+        v *= 1.0 / scale;
         X.push_back(v);
         Xeigen.conservativeResize(size, k + 1);
         auto *vr = v.Real().Read();
         auto *vi = v.Imag().Read();
-        for (int i = 0; i < size; i++)
-        {
-          Xeigen(i, k) = std::complex<double>(vr[i], vi[i]);
-        }
+        for (int i = 0; i < size; i++) Xeigen(i, k) = std::complex<double>(vr[i], vi[i]);
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        const auto scale = linalg::Norml2(GetComm(), v);
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;
         // Also store here?
         eigen_values.push_back(eig);
         eigen_vectors.push_back(v);
+        k++; // only increment eigenpairs when a converged pair is found!
         break;
       }
 
@@ -2459,20 +2451,16 @@ int SlepcPEPSolver::Solve() // test
         auto *phi3i = phi3.Imag().HostWrite();
         auto *phi4r = phi4.Real().HostWrite();
         auto *phi4i = phi4.Imag().HostWrite();
-        for (int i = 0; i < size; i++)
+        for (int j = 0; j < k; j++)
         {
-          for (int j = 0; j < k; j++)
+          auto *XR = X[j].Real().Read();
+          auto *XI = X[j].Imag().Read();
+          for (int i = 0; i < size; i++)
           {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
-            phi3r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
-            phi3i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-            //phi3r[i] += phi1(j).real() * XR[i] + phi1(j).imag() * XI[i];
-            //phi3i[i] += phi1(j).imag() * XR[i] - phi1(j).real() * XI[i];
-            phi4r[i] += phi2(j).real() * XR[i] - phi2(j).imag() * XI[i]; // transposedot
-            phi4i[i] += phi2(j).imag() * XR[i] + phi2(j).real() * XI[i];      // transposedot
-            //phi4r[i] += phi2(j).real() * XR[i] + phi2(j).imag() * XI[i];
-            //phi4i[i] += phi2(j).imag() * XR[i] - phi2(j).real() * XI[i];
+            phi3r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
+            phi3i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
+            phi4r[i] += phi2(j).real() * XR[i] - phi2(j).imag() * XI[i];
+            phi4i[i] += phi2(j).imag() * XR[i] + phi2(j).real() * XI[i];
           }
         }
         // Tests for validity
@@ -2490,8 +2478,8 @@ int SlepcPEPSolver::Solve() // test
         }
         //std::cout << " diff phi3 eigen/palace: " << (phi3_test - phi3_test1).norm() << "\n";
         //std::cout << " diff phi4 eigen/palace: " << (phi4_test - phi4_test1).norm() << "\n";
-        if ((phi3_test - phi3_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi3!!! \n\n\n\n";
-        if ((phi4_test - phi4_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi4!!! \n\n\n\n";
+        //if ((phi3_test - phi3_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi3!!! \n\n\n\n";
+        //if ((phi4_test - phi4_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi4!!! \n\n\n\n";
         opJ->AddMult(phi3, w, 1.0);
         A->AddMult(phi4, w, -1.0);
         // with p = 1, A'(l) and B'(l) are zero so w2 is zero?
@@ -2525,7 +2513,7 @@ int SlepcPEPSolver::Solve() // test
         //std::cout << " diff delta2 eigen/palace: " << (delta_eigen - delta_2) << "\n";
         //std::cout << " diff delta3 eigen/palace: " << (delta_eigen - delta_3) << "\n";
         //std::cout << " diff delta eigen/palace: " << (delta_eigen - delta) << "\n";
-        if (std::abs(delta_eigen - delta) > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE delta!!! \n\n\n\n";
+        //if (std::abs(delta_eigen - delta) > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE delta!!! \n\n\n\n";
       }
       else
       {
@@ -2543,7 +2531,8 @@ int SlepcPEPSolver::Solve() // test
       // TEST UPDATE P and ksp every x iteration?!
       if (it > 0 && it % update_freq == 0)
       {
-        Mpi::Print("Update opInv\n");
+        eig_update = eig;
+        //Mpi::Print("Update opInv\n");
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
         opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
@@ -2578,23 +2567,21 @@ int SlepcPEPSolver::Solve() // test
         phi2 = 0.0;
         auto *phi2r = phi2.Real().HostWrite();
         auto *phi2i = phi2.Imag().HostWrite();
-        for (int i = 0; i < size; i++)
+        for (int j = 0; j < k; j++)
         {
-          for (int j = 0; j < k; j++)
+          auto *XR = X[j].Real().Read();
+          auto *XI = X[j].Imag().Read();
+          for (int i = 0; i < size; i++)
           {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
-            phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
-            phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-
+            phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
+            phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
           }
         }
         linalg::AXPY(-1.0, phi2, w0);
-
-      }
-      auto *w0r = w0.Real().Read();
+        }
+        auto *w0r = w0.Real().Read();
         auto *w0i = w0.Imag().Read();
-  for (int i = 0; i < size; i++) w0_eigen(i) = std::complex<double>(w0r[i], w0i[i]);
+        for (int i = 0; i < size; i++) w0_eigen(i) = std::complex<double>(w0r[i], w0i[i]);
       }
       opInv->Mult(z, u);
       // validity test
@@ -2627,7 +2614,7 @@ int SlepcPEPSolver::Solve() // test
         //std::cout << " diff u2_2 eigen/palace: " << (u2_test - u2_2).norm() << "\n";
         //std::cout << " diff u2_3 eigen/palace: " << (u2_test - u2_3).norm() << "\n";
         //std::cout << " diff u2 eigen/palace: " << (u2_test - u2).norm() << "\n";
-        if ((u2_test - u2).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE u2 solve!!! \n\n\n\n";
+        //if ((u2_test - u2).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE u2 solve!!! \n\n\n\n";
         //std::cout << "u2_test: " << u2_test << " u2: " << u2 << "\n";
         z2 = z2 - u2;
         Eigen::MatrixXcd SS(k, k);
@@ -2652,9 +2639,9 @@ int SlepcPEPSolver::Solve() // test
         //std::cout << " diff SS_2 eigen/palace: " << (SS_test - SS_2).norm() << "\n";
         //std::cout << " diff SS_3 eigen/palace: " << (SS_test - SS_3).norm() << "\n";
         //std::cout << " diff SS eigen/palace: " << (SS_test - SS).norm() << "\n";
-        if ((SS_test - SS).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE SS!!! \n\n\n\n";
+        //if ((SS_test - SS).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE SS!!! \n\n\n\n";
 
-        const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
+        const auto S = (eig_update * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
         SS = - SS * S;
         u2 = SS.inverse() * z2;
         // u1 = u - X*S*u2
@@ -2663,16 +2650,14 @@ int SlepcPEPSolver::Solve() // test
         phi2 = 0.0;
         auto *phi2r = phi2.Real().HostWrite();
         auto *phi2i = phi2.Imag().HostWrite();
-        for (int i = 0; i < size; i++)
+        for (int j = 0; j < k; j++)
         {
-          for (int j = 0; j < k; j++)
+          auto *XR = X[j].Real().Read();
+          auto *XI = X[j].Imag().Read();
+          for (int i = 0; i < size; i++)
           {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
             phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
             phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-            //phi2r[i] += phi1(j).real() * XR[i] + phi1(j).imag() * XI[i];
-            //phi2i[i] += phi1(j).imag() * XR[i] - phi1(j).real() * XI[i];
           }
         }
         // Test using Eigen
@@ -2682,7 +2667,7 @@ int SlepcPEPSolver::Solve() // test
         auto *phi2i2 = phi2.Imag().Read();
         for (int i = 0; i < size; i++) phi2_test1(i) = std::complex<double>(phi2r2[i], phi2i2[i]);
         //std::cout << " diff phi2 solve eigen/palace: " << (phi2_test - phi2_test1).norm() << "\n";
-        if ((phi2_test - phi2_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi2 solve!!! \n\n\n\n";
+        //if ((phi2_test - phi2_test1).norm() > 1e-8) std::cout << "\n\n\n\n DIFFERENT EIGEN AND PALACE phi2 solve!!! \n\n\n\n";
         linalg::AXPY(-1.0, phi2, u);
         v2 += u2; // update v2?
         //std::cout << "updated v2: " << v2 << "\n";
@@ -2691,38 +2676,94 @@ int SlepcPEPSolver::Solve() // test
       norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
       v *= 1.0 / norm_v;
       v2 *= 1.0 / norm_v;
+      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm()); // should be 1...
       //std::cout << "updated v2 normalized: " << v2 << "\n";
       auto *vr = v.Real().Read();
       auto *vi = v.Imag().Read();
       for (int i = 0; i < size; i++) v_eigen(i) = std::complex<double>(vr[i], vi[i]);
 
       it++;
-      if (it == max_outer_it)
+      if (it == max_outer_it) // ACTUALLY, WE DO NOT WANT TO SAVE UNCONVERGED EIGENPAIRS, CAN MESS UP FUTURE DEFLATION ITERATIONS
       {
+        Mpi::Print("Quasi-Newton did not converge in {} iterations\n", max_outer_it);
+        /*
         // Update the invariant pair with normalization.
+        const auto scale = linalg::Norml2(GetComm(), v);
+        v *= 1.0 / scale;
         X.push_back(v);
         Xeigen.conservativeResize(size, k + 1);
         auto *vr = v.Real().Read();
         auto *vi = v.Imag().Read();
         for (int i = 0; i < size; i++) Xeigen(i, k) = std::complex<double>(vr[i], vi[i]);
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        const auto scale = linalg::Norml2(GetComm(), v);
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;
         // Also store here?
         eigen_values.push_back(eig);
         eigen_vectors.push_back(v);
         break;
+        */
       }
     }
     Mpi::Print(space_op->GetComm(), "\n\n i: {}, init_res: {}, min_res: {}, min_it: {}\n\n", k, init_res, min_res, min_it);
     /**/
   }
-  //Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  //eps.compute(H);
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(H);
   //std::cout << "eps.eigenvalues: " << eps.eigenvalues() << "\n";
-  //for(int k = 0; k < num_conv; k++) std::cout << "k: " << k << " eig: " << eigen_values[k] << "\n";
+  // check that eps.eigenvalues().size() == eigen_values.size()
+  std::vector<int> order(eigen_values.size()), order_eigen(eps.eigenvalues().size());
+  std::iota(order.begin(), order.end(), 0);
+  std::iota(order_eigen.begin(), order_eigen.end(), 0);
+  std::sort(order.begin(), order.end(),
+            [&eigen_values = this->eigen_values](auto l, auto r) { return eigen_values[l].imag() < eigen_values[r].imag(); });
+  std::sort(order_eigen.begin(), order_eigen.end(),
+            [&epseig = eps.eigenvalues()](auto l, auto r) { return epseig(l).imag() < epseig(r).imag(); });
+  for(int k = 0; k < num_conv; k++) Mpi::Print("k: {}, order: {}, eig: {}+{}i\n", k, order[k], eigen_values[k].real(), eigen_values[k].imag());//std::cout << "k: " << k << " order: " << order[k] << " eig: " << eigen_values[k] << "\n";
+  for(int k = 0; k < num_conv; k++) Mpi::Print("k: {}, ordereig: {}, eig: {}+{}i\n", k, order_eigen[k], eps.eigenvalues()(k).real(), eps.eigenvalues()(k).imag());//std::cout << "k: " << k << " ordereig: " << order_eigen[k] << " eig: " << eps.eigenvalues()(k) << "\n";
+  Eigen::MatrixXcd Xeig = eps.eigenvectors();
+  std::vector<Eigen::VectorXcd> sorted_Xeig;
+  std::vector<ComplexVector> sorted_eigen_vectors;
+  std::vector<std::complex<double>> sorted_eigen_values;
+  for (int k = 0; k < num_conv; k++)
+  {
+    Mpi::Print("k: {}, eig: {}+{}i, epseig: {}+{}i\n", k, eigen_values[order[k]].real(), eigen_values[order[k]].imag(), eps.eigenvalues()(order_eigen[k]).real(), eps.eigenvalues()(order_eigen[k]).imag());
+    //std::cout << "k: " << k << " eig: " << eigen_values[order[k]] << " epseig: " << eps.eigenvalues()(order_eigen[k]) << "\n";
+    sorted_Xeig.push_back(Xeig.col(order_eigen[k]));//should be col?
+    sorted_eigen_vectors.push_back(eigen_vectors[order[k]]);
+    sorted_eigen_values.push_back(eigen_values[order[k]]);
+  }
 
+  //Xeigen *= eps.eigenvectors(); // [n x k] x [k x k] = [n x k]
+  //Xeigen *= Xeigen.colwise().norm().cwiseInverse().asDiagonal(); //
+  for(int k = 0; k < num_conv; k++)
+  {
+    //const size_t k_eigen = order_eigen[k]; // double check
+    ComplexVector eigv; eigv.SetSize(size); eigv.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
+    eigv = 0.0;
+    auto *eigvr = eigv.Real().HostWrite();
+    auto *eigvi = eigv.Imag().HostWrite();
+    for (int j = 0; j < num_conv; j++)
+    {
+      //const size_t idx = order[j]; // double check;
+      //const size_t j_eigen = order_eigen[j]; // double check
+      //auto *XR = X[j].Real().Read();
+      //auto *XI = X[j].Imag().Read();
+      auto *XR = sorted_eigen_vectors[j].Real().Read();
+      auto *XI = sorted_eigen_vectors[j].Imag().Read();
+      for (int i = 0; i < size; i++)
+      {
+        //eigvr[i] += Xeig(j,k).real() * XR[i] - Xeig(j,k).imag() * XI[i];
+        //eigvi[i] += Xeig(j,k).imag() * XR[i] + Xeig(j,k).real() * XI[i];
+        eigvr[i] += sorted_Xeig[k](j).real() * XR[i] - sorted_Xeig[k](j).imag() * XI[i];
+        eigvi[i] += sorted_Xeig[k](j).imag() * XR[i] + sorted_Xeig[k](j).real() * XI[i];
+      }
+    }
+    const auto scale = linalg::Norml2(GetComm(), eigv);
+    //std::cout << "k: " << k << " scale: " << scale << "\n";
+    eigen_vectors[k] = eigv; // double check k. Should reorder?!
+    eigen_values[k] = sorted_eigen_values[k];
+  }
   space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
 
   // Compute and store the eigenpair residuals.

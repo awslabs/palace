@@ -600,7 +600,7 @@ void QN2(int n, F EvalFunction, std::complex<double> &lambda, Eigen::VectorXcd &
 {
   // XX TODO
   constexpr auto max_it = 200;
-  constexpr auto update_freq = 3;
+  constexpr auto update_freq = 2;
   constexpr auto tol = 1.0e-9;
 
   Eigen::MatrixXcd T(n, n), dT(n, n);
@@ -616,7 +616,6 @@ void QN2(int n, F EvalFunction, std::complex<double> &lambda, Eigen::VectorXcd &
   lu.compute(T);
   Eigen::VectorXcd c = Eigen::VectorXcd::Random(n);
   w0 = lu.solve(c);
-  //w0 /= w0.norm(); // not sure
   v /= v.norm(); // not sure
 
   while (it < max_it)
@@ -776,6 +775,7 @@ void SolveNEPtest(int n, int num_eig, std::complex<double> sigma, F EvalFunction
     double res = 1.0e6;
 
     auto lambda = sigma;
+    auto lambda_lu = lambda;
     EvalFunction(lambda, T, dT, true, (it == 0));
     Eigen::PartialPivLU<Eigen::MatrixXcd> lu;
     lu.compute(T);
@@ -896,11 +896,12 @@ void SolveNEPtest(int n, int num_eig, std::complex<double> sigma, F EvalFunction
       {
         z2 = -u2;
       }
-
+      // Update T
+      EvalFunction(lambda, T, dT, true, true); // trying first=true
       if (it > 0 && it % update_freq == 0)
       {
-        // Update T and refactor matrix
-        EvalFunction(lambda, T, dT, true, true); // trying first=true
+        lambda_lu = lambda;
+        // Refactor matrix
         lu.compute(T);
         w0 = lu.solve(c); // also update w0_eig?
         if (k > 0 && deflation)
@@ -908,7 +909,7 @@ void SolveNEPtest(int n, int num_eig, std::complex<double> sigma, F EvalFunction
           // update w0 eig
           Eigen::MatrixXcd SS(k, k);
           SS = X.adjoint() * X;
-          const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
+          const auto S = (lambda_lu * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
           SS = - SS * S;
           w0_eig = SS.inverse() * (c0_eig.head(k) - X.adjoint() * w0);
           w0 -= X * S * w0_eig;
@@ -923,27 +924,31 @@ void SolveNEPtest(int n, int num_eig, std::complex<double> sigma, F EvalFunction
         // dv = T^1 z1 (done above lu.solve)
         // u2 = SS^-1 (z2 - A*dv) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
         // u1 = dv - X*S*u2
-        u2 = X.adjoint() * dv;
-        z2 -= u2;
-        Eigen::MatrixXcd SS(k, k);
-        SS = X.adjoint() * X;
-        std::cout << "SS: " << SS <<"\n";
-        Eigen::MatrixXcd SS_test(k, k);
-        for (int i = 0; i < k; i++)
-        {
-          for (int j = 0; j < k; j++)
-          {
-            SS_test(i,j) = std::complex<double>(X.col(i).adjoint() * X.col(j));// not sure of order, try switching i and j?
-          }
-        }
-        SS_test -= SS;
-        std::cout << "SS_test norm: " << SS_test.norm() << "\n";
-        if (SS_test.norm() > tol) std::cout << "\n\n\n   !!!!! SS_test differs from SS by " << SS_test.norm() << " !!!! \n\n\n";
-        const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
-        SS = - SS * S;
-        u2 = SS.inverse() * z2;
+        const auto S = (lambda_lu * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
+        //u2 = - (X.adjoint() * X * S).inverse() * (z2 - X.adjoint() * dv);
+        u2 = (X.adjoint() * X * S).inverse() * (X.adjoint() * dv - z2);
+
+        //u2 = X.adjoint() * dv;
+        //z2 -= u2;
+        //Eigen::MatrixXcd SS(k, k);
+        //SS = X.adjoint() * X;
+        //std::cout << "SS: " << SS <<"\n";
+        //Eigen::MatrixXcd SS_test(k, k);
+        //for (int i = 0; i < k; i++)
+        //{
+        // for (int j = 0; j < k; j++)
+        //  {
+        //    SS_test(i,j) = std::complex<double>(X.col(i).adjoint() * X.col(j));// not sure of order, try switching i and j?
+        //  }
+        //}
+        //SS_test -= SS;
+        //std::cout << "SS_test norm: " << SS_test.norm() << "\n";
+        //if (SS_test.norm() > tol) std::cout << "\n\n\n   !!!!! SS_test differs from SS by " << SS_test.norm() << " !!!! \n\n\n";
+
+        //SS = - SS * S;
+        //u2 = SS.inverse() * z2;
         // u1 = dv - X*S*u2
-        dv -= X * S * u2;
+        dv = dv - X * S * u2;
         v2 += u2; // update v2?
         //std::cout << "updated v2: " << v2 << "\n";
       }
@@ -976,6 +981,357 @@ void SolveNEPtest(int n, int num_eig, std::complex<double> sigma, F EvalFunction
   X *= eps.eigenvectors();
   X *= X.colwise().norm().cwiseInverse().asDiagonal();
 }
+
+template <typename F, typename MatType, typename VecType>
+void SolveNEPtest2(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
+              MatType &X)
+{
+  // XX TODO
+  constexpr auto max_it = 200;
+  constexpr auto tol = 1.0e-9;
+  constexpr bool deflation = true;//false;
+  constexpr int update_freq = 2;
+  MatType H;
+  VecType u2, z2;
+  VecType w0_eig;
+
+  for (int k = 0; k < num_eig; k++)
+  {
+    VecType v = VecType::Random(n);
+    VecType v2 = VecType::Random(k);
+    VecType v_test(n + k);// = VecType::Random(n + k);
+    v_test.head(n) = v;
+    v_test.tail(k) = v2;
+    VecType c = Eigen::VectorXcd::Random(n);
+    VecType c0_eig = Eigen::VectorXcd::Random(k);
+    VecType c_test(n + k);
+    c_test.head(n) = c; c_test.tail(k) = c0_eig;
+    //VecType c_test = VecType::Random(n + k);
+
+    int p = 1;
+    std::vector<MatType> HH(p);
+    HH[0] = MatType::Identity(k, k);
+
+    Eigen::MatrixXcd T(n, n), dT(n, n);
+    Eigen::VectorXcd u(n), w(n), w0(n), z(n);
+
+    Eigen::MatrixXcd T_test(n + k, n + k), dT_test(n + k, n + k);
+    Eigen::VectorXcd u_test(n + k), w_test(n + k), w0_test(n + k), z_test(n + k);
+
+    int it = 0;
+    double res = 1.0e6;
+    double res_test = 1.0e-6;
+
+    auto lambda = sigma;
+    auto lambda_lu = lambda;
+    EvalFunction(lambda, T, dT, true, (it == 0));
+    Eigen::PartialPivLU<Eigen::MatrixXcd> lu;
+    lu.compute(T);
+    w0 = lu.solve(c);
+    if (k > 0 && deflation)
+    {
+      // update w0 eig
+      Eigen::MatrixXcd SS(k, k);
+      SS = X.adjoint() * X;
+      const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
+      SS = - SS * S;
+      w0_eig = SS.inverse() * (c0_eig - X.adjoint() * w0);
+      w0 -= X * S * w0_eig;
+    }
+
+    // Build test op
+    if (k == 0)
+    {
+      EvalFunction(lambda, T_test, dT_test, true, (it == 0));
+    }
+    else
+    {
+      const auto S = (lambda * MatType::Identity(k, k) - H).inverse();
+      T_test.topLeftCorner(n, n) = T;
+      T_test.topRightCorner(n, k) = T * (X * S);
+      T_test.bottomRows(k) = MatType::Zero(k, n + k);
+      T_test.bottomLeftCorner(k, n) = X.adjoint();
+
+      dT_test.topLeftCorner(n, n) = dT;
+      dT_test.topRightCorner(n, k) = dT * X * S;
+      dT_test.topRightCorner(n, k) -= T_test.topRightCorner(n, k) * S;
+      dT_test.bottomRows(k) = MatType::Zero(k, n + k);
+    }
+    Eigen::PartialPivLU<Eigen::MatrixXcd> lu_test;
+    lu_test.compute(T_test);
+    w0_test = lu_test.solve(c_test.head(n + k));
+    // compare [w0, w0_eig] to w0_test
+    Eigen::VectorXcd w0_comp(n+k);
+    w0_comp << w0, w0_eig;
+    w0_comp -= w0_test;
+    std::cout << " diff [w0, w0_eig] and w0_test: " << w0_comp.norm() << "\n";
+    if (w0_comp.norm() > 1e-6) std::exit(0);
+
+    double norm_v = std::sqrt(v.squaredNorm() + v2.squaredNorm());
+    v /= norm_v;
+    v2 /= norm_v;
+    std::cout << " norm v: " << norm_v << " norm v_test: " << v_test.norm() << "\n";
+    v_test /= v_test.norm();
+
+    while (it < max_it)
+    {
+      // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
+      u = T * v;
+      //std::cout << "norm (T*v) : " << u.norm() << "\n";
+      if (k > 0 && deflation)
+      {
+        const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
+        u += T * X * S * v2;
+        // Test X * S * v2
+        /**/
+        const auto phi1 = S * v2;
+        const auto phi2 = X * phi1;
+        VecType phi2_test(n);// = VecType::Constant(n, 0.0);
+        //std::cout << "X.size(): " << X.size() << "\n";
+        for (int i = 0; i < n; i++)
+        {
+          phi2_test(i) = std::complex<double>(0.0, 0.0);
+          for (int j = 0; j < k; j++)
+          {
+            double re = phi1(j).real() * X(i,j).real() - phi1(j).imag() * X(i,j).imag();
+            double im = phi1(j).imag() * X(i,j).real() + phi1(j).real() * X(i,j).imag();
+            phi2_test(i) += std::complex<double>(re, im);
+          }
+        }
+        phi2_test -= phi2;
+        //std::cout << "phi2_test norm: " << phi2_test.norm() << "\n";
+        //if (phi2_test.norm() > tol) std::cout << "\n\n\n   !!!!! phi2_test differs from phi2 by: " << phi2_test.norm() << " !!!! \n\n\n";
+        /**/
+        //std::cout << "norm (T*v + T*X*S*v2): " << u.norm() << "\n";
+        // u2 = A(l) v1 + B(l) v2 = sum i=0..p l_i (XH^i)* v1 + sum i=0..p (XH^i)* X qi(l) v2
+        // if p = 1, A(l) = X.adjoint and B(l) = 0!
+        u2 = (X * HH[0]).adjoint() * v;
+        //std::cout << "u2: " << u2 << "\n";
+        VecType u2_test(k);
+        for (int j = 0; j < k; j++)
+        {
+          u2_test(j) = std::complex<double>(X.col(j).adjoint() * v);
+        }
+        u2_test -= u2;
+        //std::cout << "u2_test norm: " << u2_test.norm() << "\n";
+        if (u2_test.norm() > tol) std::cout << "\n\n\n   !!!!! u2_test differs from u2 by: " << u2_test.norm() << " !!!! \n\n\n";
+      }
+      u_test = T_test * v_test;
+      // compare [u, u2] to u_test
+      Eigen::VectorXcd u_comp(n+k);
+      u_comp << u, u2;
+      u_comp -= u_test;
+      std::cout << " diff [u, u2] and u2_test: " << u_comp.norm() << "\n";
+
+      if (k > 0 && deflation)
+      {
+        double norm_u = std::sqrt(u.squaredNorm() + u2.squaredNorm());
+        double norm_v = std::sqrt(v.squaredNorm() + v2.squaredNorm());
+        std::cout << "norm_u: " << norm_u << " norm u_test: " << u_test.norm() << "\n";
+        res = norm_u / norm_v;
+      }
+      else
+      {
+        res = u.norm() / v.norm();
+      }
+      res_test = u_test.norm() / v_test.norm();
+      std::cout << "k: " << k << " QN2 it: " << it << " res: " << res << " res_test: " << res_test << "\n";
+      //std::cout << "QN2 it: " << it << " res_test: " << res_test << "\n";
+      //if (res < tol)
+      if (res_test < tol)
+      {
+        X.conservativeResize(n, k + 1);
+        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+        const auto scale = v_test.head(n).norm(); //v.norm();
+        X.col(k) = v_test.head(n) /scale; //v / scale;
+        H.col(k).head(k) = v_test.tail(k) / scale;//v2 / scale;
+        H(k, k) = lambda;
+        Mpi::Print("k: {}, QN2 converged in {} iterations\n", k, it);
+        break;
+      }
+
+      w = dT * v;
+      //std::cout << "norm w: " << w.norm() << "\n";
+      if (k > 0 && deflation)
+      {
+        // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2
+        const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // should re-use the one defined above!!
+        w = w + dT * X * S * v2 - T * X * S * S * v2;
+        //std::cout << "norm w after deflation terms: " << w.norm() << "\n";
+        // with p = 1, A'(l) and B'(l) are zero so w2 is zero?
+      }
+      w_test = dT_test * v_test;
+      // compare [w, w2] to w_test
+      Eigen::VectorXcd w_comp(n+k);
+      w_comp << w, Eigen::VectorXcd::Constant(k, 0.0);
+      w_comp -= w_test;
+      std::cout << " diff [w, w2] and w2_test: " << w_comp.norm() << "\n";
+
+      std::complex<double> num = w0.adjoint() * u;
+      std::complex<double> den = w0.adjoint() * w;
+      if (k > 0 && deflation)
+      {
+        std::complex<double> u2_w0 = w0_eig.adjoint() * u2;
+        //std::cout << "u2_w0: " << u2_w0 << "\n";
+        num += u2_w0;
+      }
+      std::complex<double> num_test = w0_test.adjoint() * u_test;
+      std::complex<double> den_test = w0_test.adjoint() * w_test;
+      // compare num_test to num and
+      std::complex<double> delta = -num / den;
+      std::complex<double> delta_test = -num_test / den_test;
+      std::cout << "delta: " << delta << " delta_test: " << delta_test << "\n";
+      //lambda += delta;
+      lambda += delta_test;
+
+      z = -(delta * w + u);
+      if (k > 0 && deflation)
+      {
+        z2 = -u2;
+      }
+
+      z_test = -(delta_test * w_test + u_test);
+      // compare [z, z2] to z_test
+      Eigen::VectorXcd z_comp(n+k);
+      z_comp << z, z2;
+      z_comp -= z_test;
+      std::cout << " diff [z, z2] and z2_test: " << z_comp.norm() << "\n";
+
+      // Update T
+      EvalFunction(lambda, T, dT, true, true);
+      if (k == 0)
+      {
+        EvalFunction(lambda, T_test, dT_test, true, true);
+      }
+      else
+      {
+        const auto S = (lambda * MatType::Identity(k, k) - H).inverse();
+        T_test.topLeftCorner(n, n) = T;
+        T_test.topRightCorner(n, k) = T * (X * S);
+        T_test.bottomRows(k) = MatType::Zero(k, n + k);
+        T_test.bottomLeftCorner(k, n) = X.adjoint();
+
+        dT_test.topLeftCorner(n, n) = dT;
+        dT_test.topRightCorner(n, k) = dT * X * S;
+        dT_test.topRightCorner(n, k) -= T_test.topRightCorner(n, k) * S;
+        dT_test.bottomRows(k) = MatType::Zero(k, n + k);
+      }
+      if (it > 0 && it % update_freq == 0)
+      {
+        lambda_lu = lambda;
+        // Refactor matrix
+        lu.compute(T);
+        w0 = lu.solve(c); // also update w0_eig?
+        if (k > 0 && deflation)
+        {
+          // update w0 eig
+          const auto S = (lambda_lu * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
+          w0_eig = (X.adjoint() * X * S).inverse() * (X.adjoint() * w0 - c0_eig);
+          w0 -= X * S * w0_eig;
+        }
+        // test
+        lu_test.compute(T_test);
+        w0_test = lu_test.solve(c_test);//.head(n + k));
+        // compare [w0, w0_eig] to w0_test
+        Eigen::VectorXcd w0_comp(n+k);
+        w0_comp << w0, w0_eig;
+        w0_comp -= w0_test;
+        std::cout << " diff [w0, w0_eig] and w0_test: " << w0_comp.norm() << "\n";
+        std::cout << " diff w0 and w0_test.head(n): " << (w0 - w0_test.head(n)).norm() << "\n";
+        std::cout << " diff w0_eig and w0_test.tail(k): " << (w0_eig - w0_test.tail(k)).norm() << "\n";
+        if (w0_comp.norm() > 1e-6) std::exit(0);
+      }
+
+      // Solve T dv = z and update v += dv
+      VecType dv = lu.solve(z);
+      //std::cout << "norm lu.solve(z): " << dv.norm() << "\n";
+      if (k > 0 && deflation)
+      {
+        // dv = T^1 z1 (done above lu.solve)
+        // u2 = SS^-1 (z2 - A*dv) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
+        // u1 = dv - X*S*u2
+        const auto S = (lambda_lu * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
+        u2 = (X.adjoint() * X * S).inverse() * (X.adjoint() * dv - z2);
+
+        //Eigen::MatrixXcd SS(k, k);
+        //SS = X.adjoint() * X;
+        //SS = - SS * S;
+        //u2 = SS.inverse() * (z2 - X.adjoint() * dv);
+
+        //u2 = X.adjoint() * dv;
+        //z2 -= u2;
+        //Eigen::MatrixXcd SS(k, k);
+        //SS = X.adjoint() * X;
+        //std::cout << "SS: " << SS <<"\n";
+        //Eigen::MatrixXcd SS_test(k, k);
+        //for (int i = 0; i < k; i++)
+        //{
+        // for (int j = 0; j < k; j++)
+        //  {
+        //    SS_test(i,j) = std::complex<double>(X.col(i).adjoint() * X.col(j));// not sure of order, try switching i and j?
+        //  }
+        //}
+        //SS_test -= SS;
+        //std::cout << "SS_test norm: " << SS_test.norm() << "\n";
+        //if (SS_test.norm() > tol) std::cout << "\n\n\n   !!!!! SS_test differs from SS by " << SS_test.norm() << " !!!! \n\n\n";
+
+        //SS = - SS * S;
+        //u2 = SS.inverse() * z2;
+        // u1 = dv - X*S*u2
+        dv -= X * S * u2;
+        v2 += u2; // update v2?
+        //std::cout << "updated v2: " << v2 << "\n";
+      }
+      v += dv;
+
+      VecType dv_test = lu_test.solve(z_test);
+      //Eigen::VectorXcd dv_comp(n+k);
+      //dv_comp << dv, u2;
+      //dv_comp -= dv_test;
+      //std::cout << " u2: " << u2 << " dv_test.tail(k): " << dv_test.tail(k) << "\n";
+      //std::cout << " diff [dv, u2] and dv_test: " << dv_comp.norm() << "\n";
+      //std::cout << " diff dv and dv_test.head(n): " << (dv - dv_test.head(n)).norm() << "\n";
+      //std::cout << " diff u2 and dv_test.tail(k): " << (u2 - dv_test.tail(k)).norm() << "\n";
+      v_test += dv_test;
+      // compare [v, v2] to v_test
+      Eigen::VectorXcd v_comp(n+k);
+      v_comp << v, v2;
+      v_comp -= v_test;
+      std::cout << " diff [v, v2] and v_test: " << v_comp.norm() << "\n";
+      //std::cout << " diff v and v_test.head(n): " << (v - v_test.head(n)).norm() << "\n";
+      //std::cout << " diff v2 and v_test.tail(k): " << (v2 - v_test.tail(k)).norm() << "\n";
+      //if(k>0) exit(0);
+      //std::cout << "norm dv: " << dv.norm() << " norm v: " << v.norm() << " norm v2: " << v2.norm() << "\n";
+      norm_v = std::sqrt(v.squaredNorm() + v2.squaredNorm());
+      v /= norm_v;
+      v2 /= norm_v;
+      std::cout << "norm v: " << norm_v << " norm v_test: " << v_test.norm() << "\n";
+      v_test /= v_test.norm();
+
+      it++;
+    }
+    if (it == max_it)
+    {
+      X.conservativeResize(n, k + 1);
+      H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+      const auto scale = v_test.head(n).norm(); //v.norm();
+      X.col(k) = v_test.head(n) /scale; //v / scale;
+      H.col(k).head(k) = v_test.tail(k) / scale;//v2 / scale;
+      H(k, k) = lambda;
+      //Mpi::Print("k: {}, QN2 did NOT converge in {} iterations, res: {}\n", k, it, res);
+      Mpi::Print("k: {}, QN2 did NOT converge in {} iterations, res: {}\n", k, it, res_test);
+    }
+
+  }
+  // Eigenpair extraction from the invariant pair (X, H).
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(H);
+  D = eps.eigenvalues();
+  std::cout << "eps.eigenvalues: " << D << "\n";
+  X *= eps.eigenvectors();
+  X *= X.colwise().norm().cwiseInverse().asDiagonal();
+}
+
 
 template <typename F, typename MatType, typename VecType>
 void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
@@ -1426,7 +1782,8 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() /*co
       // Variant with extended problem deflation from Effenberger.
       Mpi::Print("Call SolveNEP with sigma: {}\n", sigma);
       //SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
-      SolveNEPtest(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
+      //SolveNEPtest(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
+      SolveNEPtest2(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
     }
     for (std::size_t i = 0; i < num_eig; i++)
     {
