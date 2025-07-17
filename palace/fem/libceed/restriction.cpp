@@ -51,8 +51,9 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   // Get coordinates of element dofs.
   mfem::DenseMatrix elem_pm;
   const mfem::FiniteElement *fe_elem = fespace.GetFE(elem_id);
-  mfem::ElementTransformation *T = fespace.GetMesh()->GetElementTransformation(elem_id);
-  T->Transform(fe_elem->GetNodes(), elem_pm);
+  mfem::IsoparametricTransformation T;
+  fespace.GetMesh()->GetElementTransformation(elem_id, &T);
+  T.Transform(fe_elem->GetNodes(), elem_pm);
 
   // Find the dofs.
   double tol = 1E-5;
@@ -65,6 +66,8 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
     {
       norm2_f += face_pm(m, l) * face_pm(m, l);
     }
+
+    bool found_match = false;
     for (int m = 0; m < elem_pm.Width(); m++)
     {
       double norm2_e = 0.0;
@@ -81,9 +84,28 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
       if (diff <= relative_tol)
       {
         dofs[l] = elem_dofs[m];
+        found_match = true;
+        break;
       }
     }
+
+    MFEM_ASSERT(found_match,
+                [&]()
+                {
+                  std::stringstream msg;
+                  msg << "l " << l << '\n';
+                  msg << "elem_dofs\n";
+                  for (auto x : elem_dofs)
+                    msg << x << ' ';
+
+                  msg << "\ndofs\n";
+                  for (auto x : dofs)
+                    msg << x << ' ';
+                  msg << '\n';
+                  return msg.str();
+                }());
   }
+
   return dofs;
 };
 
