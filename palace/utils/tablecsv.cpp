@@ -214,7 +214,7 @@ std::string_view trim_space(std::string_view str_v)
   auto prefix = str_v.find_first_not_of(" \t\f\v");
   str_v.remove_prefix(std::min(prefix, str_v.size()));
   auto suffix = str_v.find_last_not_of(" \t\f\v");  // suffix also counts from 0
-  str_v.remove_prefix(std::min(str_v.size() - 1 - suffix, str_v.size()));
+  str_v.remove_suffix(std::min(str_v.size() - 1 - suffix, str_v.size()));
   return str_v;
 }
 

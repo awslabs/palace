@@ -237,6 +237,36 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
+TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
+{
+  Table table_expected{};
+  {
+    table_expected.insert("col_1", "Header Col 1");
+
+    table_expected.insert("col_2", "Header Col 2");
+    table_expected["col_2"] << 20.0;
+
+    table_expected.insert("col_3", "Header Col 3");
+    table_expected["col_3"] << 3.0;
+  }
+
+  auto table_str1 = std::string(
+      "            Header Col 1   ,            Header Col 2 ,            Header Col 3 \n  "
+      "                         ,        2.000000000e+01  ,        3.000000000e+00\n  "
+      "                    NULL  ,                    NULL ,         \n  ");
+
+  Table table_parse(table_str1);
+
+  CHECK(table_parse.n_cols() == table_expected.n_cols());
+  CHECK(table_parse[0].data == table_expected[0].data);
+  CHECK(table_parse[1].data == table_expected[1].data);
+  CHECK(table_parse[2].data == table_expected[2].data);
+
+  CHECK(table_parse[0].header_text == table_expected[0].header_text);
+  CHECK(table_parse[1].header_text == table_expected[1].header_text);
+  CHECK(table_parse[2].header_text == table_expected[2].header_text);
+}
+
 TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
 {
   // Make these tests serial to avoid duplicate file access.
