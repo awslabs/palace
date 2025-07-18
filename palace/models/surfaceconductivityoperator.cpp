@@ -102,7 +102,8 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
   }
   MFEM_VERIFY(boundaries.empty() ||
-                  iodata.problem.type == config::ProblemData::Type::DRIVEN,
+                  iodata.problem.type == config::ProblemData::Type::DRIVEN ||
+                  iodata.problem.type == config::ProblemData::Type::EIGENMODE,
               "Finite conductivity boundaries are only available for frequency "
               "domain driven simulations!");
 }

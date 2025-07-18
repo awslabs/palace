@@ -229,21 +229,22 @@ void IoData::CheckConfiguration()
   }
   else if (problem.type == config::ProblemData::Type::EIGENMODE)
   {
-    if (!boundaries.conductivity.empty())
-    {
-      Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
-                   "conditions!\n");
-    }
+    // These are all the BCs that lead to A2(omega) terms
+    //if (!boundaries.conductivity.empty())
+    //{
+    //  Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
+    //               "conditions!\n");
+    //}
     //if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     //{
     //  Mpi::Warning(
     //      "Eigenmode problem type does not support wave port boundary conditions!\n");
     //}
-    if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
-    {
-      Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
-                   "with order > 1!\n");
-    }
+    //if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
+    //{
+    //  Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
+    //               "with order > 1!\n");
+    //}
   }
   else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
   {
