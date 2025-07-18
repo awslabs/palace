@@ -72,6 +72,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("nlohmann-json")
     depends_on("fmt+shared", when="+shared")
     depends_on("fmt~shared", when="~shared")
+    depends_on("scnlib+shared", when="+shared")
+    depends_on("scnlib~shared", when="~shared")
     depends_on("eigen")
 
     ## -- Sparse Direct Solvers --
