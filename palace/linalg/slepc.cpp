@@ -701,7 +701,8 @@ void SlepcNEPSolver::SetType(SlepcEigenvalueSolver::Type type)
       // std::cerr << "Default NLEIGS Interpolation settings tol: " << tol << " degree: " <<
       // degree << "\n"; PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 10));//what
       // makes sense?
-      PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 50));  // what makes sense?
+      //PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 50));  // what makes sense?
+      PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 30));  // 5 is fast but results are bad
       //PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-8, 300));  // test tighter, takes much longer
       //PalacePetscCall(NEPNLEIGSSetSingularitiesFunction(nep, __compute_singularities, NULL));
 
@@ -935,7 +936,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PC pc;
     PetscInt nsolve;
     // NLEIGS
-    /*
+    /**/
     KSP *ksp;
     PalacePetscCall(NEPNLEIGSGetKSPs(nep, &nsolve, &ksp));
     for (int i = 0; i < nsolve; i++)
@@ -946,7 +947,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
       PalacePetscCall(PCShellSetContext(pc, (void *)this));
       PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     }
-    */
+    /**/
     // RII (needs Jacobian and target_magnitude)
     /*
     KSP ksp;
@@ -961,7 +962,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     */
     // SLP
-    /**/
+    /*
     KSP ksp;
     EPS eps;//?
     PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
@@ -972,7 +973,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
     PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
-   /**/
+   */
   }
 }
 
@@ -2155,9 +2156,6 @@ int SlepcPEPSolver::Solve() // test
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon()); // TODO: define only once above
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput!
   xscale = std::make_unique<PetscReal[]>(num_conv); // ??
-  //eigen_values.resize(num_conv);
-  //eigen_vectors.resize(num_conv);
-  //Mpi::Print("Found {:d} eigenvalues in linear problem\n", num_conv);
 
   Eigen::MatrixXcd Xeigen;//(size, num_conv); // for validity tests
   Eigen::VectorXcd v_eigen(size), c_eigen(size), w0_eigen(size), u_eigen(size), w_eigen(size); // for validity tests
@@ -2168,7 +2166,6 @@ int SlepcPEPSolver::Solve() // test
   Eigen::MatrixXcd H;
   std::vector<ComplexVector> X;
   Eigen::VectorXcd u2, z2;
-  bool ortho = false;//false;//
 
   int k = 0;
   while (k < num_conv)
@@ -2209,31 +2206,6 @@ int SlepcPEPSolver::Solve() // test
     auto *vi = v.Imag().Read();
     for (int i = 0; i < size; i++) v_eigen(i) = std::complex<double>(vr[i], vi[i]);
 
-    // Orthogonalize w0 and v (?) against previous eigenvectors to prevent convergence to previous eigenvectors?
-    // Doesn't quite achieve its purpose, deflation should be better
-    if (ortho && k > 0)
-    {
-      std::vector<std::complex<double>> Hj(k);
-      OrthogonalizeColumn(GmresSolverBase::OrthogType::MGS, GetComm(), eigen_vectors, w0, Hj.data(), k);
-      //OrthogonalizeColumn(GmresSolverBase::OrthogType::CGS, GetComm(), eigen_vectors, w0, Hj.data(), k);
-      //OrthogonalizeColumn(GmresSolverBase::OrthogType::CGS2, GetComm(), eigen_vectors, w0, Hj.data(), k);
-      Mpi::Print("Orthogonalization coeffs for w0: \n");
-      for (int j = 0; j < k; j++)
-      {
-        Mpi::Print("H[{}]: {:.3e}{:+.3e}i\n", j, Hj[j].real(), Hj[j].imag());
-      }
-      OrthogonalizeColumn(GmresSolverBase::OrthogType::MGS, GetComm(), eigen_vectors, v, Hj.data(), k);
-      //OrthogonalizeColumn(GmresSolverBase::OrthogType::CGS, GetComm(), eigen_vectors, v, Hj.data(), k);
-      //OrthogonalizeColumn(GmresSolverBase::OrthogType::CGS2, GetComm(), eigen_vectors, v, Hj.data(), k);
-      Mpi::Print("Orthogonalization coeffs for v: \n");
-      for (int j = 0; j < k; j++)
-      {
-        Mpi::Print("H[{}]: {:.3e}{:+.3e}i\n", j, Hj[j].real(), Hj[j].imag());
-      }
-      // Re-normalize v?
-      linalg::Normalize(GetComm(), v);
-    }
-
 
     // Deflation
     //https://arxiv.org/pdf/1910.11712
@@ -2252,12 +2224,6 @@ int SlepcPEPSolver::Solve() // test
     // 3) x2 = S(sigma)^-1 (b2 - A(sigma)v))
     // 4) x1 = v - X*(sigma*I-H)^-1 x2
     int p = 1; // minimality index
-    std::vector<Eigen::MatrixXcd> HH(p);
-    HH[0] = Eigen::MatrixXcd::Identity(k, k);
-    for (int i = 1; i < p; i++)
-    {
-      HH[i] = HH[i - 1] * H;
-    }
 
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
     opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
@@ -2309,13 +2275,7 @@ int SlepcPEPSolver::Solve() // test
     for (int i = 0; i < size; i++) w0_eigen(i) = std::complex<double>(w0r[i], w0i[i]);
 
     int update_freq = 4;// SHOULD REVISIT THIS AND FIGURE OUT BEST FREQUENCY around 4-5 seems good?
-    // Waveguide adapter (with linearA2)
-    // freq, it1, it2
-    // 1, 34, 64 why is 1 worse than 3?! that's odd
-    // 3, 17, 27
-    // 5, 14, 27
-    // 10, 22, 31
-    // 100, >55
+
     double min_res = 1e6;
     int min_it = 0;
     double init_res = 1e6;
@@ -2325,7 +2285,7 @@ int SlepcPEPSolver::Solve() // test
     while (it < max_outer_it)
     {
       // Compute u = A * v and check residual
-      auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
+      auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
       auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2n.get());
       A->Mult(v, u);
 
@@ -2439,7 +2399,9 @@ int SlepcPEPSolver::Solve() // test
 
       // Compute w = J * v
       opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO); // Maybe use this only for it=0 and after use prev A2?
-      opAJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(dl * std::abs(eig.imag()), 1, opA2p.get(), A2n.get());
+      //opAJ = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>(dl * std::abs(eig.imag()), 1, opA2p.get(), A2n.get());
+      std::complex<double> denom = dl * std::abs(eig.imag());
+      opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
       opJ = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2 * eig, opK, opC, opM, opAJ.get());
       opJ->Mult(v, w);
 
@@ -3968,30 +3930,31 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
-  if (ctx->lambda_test.imag() == 0.0) ctx->lambda_test = ctx->sigma;
   PetscCall(FromPetscVec(x, ctx->x1));
-
+  /*
   if (ctx->new_lambda)
   {
+    if (ctx->lambda_test.imag() == 0.0) ctx->lambda_test = ctx->sigma;
     std::cerr << "__pc_apply_NEP with new ctx->lambda_test: " << ctx->lambda_test.real() << "+" << ctx->lambda_test.imag() <<"i\n";
     std::cerr << "__pc_apply_NEP with new ctx->lambda_J: " << ctx->lambda_J.real() << "+" << ctx->lambda_J.imag() <<"i\n";
-  //auto opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(ctx->lambda_test.imag()), palace::Operator::DIAG_ZERO);
-  //auto opA_pc = ctx->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->opK, ctx->opC, ctx->opM, opA2_pc.get());
-  //auto opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->lambda_test.imag());
-  ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(ctx->lambda_test.imag()), palace::Operator::DIAG_ZERO);
-  ctx->opA_pc = ctx->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get());
-  ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->lambda_test.imag());
-  ctx->new_lambda = false;
+    //auto opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(ctx->lambda_test.imag()), palace::Operator::DIAG_ZERO);
+    //auto opA_pc = ctx->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->opK, ctx->opC, ctx->opM, opA2_pc.get());
+    //auto opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->lambda_test.imag());
+    ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(ctx->lambda_test.imag()), palace::Operator::DIAG_ZERO);
+    ctx->opA_pc = ctx->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get());
+    ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->lambda_test.imag());
+    ctx->new_lambda = false;
   }
+    */
   // If I call ctx->opInv->SetOperators I get a segfault, so I'm creating a new ksp object here for testing
   //std::cerr << "__pc_apply_NEP make unique ksp\n";
-  auto ksp = std::make_unique<palace::ComplexKspSolver>(*ctx->opIodata, ctx->space_op->GetNDSpaces(), &ctx->space_op->GetH1Spaces());
-  //ksp->SetOperators(*opA_pc, *opP_pc);
-  //std::cerr << "__pc_apply_NEP ksp->SetOperators\n";
-  ksp->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
-  //std::cerr << "__pc_apply_NEP ksp->Mult\n";
-  ksp->Mult(ctx->x1, ctx->y1);
-  //ctx->opInv->Mult(ctx->x1, ctx->y1);
+  // This is needed for Newton-based solvers:
+  //auto ksp = std::make_unique<palace::ComplexKspSolver>(*ctx->opIodata, ctx->space_op->GetNDSpaces(), &ctx->space_op->GetH1Spaces());
+  //ksp->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
+  //ksp->Mult(ctx->x1, ctx->y1);
+
+  // For NLEIGS we don't want to change the operators
+  ctx->opInv->Mult(ctx->x1, ctx->y1);
 
   //std::cerr << "__pc_apply_NEP after Mult\n";
   /**/

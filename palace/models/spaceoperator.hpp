@@ -179,6 +179,11 @@ public:
   GetExtraSystemMatrixJacobian(double eps, int order, const OperType *A2p,
                   const OperType *A2, const OperType *A2m = nullptr);
 
+  // J = (A2p - A2) / eps //find better names than A2p and A2?
+  template <typename OperType, typename ScalarType>
+  std::unique_ptr<OperType>
+  GetDividedDifferenceMatrix(ScalarType eps, const OperType *A2p, const OperType *A2, Operator::DiagonalPolicy diag_policy);
+
   template <typename OperType>
   std::unique_ptr<OperType>
   GetExtraSystemMatrixSum(double a0, double a1, const OperType *A20, const OperType *A21);

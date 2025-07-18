@@ -768,6 +768,26 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
 
 }  // namespace
 
+template <typename OperType, typename ScalarType>
+std::unique_ptr<OperType>
+SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A2p, const OperType *A2, Operator::DiagonalPolicy diag_policy)
+{
+  using ParOperType =
+    typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                              ComplexParOperator, ParOperator>::type;
+  const auto *PtAP_A2p = (A2p) ? dynamic_cast<const ParOperType *>(A2p) : nullptr;
+  const auto *PtAP_A2  = (A2)  ? dynamic_cast<const ParOperType *>(A2)  : nullptr;
+  MFEM_VERIFY((!A2p || PtAP_A2p) && (!A2 || PtAP_A2),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+
+  int height = PtAP_A2->LocalOperator().Height();
+  int width = PtAP_A2->LocalOperator().Width();
+  auto J = BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A2p, PtAP_A2, nullptr, nullptr, GetNDSpace());
+  J->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return J;
+}
+
 // rename this GetDividedDifferenceMatrix?
 template <typename OperType>
 std::unique_ptr<OperType>
@@ -1473,6 +1493,10 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrixSum(double, double, const ComplexOperator *, const ComplexOperator *);
 //template std::unique_ptr<ComplexOperator>
 //SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double>, std::vector<std::unique_ptr<ComplexOperator>>);
+template std::unique_ptr<Operator>
+SpaceOperator::GetDividedDifferenceMatrix(double, const Operator *, const Operator *, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetDividedDifferenceMatrix(std::complex<double>, const ComplexOperator *, const ComplexOperator *, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
