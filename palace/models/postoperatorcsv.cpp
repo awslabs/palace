@@ -1276,4 +1276,10 @@ template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
 
+// Function explict needed testing since everywhere it's through PostOperator.
+// TODO(C++20): with requires, we won't need a second template.
+
+template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(
+    const SpaceOperator &fem_op) -> void;
+
 }  // namespace palace
