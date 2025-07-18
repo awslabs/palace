@@ -311,29 +311,23 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_base,
                                                         Table &&t_ref)
 {
-  if (!MayReloadTable())
+  // For non-driven solvers or driven with default restart, no table was loaded.
+  if (!reload_table)
   {
     t_csv_base.table = std::move(t_ref);
     return;
   }
-  // t_base is empty. This happens if there was no file to reload, the file was empty, or
-  // the read from disk was invalid. Just check the simulation does not expect a restart.
+
+  // At this point we have a non-default restart. We need to verify that (a) the structure
+  // of the table is valid, (b) the cursor location matches the expected restart location.
+
   auto file = t_csv_base.get_csv_filepath();
   Table &t_base = t_csv_base.table;
-  if (t_base.empty())
-  {
-    if ((ex_idx_i != 0) || (row_i != 0))  // Non-trivial restart
-    {
-      MFEM_ABORT(fmt::format("The data table loaded from path {} was empty, but the "
-                             "simulation expects a non-trivial restart!",
-                             file))
-    }
-    t_base = std::move(t_ref);  // Initializing a new run, resused expected table.
-    return;
-  }
+  MFEM_VERIFY(!t_base.empty(),
+              fmt::format("The data table loaded from path {} was empty, but the "
+                          "simulation expected a restart with existing data!",
+                          file));
 
-  // t_base has data in it. We need to verify that (a) the structure of the table is valid,
-  // (b) the t_base cursor location matches the expected restart location.
   auto err_msg = fmt::format("The results table loaded from path {} contains pre-existing "
                              "data, but it doest not match the "
                              "expected table structure.",
@@ -400,7 +394,7 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   using fmt::format;
-  domain_E = TableWithCSVFile(post_dir / "domain-E.csv", MayReloadTable());
+  domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
@@ -470,7 +464,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF(const SurfacePostOperator &su
     return;
   }
   using fmt::format;
-  surface_F = TableWithCSVFile(post_dir / "surface-F.csv", MayReloadTable());
+  surface_F = TableWithCSVFile(post_dir / "surface-F.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() *
@@ -552,7 +546,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
     return;
   }
   using fmt::format;
-  surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv", MayReloadTable());
+  surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
@@ -599,7 +593,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &in
     return;
   }
   using fmt::format;
-  probe_E = TableWithCSVFile(post_dir / "probe-E.csv", MayReloadTable());
+  probe_E = TableWithCSVFile(post_dir / "probe-E.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
   auto v_dim = interp_op.GetVDim();
@@ -677,7 +671,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &in
     return;
   }
   using fmt::format;
-  probe_B = TableWithCSVFile(post_dir / "probe-B.csv", MayReloadTable());
+  probe_B = TableWithCSVFile(post_dir / "probe-B.csv", reload_table);
   Table t;  // Define table locally first due to potential reload.
   auto v_dim = interp_op.GetVDim();
   int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
@@ -757,7 +751,7 @@ auto PostOperatorCSV<solver_t>::InitializeSurfaceI(const SurfaceCurrentOperator 
     return;
   }
   using fmt::format;
-  surface_I = TableWithCSVFile(post_dir / "surface-I.csv", MayReloadTable());
+  surface_I = TableWithCSVFile(post_dir / "surface-I.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() * surf_j_op.Size();
@@ -810,8 +804,8 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
   using fmt::format;
   // Currently only works for lumped ports.
   const auto &lumped_port_op = fem_op.GetLumpedPortOp();
-  port_V = TableWithCSVFile(post_dir / "port-V.csv", MayReloadTable());
-  port_I = TableWithCSVFile(post_dir / "port-I.csv", MayReloadTable());
+  port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
+  port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
   Table tV;  // Define table locally first due to potential reload.
   Table tI;
@@ -930,7 +924,7 @@ auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
     return;
   }
   using fmt::format;
-  port_S = TableWithCSVFile(post_dir / "port-S.csv", MayReloadTable());
+  port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
 
@@ -1247,6 +1241,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     nr_expected_measurement_rows = iodata.solver.driven.sample_f.size();
+    reload_table = (iodata.solver.driven.restart != 1);
 
     row_i = std::size_t(iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
     ex_idx_i = std::size_t(iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;

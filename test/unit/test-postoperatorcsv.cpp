@@ -91,7 +91,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
-        CHECK(post_op_csv.MayReloadTable());
+        CHECK(!post_op_csv.reload_table);  // Default restart
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
         REQUIRE(post_op_csv.port_V.has_value());
         REQUIRE(post_op_csv.port_I.has_value());
@@ -111,9 +111,9 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
-        CHECK_THROWS_WITH(
-            post_op_csv.InitializePortVI(space_op),
-            Catch::Matchers::ContainsSubstring("simulation expects a non-trivial restart"));
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "simulation expected a restart with existing data"));
       }
     }
   }
@@ -137,7 +137,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
-        CHECK(post_op_csv.MayReloadTable());
+        CHECK(post_op_csv.reload_table);
 
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
         REQUIRE(post_op_csv.port_V.has_value());
@@ -167,7 +167,7 @@ public:
         }
       }
     }
-    // Different restart should fail to init table.
+    // Defaults restart overwrites any existing data and should just work.
     {
       iodata.solver.driven.restart = 0 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
@@ -180,9 +180,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
 
-        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                          Catch::Matchers::ContainsSubstring(
-                              "Specified restart position is incompatible with reloaded"));
+        CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
     }
     // Different restart should fail to init table.
@@ -222,7 +220,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
-        CHECK(post_op_csv.MayReloadTable());
+        CHECK(!post_op_csv.reload_table);  // Default restart
 
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
         REQUIRE(post_op_csv.port_V.has_value());
@@ -247,7 +245,8 @@ public:
 
   void restart1_mismatch_col_nr()
   {
-    // Try and load wrong table with incorrect width.
+    iodata.solver.driven.restart = 3;  // non-trivial restart for check to trigger
+                                       // Try and load wrong table with incorrect width.
     iodata.problem.output =
         fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c03";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
@@ -305,7 +304,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
-        CHECK(post_op_csv.MayReloadTable());
+        CHECK(post_op_csv.reload_table);
 
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
         REQUIRE(post_op_csv.port_V.has_value());
@@ -355,9 +354,8 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
 
-        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                          Catch::Matchers::ContainsSubstring(
-                              "Specified restart position is incompatible with reloaded"));
+        // No throw since 1 restart just overwrite existing table.
+        CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
     }
     // Different restart should fail to init table.
@@ -398,7 +396,7 @@ public:
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
         CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
-        CHECK(post_op_csv.MayReloadTable());
+        CHECK(post_op_csv.reload_table);
 
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
         REQUIRE(post_op_csv.port_V.has_value());
@@ -419,15 +417,13 @@ public:
         }
       }
     }
-    // Different restart should fail to init table.
+    // Restart should not throw since it overwrites table.
     {
       iodata.solver.driven.restart = 0 + 1;
       PostOperatorCSVManualTest post_op_csv{iodata, space_op};
       if (Mpi::Root(Mpi::World()))
       {
-        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
-                          Catch::Matchers::ContainsSubstring(
-                              "Specified restart position is incompatible with reloaded"));
+        CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
     }
     // Different restart should fail to init table.

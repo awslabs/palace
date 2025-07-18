@@ -167,6 +167,7 @@ class PostOperatorCSV
 protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
+  bool reload_table = false;  // True only for driven simulation with non-default restart
 
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
@@ -187,10 +188,6 @@ protected:
   // Stored column groups (excitations). Default single "0" for solvers without excitations.
   std::vector<std::size_t> ex_idx_v_all = {std::size_t(0)};
   bool HasSingleExIdx() const { return ex_idx_v_all.size() == 1; }
-
-  // Functions dealing with reloading an already existing table via "Restart".
-
-  constexpr static bool MayReloadTable() { return solver_t == ProblemType::DRIVEN; }
 
   void MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref);
 
