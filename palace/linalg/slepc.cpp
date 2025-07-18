@@ -2129,7 +2129,7 @@ int SlepcPEPSolver::Solve() // test
 
   // Copied from PEPLinearSolve
  // TEST TO REFINE EIGENVALUES WITH QUASI-NEWTON METHOD?
-  int max_outer_it = 70;//100;
+  int max_outer_it = 100;//100;
   int max_inner_it = 5;//20;
   double tol = 1e-6;
   double deflation_tol = 1e-8;//test, no effect if < tol
@@ -2320,7 +2320,7 @@ int SlepcPEPSolver::Solve() // test
     int min_it = 0;
     double init_res = 1e6;
     double res = 1e6;
-    double prev_res = 1e6;
+    int large_res = 0;
     int it = 0;
     while (it < max_outer_it)
     {
@@ -2427,6 +2427,13 @@ int SlepcPEPSolver::Solve() // test
         eigen_values.push_back(eig);
         eigen_vectors.push_back(v);
         k++; // only increment eigenpairs when a converged pair is found!
+        break;
+      }
+      // Stop if large residual for 10 consecutive iterations
+      large_res = (res > 0.9) ? large_res + 1 : 0;
+      if (large_res > 10)
+      {
+        Mpi::Print(GetComm(), "k: {}, Newton not converging after {} iterations, restarting\n", k, it);
         break;
       }
 
@@ -2712,14 +2719,16 @@ int SlepcPEPSolver::Solve() // test
   eps.compute(H);
   //std::cout << "eps.eigenvalues: " << eps.eigenvalues() << "\n";
   // check that eps.eigenvalues().size() == eigen_values.size()
-  std::vector<int> order(eigen_values.size()), order_eigen(eps.eigenvalues().size());
+  std::vector<int> order(eigen_values.size()), order_eigen(eps.eigenvalues().size()), order2(eigen_values.size());
   std::iota(order.begin(), order.end(), 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
+  std::iota(order2.begin(), order2.end(), 0);
   std::sort(order.begin(), order.end(),
             [&eigen_values = this->eigen_values](auto l, auto r) { return eigen_values[l].imag() < eigen_values[r].imag(); });
   std::sort(order_eigen.begin(), order_eigen.end(),
             [&epseig = eps.eigenvalues()](auto l, auto r) { return epseig(l).imag() < epseig(r).imag(); });
-  for(int k = 0; k < num_conv; k++) Mpi::Print("k: {}, order: {}, eig: {}+{}i\n", k, order[k], eigen_values[k].real(), eigen_values[k].imag());//std::cout << "k: " << k << " order: " << order[k] << " eig: " << eigen_values[k] << "\n";
+  std::sort(order2.begin(), order2.end(), [&order](auto l, auto r) { return order[l] < order[r]; });
+  for(int k = 0; k < num_conv; k++) Mpi::Print("k: {}, order: {}, order2: {}, eig: {}+{}i\n", k, order[k], order2[k], eigen_values[k].real(), eigen_values[k].imag());//std::cout << "k: " << k << " order: " << order[k] << " eig: " << eigen_values[k] << "\n";
   for(int k = 0; k < num_conv; k++) Mpi::Print("k: {}, ordereig: {}, eig: {}+{}i\n", k, order_eigen[k], eps.eigenvalues()(k).real(), eps.eigenvalues()(k).imag());//std::cout << "k: " << k << " ordereig: " << order_eigen[k] << " eig: " << eps.eigenvalues()(k) << "\n";
   Eigen::MatrixXcd Xeig = eps.eigenvectors();
   std::vector<Eigen::VectorXcd> sorted_Xeig;
@@ -2727,17 +2736,27 @@ int SlepcPEPSolver::Solve() // test
   std::vector<std::complex<double>> sorted_eigen_values;
   for (int k = 0; k < num_conv; k++)
   {
-    Mpi::Print("k: {}, eig: {}+{}i, epseig: {}+{}i\n", k, eigen_values[order[k]].real(), eigen_values[order[k]].imag(), eps.eigenvalues()(order_eigen[k]).real(), eps.eigenvalues()(order_eigen[k]).imag());
+    //Mpi::Print("k: {}, eig: {}+{}i, epseig: {}+{}i\n", k, eigen_values[order[k]].real(), eigen_values[order[k]].imag(), eps.eigenvalues()(order_eigen[k]).real(), eps.eigenvalues()(order_eigen[k]).imag());
     //std::cout << "k: " << k << " eig: " << eigen_values[order[k]] << " epseig: " << eps.eigenvalues()(order_eigen[k]) << "\n";
     sorted_Xeig.push_back(Xeig.col(order_eigen[k]));//should be col?
-    sorted_eigen_vectors.push_back(eigen_vectors[order[k]]);
-    sorted_eigen_values.push_back(eigen_values[order[k]]);
+    //sorted_eigen_vectors.push_back(eigen_vectors[order[k]]);
+    //sorted_eigen_values.push_back(eigen_values[order[k]]);
+
+    // original order
+    //sorted_Xeig.push_back(Xeig.col(k));
+    sorted_eigen_vectors.push_back(eigen_vectors[k]);
+    sorted_eigen_values.push_back(eigen_values[k]);
   }
 
   //Xeigen *= eps.eigenvectors(); // [n x k] x [k x k] = [n x k]
   //Xeigen *= Xeigen.colwise().norm().cwiseInverse().asDiagonal(); //
   for(int k = 0; k < num_conv; k++)
   {
+    double min_res = 1e6; int min_k = -1;
+    ComplexVector eigv_best; eigv_best.SetSize(size); eigv_best.UseDevice(false);
+    //for(int k2 = 0; k2 < num_conv; k2++) // find which Xeig columns leads to lowest residual
+    //{
+    int k2 = order2[k];//order_eigen[order[k]];
     //const size_t k_eigen = order_eigen[k]; // double check
     ComplexVector eigv; eigv.SetSize(size); eigv.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
     eigv = 0.0;
@@ -2755,13 +2774,23 @@ int SlepcPEPSolver::Solve() // test
       {
         //eigvr[i] += Xeig(j,k).real() * XR[i] - Xeig(j,k).imag() * XI[i];
         //eigvi[i] += Xeig(j,k).imag() * XR[i] + Xeig(j,k).real() * XI[i];
-        eigvr[i] += sorted_Xeig[k](j).real() * XR[i] - sorted_Xeig[k](j).imag() * XI[i];
-        eigvi[i] += sorted_Xeig[k](j).imag() * XR[i] + sorted_Xeig[k](j).real() * XI[i];
+        eigvr[i] += sorted_Xeig[k2](j).real() * XR[i] - sorted_Xeig[k2](j).imag() * XI[i];
+        eigvi[i] += sorted_Xeig[k2](j).imag() * XR[i] + sorted_Xeig[k2](j).real() * XI[i];
       }
     }
     const auto scale = linalg::Norml2(GetComm(), eigv);
     //std::cout << "k: " << k << " scale: " << scale << "\n";
-    eigen_vectors[k] = eigv; // double check k. Should reorder?!
+
+    // evaluate residual
+    std::complex<double> eig = sorted_eigen_values[k];
+    auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO); //std:abs???
+    auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2n.get());
+    A->Mult(eigv, u);
+    double res = linalg::Norml2(GetComm(), u) / scale;
+    if (res < min_res) {min_res = res; min_k = k2; eigv_best = eigv;}
+    //} // test loop k2
+    Mpi::Print("k: {}, min_res: {} at k: {}\n", k, min_res, min_k);
+    eigen_vectors[k] = eigv_best; // double check k. Should reorder?!
     eigen_values[k] = sorted_eigen_values[k];
   }
   space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
