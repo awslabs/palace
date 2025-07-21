@@ -68,6 +68,7 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
     }
 
     bool found_match = false;
+    MFEM_CONTRACT_VAR(found_match);  // silence unused warning
     for (int m = 0; m < elem_pm.Width(); m++)
     {
       double norm2_e = 0.0;

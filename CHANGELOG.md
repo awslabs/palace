@@ -111,6 +111,9 @@ The format of this changelog is based on
   - Fix bug when combining OpenMP and GPU builds in reduction operations over `Vector`.
   - Fix race condition that would affect OpenMP parallelism with periodic boundaries (exact
     and Floquet).
+  - Fix race condition in `mfem::DenseTensor::operator()` with OpenMP, due to class member
+    variable access.
+  - Fix race condition in `DofToQuad` methods within mfem.
 
 ## [0.13.0] - 2024-05-20
 

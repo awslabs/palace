@@ -39,6 +39,8 @@ private:
   void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void SetUpFloquetWaveVector(const IoData &iodata, const mfem::ParMesh &mesh);
 
+  // Map from an attribute (specified on a mesh) to a material index (location in the
+  // property vector).
   auto AttrToMat(int attr) const
   {
     const auto &loc_attr = mesh.GetCeedAttributes();
