@@ -109,6 +109,9 @@ The format of this changelog is based on
   - Fix bug in using `"MakeSimplex"` which would cause undefined behaviour for higher order
     meshes.
   - Fix bug when combining OpenMP and GPU builds in reduction operations over `Vector`.
+  - Added `scnlib` as a dependency to Palace.
+  - Added parsing ability of existing csv files into the nes `Table` class. Fix `restart` behaviour
+    with new multi-excitation feature of driven solver.
 
 ## [0.13.0] - 2024-05-20
 

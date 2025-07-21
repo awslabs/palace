@@ -654,8 +654,9 @@ public:
   // Indices of frequency samples on which to save fields to disk.
   std::vector<std::size_t> save_indices;
 
-  // Restart iteration for a partial sweep.
-  int rst = 1;
+  // Restart iteration for a partial sweep. 1-based indexing. So 1 <= restart <= nr_freq *
+  // nr_excitations.
+  int restart = 1;
 
   // Error tolerance for enabling adaptive frequency sweep.
   double adaptive_tol = 0.0;

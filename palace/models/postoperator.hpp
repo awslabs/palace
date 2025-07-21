@@ -35,27 +35,6 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
-// Statically map solver (ProblemType) to finite element operator.
-
-template <ProblemType solver_t>
-struct fem_op_map_type
-{
-  using type = SpaceOperator;
-};
-template <>
-struct fem_op_map_type<ProblemType::ELECTROSTATIC>
-{
-  using type = LaplaceOperator;
-};
-template <>
-struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
-{
-  using type = CurlCurlOperator;
-};
-
-template <ProblemType solver_t>
-using fem_op_t = typename fem_op_map_type<solver_t>::type;
-
 // Statically specify if solver uses real or complex fields.
 
 template <ProblemType solver_t>
