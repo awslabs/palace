@@ -97,7 +97,8 @@ public:
   virtual void SetWhichEigenpairs(WhichType type) = 0;
 
   // Set shift-and-invert spectral transformation.
-  virtual void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) = 0; //test
+  //virtual void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) = 0; //test
+  virtual void SetShiftInvert(std::complex<double> s, bool precond = false) = 0;
 
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;

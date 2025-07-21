@@ -12,6 +12,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp" // test for orthog
 #include "linalg/slepc.hpp"
@@ -51,7 +52,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   bool nonlinear = std::getenv("NONLINEAR_SLEPC"); // SHOULD DETECT BASED ON CONFIG!
   Mpi::Print("nonlinear: {:d}\n", nonlinear);
   // Define and configure the eigensolver to solve the eigenvalue problem:
-  //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
+  //         (K + λ C + λ² M + A2(λ)) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
   config::EigenSolverData::Type type = iodata.solver.eigenmode.type;
@@ -101,11 +102,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("Using SLEPc NEP solver\n");
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
-      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with split operators (no callbacks)
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing all Eigs
       //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE.
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE. Works-ish when updating pc shell, but kinda slow...
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE. Works-ish when updating pc shell, but kinda slow...
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI); //only works with split operators (no callbacks)
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
       //slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::RATIONAL);//test
@@ -260,7 +261,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     Mpi::Print("SetShiftInvert i*target and linearization point\n");
-    eigen->SetShiftInvert(1i * target, 1i * l0, 1i * target * 10.0);
+    //eigen->SetShiftInvert(1i * target, 1i * l0, 1i * target * 3.0);
+    eigen->SetShiftInvert(1i * target);
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
@@ -278,7 +280,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else
   {
     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target, l0 * l0, target * target * 10.0); // not sure l0 makes sense for linear EVP
+    //eigen->SetShiftInvert(target * target, l0 * l0, target * target * 3.0); // not sure l0 makes sense for linear EVP
+    eigen->SetShiftInvert(target * target); // not sure l0 makes sense for linear EVP
     if (type == config::EigenSolverData::Type::ARPACK)
     {
       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
@@ -302,6 +305,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //{
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
+  bool has_A2 = (A2 != nullptr);
   auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
   auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get());
   //}
@@ -629,7 +633,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
 
   // Define an eigensolver for refinement?
-  /**/
+  /*
   std::unique_ptr<EigenvalueSolver> eigen2;
   std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc2;
   Mpi::Print("Using SLEPc NEP solver to refine eigen solution\n");
@@ -647,8 +651,43 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   eigen2->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE); // test for SLP/RII?
   eigen2->SetIoData(iodata);
-  /**/
-  std::vector<ComplexVector> eigen_vectors;
+    std::vector<ComplexVector> eigen_vectors;
+  */
+
+  Mpi::Print("Setting up Quasi-Newton solver\n");
+  std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
+  qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+  Mpi::Print("L659\n");
+  qn->SetTol(iodata.solver.eigenmode.tol);
+  Mpi::Print("L661 max it : {}\n", iodata.solver.eigenmode.max_it);
+  qn->SetMaxIter(100);
+  Mpi::Print("L663\n");
+  qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE); // currently not using scaling but will need to make it work
+  Mpi::Print("L665\n");
+  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); // second input not actually used
+  Mpi::Print("L667\n");
+  qn->SetLinearSolver(*ksp); // careful with SaveMetatadata call above, might not to move it down here
+  Mpi::Print("L669\n");
+  std::vector<std::complex<double>> init_eigs;
+  std::vector<ComplexVector> init_V;
+  for (int i = 0; i < num_conv; i++)
+  {
+    Mpi::Print("L674 i: {}\n", i);
+    ComplexVector v0;
+    v0.SetSize(Curl.Width());
+    v0.UseDevice(true);
+    eigen->GetEigenvector(i, v0);
+    init_eigs.push_back(eigen->GetEigenvalue(i));
+    init_V.push_back(v0);
+  }
+  Mpi::Print("L682\n");
+  qn->SetInitialGuess(init_eigs, init_V);
+  Mpi::Print("L684\n");
+  eigen = std::move(qn); //?
+  Mpi::Print("Calling QuasiNewton Solve()\n");
+  eigen->Solve();
+
+  Mpi::Print("Done with QuasiNewton Solve, now writing eigenpairs\n");
   for (int i = 0; i < num_conv; i++)
   {
     /*
@@ -667,7 +706,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen2->SetInitialSpace(v0);  // Copies the vector
 
     std::complex<double> omega_lin = eigen->GetEigenvalue(i);
-    eigen2->SetShiftInvert(omega_lin, omega_lin, 10.0 * omega_lin);
+    //eigen2->SetShiftInvert(omega_lin, omega_lin, 10.0 * omega_lin);
+    eigen2->SetShiftInvert(omega_lin);
 
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(omega_lin.imag()), Operator::DIAG_ZERO);
     A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), omega_lin, omega_lin * omega_lin, K.get(), C.get(), M.get(), A2.get());
@@ -753,6 +793,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
     //double error_bkwd = eigen2->GetError(0, EigenvalueSolver::ErrorType::BACKWARD);
     //double error_abs = eigen2->GetError(0, EigenvalueSolver::ErrorType::ABSOLUTE);
+
+    // Could have something like
+    // What's the best interface? currently it's in SLEPc but that's not good as it does not depend on SLEPc or ARPACK
+    // so it should be independent
+    // std::unique_ptr<> nleigen(space_op, iodata) // maybe don't need iodata
+    // nleigen->SetLinearSolve(ksp);
+    // nleigen->SetTol(iodata.solver.eigenmode.tol)
+    // nleigen->SetOperators(K, C, M);
+    // Initialize the nonlinear eigensolver above, kinda like floquet_corr, and call it here??
+    // if (nonlinear && error_abs > iodata.solver.eigenmode.tol)
+    //.  nleigen->Refine(omega, E);
+    //   RII(space_op, K, C, M, ksp, tol, omega, E);
+    //   QN2(space_op, K, C, M, ksp, tol, omega, E)
+    //
+
+
     if (!C && !nonlinear)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
@@ -769,12 +825,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
     //eigen2->GetEigenvector(0, E);
     //eigen_vectors.push_back(E);
-
-    // Could have something like
-    // if (nonlinear && error_abs > iodata.solver.eigenmode.tol)
-    //   RII(space_op, K, C, M, ksp, tol, omega, E);
-    //   QN2(space_op, K, C, M, ksp, tol, omega, E)
-    //
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());

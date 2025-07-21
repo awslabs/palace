@@ -23,6 +23,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mumps.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp

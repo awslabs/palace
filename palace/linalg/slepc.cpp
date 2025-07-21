@@ -418,7 +418,8 @@ void SlepcEigenvalueSolver::SetBMat(const Operator &B)
   opB = &B;
 }
 
-void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond)
+//void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond)
+void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
 {
   ST st = GetST();
   if (precond)
@@ -433,8 +434,10 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, std::complex<
   PalacePetscCall(STSetMatMode(st, ST_MATMODE_SHELL));
   sigma = s;  // Wait until solve time to call EPS/PEPSetTarget
   sinvert = true;
-  l0 = l;
-  sigma_max = s_max;
+  //l0 = l;
+  //sigma_max = s_max;
+  l0 = sigma;
+  sigma_max = 3.0 * sigma; // don't love this..
 }
 
 void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
@@ -733,12 +736,15 @@ void SlepcNEPSolver::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(NEPSetInitialSpace(nep, 1, is));
 }
 
-void SlepcNEPSolver::SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond)
+//void SlepcNEPSolver::SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond)
+void SlepcNEPSolver::SetShiftInvert(std::complex<double> s, bool precond)
 {
   sigma = s;  // Wait until solve time to call NEPSetTarget
   sinvert = true;
-  sigma_max = s_max;
-  l0 = l;
+  //sigma_max = s_max;
+  //l0 = l;
+  sigma_max = s * 3.0;
+  l0 = s;
 }
 
 void SlepcNEPSolver::Customize()
@@ -2130,10 +2136,11 @@ int SlepcPEPSolver::Solve() // test
 
   // Copied from PEPLinearSolve
  // TEST TO REFINE EIGENVALUES WITH QUASI-NEWTON METHOD?
+ /*
   int max_outer_it = 100;//100;
   int max_inner_it = 5;//20;
   double tol = 1e-6;
-  double deflation_tol = 1e-8;//test, no effect if < tol
+  //double deflation_tol = 1e-8;//test, no effect if < tol
   ComplexVector v, vold, v1, u, w, c, w0, z;
   const int size = opK->Height();
   v.SetSize(size);
@@ -2167,6 +2174,7 @@ int SlepcPEPSolver::Solve() // test
   std::vector<ComplexVector> X;
   Eigen::VectorXcd u2, z2;
 
+
   int k = 0;
   while (k < num_conv)
   {
@@ -2188,11 +2196,10 @@ int SlepcPEPSolver::Solve() // test
     {
       std::srand((unsigned int) time(0));
       v2.setRandom();
-      std::cout << "random v2: " << v2 << "\n";
+      //std::cout << "random v2: " << v2 << "\n";
     }
 
     // Removed RII but we should test what works better when deflation is implemented
-    /**/
     // Quasi-Newton 2 from https://arxiv.org/pdf/1702.08492
     double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
     v *= 1.0 / norm_v;
@@ -2655,28 +2662,11 @@ int SlepcPEPSolver::Solve() // test
       if (it == max_outer_it) // ACTUALLY, WE DO NOT WANT TO SAVE UNCONVERGED EIGENPAIRS, CAN MESS UP FUTURE DEFLATION ITERATIONS
       {
         Mpi::Print("Quasi-Newton did not converge in {} iterations\n", max_outer_it);
-        /*
-        // Update the invariant pair with normalization.
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        X.push_back(v);
-        Xeigen.conservativeResize(size, k + 1);
-        auto *vr = v.Real().Read();
-        auto *vi = v.Imag().Read();
-        for (int i = 0; i < size; i++) Xeigen(i, k) = std::complex<double>(vr[i], vi[i]);
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        // Also store here?
-        eigen_values.push_back(eig);
-        eigen_vectors.push_back(v);
-        break;
-        */
       }
     }
     Mpi::Print(space_op->GetComm(), "\n\n i: {}, init_res: {}, min_res: {}, min_it: {}\n\n", k, init_res, min_res, min_it);
-    /**/
   }
+
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
   //std::cout << "eps.eigenvalues: " << eps.eigenvalues() << "\n";
@@ -2755,7 +2745,8 @@ int SlepcPEPSolver::Solve() // test
     eigen_vectors[k] = eigv_best; // double check k. Should reorder?!
     eigen_values[k] = sorted_eigen_values[k];
   }
-  space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
+    space_op->GetWavePortOp().SetSuppressOutput(false); //suppressoutput!
+  */
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
@@ -2856,7 +2847,9 @@ void SlepcPEPSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar tar
       }
       else
       {
-        auto A2dd = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>((xs[j+k]-xs[j]).imag(), 1, D_j[k-1][j+1].get(), D_j[k-1][j].get());
+        //auto A2dd = space_op->GetExtraSystemMatrixJacobian<ComplexOperator>((xs[j+k]-xs[j]).imag(), 1, D_j[k-1][j+1].get(), D_j[k-1][j].get());
+        std::complex<double> denom = (xs[j+k]-xs[j]).imag();
+        auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
         D_j[k].push_back(std::move(A2dd));
       }
     }

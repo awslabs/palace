@@ -174,7 +174,8 @@ public:
   PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
+  //void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -218,7 +219,7 @@ public:
   std::vector<PetscScalar> xs;
 
   // Reference to space operator so we recompute A2
-  SpaceOperator *space_op; // TEST???
+  SpaceOperator *space_op; // TEST??? make it const?? would require making GetExtraSystemMatrix (and GetDividedDifferenceMatrix) const in space_operator.cpp
 
   ComplexKspSolver *opInv; //moved to public just as a test
   const IoData *opIodata;
@@ -242,7 +243,8 @@ protected:
 
   void Customize() override;
 
-  void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
+  //void SetShiftInvert(std::complex<double> s, std::complex<double> l, std::complex<double> s_max, bool precond = false) override;
+  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
 
 public:
   //
