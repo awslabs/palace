@@ -607,7 +607,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
-  Mpi::Print("Call eigen->Solve()\n");
   int num_conv = eigen->Solve();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
@@ -617,6 +616,34 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
+
+  // Move nonlinear Newton refinement here!
+  Mpi::Print("Setting up Quasi-Newton solver\n");
+  std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
+  qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+  qn->SetTol(iodata.solver.eigenmode.tol);
+  Mpi::Print("L661 max it : {}\n", iodata.solver.eigenmode.max_it);
+  qn->SetMaxIter(100);
+  qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE); // currently not using scaling but will need to make it work
+  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); // second input not actually used
+  qn->SetLinearSolver(*ksp); // careful with SaveMetatadata call above, might not to move it down here
+  std::vector<std::complex<double>> init_eigs;
+  std::vector<ComplexVector> init_V;
+  for (int i = 0; i < num_conv; i++)
+  {
+    ComplexVector v0;
+    v0.SetSize(Curl.Width());
+    v0.UseDevice(true);
+    eigen->GetEigenvector(i, v0);
+    init_eigs.push_back(eigen->GetEigenvalue(i));
+    init_V.push_back(v0);
+  }
+  qn->SetInitialGuess(init_eigs, init_V);
+  eigen = std::move(qn); //?
+  eigen->Solve();
+
+  Mpi::Print("Done with QuasiNewton Solve\n");
+
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
@@ -654,40 +681,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::vector<ComplexVector> eigen_vectors;
   */
 
-  Mpi::Print("Setting up Quasi-Newton solver\n");
-  std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
-  qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
-  Mpi::Print("L659\n");
-  qn->SetTol(iodata.solver.eigenmode.tol);
-  Mpi::Print("L661 max it : {}\n", iodata.solver.eigenmode.max_it);
-  qn->SetMaxIter(100);
-  Mpi::Print("L663\n");
-  qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE); // currently not using scaling but will need to make it work
-  Mpi::Print("L665\n");
-  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); // second input not actually used
-  Mpi::Print("L667\n");
-  qn->SetLinearSolver(*ksp); // careful with SaveMetatadata call above, might not to move it down here
-  Mpi::Print("L669\n");
-  std::vector<std::complex<double>> init_eigs;
-  std::vector<ComplexVector> init_V;
-  for (int i = 0; i < num_conv; i++)
-  {
-    Mpi::Print("L674 i: {}\n", i);
-    ComplexVector v0;
-    v0.SetSize(Curl.Width());
-    v0.UseDevice(true);
-    eigen->GetEigenvector(i, v0);
-    init_eigs.push_back(eigen->GetEigenvalue(i));
-    init_V.push_back(v0);
-  }
-  Mpi::Print("L682\n");
-  qn->SetInitialGuess(init_eigs, init_V);
-  Mpi::Print("L684\n");
-  eigen = std::move(qn); //?
-  Mpi::Print("Calling QuasiNewton Solve()\n");
-  eigen->Solve();
 
-  Mpi::Print("Done with QuasiNewton Solve, now writing eigenpairs\n");
   for (int i = 0; i < num_conv; i++)
   {
     /*

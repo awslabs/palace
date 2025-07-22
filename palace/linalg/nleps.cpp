@@ -198,9 +198,11 @@ double NonLinearEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType ty
     case ErrorType::ABSOLUTE:
       return res.get()[j];
     case ErrorType::RELATIVE:
-      return res.get()[j] / std::abs(eig.get()[j]);
+      //return res.get()[j] / std::abs(eig.get()[j]);
+      return res.get()[j] / std::abs(eigenvalues[j]);
     case ErrorType::BACKWARD:
-      return res.get()[j] / GetBackwardScaling(eig.get()[j]);
+      //return res.get()[j] / GetBackwardScaling(eig.get()[j]);
+      return res.get()[j] / GetBackwardScaling(eigenvalues[j]);
   }
   return 0.0;
 }
@@ -214,7 +216,8 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
     //x1.Set(V.get() + i * n, n, false);
     x1 = eigenvectors[i];
     xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
-    res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
+    //res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
+    res.get()[i] = GetResidualNorm(eigenvalues[i], x1, y1) / linalg::Norml2(comm, x1);
   }
 }
 
@@ -266,6 +269,34 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref,
   n = opK->Height();
 }
 
+namespace
+{
+  // z = X * y where X is a vector of size k or ComplexVector's of size n, y is a vector of size k
+  // z will be a ComplexVector of size n
+  //ComplexVector MatMult(const std::vector<ComplexVector> &X, const std::vector<std::complex<double>> y, bool on_dev)
+  ComplexVector MatMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y, bool on_dev)
+  {
+    MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of vector blocks");
+    const size_t k = X.size();
+    const size_t n = X[0].Size();
+    ComplexVector z; z.SetSize(n); z.UseDevice(on_dev); // not sure about on_dev?
+    z = 0.0;
+    auto *zr = z.Real().Write(on_dev);//z.Real().HostWrite(); // not sure about on_dev
+    auto *zi = z.Imag().Write(on_dev);//HostWrite();
+    for (int j = 0; j < k; j++)
+    {
+      auto *XR = X[j].Real().Read(on_dev); //not sure about on_dev. Need to figure out if X is on device or not?
+      auto *XI = X[j].Imag().Read(on_dev);
+      for (int i = 0; i < n; i++) // MFEM forall instead????
+      {
+        zr[i] += y(j).real() * XR[i] - y(j).imag() * XI[i];
+        zi[i] += y(j).imag() * XR[i] + y(j).real() * XI[i];
+      }
+    }
+    return z;
+  }
+
+} // test
 
 
 int QuasiNewtonSolver::Solve()
@@ -284,6 +315,11 @@ int QuasiNewtonSolver::Solve()
   w0.UseDevice(true);
   z.UseDevice(true);
 
+  // Example use of map in eigen
+  // std::vector<std::complex<double>>> std_vec = {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}};
+  // Eigen::Map<Eigen::VectorXcd> eigen_vec_map(std_vec.data(), std_vec.size()); // no copy
+  //
+
   perm = std::make_unique<int[]>(nev); // use this or order below??
 
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon()); // TODO: define only once above
@@ -292,16 +328,15 @@ int QuasiNewtonSolver::Solve()
   Eigen::MatrixXcd H;
   std::vector<ComplexVector> X; // if this is always the same as eigenvectors, use only one of the two!
   Eigen::VectorXcd u2, z2;
-  Mpi::Print("nev: {}\n", nev);
+
   int k = 0;
   while (k < nev)
   {
-    Mpi::Print("inside while k < nev loop, k: {}\n", k);
     // do we want set c inside the loop so it's random and thus avoids getting stuck on a "BAD" guess?
     // Set arbitrary c and solve for w0?
-    linalg::SetRandom(GetComm(), c);
+    linalg::SetRandom(GetComm(), c); // can pass a seed to make it deterministc? seed = k?
     std::srand((unsigned int) time(0)); // ?
-    Eigen::VectorXcd c_eig = Eigen::VectorXcd::Random(k);
+    Eigen::VectorXcd c_eig = Eigen::VectorXcd::Random(k); // is this one already deterministic?
     Eigen::VectorXcd w0_eig;
 
     bool deflation = true;//false;
@@ -320,7 +355,7 @@ int QuasiNewtonSolver::Solve()
     else
     {
       eig = sigma;
-      linalg::SetRandom(GetComm(), v);
+      linalg::SetRandom(GetComm(), v); // pass a seed or not?
     }
     std::complex<double> eig_update = eig;
 
@@ -386,20 +421,7 @@ int QuasiNewtonSolver::Solve()
       w0_eig = SS.inverse() * w0_eig;
       // w0_1 = w0 - X*S*w0_eig
       const auto phi1 = S * w0_eig;
-      ComplexVector phi2; phi2.SetSize(n); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-      phi2 = 0.0;
-      auto *phi2r = phi2.Real().HostWrite();
-      auto *phi2i = phi2.Imag().HostWrite();
-      for (int j = 0; j < k; j++)
-      {
-        auto *XR = X[j].Real().Read();
-        auto *XI = X[j].Imag().Read();
-        for (int i = 0; i < n; i++)
-        {
-          phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
-          phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-        }
-      }
+      ComplexVector phi2 = MatMult(X, phi1, true);
       linalg::AXPY(-1.0, phi2, w0);
     }
 
@@ -427,21 +449,7 @@ int QuasiNewtonSolver::Solve()
         // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
         const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
         const auto phi1 = S * v2;
-        ComplexVector phi2; phi2.SetSize(n); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-        phi2 = 0.0;
-        auto *phi2r = phi2.Real().HostWrite();
-        auto *phi2i = phi2.Imag().HostWrite();
-        for (int j = 0; j < k; j++)
-        {
-          auto *XR = X[j].Real().Read();
-          auto *XI = X[j].Imag().Read();
-          for (int i = 0; i < n; i++)
-          {
-            phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
-            phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
-          }
-        }
-
+        ComplexVector phi2 = MatMult(X, phi1, true);
         A->AddMult(phi2, u, 1.0);
         // u2 = A(l) v1 + B(l) v2 = sum i=0..p l_i (XH^i)* v1 + sum i=0..p (XH^i)* X qi(l) v2
         // if p = 1, A(l) = X.adjoint and B(l) = 0!
@@ -465,7 +473,7 @@ int QuasiNewtonSolver::Solve()
       //min_res = std::min(res, min_res);
       Mpi::Print(GetComm(), "k: {}, it: {}, eig: {}, {}, res: {}\n", k, it, eig.real(), eig.imag(), res); // only print if print > 0? >1 ????
 
-      if (res < rtol) // In addition to res < tol, do we also want to check if it's within the range (i.e. greater than the target)???
+      if (res < rtol && eig.imag() > sigma.imag()) // eig > sigma implies target type?
       {
         // Update the invariant pair with normalization.
         Mpi::Print("L463\n");
@@ -476,9 +484,7 @@ int QuasiNewtonSolver::Solve()
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;
         // Also store here?
-        Mpi::Print("L471 eigenvalues.size(): {}\n", eigenvalues.size());
         eigenvalues[k] = eig;
-        Mpi::Print("L473 eigenvectors.size(): {}\n", eigenvectors.size());
         eigenvectors[k] = v;
         k++; // only increment eigenpairs when a converged pair is found!
         break;
@@ -505,26 +511,8 @@ int QuasiNewtonSolver::Solve()
         const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // should re-use the one defined above!!
         const auto phi1 = S * v2;
         const auto phi2 = S * phi1;
-        ComplexVector phi3; phi3.SetSize(n); phi3.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-        ComplexVector phi4; phi4.SetSize(n); phi4.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-        phi3 = 0.0;
-        phi4 = 0.0;
-        auto *phi3r = phi3.Real().HostWrite();
-        auto *phi3i = phi3.Imag().HostWrite();
-        auto *phi4r = phi4.Real().HostWrite();
-        auto *phi4i = phi4.Imag().HostWrite();
-        for (int j = 0; j < k; j++)
-        {
-          auto *XR = X[j].Real().Read();
-          auto *XI = X[j].Imag().Read();
-          for (int i = 0; i < n; i++)
-          {
-            phi3r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
-            phi3i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
-            phi4r[i] += phi2(j).real() * XR[i] - phi2(j).imag() * XI[i];
-            phi4i[i] += phi2(j).imag() * XR[i] + phi2(j).real() * XI[i];
-          }
-        }
+        ComplexVector phi3 = MatMult(X, phi1, true);
+        ComplexVector phi4 = MatMult(X, phi2, true);
         opJ->AddMult(phi3, w, 1.0);
         A->AddMult(phi4, w, -1.0);
         // with p = 1, A'(l) and B'(l) are zero so w2 is zero?
@@ -581,20 +569,7 @@ int QuasiNewtonSolver::Solve()
           w0_eig = SS.inverse() * w0_eig;
           // w0_1 = w0 - X*S*w0_eig
           const auto phi1 = S * w0_eig;
-          ComplexVector phi2; phi2.SetSize(n); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-          phi2 = 0.0;
-          auto *phi2r = phi2.Real().HostWrite();
-          auto *phi2i = phi2.Imag().HostWrite();
-          for (int j = 0; j < k; j++)
-          {
-            auto *XR = X[j].Real().Read();
-            auto *XI = X[j].Imag().Read();
-            for (int i = 0; i < n; i++)
-            {
-              phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i];
-              phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i];
-            }
-          }
+          ComplexVector phi2 = MatMult(X, phi1, true);
           linalg::AXPY(-1.0, phi2, w0);
         }
       }
@@ -625,20 +600,7 @@ int QuasiNewtonSolver::Solve()
         u2 = SS.inverse() * z2;
         // u1 = u - X*S*u2
         const auto phi1 = S * u2;
-        ComplexVector phi2; phi2.SetSize(n); phi2.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-        phi2 = 0.0;
-        auto *phi2r = phi2.Real().HostWrite();
-        auto *phi2i = phi2.Imag().HostWrite();
-        for (int j = 0; j < k; j++)
-        {
-          auto *XR = X[j].Real().Read();
-          auto *XI = X[j].Imag().Read();
-          for (int i = 0; i < n; i++)
-          {
-            phi2r[i] += phi1(j).real() * XR[i] - phi1(j).imag() * XI[i]; // transposedot
-            phi2i[i] += phi1(j).imag() * XR[i] + phi1(j).real() * XI[i]; // transposedot
-          }
-        }
+        ComplexVector phi2 = MatMult(X, phi1, true);
         linalg::AXPY(-1.0, phi2, u);
         v2 += u2;
       }
@@ -681,25 +643,12 @@ int QuasiNewtonSolver::Solve()
   for(int k = 0; k < nev; k++)
   {
     int k2 = order2[k];
-    ComplexVector eigv; eigv.SetSize(n); eigv.UseDevice(false); // keep on CPU?! Might want to implement methods in vector.cpp to do this
-    eigv = 0.0;
-    auto *eigvr = eigv.Real().HostWrite();
-    auto *eigvi = eigv.Imag().HostWrite();
-    for (int j = 0; j < nev; j++)
-    {
-      auto *XR = X[j].Real().Read();
-      auto *XI = X[j].Imag().Read();
-      for (int i = 0; i < n; i++)
-      {
-        //eigvr[i] += Xeig(j,k).real() * XR[i] - Xeig(j,k).imag() * XI[i];
-        //eigvi[i] += Xeig(j,k).imag() * XR[i] + Xeig(j,k).real() * XI[i];
-        eigvr[i] += sorted_Xeig[k2](j).real() * XR[i] - sorted_Xeig[k2](j).imag() * XI[i];
-        eigvi[i] += sorted_Xeig[k2](j).imag() * XR[i] + sorted_Xeig[k2](j).real() * XI[i];
-      }
-    }
+    ComplexVector eigv = MatMult(X, sorted_Xeig[k2], true);
     eigenvectors[k] = eigv;
   }
 
+  // Compute the eigenpair residuals for eigenvalue λ.
+  RescaleEigenvectors(nev); // maybe repetitive?
 
   space_op->GetWavePortOp().SetSuppressOutput(false); //reset?
   //
