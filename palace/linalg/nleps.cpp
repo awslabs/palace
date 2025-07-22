@@ -339,18 +339,17 @@ int QuasiNewtonSolver::Solve()
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput?
 
   Eigen::MatrixXcd H;
-  Eigen::VectorXcd u2, z2;
+  Eigen::VectorXcd u2, z2, c2, w2, v2;
+
+  // Set a seed and distribution for random Eigen vectors to ensure the same values on all ranks.
+  unsigned int seed = nev; // = nev, or some constant value?
+  std::mt19937 gen(seed);
+  std::uniform_real_distribution<> dis(-1.0, 1.0);
 
   int k = 0;
   while (k < nev)
   {
-    // do we want set c inside the loop so it's random and thus avoids getting stuck on a "BAD" guess?
-    linalg::SetRandom(GetComm(), c); // can it be made deterministc? seed = k?
-    std::srand((unsigned int) time(0)); // ?don't like this?! ensures all processes have the same but it's ugly
-    Eigen::VectorXcd c2 = Eigen::VectorXcd::Random(k); // is this one already deterministic?
-    Eigen::VectorXcd w2;
-
-    // Set the initial guess.
+    // Set the eigenpair estimate to the initial guess.
     std::complex<double> eig, eig_opInv;
     if (k < init_eigenvalues.size())
     {
@@ -369,20 +368,29 @@ int QuasiNewtonSolver::Solve()
       linalg::SetRandom(GetComm(), v); // pass a seed or not?
     }
     eig_opInv = eig;
-    // The deflation component is always random.
-    std::srand((unsigned int) time(0)); // don't like this!?
-    Eigen::VectorXcd v2 = Eigen::VectorXcd::Random(k);
+
+    // Set the "random" c vector and the deflation component of the eigenpair initial guess.
+    linalg::SetRandom(GetComm(), c, seed); // deterministic?
+    c2.conservativeResize(k);
+    v2.conservativeResize(k);
+    for (int i = 0; i < k; i++)
+    {
+      c2(i) = std::complex<double>(dis(gen), dis(gen));
+      v2(i) = std::complex<double>(dis(gen), dis(gen));
+    }
 
     // Normalize eigenvector estimate.
     double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
     v *= 1.0 / norm_v;
     v2 *= 1.0 / norm_v;
 
+    // Set the linear solver operators.
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
     opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
     opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
+    // Solve the extended operator of the deflated problem.
     auto deflated_solve = [&](const std::complex<double> lambda, const ComplexVector &b1, const Eigen::VectorXcd &b2, ComplexVector &x1, Eigen::VectorXcd &x2)
     {
       // Solve the block linear system
@@ -415,6 +423,8 @@ int QuasiNewtonSolver::Solve()
       ComplexVector XSx2 = MatVecMult(X, S * x2, true);
       linalg::AXPY(-1.0, XSx2, x1);
     };
+
+    // Compute w0 = T^-1 c.
     deflated_solve(eig_opInv, c, c2, w0, w2);
 
     // Newton iterations.
@@ -486,13 +496,8 @@ int QuasiNewtonSolver::Solve()
       }
 
       // Compute delta = - dot(w0, u) / dot(w0, w).
-      std::complex<double> delta;
-      std::complex<double> u2_w0(0.0, 0.0);
-      if (k > 0)
-      {
-        u2_w0 = std::complex<double>(w2.adjoint() * u2);
-      }
-      delta = - (linalg::Dot(GetComm(), u, w0) + u2_w0) / linalg::Dot(GetComm(), w, w0);
+      std::complex<double> u2_w0 = w2.adjoint() * u2;
+      std::complex<double> delta = - (linalg::Dot(GetComm(), u, w0) + u2_w0) / linalg::Dot(GetComm(), w, w0);
 
       // Update eigenvalue.
       eig += delta;
@@ -543,7 +548,7 @@ int QuasiNewtonSolver::Solve()
             [&epseig = eps.eigenvalues()](auto l, auto r) { return epseig(l).imag() < epseig(r).imag(); });
   std::sort(order2.begin(), order2.end(), [&order](auto l, auto r) { return order[l] < order[r]; });
 
-  // Sort Eigen eigenvectors
+  // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;
   for (int k = 0; k < nev; k++)
   {
@@ -551,6 +556,7 @@ int QuasiNewtonSolver::Solve()
     Xeig.push_back(eps.eigenvectors().col(order_eigen[k]));
   }
 
+  // Recover the eigenvectors of the original problem.
   for(int k = 0; k < nev; k++)
   {
     ComplexVector eigv = MatVecMult(X, Xeig[order2[k]], true);
