@@ -627,6 +627,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE); // currently not using scaling but will need to make it work
   qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); // second input not actually used
   qn->SetLinearSolver(*ksp); // careful with SaveMetatadata call above, might not to move it down here
+  qn->SetShiftInvert(1i * target);
   std::vector<std::complex<double>> init_eigs;
   std::vector<ComplexVector> init_V;
   for (int i = 0; i < num_conv; i++)
@@ -643,6 +644,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen->Solve();
 
   Mpi::Print("Done with QuasiNewton Solve\n");
+
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);

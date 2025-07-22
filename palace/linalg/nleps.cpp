@@ -7,6 +7,7 @@
 #include <Eigen/Dense> // test for deflation
 #include <string>
 #include <mfem.hpp>
+#include <mfem/general/forall.hpp>
 #include "linalg/divfree.hpp"
 #include "utils/communication.hpp"
 
@@ -273,10 +274,10 @@ namespace
 {
   // z = X * y where X is a vector of size k or ComplexVector's of size n, y is a vector of size k
   // z will be a ComplexVector of size n
-  //ComplexVector MatMult(const std::vector<ComplexVector> &X, const std::vector<std::complex<double>> y, bool on_dev)
-  ComplexVector MatMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y, bool on_dev)
+  //ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const std::vector<std::complex<double>> y, bool on_dev)
+  ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y, bool on_dev)
   {
-    MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of vector blocks");
+    MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of input vectors!");
     const size_t k = X.size();
     const size_t n = X[0].Size();
     ComplexVector z; z.SetSize(n); z.UseDevice(on_dev); // not sure about on_dev?
@@ -287,11 +288,12 @@ namespace
     {
       auto *XR = X[j].Real().Read(on_dev); //not sure about on_dev. Need to figure out if X is on device or not?
       auto *XI = X[j].Imag().Read(on_dev);
-      for (int i = 0; i < n; i++) // MFEM forall instead????
-      {
-        zr[i] += y(j).real() * XR[i] - y(j).imag() * XI[i];
-        zi[i] += y(j).imag() * XR[i] + y(j).real() * XI[i];
-      }
+      mfem::forall_switch(on_dev, n,
+                          [=] MFEM_HOST_DEVICE(int i)
+                          {
+                            zr[i] += y(j).real() * XR[i] - y(j).imag() * XI[i];
+                            zi[i] += y(j).imag() * XR[i] + y(j).real() * XI[i];
+                          });
     }
     return z;
   }
@@ -301,7 +303,21 @@ namespace
 
 int QuasiNewtonSolver::Solve()
 {
+  // Quasi-Newton method for nonlinear eigenvalue problems.
+  // Reference: Jarlebring, Koskela, Mele, Disguised and new quasi-Newton methods for nonlinear
+  //            eigenvalue problems, Numerical Algorithms (2018).
+  // Using the deflation scheme used by SLEPc's NEP solver with minimality index set to 1.
+  // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
+  //            eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
+  // The deflation scheme solves an extended problem of size n + k, where n is the original
+  // problem size and k is the number of converged eigenpairs. The extended operators are never
+  // explicitly constructed and two separate vectors of length n and k are used to store the
+  // extended solution: [v, v2] where v is a ComplexVector distributed across all processes
+  // and v2 is an Eigen::VectorXcd stored redundantly on all processes.
+
+  // Use x1, x2, y1, y2 instead of some of these?!
   ComplexVector v, u, w, c, w0, z;
+  std::vector<ComplexVector> X;
   v.SetSize(n);
   u.SetSize(n);
   w.SetSize(n);
@@ -315,10 +331,7 @@ int QuasiNewtonSolver::Solve()
   w0.UseDevice(true);
   z.UseDevice(true);
 
-  // Example use of map in eigen
-  // std::vector<std::complex<double>>> std_vec = {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}};
-  // Eigen::Map<Eigen::VectorXcd> eigen_vec_map(std_vec.data(), std_vec.size()); // no copy
-  //
+  const int update_freq = 4;// SHOULD REVISIT THIS AND FIGURE OUT BEST FREQUENCY around 4-5 seems good?
 
   perm = std::make_unique<int[]>(nev); // use this or order below??
 
@@ -326,21 +339,19 @@ int QuasiNewtonSolver::Solve()
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput?
 
   Eigen::MatrixXcd H;
-  std::vector<ComplexVector> X; // if this is always the same as eigenvectors, use only one of the two!
   Eigen::VectorXcd u2, z2;
 
   int k = 0;
   while (k < nev)
   {
     // do we want set c inside the loop so it's random and thus avoids getting stuck on a "BAD" guess?
-    // Set arbitrary c and solve for w0?
-    linalg::SetRandom(GetComm(), c); // can pass a seed to make it deterministc? seed = k?
-    std::srand((unsigned int) time(0)); // ?
-    Eigen::VectorXcd c_eig = Eigen::VectorXcd::Random(k); // is this one already deterministic?
-    Eigen::VectorXcd w0_eig;
+    linalg::SetRandom(GetComm(), c); // can it be made deterministc? seed = k?
+    std::srand((unsigned int) time(0)); // ?don't like this?! ensures all processes have the same but it's ugly
+    Eigen::VectorXcd c2 = Eigen::VectorXcd::Random(k); // is this one already deterministic?
+    Eigen::VectorXcd w2;
 
-    bool deflation = true;//false;
-    std::complex<double> eig;
+    // Set the initial guess.
+    std::complex<double> eig, eig_opInv;
     if (k < init_eigenvalues.size())
     {
       eig = init_eigenvalues[k];
@@ -357,56 +368,38 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       linalg::SetRandom(GetComm(), v); // pass a seed or not?
     }
-    std::complex<double> eig_update = eig;
+    eig_opInv = eig;
+    // The deflation component is always random.
+    std::srand((unsigned int) time(0)); // don't like this!?
+    Eigen::VectorXcd v2 = Eigen::VectorXcd::Random(k);
 
-    Eigen::VectorXcd v2 = Eigen::VectorXcd::Constant(k, 0.0);// how to initialize v2? zero or random?
-    if (k > 0 && deflation)
-    {
-      std::srand((unsigned int) time(0));
-      v2.setRandom();
-    }
-
-    // Removed RII but we should test what works better when deflation is implemented
-    // Quasi-Newton 2 from https://arxiv.org/pdf/1702.08492
+    // Normalize eigenvector estimate.
     double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
     v *= 1.0 / norm_v;
     v2 *= 1.0 / norm_v;
-    norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm()); // should be 1...
-
-    // Deflation
-    //https://arxiv.org/pdf/1910.11712
-    // T*(l) = |T(l) U(l)|
-    //         |A(l) B(l)|
-    // |y1|= T*(l) |z1| ->
-    // |y2|        |z2|
-    // y1 = T(l) z1 + U(l) z2 = T(l) z1 + T(l)X(lI - H)^-1 z2
-    // y2 = A(l) z1 + B(l) z2 = sum i=0..p l_i (XH^i)* z1 + sum i=0..p (XH^i)* X qi(l)z2
-    // qi = sum j=0..i-1 l^j H^(i-j-1)
-
-    // Linear solve |T(sigma) U(sigma)| |x1| = |b1|
-    //              |A(sigma) B(sigma)| |x2|   |b2|
-    // 1) S(sigma) = B(sigma) - A(sigma)*X*(sigma*I-H)^-1
-    // 2) v = T(sigma)^-1 b1
-    // 3) x2 = S(sigma)^-1 (b2 - A(sigma)v))
-    // 4) x1 = v - X*(sigma*I-H)^-1 x2
-    int p = 1; // minimality index
 
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
     opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
     opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
-    opInv->Mult(c, w0);
-    // update w0_eig // this whole deflated solve should be a separate function since it's being called a few times!
-    // deflated_solve(c_eig, w0, w0_eig, k, lambda) // uses X and H but those should be class data members
-    if (k > 0 && deflation) //Effenberger
+
+    auto deflated_solve = [&](const std::complex<double> lambda, const ComplexVector &b1, const Eigen::VectorXcd &b2, ComplexVector &x1, Eigen::VectorXcd &x2)
     {
-      // w0 = T^1 c1 (done above with opInv)
-      // w0_2 = SS^-1 (c2 - A*w0) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
-      // w0_1 = w0 - X*S*w0_2
-      w0_eig.conservativeResize(k);
+      // Solve the block linear system
+      // |T(σ) U(σ)| |x1| = |b1|
+      // |A(σ) B(σ)| |x2|   |b2|
+      // x1 = T^-1 b1
+      // x2 = SS^-1 (b2 - A x1) where SS = (B - A T^-1 U) = - X^* X S^-1
+      // x1 = x1 - X S x2
+      opInv->Mult(b1, x1);
+      if (k == 0)
+      {
+        return;
+      }
+      x2.conservativeResize(k);
       for (int j = 0; j < k; j++)
       {
-        w0_eig(j) = c_eig(j) - linalg::Dot(GetComm(), w0, X[j]);
+        x2(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);
       }
       Eigen::MatrixXcd SS(k, k);
       for (int i = 0; i < k; i++)
@@ -416,43 +409,30 @@ int QuasiNewtonSolver::Solve()
           SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]);
         }
       }
-      const auto S = (eig_update * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
+      const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
       SS = - SS * S;
-      w0_eig = SS.inverse() * w0_eig;
-      // w0_1 = w0 - X*S*w0_eig
-      const auto phi1 = S * w0_eig;
-      ComplexVector phi2 = MatMult(X, phi1, true);
-      linalg::AXPY(-1.0, phi2, w0);
-    }
+      x2 = SS.inverse() * x2;
+      ComplexVector XSx2 = MatVecMult(X, S * x2, true);
+      linalg::AXPY(-1.0, XSx2, x1);
+    };
+    deflated_solve(eig_opInv, c, c2, w0, w2);
 
-    int update_freq = 4;// SHOULD REVISIT THIS AND FIGURE OUT BEST FREQUENCY around 4-5 seems good?
-
-    double min_res = 1e6;
-    int min_it = 0;
-    double init_res = 1e6;
-    double res = 1e6;
-    int large_res = 0;
-    int it = 0;
+    // Newton iterations.
+    double res = mfem::infinity();
+    int it = 0, diverged_it = 0;
     while (it < nleps_it)
     {
-      Mpi::Print("inside while it < nleps_it lool it: {}\n", it);
-      // Compute u = A * v and check residual
+      // Compute u = A * v.
       auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
       auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, A2n.get());
       A->Mult(v, u);
-
-      deflation = (k > 0); // could add a residual check?!
-
-      // Effenberger deflation
-      if (deflation)
+      if (k > 0) // Deflation
       {
         // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
         const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
-        const auto phi1 = S * v2;
-        ComplexVector phi2 = MatMult(X, phi1, true);
-        A->AddMult(phi2, u, 1.0);
-        // u2 = A(l) v1 + B(l) v2 = sum i=0..p l_i (XH^i)* v1 + sum i=0..p (XH^i)* X qi(l) v2
-        // if p = 1, A(l) = X.adjoint and B(l) = 0!
+        ComplexVector XSv2 = MatVecMult(X, S * v2, true);
+        A->AddMult(XSv2, u, 1.0);
+        // u2 = X^* v1
         u2.conservativeResize(k);
         for (int j = 0; j < k; j++)
         {
@@ -460,164 +440,96 @@ int QuasiNewtonSolver::Solve()
         }
       }
 
-      if (deflation)
-      {
-        res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm()) / norm_v;
-      }
-      else
-      {
-        res = linalg::Norml2(GetComm(), u) / linalg::Norml2(GetComm(), v);
-      }
-      if (it == 0) init_res = res;
-      if (res < min_res){min_res = res; min_it = it;}
-      //min_res = std::min(res, min_res);
+      // Compute residual.
+      res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm());
       Mpi::Print(GetComm(), "k: {}, it: {}, eig: {}, {}, res: {}\n", k, it, eig.real(), eig.imag(), res); // only print if print > 0? >1 ????
 
-      if (res < rtol && eig.imag() > sigma.imag()) // eig > sigma implies target type?
+      // End if residual below tolerance and eigenvalue above the target.
+      if (res < rtol)
       {
-        // Update the invariant pair with normalization.
-        Mpi::Print("L463\n");
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        X.push_back(v);
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        // Also store here?
-        eigenvalues[k] = eig;
-        eigenvectors[k] = v;
-        k++; // only increment eigenpairs when a converged pair is found!
+        if (eig.imag() > sigma.imag())
+        {
+          // Update the invariant pair with normalization.
+          const auto scale = linalg::Norml2(GetComm(), v);
+          v *= 1.0 / scale;
+          X.push_back(v);
+          H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+          H.col(k).head(k) = v2 / scale;
+          H(k, k) = eig;
+          eigenvalues[k] = eig;
+          k++;
+        }
         break;
       }
-      // Stop if large residual for 10 consecutive iterations
-      large_res = (res > 0.9) ? large_res + 1 : 0;
-      if (large_res > 10)
+      // Stop if large residual for 10 consecutive iterations.
+      diverged_it = (res > 0.9) ? diverged_it + 1 : 0;
+      if (diverged_it > 10)
       {
-        Mpi::Print(GetComm(), "k: {}, Quasi-Newton not converging after {} iterations, restarting\n", k, it);
+        Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton not converging after {} iterations, restarting.\n", k, it);
         break;
       }
 
-      // Compute w = J * v
+      // Compute w = J * v.
       auto opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO);
       std::complex<double> denom = dl * std::abs(eig.imag());
       auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
       auto opJ = space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), std::complex<double>(2.0, 0.0) * eig, opK, opC, opM, opAJ.get());
       opJ->Mult(v, w);
-      // Create deflated Jac multiply function?
-      // jacmult(w, v2, k, H) // assume X is a class data member? maybe H too?
-      if (deflation)
+      if (k > 0) // Deflation
       {
         // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2
         const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // should re-use the one defined above!!
-        const auto phi1 = S * v2;
-        const auto phi2 = S * phi1;
-        ComplexVector phi3 = MatMult(X, phi1, true);
-        ComplexVector phi4 = MatMult(X, phi2, true);
-        opJ->AddMult(phi3, w, 1.0);
-        A->AddMult(phi4, w, -1.0);
-        // with p = 1, A'(l) and B'(l) are zero so w2 is zero?
+        ComplexVector XSv2 = MatVecMult(X, S * v2, true);
+        ComplexVector XSSv2 = MatVecMult(X, S * S * v2, true);
+        opJ->AddMult(XSv2, w, 1.0);
+        A->AddMult(XSSv2, w, -1.0);
       }
 
-      // Compute delta = - dot(w0, u) / dot(w0, w)
+      // Compute delta = - dot(w0, u) / dot(w0, w).
       std::complex<double> delta;
       std::complex<double> u2_w0(0.0, 0.0);
-      if (deflation)
+      if (k > 0)
       {
-        u2_w0 = std::complex<double>(w0_eig.adjoint() * u2);
+        u2_w0 = std::complex<double>(w2.adjoint() * u2);
       }
       delta = - (linalg::Dot(GetComm(), u, w0) + u2_w0) / linalg::Dot(GetComm(), w, w0);
 
-      // Update eigenvalue eig += delta
+      // Update eigenvalue.
       eig += delta;
 
-      // Compute z = -(delta * w + u)  TODO: reuse w instead of different variable z?
+      // Compute z = -(delta * w + u).
       z.AXPBYPCZ(-delta, w, std::complex<double>(-1.0, 0.0), u, std::complex<double>(0.0, 0.0));
-      // z2 = -delta w2 - u2 = -u2 since w2 is zero?
+      z2 = -u2;
 
-      //  M (x_k+1 - x_k) = z
-      // TEST UPDATE P and ksp every x iteration?!
+      //  M (x_k+1 - x_k) = z.
       if (it > 0 && it % update_freq == 0)
       {
-        eig_update = eig;
-        //Mpi::Print("Update opInv\n");
+        eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()), Operator::DIAG_ZERO);
         opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
-        opInv->Mult(c, w0);
-        // use deflated solve function
-        if (k > 0 && deflation) //Effenberger
-        {
-          // w0 = T^1 c1 (done above with opInv)
-          // w0_2 = SS^-1 (c2 - A*w0) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
-          // w0_1 = w0 - X*S*w0_2
-          w0_eig.conservativeResize(k);
-          for (int j = 0; j < k; j++)
-          {
-            w0_eig(j) = c_eig(j) - linalg::Dot(GetComm(), w0, X[j]);
-          }
-          Eigen::MatrixXcd SS(k, k);
-          for (int i = 0; i < k; i++)
-          {
-            for (int j = 0; j < k; j++)
-            {
-              SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]);
-            }
-          }
-          const auto S = (eig_update * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
-          SS = - SS * S;
-          w0_eig = SS.inverse() * w0_eig;
-          // w0_1 = w0 - X*S*w0_eig
-          const auto phi1 = S * w0_eig;
-          ComplexVector phi2 = MatMult(X, phi1, true);
-          linalg::AXPY(-1.0, phi2, w0);
-        }
+        deflated_solve(eig_opInv, c, c2, w0, w2);
       }
-      opInv->Mult(z, u);
-      if (k > 0 && deflation) //Effenberger
-      {
-        // u = T^1 z1 (done above with opInv)
-        // u2 = SS^-1 (z2 - A*u) where SS = B(sigma) - A(sigma) X S^-1. if p==1, B = 0 and A = X.adjoint() so SS = X^* X S^-1
-        // u1 = u - X*S*u2
-        Eigen::VectorXcd z2 = -u2;
-        u2.conservativeResize(k);
-        Eigen::VectorXcd u2_0(k), u2_1(k), u2_2(k), u2_3(k);
-        for (int j = 0; j < k; j++)
-        {
-          u2(j) = linalg::Dot(GetComm(), u, X[j]);
-        }
-        z2 = z2 - u2;
-        Eigen::MatrixXcd SS(k, k);
-        for (int i = 0; i < k; i++)
-        {
-          for (int j = 0; j < k; j++)
-          {
-            SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]); // 2 or 3??
-          }
-        }
-        const auto S = (eig_update * Eigen::MatrixXcd::Identity(k, k) - H).inverse(); // use eig or something else?
-        SS = - SS * S;
-        u2 = SS.inverse() * z2;
-        // u1 = u - X*S*u2
-        const auto phi1 = S * u2;
-        ComplexVector phi2 = MatMult(X, phi1, true);
-        linalg::AXPY(-1.0, phi2, u);
-        v2 += u2;
-      }
+      deflated_solve(eig_opInv, z, z2, u, u2);
+
+      // Update and normalize eigenvector estimate.
+      v2 += u2;
       v += u;
       norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
       v *= 1.0 / norm_v;
       v2 *= 1.0 / norm_v;
-      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm()); // should be 1...
 
       it++;
-      if (it == nleps_it) // ACTUALLY, WE DO NOT WANT TO SAVE UNCONVERGED EIGENPAIRS, CAN MESS UP FUTURE DEFLATION ITERATIONS
+      if (it == nleps_it)
       {
-        Mpi::Print("Quasi-Newton did not converge in {} iterations\n", nleps_it);
+        Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton did not converge in {} iterations, restarting.\n", k, nleps_it); // only if print > 0? > 1??
       }
     }
-    Mpi::Print(GetComm(), "\n\n i: {}, init_res: {}, min_res: {}, min_it: {}\n\n", k, init_res, min_res, min_it);
+    Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton converged in {} iterations.\n", k, it); // only if print > 0?
   }
+
+  // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
 
@@ -631,24 +543,22 @@ int QuasiNewtonSolver::Solve()
             [&epseig = eps.eigenvalues()](auto l, auto r) { return epseig(l).imag() < epseig(r).imag(); });
   std::sort(order2.begin(), order2.end(), [&order](auto l, auto r) { return order[l] < order[r]; });
 
-  Eigen::MatrixXcd Xeig = eps.eigenvectors();
-  std::vector<Eigen::VectorXcd> sorted_Xeig;
-
+  // Sort Eigen eigenvectors
+  std::vector<Eigen::VectorXcd> Xeig;
   for (int k = 0; k < nev; k++)
   {
     perm[k] = order[k]; // stupid, only use one!
-    sorted_Xeig.push_back(Xeig.col(order_eigen[k]));
+    Xeig.push_back(eps.eigenvectors().col(order_eigen[k]));
   }
 
   for(int k = 0; k < nev; k++)
   {
-    int k2 = order2[k];
-    ComplexVector eigv = MatMult(X, sorted_Xeig[k2], true);
+    ComplexVector eigv = MatVecMult(X, Xeig[order2[k]], true);
     eigenvectors[k] = eigv;
   }
 
   // Compute the eigenpair residuals for eigenvalue λ.
-  RescaleEigenvectors(nev); // maybe repetitive?
+  RescaleEigenvectors(nev);
 
   space_op->GetWavePortOp().SetSuppressOutput(false); //reset?
   //

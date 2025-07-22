@@ -184,12 +184,14 @@ private:
   // References to matrices defining the nonlinear eigenvalue problem
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
+
+  // Operators used in the iterative linear solver.
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
-  // Workspace vectors for operator applications.
+  // Workspace vectors for operator applications. // ??? See if needed??
   mutable ComplexVector x2, y2;
 
 protected:
@@ -215,9 +217,6 @@ public:
   int Solve() override;
 
   MPI_Comm GetComm() const override {return comm;}
-
-  //void SetWhichEigenpairs(WhichType type) override; // just a test
-  //void SetBMat(const Operator &B) override; // just a test
 };
 
 }  // namespace nleps
