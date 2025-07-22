@@ -201,9 +201,10 @@ mfem::DenseMatrix MatrixSqrt(const mfem::DenseMatrix &M)
 mfem::DenseTensor MatrixSqrt(const mfem::DenseTensor &T)
 {
   mfem::DenseTensor S(T);
+  mfem::DenseMatrix buffS, buffT;
   for (int k = 0; k < T.SizeK(); k++)
   {
-    S(k) = MatrixSqrt(T(k));
+    S(k, buffS) = MatrixSqrt(T(k, buffT));
   }
   return S;
 }
@@ -216,9 +217,10 @@ mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, double p)
 mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
 {
   mfem::DenseTensor S(T);
+  mfem::DenseMatrix buffS, buffT;
   for (int k = 0; k < T.SizeK(); k++)
   {
-    S(k) = MatrixPow(T(k), p);
+    S(k, buffS) = MatrixPow(T(k, buffT), p);
   }
   return S;
 }
@@ -268,9 +270,10 @@ mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B)
   MFEM_VERIFY(A.SizeK() == B.SizeK(),
               "Size mismatch for product of two DenseTensor objects!");
   mfem::DenseTensor C(A.SizeI(), B.SizeJ(), A.SizeK());
+  mfem::DenseMatrix buffA, buffB, buffC;
   for (int k = 0; k < C.SizeK(); k++)
   {
-    Mult(A(k), B(k), C(k));
+    Mult(A(k, buffA), B(k, buffB), C(k, buffC));
   }
   return C;
 }
