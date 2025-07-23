@@ -27,7 +27,7 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   sigma = 0.0;
 
   opInv = nullptr;
-  opProj = nullptr;
+  opProj = nullptr; // use or not?
   opB = nullptr; // figure out whether we should keep or not
 }
 
@@ -62,6 +62,15 @@ void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
 {
 MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
 }
+
+void NonLinearEigenvalueSolver::SetLinearA2Operators(
+  const ComplexOperator &A2_0,
+  const ComplexOperator &A2_1,
+  const ComplexOperator &A2_2)
+{
+MFEM_ABORT("SetLinearA2Operators not defined for base class NonLinearEigenvalueSolver!");
+}
+
 
 void NonLinearEigenvalueSolver::SetLinearSolver(/*const*/ ComplexKspSolver &ksp)
 {
@@ -272,21 +281,20 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref,
 
 namespace
 {
-  // z = X * y where X is a vector of size k or ComplexVector's of size n, y is a vector of size k
-  // z will be a ComplexVector of size n
-  //ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const std::vector<std::complex<double>> y, bool on_dev)
+  // Multiply an (n x k) matrix (vector of size k of ComplexVectors of size n) by a vector of size k,
+  // returning a ComplexVector of size n.
   ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y, bool on_dev)
   {
     MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of input vectors!");
     const size_t k = X.size();
     const size_t n = X[0].Size();
-    ComplexVector z; z.SetSize(n); z.UseDevice(on_dev); // not sure about on_dev?
+    ComplexVector z; z.SetSize(n); z.UseDevice(on_dev);
     z = 0.0;
-    auto *zr = z.Real().Write(on_dev);//z.Real().HostWrite(); // not sure about on_dev
-    auto *zi = z.Imag().Write(on_dev);//HostWrite();
+    auto *zr = z.Real().Write(on_dev);
+    auto *zi = z.Imag().Write(on_dev);
     for (int j = 0; j < k; j++)
     {
-      auto *XR = X[j].Real().Read(on_dev); //not sure about on_dev. Need to figure out if X is on device or not?
+      auto *XR = X[j].Real().Read(on_dev);
       auto *XI = X[j].Imag().Read(on_dev);
       mfem::forall_switch(on_dev, n,
                           [=] MFEM_HOST_DEVICE(int i)
@@ -298,8 +306,7 @@ namespace
     return z;
   }
 
-} // test
-
+}
 
 int QuasiNewtonSolver::Solve()
 {
@@ -331,7 +338,12 @@ int QuasiNewtonSolver::Solve()
   w0.UseDevice(true);
   z.UseDevice(true);
 
-  const int update_freq = 4;// SHOULD REVISIT THIS AND FIGURE OUT BEST FREQUENCY around 4-5 seems good?
+  // Set defaults.
+  if (nleps_it <= 0)
+  {
+    nleps_it = 100;
+  }
+  const int update_freq = 5; //4 // Set from config file?
 
   perm = std::make_unique<int[]>(nev); // use this or order below??
 
@@ -365,12 +377,12 @@ int QuasiNewtonSolver::Solve()
     else
     {
       eig = sigma;
-      linalg::SetRandom(GetComm(), v); // pass a seed or not?
+      linalg::SetRandom(GetComm(), v);
     }
     eig_opInv = eig;
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
-    linalg::SetRandom(GetComm(), c, seed); // deterministic?
+    linalg::SetRandom(GetComm(), c, seed); // Set seed for deterministic behavior
     c2.conservativeResize(k);
     v2.conservativeResize(k);
     for (int i = 0; i < k; i++)
@@ -390,8 +402,8 @@ int QuasiNewtonSolver::Solve()
     opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
-    // Solve the extended operator of the deflated problem.
-    auto deflated_solve = [&](const std::complex<double> lambda, const ComplexVector &b1, const Eigen::VectorXcd &b2, ComplexVector &x1, Eigen::VectorXcd &x2)
+    // Linear solve with the extended operator of the deflated problem.
+    auto deflated_solve = [&](const ComplexVector &b1, const Eigen::VectorXcd &b2, ComplexVector &x1, Eigen::VectorXcd &x2)
     {
       // Solve the block linear system
       // |T(σ) U(σ)| |x1| = |b1|
@@ -417,7 +429,7 @@ int QuasiNewtonSolver::Solve()
           SS(i,j) = linalg::Dot(GetComm(), X[i], X[j]);
         }
       }
-      const auto S = (lambda * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
+      const auto S = (eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
       SS = - SS * S;
       x2 = SS.inverse() * x2;
       ComplexVector XSx2 = MatVecMult(X, S * x2, true);
@@ -425,7 +437,7 @@ int QuasiNewtonSolver::Solve()
     };
 
     // Compute w0 = T^-1 c.
-    deflated_solve(eig_opInv, c, c2, w0, w2);
+    deflated_solve(c, c2, w0, w2);
 
     // Newton iterations.
     double res = mfem::infinity();
@@ -452,8 +464,10 @@ int QuasiNewtonSolver::Solve()
 
       // Compute residual.
       res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm());
-      Mpi::Print(GetComm(), "k: {}, it: {}, eig: {}, {}, res: {}\n", k, it, eig.real(), eig.imag(), res); // only print if print > 0? >1 ????
-
+      if (print > 0)
+      {
+        Mpi::Print(GetComm(), "{:d} NLEPS (nconv={:d}) residual norm {:.6e}\n", it, k, res);
+      }
       // End if residual below tolerance and eigenvalue above the target.
       if (res < rtol)
       {
@@ -475,7 +489,10 @@ int QuasiNewtonSolver::Solve()
       diverged_it = (res > 0.9) ? diverged_it + 1 : 0;
       if (diverged_it > 10)
       {
-        Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton not converging after {} iterations, restarting.\n", k, it);
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton not converging after {:d} iterations, restarting.\n", k, it);
+        }
         break;
       }
 
@@ -514,9 +531,9 @@ int QuasiNewtonSolver::Solve()
         opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK, opC, opM, opA2.get());
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
-        deflated_solve(eig_opInv, c, c2, w0, w2);
+        deflated_solve(c, c2, w0, w2);
       }
-      deflated_solve(eig_opInv, z, z2, u, u2);
+      deflated_solve(z, z2, u, u2);
 
       // Update and normalize eigenvector estimate.
       v2 += u2;
@@ -528,10 +545,16 @@ int QuasiNewtonSolver::Solve()
       it++;
       if (it == nleps_it)
       {
-        Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton did not converge in {} iterations, restarting.\n", k, nleps_it); // only if print > 0? > 1??
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton did not converge in {:d} iterations, restarting.\n", k, nleps_it);
+        }
       }
     }
-    Mpi::Print(GetComm(), "Eigenvalue {}, Quasi-Newton converged in {} iterations.\n", k, it); // only if print > 0?
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations.\n", k, it);
+    }
   }
 
   // Eigenpair extraction from the invariant pair (X, H).

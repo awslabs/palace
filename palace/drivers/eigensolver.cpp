@@ -51,6 +51,66 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   B.UseDevice(true);
   bool nonlinear = std::getenv("NONLINEAR_SLEPC"); // SHOULD DETECT BASED ON CONFIG!
   Mpi::Print("nonlinear: {:d}\n", nonlinear);
+
+  // Check if nonlinear
+  const double target = iodata.solver.eigenmode.target; // moved from below
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
+  bool has_A2 = (A2 != nullptr);
+  //std::unique_ptr<ComplexOperator> Knew, Cnew, Mnew;
+  std::vector<std::complex<double>> xs;
+  std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j;
+  if (has_A2)
+  {
+    Mpi::Print("Test RationalA2 inside eigensolver.cpp\n");
+    const double target_max = 3.0 * target; // get 3.0 from config file!
+    // Compute rational interpolation and add matrices to K, C, M???
+    // Currently copied code here but maybe should live elsewhere?
+    const int npoints = 3;
+    xs.resize(npoints);
+    for (int j = 0; j < npoints; j++)
+    {
+      xs[j] = std::complex<double>(0.0, target + j * (target_max - target) / (npoints - 1));
+    }
+    // Divided difference matrices (order 0 -> A2, order > 0 divided differences)
+    D_j.resize(npoints);
+    for (int k = 0; k < npoints; k++) // Order
+    {
+      for (int j = 0; j < npoints - k; j++)
+      {
+        if (k == 0)
+        {
+          auto A2j = space_op.GetExtraSystemMatrix<ComplexOperator>(xs[j].imag(), Operator::DIAG_ZERO);
+          D_j[k].push_back(std::move(A2j));
+        }
+        else
+        {
+          std::complex<double> denom = (xs[j+k] - xs[j]).imag();
+          auto A2dd = space_op.GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
+          D_j[k].push_back(std::move(A2dd));
+        }
+      }
+    }
+    //std::vector<std::complex<double>> coeffs;
+    //std::vector<std::unique_ptr<ComplexOperator>> ops;
+    //coeffs = {std::complex<double>(1.0, 0.0), std::complex<double>(1.0, 0.0), - xs[0], xs[0] * xs[1]};
+    //ops.push_back(std::move(K));
+    //ops.push_back(std::move(D_j[0][0]));
+    //ops.push_back(std::move(D_j[1][0]));
+    //ops.push_back(std::move(D_j[2][0]));
+    //Knew = space_op.GetExtraSystemMatrixSum2(coeffs, ops, Operator::DIAG_ONE);
+    //coeffs = {std::complex<double>(1.0, 0.0), std::complex<double>(1.0, 0.0), - (xs[0] + xs[1])};
+    //ops[0] = std::move(C);
+    //ops.erase(ops.begin() + 1);
+    //Cnew = space_op.GetExtraSystemMatrixSum2(coeffs, ops, Operator::DIAG_ZERO);
+    //coeffs = {std::complex<double>(1.0, 0.0), std::complex<double>(1.0, 0.0)};
+    //ops[0] = std::move(M);
+    //ops.erase(ops.begin() + 1);
+    //Mnew = space_op.GetExtraSystemMatrixSum2(coeffs, ops, Operator::DIAG_ZERO);
+    // Knew = K + Dj[0][0] - xs[0] * Dj[1][0] + xs[0]*xs[1] * Dj[2][0]
+    // Cnew = C + Dj[1][0] - (xs[0] + xs[1]) * Dj[2][0]
+    // Mnew = M + Dj[2][0]
+  }
+
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M + A2(λ)) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
@@ -155,9 +215,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     Mpi::Print("SetOperators with space_op, K, C, M\n");
     eigen->SetOperators(space_op, *K, *C, *M, scale);
+    Mpi::Print("SetLinearA2Operators\n");
+    eigen->SetLinearA2Operators(*D_j[0][0], *D_j[1][0], *D_j[2][0]);
+    Mpi::Print("Done SetLinearA2Operators\n");
+    //eigen->SetOperators(space_op, *Knew, *Cnew, *Mnew, scale);
     // set NLEIGS numdegrees?
   }
-  else if (C)
+  else if (C) // else if Cnew
   {
     eigen->SetOperators(*K, *C, *M, scale);
   }
@@ -245,7 +309,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
-  const double target = iodata.solver.eigenmode.target;
+  //const double target = iodata.solver.eigenmode.target;
   {
     const double f_target =
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
@@ -304,10 +368,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //if (has_A2)
   //{
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
-  bool has_A2 = (A2 != nullptr);
-  auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
-  auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get());
+  //auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(l0, Operator::DIAG_ZERO); // or target??
+  //bool has_A2 = (A2 != nullptr);
+  if (has_A2)
+  {
+    auto A2p = space_op.GetExtraSystemMatrix<ComplexOperator>(l0 * (1.0 + eps), Operator::DIAG_ZERO);
+    auto A2j = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>(eps * l0, 1, A2p.get(), A2.get());
+  }
   //}
   // Test to see waveport mode at difference frequencies
   /*
@@ -584,16 +651,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
   // K + i sigma C + sigma^2 M + A2(l0) + (sigma - l0) A2J(l0)
-  auto Atest = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), - 1i * l0, K.get(),
-                                    C.get(), M.get(), A2.get(), A2j.get());
+  //auto Atest = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+  //                                  std::complex<double>(-target * target, 0.0), - 1i * l0, K.get(),
+  //                                  C.get(), M.get(), A2.get(), A2j.get());
   //auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target, target);
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
-  ksp->SetOperators(*Atest, *P);
-  //ksp->SetOperators(*A, *P);
+  //ksp->SetOperators(*Atest, *P);
+  ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
   eigen->SetIoData(iodata);
 
@@ -617,17 +684,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  // Move nonlinear Newton refinement here!
+  /**/
   Mpi::Print("Setting up Quasi-Newton solver\n");
   std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
   qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
   qn->SetTol(iodata.solver.eigenmode.tol);
-  Mpi::Print("L661 max it : {}\n", iodata.solver.eigenmode.max_it);
-  qn->SetMaxIter(100);
-  qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE); // currently not using scaling but will need to make it work
+  qn->SetMaxIter(iodata.solver.eigenmode.max_it);
+  qn->SetOperators(space_op, *K, *C, *M, scale); // currently not using scaling but maybe try to make it work?
   qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); // second input not actually used
-  qn->SetLinearSolver(*ksp); // careful with SaveMetatadata call above, might not to move it down here
+  qn->SetLinearSolver(*ksp);
   qn->SetShiftInvert(1i * target);
+  // Use linear eigensolve solution as initial guess.
   std::vector<std::complex<double>> init_eigs;
   std::vector<ComplexVector> init_V;
   for (int i = 0; i < num_conv; i++)
@@ -642,9 +709,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   qn->SetInitialGuess(init_eigs, init_V);
   eigen = std::move(qn); //?
   eigen->Solve();
-
   Mpi::Print("Done with QuasiNewton Solve\n");
-
+  /**/
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);

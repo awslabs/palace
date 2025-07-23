@@ -55,7 +55,7 @@ protected:
   std::vector<std::complex<double>> eigenvalues;
   std::vector<ComplexVector> eigenvectors;
   std::unique_ptr<std::complex<double>[]> eig; // use this or eigenvalues above?
-  std::unique_ptr<int[]> perm;
+  std::unique_ptr<int[]> perm; // this or the order std::vector?
 
   // Storage for eigenpairs initial guesses.
   std::vector<std::complex<double>> init_eigenvalues;
@@ -66,7 +66,7 @@ protected:
 
   // On input used to define optional initial guess, on output stores final residual
   // vector.
-  std::unique_ptr<std::complex<double>[]> r;
+  std::unique_ptr<std::complex<double>[]> r; // unused in Newton solver? remove this?
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
@@ -119,11 +119,13 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
+  void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1,const ComplexOperator &A2_2) override;
 
   // The linear solver will be configured to compute the
   // action of T(σ)⁻¹ where σ is the current eigenvalue
   void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) override;
   void SetIoData(const IoData &iodata) override; // remove this later!
+
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
 

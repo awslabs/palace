@@ -853,7 +853,7 @@ SpaceOperator::GetExtraSystemMatrixSum(double a0, double a1, const OperType *A20
 
 //template <typename OperType>
 std::unique_ptr<ComplexOperator>
-SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops)
+SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops, Operator::DiagonalPolicy diag_policy)
 {
   using ParOperType = ComplexParOperator;
   //  typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
@@ -880,7 +880,53 @@ SpaceOperator::GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<
     }
   }
   auto S = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), GetNDSpace());
-  S->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ZERO); //do this here or outside?
+  S->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return S;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrixSum2(std::vector<std::complex<double>> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops, Operator::DiagonalPolicy diag_policy)
+{
+  using ParOperType = ComplexParOperator;
+  //  typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+  //                            ComplexParOperator, ParOperator>::type;
+  MFEM_VERIFY(coeffs.size() == ops.size(), "coeffs and ops must have the same size!");
+  MFEM_VERIFY(ops.size() > 0,  "empty operator vector supplied");
+  const auto *PtAP_op0 = (ops[0].get()) ? dynamic_cast<const ParOperType *>(ops[0].get()) : nullptr;
+  int height = PtAP_op0->LocalOperator().Height(), width = PtAP_op0->LocalOperator().Width();
+  auto sumr = std::make_unique<SumOperator>(height, width);
+  auto sumi = std::make_unique<SumOperator>(height, width);
+  for (int i = 0; i < ops.size(); i++)
+  {
+    const auto *PtAP_op = (ops[i].get()) ? dynamic_cast<const ParOperType *>(ops[i].get()) : nullptr;
+    if (coeffs[i] != 0.0)
+    {
+      if (coeffs[i].real() != 0.0)
+      {
+        if (PtAP_op->LocalOperator().Real())
+        {
+          sumr->AddOperator(*PtAP_op->LocalOperator().Real(), coeffs[i].real());
+        }
+        if (PtAP_op->LocalOperator().Imag())
+        {
+          sumi->AddOperator(*PtAP_op->LocalOperator().Imag(), coeffs[i].real());
+        }
+      }
+      if (coeffs[i].imag() != 0.0)
+      {
+        if (PtAP_op->LocalOperator().Imag())
+        {
+          sumr->AddOperator(*PtAP_op->LocalOperator().Imag(), -coeffs[i].imag());
+        }
+        if (PtAP_op->LocalOperator().Imag())
+        {
+          sumi->AddOperator(*PtAP_op->LocalOperator().Real(), coeffs[i].imag());
+        }
+      }
+    }
+  }
+  auto S = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), GetNDSpace());
+  S->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return S;
 }
 

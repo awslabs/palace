@@ -190,7 +190,10 @@ public:
 
   //template <typename OperType>
   std::unique_ptr<ComplexOperator>
-  GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops);
+  GetExtraSystemMatrixSum2(std::vector<double> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops, Operator::DiagonalPolicy diag_policy);
+
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemMatrixSum2(std::vector<std::complex<double>> coeffs, std::vector<std::unique_ptr<ComplexOperator>> &ops, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

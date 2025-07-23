@@ -155,6 +155,7 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
+  void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
@@ -390,6 +391,8 @@ public:
   }
 
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(eps); };
+
+  void RationalA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
 };
 
 // Generalized eigenvalue problem solver: K x = λ M x .
@@ -452,6 +455,8 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
+  const ComplexOperator *opA2_0, *opA2_1, *opA2_2;
+
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
 
@@ -482,6 +487,8 @@ public:
   void GetEigenvector(int i, ComplexVector &x) const override;
 
   int Solve() override; // test
+
+  void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
 };
 
 // Base class for SLEPc's PEP problem type.
@@ -563,6 +570,8 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
+  const ComplexOperator *opA2_0, *opA2_1, *opA2_2;
+
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
@@ -585,6 +594,7 @@ public:
   void SetBMat(const Operator &B) override;
   //void GetEigenvector(int i, ComplexVector &x) const override; // test
   int Solve() override; // test
+  void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
 };
 
 }  // namespace slepc
