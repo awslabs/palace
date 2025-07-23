@@ -369,17 +369,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  excitation_counter = 0;
-  const int restart_excitation_idx =
-      (iodata.solver.driven.restart - 1) / port_excitations.Size() + 1;
-  const int freq_restart_idx =
-      (iodata.solver.driven.restart - 1) % int(omega_sample.size());
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
-    if (++excitation_counter < restart_excitation_idx)
-    {
-      continue;
-    }
     if (port_excitations.Size() > 1)
     {
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
@@ -389,21 +380,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     post_op.InitializeParaviewDataCollection(excitation_idx);
 
     // Frequency loop.
-    for (std::size_t omega_i =
-             ((excitation_counter == restart_excitation_idx) ? freq_restart_idx : 0);
-         omega_i < omega_sample.size(); omega_i++)
+    for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
       auto omega = omega_sample[omega_i];
-      Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
+      Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                  omega_i + 1, omega_sample.size(),
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega),
-                 Timer::Duration(Timer::Now() - t0).count(),
-                 (port_excitations.Size() > 1)
-                     ? fmt::format(", solve {:d}/{:d}",
-                                   1 + omega_i +
-                                       (excitation_counter - 1) * port_excitations.Size(),
-                                   omega_sample.size() * port_excitations.Size())
-                     : "");
+                 Timer::Duration(Timer::Now() - t0).count());
 
       // Assemble and solve the PROM linear system.
       prom_op.SolvePROM(excitation_idx, omega, E);
