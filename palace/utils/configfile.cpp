@@ -1724,6 +1724,9 @@ void DrivenSolverData::SetUp(json &solver)
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
 
+  MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
+              "\"Restart\" is incompatible with adaptive frequency sweep!");
+
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
   if (driven->find("MinFreq") != driven->end() &&
