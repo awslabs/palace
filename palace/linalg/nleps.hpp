@@ -157,7 +157,7 @@ public:
   void SetInitialSpace(const ComplexVector &v) override;
 
   // Set initial guess for the eigenpairs.
-  void SetInitialGuess(const std::vector<std::complex<double>> init_eig, const std::vector<ComplexVector> &init_V);
+  void SetInitialGuess(const std::vector<std::complex<double>> &init_eig, const std::vector<ComplexVector> &init_V);
 
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   int Solve() override = 0;

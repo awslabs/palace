@@ -215,10 +215,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     Mpi::Print("SetOperators with space_op, K, C, M\n");
     eigen->SetOperators(space_op, *K, *C, *M, scale);
-    Mpi::Print("SetLinearA2Operators\n");
-    eigen->SetLinearA2Operators(*D_j[0][0], *D_j[1][0], *D_j[2][0]);
-    Mpi::Print("Done SetLinearA2Operators\n");
-    //eigen->SetOperators(space_op, *Knew, *Cnew, *Mnew, scale);
+    if (has_A2)
+    {
+      Mpi::Print("SetLinearA2Operators\n");
+      eigen->SetLinearA2Operators(*D_j[0][0], *D_j[1][0], *D_j[2][0]);
+      Mpi::Print("Done SetLinearA2Operators\n");
+    }
     // set NLEIGS numdegrees?
   }
   else if (C) // else if Cnew

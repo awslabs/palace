@@ -144,12 +144,12 @@ void NonLinearEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
   v.Get(r.get(), n, false);
 }
 
-void NonLinearEigenvalueSolver::SetInitialGuess(const std::vector<std::complex<double>> init_eig, const std::vector<ComplexVector> &init_V)
+void NonLinearEigenvalueSolver::SetInitialGuess(const std::vector<std::complex<double>> &init_eig, const std::vector<ComplexVector> &init_V)
 {
   MFEM_VERIFY(
       n > 0,
       "Must call SetOperators before using SetInitialguess for nonlinear eigenvalue solver!");
-  MFEM_VERIFY(init_eig.size() == init_V.size(), "SetInitialGuess requires the same number of eigenvalues and eigenvectors\n");
+  MFEM_VERIFY(init_eig.size() == init_V.size(), "SetInitialGuess requires the same number of eigenvalues and eigenvectors guesses!");
 
   init_eigenvalues.resize(init_eig.size());
   init_eigenvectors.resize(init_eig.size());
@@ -265,6 +265,8 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref,
     }
   }
 
+  n = opK->Height();
+
   // Set up workspace.
   x1.SetSize(opK->Height());
   x2.SetSize(opK->Height());
@@ -276,7 +278,7 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref,
   y1.UseDevice(true);
   y2.UseDevice(true);
   //z1.UseDevice(true);
-  n = opK->Height();
+
 }
 
 namespace
@@ -343,9 +345,8 @@ int QuasiNewtonSolver::Solve()
   {
     nleps_it = 100;
   }
-  const int update_freq = 5; //4 // Set from config file?
-
-  perm = std::make_unique<int[]>(nev); // use this or order below??
+  const int update_freq = 5; // Set from config file?
+  const int max_restart = 2; // Set from config file?
 
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon()); // TODO: define only once above
   space_op->GetWavePortOp().SetSuppressOutput(true); //suppressoutput?
@@ -358,21 +359,30 @@ int QuasiNewtonSolver::Solve()
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
-  int k = 0;
+  const int num_init_guess = init_eigenvalues.size();
+  int k = 0, restart = 0, guess_idx = 0;
   while (k < nev)
   {
+    // If multiple restarts with the same initial guess, skip to next initial guess.
+    // If we tried all initial guesses and the random guess, end search even if k < nev.
+    if (restart > max_restart)
+    {
+      if (guess_idx < num_init_guess)
+      {
+        guess_idx++;
+      }
+      else
+      {
+        break;
+      }
+    }
+
     // Set the eigenpair estimate to the initial guess.
     std::complex<double> eig, eig_opInv;
-    if (k < init_eigenvalues.size())
+    if (guess_idx < num_init_guess)
     {
-      eig = init_eigenvalues[k];
-      v = init_eigenvectors[k];
-    }
-    else if (init_eigenvalues.size() > 0)
-    {
-      const int last_idx = init_eigenvalues.size() - 1;
-      eig = init_eigenvalues[last_idx];
-      v = init_eigenvectors[last_idx];
+      eig = init_eigenvalues[guess_idx];
+      v = init_eigenvectors[guess_idx];
     }
     else
     {
@@ -466,23 +476,35 @@ int QuasiNewtonSolver::Solve()
       res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm());
       if (print > 0)
       {
-        Mpi::Print(GetComm(), "{:d} NLEPS (nconv={:d}) residual norm {:.6e}\n", it, k, res);
+        Mpi::Print(GetComm(), "{:d} NLEPS (nconv={:d}, restart={:d}) residual norm {:.6e}\n", it, k, restart, res);
       }
       // End if residual below tolerance and eigenvalue above the target.
       if (res < rtol)
       {
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations.\n", k, it);
+        }
+        // Update the invariant pair with normalization.
+        const auto scale = linalg::Norml2(GetComm(), v);
+        v *= 1.0 / scale;
+        X.push_back(v);
+        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+        H.col(k).head(k) = v2 / scale;
+        H(k, k) = eig;
+        eigenvalues[k] = eig;
+        k++;
+        // If the eigenvalue is inside the desired range, increment initial guess index
+        // Otherwise, use the same initial guess again.
         if (eig.imag() > sigma.imag())
         {
-          // Update the invariant pair with normalization.
-          const auto scale = linalg::Norml2(GetComm(), v);
-          v *= 1.0 / scale;
-          X.push_back(v);
-          H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-          H.col(k).head(k) = v2 / scale;
-          H(k, k) = eig;
-          eigenvalues[k] = eig;
-          k++;
+          guess_idx++;
         }
+        else
+        {
+          nev++; // increment number of desired eigenvalues
+        }
+        restart = 0; // reset restart counter
         break;
       }
       // Stop if large residual for 10 consecutive iterations.
@@ -493,6 +515,7 @@ int QuasiNewtonSolver::Solve()
         {
           Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton not converging after {:d} iterations, restarting.\n", k, it);
         }
+        restart++;
         break;
       }
 
@@ -549,18 +572,17 @@ int QuasiNewtonSolver::Solve()
         {
           Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton did not converge in {:d} iterations, restarting.\n", k, nleps_it);
         }
+        restart++;
       }
     }
-    if (print > 0)
-    {
-      Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations.\n", k, it);
-    }
   }
+  nev = k; // in case some guesses did not converge
 
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
 
+  perm = std::make_unique<int[]>(nev); // use this or order below??
   std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()), order2(eigenvalues.size());
   std::iota(order.begin(), order.end(), 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
@@ -575,7 +597,7 @@ int QuasiNewtonSolver::Solve()
   std::vector<Eigen::VectorXcd> Xeig;
   for (int k = 0; k < nev; k++)
   {
-    perm[k] = order[k]; // stupid, only use one!
+    perm[k] = order[k]; // stupid, only use one of perm and order!
     Xeig.push_back(eps.eigenvectors().col(order_eigen[k]));
   }
 
