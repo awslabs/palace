@@ -23,11 +23,394 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+#include <Eigen/Dense> // test for AAA
+
+// Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
+// for this.
+extern "C"
+{
+  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
+              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
+              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
+              int *);
+}
 
 namespace palace
 {
 
 using namespace std::complex_literals;
+
+using Complex = std::complex<double>;
+using VectorEig = Eigen::VectorXcd;
+using Matrix = Eigen::MatrixXcd;
+
+template <typename MatType, typename VecType>
+inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
+{
+  // Wrapper for LAPACK's (z)ggev. A and B are overwritten by their Schur decompositions.
+  MFEM_VERIFY(A.rows() == A.cols() && B.rows() == B.cols() && A.rows() == B.rows(),
+              "Generalized eigenvalue problem expects A, B matrices to be square and have "
+              "same dimensions!");
+  char jobvl = 'N', jobvr = 'V';
+  int n = static_cast<int>(A.rows()), lwork = 2 * n;
+  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
+  std::vector<double> rwork(8 * n);
+  MatType VL(0, 0);
+  VR.resize(n, n);
+  int info = 0;
+
+  zggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
+         VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "ZGGEV failed with info = " << info << "!");
+
+  // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).
+  D.resize(n);
+  for (int i = 0; i < n; i++)
+  {
+    D(i) = (beta[i] == 0.0)
+               ? ((alpha[i] == 0.0) ? std::numeric_limits<std::complex<double>>::quiet_NaN()
+                                    : mfem::infinity())
+               : alpha[i] / beta[i];
+    VR.col(i) /= VR.col(i).norm();
+  }
+}
+
+class AAAApproximation
+{
+private:
+    std::vector<Complex> support_points;  // zi
+    std::vector<Complex> weights;         // wi
+    std::vector<Complex> function_values; // fi
+
+public:
+    struct AAAResult
+    {
+        std::vector<Complex> support_points;
+        std::vector<Complex> weights;
+        std::vector<Complex> function_values;
+        std::vector<double> errors;
+        int degree;
+    };
+
+    // Evaluate the rational approximation at point z
+    Complex evaluate(Complex z) const
+    {
+        if (support_points.empty()) return Complex(0.0);
+
+        Complex numerator(0.0);
+        Complex denominator(0.0);
+
+        for (size_t i = 0; i < support_points.size(); ++i) {
+            Complex term = weights[i] / (z - support_points[i]);
+            numerator += function_values[i] * term;
+            denominator += term;
+        }
+
+        return numerator / denominator;
+    }
+
+    AAAResult computeAAA2(
+      std::function<Complex(Complex)> f,
+      const std::vector<Complex>& sample_points,
+      double tolerance = 1e-13)
+    {
+      int n = sample_points.size();
+      std::vector<Complex> f_values(n);
+      Complex mean = 0.0;
+      double norm = 0.0;
+      for (int i = 0; i < n; i++)
+      {
+        f_values[i] = f(sample_points[i]);
+        mean += f_values[i];
+        norm = std::max(std::abs(f_values[i]), norm);
+      }
+      mean /= n;
+      std::vector<double> R(n);
+      for (int i = 0; i < n; i++) R[i] = std::abs(f_values[i]-mean);
+
+      // Initialize
+      support_points.clear();
+      weights.clear();
+      function_values.clear();
+
+      // next support point
+      double err;
+      err = 0.0;
+      int idx = 0;
+      for (int i = 0; i < n; i++) {if (R[i] >= err) {idx = i; err = R[i];}}
+
+      std::vector<Complex> z(n), f2(n);
+      Matrix C(n,n), A(n,n);
+      VectorEig ww(n), D(n), N(n);
+      int k;
+      for (k = 0; k < n - 1; k++)
+      {
+        z[k] = sample_points[idx];
+        f2[k] = f_values[idx];
+        R[idx] = -1.0;
+        // Next column
+        for (int i = 0; i < n; i++)
+        {
+          C(i,k) = 1.0 / (sample_points[i] - sample_points[idx]);
+        }
+        int cont = 0;
+        for (int i = 0; i < n; i++)
+        {
+          if (R[i] != -1.0)
+          {
+            for (int j = 0; j <= k; j++)
+            {
+              A(cont,j) = C(i,j)*f_values[i] - C(i,j)*f2[j];
+            }
+            cont++;
+          }
+        }
+        // SVD of A
+        Eigen::JacobiSVD<Eigen::MatrixXcd> svd;
+        svd.compute(A.topLeftCorner(cont, k+1), Eigen::ComputeFullV);
+        for (int i = 0; i <= k; i++)
+        {
+          ww(i) = std::conj(svd.matrixV().col(k)(i));
+          D(i) = ww(i) * f2[i];
+        }
+        N = C.topLeftCorner(n,k+1) * D.head(k+1);
+        D = C.topLeftCorner(n,k+1) * ww.head(k+1);
+        for (int i = 0; i < n; i++)
+        {
+          if (R[i] >= 0) R[i] = std::abs(f_values[i] - N[i]/D[i]);
+        }
+        // next support point
+        err = 0.0;
+        for (int i = 0; i < n; i++) {if (R[i] >= err) {idx = i; err = R[i];}}
+        std::cout << "k: " << k << " error: " << err << "\n";
+        if (err < tolerance*norm) break;
+      }
+      //
+      for (int i = 0; i <= k; i++) // k or k+1?
+      {
+        support_points.push_back(z[i]);
+        function_values.push_back(f2[i]);
+        weights.push_back(ww(i));
+      }
+
+
+      // Poles
+      Matrix E(k+2,k+2), B(k+2,k+2);
+      E.setZero(); B.setZero();
+      for (int i = 0; i <= k; i++)
+      {
+        B(i,i) = 1.0;
+        E(i+1,0) = ww(i);
+        E(0,i+1) = 1.0;
+        E(i+1,i+1) = z[i];
+      }
+      B(0,0) = 0.0;
+      B(k+1,k+1) = 1.0;
+
+      Eigen::VectorXcd D2;
+      Eigen::MatrixXcd X;
+      ZGGEV(E, B, D2, X);
+      int cont = 0;
+      //for (int i = 0; i < k+2; i++)
+      //{
+      //  if
+      //}
+
+      // Return results
+      AAAResult result;
+      result.support_points = support_points;
+      result.weights = weights;
+      result.function_values = function_values;
+      result.errors = R;
+      result.degree = support_points.size();
+
+      return result;
+    }
+
+    // This was written by Amazon Q and it does not seem to work as well as the above...
+    // Main AAA algorithm implementation
+    AAAResult computeAAA(
+        std::function<Complex(Complex)> f,
+        const std::vector<Complex>& sample_points,
+        double tolerance = 1e-13,
+        int max_degree = 100)
+    {
+
+        int n = sample_points.size();
+        std::vector<Complex> f_values(n);
+
+        // Evaluate function at all sample points
+        for (int i = 0; i < n; ++i)
+        {
+            f_values[i] = f(sample_points[i]);
+        }
+
+        // Initialize
+        support_points.clear();
+        weights.clear();
+        function_values.clear();
+
+        std::vector<bool> is_support(n, false);
+        std::vector<double> errors;
+
+        // Find initial support point (point with largest function value)
+        int max_idx = 0;
+        double max_val = std::abs(f_values[0]);
+        for (int i = 1; i < n; ++i)
+        {
+            if (std::abs(f_values[i]) > max_val)
+            {
+                max_val = std::abs(f_values[i]);
+                max_idx = i;
+            }
+        }
+
+        support_points.push_back(sample_points[max_idx]);
+        function_values.push_back(f_values[max_idx]);
+        is_support[max_idx] = true;
+
+        // Main AAA iteration
+        for (int degree = 1; degree <= max_degree; ++degree)
+        {
+            // Compute current approximation errors at non-support points
+            std::vector<double> current_errors(n);
+            double max_error = 0.0;
+            int next_support_idx = -1;
+
+            for (int i = 0; i < n; ++i) {
+                if (!is_support[i]) {
+                    Complex approx_val = (degree == 1) ? function_values[0] :
+                                       evaluateAtNonSupportPoint(sample_points[i], sample_points, f_values, is_support);
+                    current_errors[i] = std::abs(f_values[i] - approx_val);
+
+                    if (current_errors[i] > max_error) {
+                        max_error = current_errors[i];
+                        next_support_idx = i;
+                    }
+                }
+            }
+
+            errors.push_back(max_error);
+            std::cout << "degree: " << degree << " max_error: " << max_error << "\n";
+            // Check convergence
+            if (max_error < tolerance || next_support_idx == -1) {
+                break;
+            }
+
+            // Add new support point
+            support_points.push_back(sample_points[next_support_idx]);
+            function_values.push_back(f_values[next_support_idx]);
+            is_support[next_support_idx] = true;
+
+            // Compute new weights using least squares
+            computeWeights(sample_points, f_values, is_support);
+        }
+
+        // Return results
+        AAAResult result;
+        result.support_points = support_points;
+        result.weights = weights;
+        result.function_values = function_values;
+        result.errors = errors;
+        result.degree = support_points.size();
+
+        return result;
+    }
+
+private:
+    // Evaluate approximation at a non-support point during iteration
+    Complex evaluateAtNonSupportPoint(
+        Complex z,
+        const std::vector<Complex>& sample_points,
+        const std::vector<Complex>& f_values,
+        const std::vector<bool>& is_support) const
+    {
+
+        if (support_points.size() == 1)
+        {
+            return function_values[0];
+        }
+
+        Complex numerator(0.0);
+        Complex denominator(0.0);
+
+        for (size_t i = 0; i < support_points.size(); ++i) {
+            if (std::abs(z - support_points[i]) < 1e-14) {
+                return function_values[i];  // Exact match
+            }
+
+            Complex term = weights[i] / (z - support_points[i]);
+            numerator += function_values[i] * term;
+            denominator += term;
+        }
+
+        return numerator / denominator;
+    }
+
+    // Compute weights using least squares approach
+    void computeWeights(
+        const std::vector<Complex>& sample_points,
+        const std::vector<Complex>& f_values,
+        const std::vector<bool>& is_support)
+    {
+
+        int m = support_points.size();  // Number of support points
+        int n = sample_points.size();   // Total number of points
+
+        if (m == 1)
+        {
+            weights = {Complex(1.0)};
+            return;
+        }
+
+        // Count non-support points
+        int num_nonsupport = 0;
+        for (bool is_supp : is_support)
+        {
+            if (!is_supp) num_nonsupport++;
+        }
+
+        if (num_nonsupport == 0)
+        {
+            // All points are support points, use simple weights
+            weights.assign(m, Complex(1.0));
+            return;
+        }
+
+        // Set up least squares system: A * w = b
+        Matrix A(num_nonsupport, m);
+        VectorEig b(num_nonsupport);
+
+        int row = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            if (!is_support[i]) {
+                Complex zi = sample_points[i];
+                Complex fi = f_values[i];
+
+                for (int j = 0; j < m; ++j)
+                {
+                    Complex zj = support_points[j];
+                    Complex fj = function_values[j];
+                    A(row, j) = (fi - fj) / (zi - zj);
+                }
+                b(row) = -fi;
+                row++;
+            }
+        }
+
+        // Solve least squares system
+        VectorEig w = A.colPivHouseholderQr().solve(b);
+
+        // Store weights
+        weights.clear();
+        for (int i = 0; i < m; ++i) {
+            weights.push_back(w(i));
+        }
+    }
+};
+
+
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -109,6 +492,56 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Knew = K + Dj[0][0] - xs[0] * Dj[1][0] + xs[0]*xs[1] * Dj[2][0]
     // Cnew = C + Dj[1][0] - (xs[0] + xs[1]) * Dj[2][0]
     // Mnew = M + Dj[2][0]
+
+    // Test AAA
+    ComplexVector u; u.SetSize(K->Height()); u.UseDevice(true);
+    ComplexVector v; v.SetSize(K->Height()); v.UseDevice(true);
+    linalg::SetRandom(space_op.GetComm(), u);
+    linalg::SetRandom(space_op.GetComm(), v);
+    linalg::Normalize(space_op.GetComm(), u);
+    linalg::Normalize(space_op.GetComm(), v);
+    // Define your black box function
+    auto f = [&](Complex z) -> Complex
+    {
+        ComplexVector A2v; A2v.SetSize(K->Height()); A2v.UseDevice(true);
+        auto A2z = space_op.GetExtraSystemMatrix<ComplexOperator>(z.imag(), Operator::DIAG_ZERO);
+        A2z->Mult(v, A2v);
+        return linalg::Dot(space_op.GetComm(), u, A2v);
+    };
+
+    // Create sample points (you can customize this)
+    std::vector<Complex> sample_points;
+    int n_samples = 100;
+    for (int i = 0; i < n_samples; ++i)
+    {
+        double x = target + i * (target_max - target) / (n_samples - 1);
+        sample_points.push_back(Complex(0.0, x));
+    }
+
+    // Apply AAA algorithm
+    AAAApproximation aaa;
+    auto result = aaa.computeAAA2(f, sample_points, 1e-8);
+
+    // Print results
+    std::cout << "AAA Approximation Results:" << std::endl;
+    std::cout << "Degree: " << result.degree << std::endl;
+    std::cout << "Support points:" << std::endl;
+    for (size_t i = 0; i < result.support_points.size(); ++i) {
+        std::cout << "z[" << i << "] = " << result.support_points[i]
+                  << ", w[" << i << "] = " << result.weights[i]
+                  << ", f[" << i << "] = " << result.function_values[i] << std::endl;
+    }
+
+    // Test the approximation
+    Complex test_point(0.0, 0.5*(target+target_max));
+    Complex exact_value = f(test_point);
+    Complex approx_value = aaa.evaluate(test_point);
+
+    std::cout << "\nTest at z = " << test_point << std::endl;
+    std::cout << "Exact value: " << exact_value << std::endl;
+    std::cout << "Approximation: " << approx_value << std::endl;
+    std::cout << "Error: " << std::abs(exact_value - approx_value) << std::endl;
+    exit(0);
   }
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
