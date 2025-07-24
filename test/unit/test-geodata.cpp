@@ -1,9 +1,12 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-// Expose anonymous namespace functions for testing.
-#include "utils/geodata.cpp"
+#include "utils/geodata.hpp"
+#include "utils/geodata_impl.hpp"
 
-using namespace palace;
+#include "utils/communication.hpp"
+
+namespace palace
+{
 using namespace Catch;
 
 TEST_CASE("TwoDimensionalDiagonalSquare", "[geodata]")
@@ -128,3 +131,4 @@ TEST_CASE("TwoDimensionalDiagonalSquare", "[geodata]")
   CHECK(normals[1][2] == Approx(ax1[2]).margin(1e-4));
   CHECK(box.planar);
 }
+}  // namespace palace
