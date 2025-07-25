@@ -91,7 +91,7 @@ uses the computed field energies, the capacitance can also be calculated by dire
 integrating the charge on a boundary surface and dividing by the excitation voltage. The
 configuration file for this example contains this information under
 [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D).
-The resulting capacitances are written to `postpro/surface-C.csv`:
+The resulting capacitances are written to `postpro/terminal-C.csv`:
 
 ```
                i,                C[1] (F),                C[2] (F)

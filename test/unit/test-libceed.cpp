@@ -62,7 +62,7 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool am
     pmesh->UniformRefinement();
   }
 
-  // Perform nonconforming AMR (two levels of refinement with no hanging node restritions).
+  // Perform nonconforming AMR (two levels of refinement with no hanging node restrictions).
   if (amr)
   {
     pmesh->RandomRefinement(0.5);
