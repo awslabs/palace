@@ -7,6 +7,16 @@ on:
     tags: '*'
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# We need spack so that we can install palace for the tutorials
+env:
+  REGISTRY: ghcr.io/awslabs/palace
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   build-docs:
     permissions:
@@ -14,6 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Spack
+        uses: spack/setup-spack@v2
+        with:
+          ref: develop
+          buildcache: true
+          color: true
+          # This seems unnecessary, but otherwise we clone into ./spack
+          # This then would override the spack local repo dir, and break CI
+          path: spack-path
+
+      - name: Bootstrap Spack
+        run: spack bootstrap now
+
+      - name: Install Palace
+        run: spack install palace
 
       - name: Build and deploy
         env:
