@@ -36,6 +36,7 @@ else
     cases = [
         "spheres",
         "rings",
+        "antenna",
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -145,6 +146,19 @@ end
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
 abstol = 2.0e-12
+
+if "antenna" in cases
+    @info "Testing antenna..."
+    @time testcase(
+        "antenna",
+        "antenna.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=50abstol
+    )
+end
 
 if "coaxial/open" in cases
     @info "Testing coaxial (open)..."

@@ -98,6 +98,7 @@ fi
 TEST_DIRS=$(cat << EOF
 spheres
 rings
+antenna
 cavity/pec
 cavity/impedance
 coaxial/open
