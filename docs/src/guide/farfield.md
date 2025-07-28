@@ -3,22 +3,21 @@
 <!--- SPDX-License-Identifier: Apache-2.0 --->
 ```
 
-# Extracting fields in the radiation zone
+# Extracting Fields in the Radiation Zone
 
-When run in the [`Driven`
-mode](problem.md#driven-problems-in-the-frequency-domain), *Palace* can
-extrapolate fields from the near-field region (being simulated) to the far-field
-zone. This capability can be used to study the radiative properties of a system.
+When run in the [`Driven` mode](problem.md), *Palace* can extrapolate fields
+from the near-field region (being simulated) to the far-field zone. This
+capability can be used to study the radiative properties of a system.
 
 The mathematical details on how this is accomplished are available in the
-[reference](../reference.md#far-field-extraction). The key points are as follows:
+[reference](../reference.md#Far-field-extraction). The key points are as follows:
 
   - Computing fields requires evaluation of surface integrals, so users must
     specify a surface of integration (more on this later).
   - For the result to be physically accurate, it is important to properly model
     the propagation of waves to infinity. This can be accomplished by enclosing
-    the system inside a sphere or box and applying ["Absorbing" boundary
-    conditions](../config/boundaries.md#absorbing-boundary).
+    the system inside a sphere or box and applying [`config["Boundaries"]["Absorbing"]` boundary
+    conditions](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D).
   - The result is provided as complex vectors ``r \mathbf{E}(\theta, \phi)``, where
     ``(\theta, \phi)`` identify a point on sphere at infinite distance and the
     result is defined up to a global phase.
@@ -93,7 +92,8 @@ for 1 GHz).
     farfield-E-([+-]?\d+\.\d+e[+-]?\d+)\.csv
     ```
 
-The CSV contains a header line that describes the columns, and one row for each ``(\theta, \phi)`` pair. The columns are:
+The CSV contains a header line that describes the columns, and one row for each
+``(\theta, \phi)`` pair. The columns are:
 
   - `theta (deg.)` : Polar angle in degrees
   - `phi (deg.)` : Azimuthal angle in degrees
@@ -130,5 +130,8 @@ for csv_file in postpro_dir.glob("farfield-E-*.csv"):
         print(f"Max |rE|: {max_field:.3e} V")
 ```
 
-See also the [antenna example](../examples/antenna.md) for more complex postprocessing and for a
-script that directly plots antenna patterns.
+See also the [antenna example](../examples/antenna.md) for more complex
+postprocessing and for a script that directly plots antenna patterns. In
+particular, the example includes a Python script that converts CSV files to PVD
+files that can be immediately visualized with
+[ParaView](https://www.paraview.org/).
