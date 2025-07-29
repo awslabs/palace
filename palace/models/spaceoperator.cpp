@@ -338,6 +338,8 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   AddStiffnessBdrCoefficients(1.0, fb);
   AddRealPeriodicCoefficients(1.0, f);
   AddImagPeriodicCoefficients(1.0, fc);
+  AddRealPeriodicCoefficients(1.0, f);
+  AddImagPeriodicCoefficients(1.0, fc);
   int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -540,6 +542,13 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
 {
+void SpaceOperator::AssemblePreconditioner(
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, double a3,
+    std::vector<std::unique_ptr<Operator>> &br_vec,
+    std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+    std::vector<std::unique_ptr<Operator>> &bi_vec,
+    std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
+{
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
       dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
@@ -716,6 +725,29 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   print_prec_hdr = false;
   return B;
+}
+
+template <typename OperType, typename ScalarType>
+std::unique_ptr<OperType>
+SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
+                                          const OperType *B,
+                                          Operator::DiagonalPolicy diag_policy)
+{
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
+  const auto *PtAP_A = (A) ? dynamic_cast<const ParOperType *>(A) : nullptr;
+  const auto *PtAP_B = (B) ? dynamic_cast<const ParOperType *>(B) : nullptr;
+  MFEM_VERIFY((!A || PtAP_A) && (!B || PtAP_B),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+
+  int height = PtAP_A->LocalOperator().Height();
+  int width = PtAP_A->LocalOperator().Width();
+  auto DD = BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A, PtAP_B,
+                                nullptr, nullptr, GetNDSpace());
+  DD->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return DD;
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
@@ -979,4 +1011,11 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>, double);
 
+template std::unique_ptr<Operator>
+SpaceOperator::GetDividedDifferenceMatrix(double, const Operator *, const Operator *,
+                                          Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetDividedDifferenceMatrix(std::complex<double>, const ComplexOperator *,
+                                          const ComplexOperator *,
+                                          Operator::DiagonalPolicy);
 }  // namespace palace

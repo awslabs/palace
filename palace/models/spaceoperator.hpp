@@ -199,6 +199,14 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, double a3);
 
+  // Construct the divided difference matrix (A - B) / eps.
+  // It is assumed that the inputs have been constructed with previous calls to
+  // Get*Matrix() and the returned operator does not inherit ownership of any of them.
+  template <typename OperType, typename ScalarType>
+  std::unique_ptr<OperType>
+  GetDividedDifferenceMatrix(ScalarType eps, const OperType *A, const OperType *B,
+                             Operator::DiagonalPolicy diag_policy);
+
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {
