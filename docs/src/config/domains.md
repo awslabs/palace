@@ -126,4 +126,4 @@ with
 `"Index" [None]` :  Index of this probe, used in postprocessing output files.
 
 `"Center" [None]` :  Floating point array of length equal to the model spatial dimension
-specfiying the coordinates of this probe in mesh length units.
+specifying the coordinates of this probe in mesh length units.

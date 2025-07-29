@@ -173,7 +173,7 @@ protected:
   // measurements. Conceptually, its members could be a part of this class, like the
   // ParaView fields and functions above. It has been separated out for code readability. To
   // achieve this, it is has a pointer back to its "parent" PostOperator class and is a
-  // friend class so it can access the the private measurement_cache and references of the
+  // friend class so it can access the private measurement_cache and references of the
   // system from fem_op.
   friend PostOperatorCSV<solver_t>;
 

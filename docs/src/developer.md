@@ -32,7 +32,7 @@ The following conventions also apply:
 
 ## Static analysis
 
-During the `cmake` configuration step, definining the variables `ANALYZE_SOURCES_CLANG_TIDY`
+During the `cmake` configuration step, defining the variables `ANALYZE_SOURCES_CLANG_TIDY`
 and `ANALYZE_SOURCES_CPPCHECK` to `ON` will turn on static analysis using
 [`clang-tidy`](https://clang.llvm.org/extra/clang-tidy/) and
 [`cppcheck`](https://cppcheck.sourceforge.io/), respectively, during the build step. This
@@ -61,7 +61,7 @@ Timing facilities are provided by the `Timer` and `BlockTimer` classes.
 Creating a block as `BlockTimer b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
 etc. will record time so long as `b` is in scope; however, timing may be interrupted by
 creation of another `BlockTimer` object. It will resume whenever the new block is destroyed.
-Only one category is timed at once. This enables functions can declare how calls within them
+Only one category is timed at once. This enables functions to declare how calls within them
 are timed without needing to know how timing may be done by the calling function.
 
 The `BlockTimer` implementation relies upon a static member object of the `Timer` class,
