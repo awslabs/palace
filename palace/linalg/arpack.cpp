@@ -201,7 +201,21 @@ void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
-void ArpackEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
+void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                          const ComplexOperator &C,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+}
+
+void ArpackEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
+{
+  opInterp = &interp;
+  has_A2 = true;  // is there a better place to set this?
+}
+
+void ArpackEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
   opInv = &ksp;
 }
