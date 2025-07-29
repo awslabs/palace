@@ -863,7 +863,13 @@ void WavePortData::Initialize(double omega)
     eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
     eigen->SetInitialSpace(v0);
     int num_conv = eigen->Solve();
-    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+    if (num_conv < mode_idx)
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE); // hack
+      num_conv = eigen->Solve();
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL); // reset
+      MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+    }
     lambda = eigen->GetEigenvalue(mode_idx - 1);
     // Mpi::Print(port_comm, " ... Wave port eigensolver error = {} (bkwd), {} (abs)\n",
     //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::BACKWARD),
