@@ -229,21 +229,7 @@ void IoData::CheckConfiguration()
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
-    if (!boundaries.conductivity.empty())
-    {
-      Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
-                   "conditions!\n");
-    }
-    if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
-    {
-      Mpi::Warning(
-          "Eigenmode problem type does not support wave port boundary conditions!\n");
-    }
-    if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
-    {
-      Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
-                   "with order > 1!\n");
-    }
+    // No unsupported domain or boundary objects for frequency domain driven simulations.
   }
   else if (problem.type == ProblemType::ELECTROSTATIC)
   {

@@ -1148,7 +1148,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                       port_dbc_bcs);
   }
   MFEM_VERIFY(
-      ports.empty() || iodata.problem.type == ProblemType::DRIVEN,
+      ports.empty() || iodata.problem.type == ProblemType::DRIVEN ||
+          iodata.problem.type == ProblemType::EIGENMODE,
       "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 
