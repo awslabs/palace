@@ -149,8 +149,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                         std::complex<double>(-omega * omega, 0.0), K.get(),
                                         C.get(), M.get(), A2.get());
-      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
-                                                                 omega);
+      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+          std::complex<double>(1.0, 0.0), 1i * omega,
+          std::complex<double>(-omega * omega, 0.0), omega);
       ksp.SetOperators(*A, *P);
 
       Mpi::Print(
