@@ -221,6 +221,51 @@ public:
   MPI_Comm GetComm() const override {return comm;}
 };
 
+//
+// Interpolation operators for the nonlinear A2 operator.
+//
+
+class Interpolation
+{
+  public:
+    virtual void Mult(const int order, const ComplexVector &x, ComplexVector &y) = 0;
+    virtual void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0) = 0;
+    virtual void Interpolate(const int order, const std::complex<double> sigma_min, const std::complex<double> sigma_max) = 0;
+};
+
+// Newton polynomial interpolation to approximate nonlinear A2 operator.
+class NewtonInterpolation : public Interpolation
+{
+  private:
+    // Reference to SpaceOperator to compute A2 matrix.
+    SpaceOperator *space_op;
+
+    // Number of points used in the interpolation.
+    int num_points;
+
+    // Interpolation points.
+    std::vector<std::complex<double>> points;
+
+    // Monomial basis coefficients.
+    std::vector<std::vector<std::complex<double>>> coeffs;
+
+    // Divided difference operators.
+    std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
+
+    // Workspace objects for solver application.
+    mutable ComplexVector rhs;
+
+  public:
+    NewtonInterpolation(SpaceOperator &space_op);
+
+    // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
+    void Interpolate(const int order, const std::complex<double> sigma_min, const std::complex<double> sigma_max);
+
+    // Perform multiplication with interpolation operator of specified order.
+    void Mult(const int order, const ComplexVector &x, ComplexVector &y);
+    void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0);
+};
+
 }  // namespace nleps
 
 }  // namespace palace

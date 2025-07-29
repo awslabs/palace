@@ -404,6 +404,11 @@ void SlepcEigenvalueSolver::SetLinearA2Operators(
 MFEM_ABORT("SetLinearA2Operators not defined for base class SlepcEigenvalueSolver!");
 }
 
+void SlepcEigenvalueSolver::SetA2Interpolation(const Interpolation &A2interp)
+{
+  MFEM_ABORT("SetA2Interpolation not defined for base class SlepcEigenvalueSolver!");
+};
+
 void SlepcEigenvalueSolver::SetLinearSolver(/*const*/ ComplexKspSolver &ksp)
 {
   opInv = &ksp;
@@ -443,7 +448,7 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
   //l0 = l;
   //sigma_max = s_max;
   l0 = sigma;
-  sigma_max = 3.0 * sigma; // don't love this..
+  sigma_max = 2.0 * sigma; // don't love this..
 }
 
 void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
@@ -485,7 +490,7 @@ void SlepcEigenvalueSolver::Customize()
   // Configure the region based on the given target if necessary.
   if (sinvert && region)
   {
-    Mpi::Print("\nCAREFUL, TESTING REGION WIDTH IN SlepcEigenvalueSolver ConfigureRG!!\n");
+    //Mpi::Print("\nCAREFUL, TESTING REGION WIDTH IN SlepcEigenvalueSolver ConfigureRG!!\n");
     //if (sigma_max == 0.0) sigma_max = 10.0 * sigma; // hack
     if (PetscImaginaryPart(sigma) == 0.0)
     {
@@ -493,14 +498,14 @@ void SlepcEigenvalueSolver::Customize()
       PetscReal sr_max = PetscRealPart(sigma_max);
       if (sr > 0.0)
       {
-        //ConfigureRG(GetRG(), sr / gamma, mfem::infinity(), -mfem::infinity(),
-        ConfigureRG(GetRG(), sr / gamma, sr_max / gamma, -mfem::infinity(),
+        ConfigureRG(GetRG(), sr / gamma, mfem::infinity(), -mfem::infinity(),
+        //ConfigureRG(GetRG(), sr / gamma, sr_max / gamma, -mfem::infinity(),
                     mfem::infinity());
       }
       else if (sr < 0.0)
       {
-        //ConfigureRG(GetRG(), -mfem::infinity(), sr / gamma, -mfem::infinity(),
-        ConfigureRG(GetRG(), - sr_max / gamma, sr / gamma, -mfem::infinity(),
+        ConfigureRG(GetRG(), -mfem::infinity(), sr / gamma, -mfem::infinity(),
+        //ConfigureRG(GetRG(), - sr_max / gamma, sr / gamma, -mfem::infinity(),
                     mfem::infinity());
       }
     }
@@ -511,13 +516,13 @@ void SlepcEigenvalueSolver::Customize()
       if (si > 0.0)
       {
         ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), si / gamma,
-        //            mfem::infinity());
-                    si_max / gamma);
+                    mfem::infinity());
+        //            si_max / gamma);
       }
       else if (si < 0.0)
       {
-        //ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), -mfem::infinity(),
-        ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), - si_max / gamma,
+        ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), -mfem::infinity(),
+        //ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), - si_max / gamma,
                     si / gamma);
       }
     }
@@ -749,7 +754,7 @@ void SlepcNEPSolver::SetShiftInvert(std::complex<double> s, bool precond)
   sinvert = true;
   //sigma_max = s_max;
   //l0 = l;
-  sigma_max = s * 3.0;
+  sigma_max = s * 2.0;
   l0 = s;
 }
 
@@ -948,7 +953,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PC pc;
     PetscInt nsolve;
     // NLEIGS
-    /**/
+    /*
     KSP *ksp;
     PalacePetscCall(NEPNLEIGSGetKSPs(nep, &nsolve, &ksp));
     for (int i = 0; i < nsolve; i++)
@@ -959,7 +964,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
       PalacePetscCall(PCShellSetContext(pc, (void *)this));
       PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     }
-    /**/
+    */
     // RII (needs Jacobian and target_magnitude)
     /*
     KSP ksp;
@@ -974,7 +979,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
     */
     // SLP
-    /*
+    /**/
     KSP ksp;
     EPS eps;//?
     PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
@@ -985,7 +990,7 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
     PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
-   */
+   /**/
   }
 }
 
@@ -1200,7 +1205,7 @@ int SlepcEPSSolverBase::Solve()
     //opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(l0.real()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
     //opAJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(l0.real()), 1, opA2p.get(), opA2.get());//, opA2.get());
     Mpi::Print("Creating rational interpolation ops in EPSSolverBase::Solve with sigma: {}, sigma_max: {}\n", sigma.imag(), sigma_max.imag());
-    RationalA2_deg2(sigma, sigma_max);
+    NewtonA2_deg2(sigma, sigma_max);
   }
 
   // Solve the eigenvalue problem.
@@ -1442,6 +1447,7 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
 {
   opK = opC = opM = nullptr;
   opA2_0 = opA2_1 = opA2_2 = nullptr;//test
+  opA2interp = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -1532,6 +1538,22 @@ void SlepcPEPSolver::SetLinearA2Operators(const ComplexOperator &A2_0, const Com
   Mpi::Print("PEPSolver end\n");
 }
 
+void SlepcPEPLinearSolver::SetA2Interpolation(const Interpolation &A2interp)
+{
+  Mpi::Print("PEPLinearSolver begin\n");
+  has_A2 = true; // should be false otherwise!
+  opA2interp =  &A2interp;
+  Mpi::Print("PEPLinearSolver end\n");
+}
+
+void SlepcPEPSolver::SetA2Interpolation(const Interpolation &A2interp)
+{
+  Mpi::Print("PEPSolver begin\n");
+  has_A2 = true; // should be false otherwise!
+  opA2interp =  &A2interp;
+  Mpi::Print("PEPLinearSolver end\n");
+}
+
 int SlepcPEPLinearSolver::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcPEPSolverBase!"); // CHECK IF IT SHOULD BE A0 and A1 or something else??
@@ -1544,7 +1566,8 @@ int SlepcPEPLinearSolver::Solve()
     //opA2 = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(l0.imag()), palace::Operator::DIAG_ZERO);
     //opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(l0.imag()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
     //opAJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(l0.imag()), 1, opA2p.get(), opA2.get());//, opA2.get());
-    RationalA2_deg2(sigma, sigma_max);
+    NewtonA2_deg2(sigma, sigma_max);
+    //ChebyshevA2(2, sigma.imag(), sigma_max.imag());
   }
 
     // Solve the eigenvalue problem.
@@ -2092,8 +2115,8 @@ int SlepcPEPSolverBase::Solve() // test
     opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(l0.imag()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
     opAJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(l0.imag()), 1, opA2p.get(), opA2.get());
     //RationalA2(100, 1e-6);
-    RationalA2_deg2(sigma, sigma_max);
-    //ChebyshevA2(100, sigma.imag(), sigma_max.imag());
+    NewtonA2_deg2(sigma, sigma_max);
+    //ChebyshevA2(2, sigma.imag(), sigma_max.imag());
   }
 
   // Solve the eigenvalue problem.
@@ -2147,8 +2170,8 @@ int SlepcPEPSolver::Solve() // test
     opA2p = space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(l0.imag()) * (1.0 + dl), palace::Operator::DIAG_ZERO);
     opAJ = space_op->GetExtraSystemMatrixJacobian<palace::ComplexOperator>(dl * std::abs(l0.imag()), 1, opA2p.get(), opA2.get());
     //RationalA2(100, 1e-6);
-    RationalA2_deg2(sigma, sigma_max);
-    //ChebyshevA2(100, sigma.imag(), sigma_max.imag());
+    NewtonA2_deg2(sigma, sigma_max);
+    //ChebyshevA2(2, sigma.imag(), sigma_max.imag());
   }
 
   // Solve the eigenvalue problem.
@@ -2840,6 +2863,7 @@ SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &pref
 {
   opK = opC = opM = nullptr;
   opA2_0 = opA2_1 = opA2_2 = nullptr;//test
+  opA2interp = nullptr;
   normK = normC = normM = 0.0;
 }
 
@@ -2858,7 +2882,7 @@ double b_coeff(double lambda, int j, std::vector<double> &sigma_vec, std::vector
   }
 }
 
-void SlepcPEPSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar target_max)
+void SlepcPEPSolverBase::NewtonA2_deg2(PetscScalar target_min, PetscScalar target_max)
 {
   int npoints = 3;//10;
   // interpolation points
@@ -2879,7 +2903,8 @@ void SlepcPEPSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar tar
       }
       else
       {
-        std::complex<double> denom = (xs[j+k]-xs[j]).imag();
+        //std::complex<double> denom = (xs[j+k]-xs[j]).imag();
+        std::complex<double> denom = (xs[j+k]-xs[j]);
         auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
         D_j[k].push_back(std::move(A2dd));
       }
@@ -2887,9 +2912,8 @@ void SlepcPEPSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar tar
   }
 }
 
-void SlepcEPSSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar target_max)
+void SlepcEPSSolverBase::NewtonA2_deg2(PetscScalar target_min, PetscScalar target_max)
 {
-  // Further rational interpolation tests
   int npoints = 3;//10;
   // interpolation points
   //std::vector<double> xs(npoints);
@@ -2909,13 +2933,58 @@ void SlepcEPSSolverBase::RationalA2_deg2(PetscScalar target_min, PetscScalar tar
       }
       else
       {
-        std::complex<double> denom = (xs[j+k]-xs[j]).imag();
+        //std::complex<double> denom = (xs[j+k]-xs[j]).imag();
+        std::complex<double> denom = (xs[j+k]-xs[j]);
         auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
         D_j[k].push_back(std::move(A2dd));
       }
     }
   }
 }
+
+std::complex<double> b_coeff(
+  std::complex<double> lambda, int j,
+  std::vector<std::complex<double>> &sigma,
+  std::vector<std::complex<double>> &xi,
+  std::vector<std::complex<double>> &beta)
+{
+  if (j == 0)
+  {
+    return std::complex<double>(1.0, 0.0);
+  }
+  else
+  {
+    return (lambda - sigma[j-1]) / (beta[j] * (1.0 - lambda / xi[j])) * b_coeff(lambda, j-1, sigma, xi, beta);
+  }
+}
+/*
+void SlepcPEPSolverBase::RationalA2_deg2(
+  const std::vector<std::complex<double>> &s,
+  const std::vector<std::complex<double>> &xi,
+  const std::vector<std::complex<double>> &beta)
+{
+  int npoints = s.size();
+
+  D_j.resize(npoints);
+  for (int k = 0; k < npoints; k++) // Order
+  {
+    for (int j = 0; j < npoints - k; j++)
+    {
+      if (k == 0)
+      {
+        auto A2i = space_op->GetExtraSystemMatrix<ComplexOperator>(s[j].imag(), Operator::DIAG_ZERO);
+        D_j[k].push_back(std::move(A2i));
+      }
+      else
+      {
+        std::complex<double> denom = b_coeff()
+        auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
+        D_j[k].push_back(std::move(A2dd));
+      }
+    }
+  }
+}
+  */
 
 void SlepcPEPSolverBase::RationalA2(int degree, double tol)
 {
@@ -3021,6 +3090,80 @@ void SlepcPEPSolverBase::RationalA2(int degree, double tol)
   std::exit(0);
 }
 
+//
+// Convert T_k((2*lambda - (a+b))/(b-a)) to monomial form in lambda
+std::vector<double> chebyshevPolynomialToMonomial(int k, double scale, double shift) {
+    std::vector<double> coeffs(k + 1, 0.0);
+
+    if (k == 0) {
+        coeffs[0] = 1.0;  // T_0 = 1
+        return coeffs;
+    }
+
+    if (k == 1) {
+        // T_1(x) = x = (2*lambda - (a+b))/(b-a) = scale*lambda + shift * scale
+        coeffs[0] = shift * scale;  // Constant term
+        coeffs[1] = scale;       // Linear term
+        return coeffs;
+    }
+
+    // Use recurrence: T_{k+1}(x) = 2*x*T_k(x) - T_{k-1}(x)
+    std::vector<double> T_prev2 = chebyshevPolynomialToMonomial(k-2, scale, shift);
+    std::vector<double> T_prev1 = chebyshevPolynomialToMonomial(k-1, scale, shift);
+
+    // T_k = 2*x*T_{k-1} - T_{k-2}
+    // where x = (2*lambda - (a+b))/(b-a) = scale * lambda + shift * scale
+
+    // First compute 2*x*T_{k-1}
+    std::vector<double> temp(k + 1, 0.0);
+    for (int i = 0; i < T_prev1.size(); ++i) {
+        // Multiply T_{k-1} by 2*x = 2*(2*lambda - (a+b))/(b-a) = 2 * scale * lambda + 2 * scale * shift
+        if (i + 1 < temp.size()) {
+            temp[i + 1] += T_prev1[i] * 2.0 * scale;  // lambda term
+        }
+        temp[i] += T_prev1[i] * 2 * scale * shift;  // constant term
+    }
+
+    // Subtract T_{k-2}
+    for (int i = 0; i < T_prev2.size() && i < temp.size(); ++i) {
+        temp[i] -= T_prev2[i];
+    }
+
+    return temp;
+}
+
+// Convert Chebyshev coefficients to monomial coefficients on original interval [a, b]
+std::vector<double> chebyshevToMonomialOriginalRange(const std::vector<double>& cheb_coeffs, double a, double b) {
+
+    int n = cheb_coeffs.size();
+    std::vector<double> monomial_coeffs(n, 0.0);
+
+    // Transformation parameters: x = (2*lambda - (a+b))/(b-a)
+    // So lambda = ((b-a)*x + (a+b))/2
+    double scale = 2.0 / (b - a);
+    double shift = -(a + b) / 2.0;
+
+    // Convert each Chebyshev polynomial T_k(x) to monomial form in lambda
+    for (int k = 0; k < n; ++k) {
+        if (std::abs(cheb_coeffs[k]) < 1e-15) continue;
+
+        // Get monomial coefficients for T_k(x) where x = (2*lambda - (a+b))/(b-a)
+        std::vector<double> tk_coeffs = chebyshevPolynomialToMonomial(k, scale, shift);
+
+        // Add contribution to final polynomial
+        for (int j = 0; j < tk_coeffs.size() && j < n; ++j) {
+            monomial_coeffs[j] += cheb_coeffs[k] * tk_coeffs[j];
+        }
+    }
+
+    return monomial_coeffs;
+}
+
+// l in [a, b], x in [-1, 1]
+// x = (2 * (l - a) / (b - a)) - 1
+// x = (2 * l - 2 * a - b + a) / (b - a) = (2 * l - (a + b)) / (b - a) = 2 * l / (b - a) - (a + b)/(b - a) = l * scale + shift
+// scale = 2 / (b - a), shift = - (a + b)/(b - a)
+// or x = scale * (l + shift) with scale = 2 / (b - a) and shift = - (a + b) / 2
 void SlepcPEPSolverBase::ChebyshevA2(int degree, double target_min, double target_max)
 {
   Mpi::Print("\n\n Now testing Chebyshev interpolation!\n\n");
@@ -3048,7 +3191,7 @@ void SlepcPEPSolverBase::ChebyshevA2(int degree, double target_min, double targe
     opA2_cheb.push_back(std::move(cheb));
   }
 
-  std::vector<double> test_p = {nodes[0], nodes[degree], nodes[0]*0.9999, nodes[0]*0.99, nodes[0]*0.9, nodes[degree]*1.01, nodes[degree]*1.1, target_min, target_min*1.1, target_min*1.5, target_min*2, target_min*3.01, target_min*5, target_min*6.01, target_min*9};
+  std::vector<double> test_p = {nodes[0], nodes[degree], nodes[0]*0.9999, nodes[0]*0.99, nodes[0]*0.9, nodes[degree]*1.01, nodes[degree]*1.1, target_min, target_min*1.1, target_min*1.5, target_min*2};//, target_min*3.01, target_min*5, target_min*6.01, target_min*9};
   //std::vector<double> total_res(degree+1, 0.0);
   double total_res = 0.0;
   for (auto l : test_p)
@@ -3078,10 +3221,47 @@ void SlepcPEPSolverBase::ChebyshevA2(int degree, double target_min, double targe
       Mpi::Print("Order {} res: {}, res/normx1: {}, \n\n", degree, res, res/normx1);
       total_res += res/normx1;
     }
+
+    // Monomial basis test - only works for order 2 for now
+    // x = (2 * l - (a + b))/(b - a) = 2 * l/(b-a) - (a+b)/(b-a) = alpha * l + beta
+    // alpha = 2 / (b - a), beta = -(a+b)/(b-a)
+    if (k == 2)
+    {
+      double alpha = 2.0 / (b-a);
+      double beta = -(a+b) / (b-a);
+      x2 = 0.0;
+      // a0 = c0 + c1 beta + c2 (2 beta^2 - 1)
+      opA2_cheb[0]->AddMult(tt, x2, 1.0);
+      opA2_cheb[1]->AddMult(tt, x2, beta);
+      opA2_cheb[2]->AddMult(tt, x2, 2.0 * beta * beta - 1.0);
+      // a1 = c1 alpha + c2 4 alpha beta
+      opA2_cheb[1]->AddMult(tt, x2, alpha * l);
+      opA2_cheb[2]->AddMult(tt, x2, 4.0 * alpha * beta * l);
+      // a2 = 2 c2 alpha^2
+      opA2_cheb[2]->AddMult(tt, x2, 2.0 * alpha * alpha * l * l);
+      diff = 0.0; linalg::AXPBYPCZ(1.0, x1, -1.0, x2, 0.0, diff);
+      double res = linalg::Norml2(space_op->GetComm(), diff);
+      //Mpi::Print("Order {} res: {}, res/normx1: {}, \n\n", k, res, res/normx1);
+      Mpi::Print("Order {} monomial res: {}, res/normx1: {}, \n\n", degree, res, res/normx1);
+
+      cheb_to_mono.resize(3);
+      cheb_to_mono[0].push_back(1.0);
+      cheb_to_mono[0].push_back(beta);
+      cheb_to_mono[0].push_back(2.0 * beta * beta - 1.0);
+      cheb_to_mono[1].push_back(0.0);
+      cheb_to_mono[1].push_back(alpha);
+      cheb_to_mono[1].push_back(4.0 * alpha * beta);
+      cheb_to_mono[2].push_back(0.0);
+      cheb_to_mono[2].push_back(0.0);
+      cheb_to_mono[2].push_back(2.0 * alpha * alpha);
+    }
+
+
+
   }
   //for (int k = 0; k <= degree; k++)
   Mpi::Print("Cheb Order {}, total_res: {}\n", degree, total_res / test_p.size());
-  std::exit(0);
+  //std::exit(0);
 }
 
 //void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -3671,7 +3851,7 @@ PetscErrorCode __mat_apply_PEPCheb_A1(Mat A, Vec x, Vec y)
   std::cerr << "__mat_apply_PEPCheb_A1\n";
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opC->Mult(ctx->x1, ctx->y1);
-  //if (ctx->opA2_cheb.size() > 1) ctx->opA2_cheb[1]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // coeff??
+  if (ctx->opA2_cheb.size() > 1) ctx->opA2_cheb[1]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // coeff??
   //ctx->opAJ->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); //TEST???
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -3688,7 +3868,7 @@ PetscErrorCode __mat_apply_PEPCheb_A2(Mat A, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
   ctx->y1 *= std::complex<double>(0.5, 0.0); //
-  //if (ctx->opA2_cheb.size() > 2) ctx->opA2_cheb[2]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // coeff??
+  if (ctx->opA2_cheb.size() > 2) ctx->opA2_cheb[2]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0)); // coeff??
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -3753,9 +3933,11 @@ PetscErrorCode __mat_apply_PEPRat_A0(Mat A, Vec x, Vec y)
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->has_A2)
   {
+    //opA2interp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2_0->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2_1->AddMult(ctx->x1, ctx->y1, -ctx->xs[0]);
     ctx->opA2_2->AddMult(ctx->x1, ctx->y1, ctx->xs[0]*ctx->xs[1]);
+    //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[0][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[0][i]);}
   }
   //ctx->D_j[0][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   //ctx->D_j[1][0]->AddMult(ctx->x1, ctx->y1, -ctx->xs[0]);
@@ -3776,8 +3958,11 @@ PetscErrorCode __mat_apply_PEPRat_A1(Mat A, Vec x, Vec y)
   ctx->opC->Mult(ctx->x1, ctx->y1);
   if (ctx->has_A2)
   {
+    std::cerr << "__mat_apply_PEPRat_A1 with opA2\n";
+    //opA2interp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2_1->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2_2->AddMult(ctx->x1, ctx->y1, -(ctx->xs[0] + ctx->xs[1]));
+    //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[1][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[1][i]);}
   }
   //ctx->D_j[1][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   //ctx->D_j[2][0]->AddMult(ctx->x1, ctx->y1, -(ctx->xs[0] + ctx->xs[1]));
@@ -3797,7 +3982,10 @@ PetscErrorCode __mat_apply_PEPRat_A2(Mat A, Vec x, Vec y)
   ctx->opM->Mult(ctx->x1, ctx->y1);
   if (ctx->has_A2)
   {
+    std::cerr << "__mat_apply_PEPRat_A2 with opA2\n";
+    //opA2interp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     ctx->opA2_2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[2][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[2][i]);}
   }
   //ctx->D_j[2][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   PetscCall(ToPetscVec(ctx->y1, y));
@@ -4011,7 +4199,7 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
   PetscCall(FromPetscVec(x, ctx->x1));
-  /*
+  /**/
   if (ctx->new_lambda)
   {
     if (ctx->lambda_test.imag() == 0.0) ctx->lambda_test = ctx->sigma;
@@ -4025,16 +4213,17 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda_test, ctx->lambda_test * ctx->lambda_test, ctx->lambda_test.imag());
     ctx->new_lambda = false;
   }
-    */
+
   // If I call ctx->opInv->SetOperators I get a segfault, so I'm creating a new ksp object here for testing
+  // This is inefficient and expensive though, so we'd want to do something else instead...
   //std::cerr << "__pc_apply_NEP make unique ksp\n";
   // This is needed for Newton-based solvers:
-  //auto ksp = std::make_unique<palace::ComplexKspSolver>(*ctx->opIodata, ctx->space_op->GetNDSpaces(), &ctx->space_op->GetH1Spaces());
-  //ksp->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
-  //ksp->Mult(ctx->x1, ctx->y1);
-
+    auto ksp = std::make_unique<palace::ComplexKspSolver>(*ctx->opIodata, ctx->space_op->GetNDSpaces(), &ctx->space_op->GetH1Spaces());
+  ksp->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
+  ksp->Mult(ctx->x1, ctx->y1);
+ /**/
   // For NLEIGS we don't want to change the operators
-  ctx->opInv->Mult(ctx->x1, ctx->y1);
+  //ctx->opInv->Mult(ctx->x1, ctx->y1);
 
   //std::cerr << "__pc_apply_NEP after Mult\n";
   /**/

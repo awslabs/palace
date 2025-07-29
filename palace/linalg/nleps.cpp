@@ -672,4 +672,96 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
   return normK + t * normC + t * t * normM;
 }
 
+NewtonInterpolation::NewtonInterpolation(SpaceOperator &space_op)
+  : space_op(&space_op)
+{
+  rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  rhs.UseDevice(true);
+}
+
+// Compute the elementary symmetric polynomial. Used to convert from Newton to monomial basis.
+template <typename ScalarType>
+ScalarType elementarySymmetric(const std::vector<ScalarType> &points, const int k, const int n)
+{
+  if (k == 0)
+  {
+    return 1.0;
+  }
+  if (k > n || k < 0 || n == 0)
+  {
+    return 0.0;
+  }
+  return elementarySymmetric(points, k, n - 1) + points[n - 1] * elementarySymmetric(points, k - 1, n - 1);
+}
+
+void NewtonInterpolation::Interpolate(const int order, const std::complex<double> sigma_min, const std::complex<double> sigma_max)
+{
+  MFEM_VERIFY(order >= 0, "Interpolation order must be greater than or equal to 0!");
+
+  // Reset operators and sample points each time Interpolate is called.
+  num_points = order + 1;
+  ops.clear();
+  ops.resize(num_points);
+  points.clear();
+  points.resize(num_points);
+
+  // Linearly spaced sample points.
+  for (int j = 0; j < num_points; j++)
+  {
+    points[j] = sigma_min + (double)j * (sigma_max - sigma_min) / (double)(num_points - 1);
+  }
+
+  // Build divided difference matrices.
+  for (int k = 0; k < num_points; k++)
+  {
+    for (int j = 0; j < num_points - k; j++)
+    {
+      if (k == 0)
+      {
+        auto A2j = space_op->GetExtraSystemMatrix<ComplexOperator>(points[j].imag(), Operator::DIAG_ZERO);
+        ops[k].push_back(std::move(A2j));
+      }
+      else
+      {
+        std::complex<double> denom = points[j+k] - points[j];
+        auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(denom, ops[k-1][j+1].get(), ops[k-1][j].get(), Operator::DIAG_ZERO);
+        ops[k].push_back(std::move(A2dd));
+      }
+    }
+  }
+
+  // Compute monomial coefficients by converting from the Newton polynomial basis.
+  coeffs.clear();
+  coeffs.assign(num_points, std::vector<std::complex<double>>(num_points, 0.0));
+  for (int k = 0; k < num_points; k++)
+  {
+    for (int j = k; j < num_points; j++)
+    {
+      double sign = ((j - k) % 2 == 0) ? 1 : -1;
+      coeffs[k][j] = sign * elementarySymmetric(points, j - k, j);
+    }
+  }
+}
+
+void NewtonInterpolation::Mult(const int order, const ComplexVector &x, ComplexVector &y)
+{
+  MFEM_VERIFY(order >= 0 && order < num_points,
+    "Order must be greater than or equal to 0 and smaller than the number of interpolation points!");
+
+  for(int j = 0; j < num_points; j++)
+  {
+    if (coeffs[order][j] != 0.0)
+    {
+      ops[order][0]->AddMult(x, y, coeffs[order][j]);
+    }
+  }
+}
+
+void NewtonInterpolation::AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a)
+{
+  this->Mult(order, x, rhs);
+  rhs *= a;
+  y += rhs;
+}
+
 }  // namespace palace::nleps

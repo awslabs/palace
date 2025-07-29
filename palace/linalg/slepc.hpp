@@ -156,6 +156,7 @@ public:
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
   void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
+  void SetA2Interpolation(const Interpolation &A2interp) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
@@ -214,6 +215,7 @@ public:
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ, opA2_pc, opA_pc, opP_pc;  //test
   std::vector<std::unique_ptr<ComplexOperator>> opA2_sample;
   std::vector<std::unique_ptr<ComplexOperator>> opA2_cheb;
+  std::vector<std::vector<double>> cheb_to_mono;
 
   // Test for rational interpolation
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j;
@@ -392,7 +394,7 @@ public:
 
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(eps); };
 
-  void RationalA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
+  void NewtonA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
 };
 
 // Generalized eigenvalue problem solver: K x = λ M x .
@@ -457,6 +459,8 @@ public:
 
   const ComplexOperator *opA2_0, *opA2_1, *opA2_2;
 
+  const Interpolation *opA2interp;
+
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
 
@@ -489,6 +493,7 @@ public:
   int Solve() override; // test
 
   void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
+  void SetA2Interpolation(const Interpolation &A2interp) override;
 };
 
 // Base class for SLEPc's PEP problem type.
@@ -547,7 +552,7 @@ public:
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(pep); };
 
   void RationalA2(int degree, double tol); //test
-  void RationalA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
+  void NewtonA2_deg2(PetscScalar target_min, PetscScalar target_max); // test
   void ChebyshevA2(int degree, double min_target, double max_target); // test
 };
 
@@ -572,6 +577,8 @@ public:
 
   const ComplexOperator *opA2_0, *opA2_1, *opA2_2;
 
+  const Interpolation *opA2interp;
+
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
@@ -595,6 +602,7 @@ public:
   //void GetEigenvector(int i, ComplexVector &x) const override; // test
   int Solve() override; // test
   void SetLinearA2Operators(const ComplexOperator &A2_0, const ComplexOperator &A2_1, const ComplexOperator &A2_2) override;
+  void SetA2Interpolation(const Interpolation &A2interp) override;
 };
 
 }  // namespace slepc

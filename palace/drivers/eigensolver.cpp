@@ -81,13 +81,14 @@ private:
     std::vector<Complex> support_points;  // zi
     std::vector<Complex> weights;         // wi
     std::vector<Complex> function_values; // fi
-
+    std::vector<Complex> poles;           // pi
 public:
     struct AAAResult
     {
         std::vector<Complex> support_points;
         std::vector<Complex> weights;
         std::vector<Complex> function_values;
+        std::vector<Complex> poles;
         std::vector<double> errors;
         int degree;
     };
@@ -109,10 +110,11 @@ public:
         return numerator / denominator;
     }
 
-    AAAResult computeAAA2(
+    AAAResult computeAAA(
       std::function<Complex(Complex)> f,
       const std::vector<Complex>& sample_points,
-      double tolerance = 1e-13)
+      double tolerance = 1e-13,
+      int max_degree = 100)
     {
       int n = sample_points.size();
       std::vector<Complex> f_values(n);
@@ -132,6 +134,7 @@ public:
       support_points.clear();
       weights.clear();
       function_values.clear();
+      poles.clear();
 
       // next support point
       double err;
@@ -143,7 +146,7 @@ public:
       Matrix C(n,n), A(n,n);
       VectorEig ww(n), D(n), N(n);
       int k;
-      for (k = 0; k < n - 1; k++)
+      for (k = 0; k < n-1; k++)
       {
         z[k] = sample_points[idx];
         f2[k] = f_values[idx];
@@ -181,18 +184,24 @@ public:
         }
         // next support point
         err = 0.0;
-        for (int i = 0; i < n; i++) {if (R[i] >= err) {idx = i; err = R[i];}}
-        std::cout << "k: " << k << " error: " << err << "\n";
-        if (err < tolerance*norm) break;
-      }
+        double mean_err = 0.0;
+        for (int i = 0; i < n; i++)
+        {
+          if (R[i] >= err) {idx = i; err = R[i];}
+          if (R[i] >= 0) {mean_err += R[i];};
+        }
+        mean_err /= n;
+        std::cout << "k: " << k << " error: " << err << " mean error: " << mean_err << "\n";
+        if (err < tolerance*norm || k+1 >= max_degree) break;
+      } // for k < n-1
+
       //
-      for (int i = 0; i <= k; i++) // k or k+1?
+      for (int i = 0; i <= k; i++)
       {
         support_points.push_back(z[i]);
         function_values.push_back(f2[i]);
         weights.push_back(ww(i));
       }
-
 
       // Poles
       Matrix E(k+2,k+2), B(k+2,k+2);
@@ -210,11 +219,26 @@ public:
       Eigen::VectorXcd D2;
       Eigen::MatrixXcd X;
       ZGGEV(E, B, D2, X);
-      int cont = 0;
-      //for (int i = 0; i < k+2; i++)
-      //{
-      //  if
-      //}
+      //std::cout << "poles D2: " << D2 << "\n";
+      // Only keep non-infinity poles with positive(!?) imaginary component?
+      for (int i = 0; i < k+2; i++)
+      {
+        if (std::abs(D2(i)) < mfem::infinity() && D2(i).imag() > 0.0) // do something better
+        {
+          poles.push_back(D2(i));
+        }
+      }
+      // Sort poles by their imaginary component
+      std::sort(poles.begin(), poles.end(),
+              [](const std::complex<double>& a, const std::complex<double>& b) {
+                  return a.imag() < b.imag();
+              });
+
+      std::cout << "sorted poles: " << "\n";
+      for (int i = 0; i < poles.size(); i++)
+      {
+        std::cout << poles[i] << "\n";
+      }
 
       // Return results
       AAAResult result;
@@ -223,194 +247,121 @@ public:
       result.function_values = function_values;
       result.errors = R;
       result.degree = support_points.size();
+      result.poles = poles;
 
       return result;
     }
 
-    // This was written by Amazon Q and it does not seem to work as well as the above...
-    // Main AAA algorithm implementation
-    AAAResult computeAAA(
-        std::function<Complex(Complex)> f,
-        const std::vector<Complex>& sample_points,
-        double tolerance = 1e-13,
-        int max_degree = 100)
-    {
-
-        int n = sample_points.size();
-        std::vector<Complex> f_values(n);
-
-        // Evaluate function at all sample points
-        for (int i = 0; i < n; ++i)
-        {
-            f_values[i] = f(sample_points[i]);
-        }
-
-        // Initialize
-        support_points.clear();
-        weights.clear();
-        function_values.clear();
-
-        std::vector<bool> is_support(n, false);
-        std::vector<double> errors;
-
-        // Find initial support point (point with largest function value)
-        int max_idx = 0;
-        double max_val = std::abs(f_values[0]);
-        for (int i = 1; i < n; ++i)
-        {
-            if (std::abs(f_values[i]) > max_val)
-            {
-                max_val = std::abs(f_values[i]);
-                max_idx = i;
-            }
-        }
-
-        support_points.push_back(sample_points[max_idx]);
-        function_values.push_back(f_values[max_idx]);
-        is_support[max_idx] = true;
-
-        // Main AAA iteration
-        for (int degree = 1; degree <= max_degree; ++degree)
-        {
-            // Compute current approximation errors at non-support points
-            std::vector<double> current_errors(n);
-            double max_error = 0.0;
-            int next_support_idx = -1;
-
-            for (int i = 0; i < n; ++i) {
-                if (!is_support[i]) {
-                    Complex approx_val = (degree == 1) ? function_values[0] :
-                                       evaluateAtNonSupportPoint(sample_points[i], sample_points, f_values, is_support);
-                    current_errors[i] = std::abs(f_values[i] - approx_val);
-
-                    if (current_errors[i] > max_error) {
-                        max_error = current_errors[i];
-                        next_support_idx = i;
-                    }
-                }
-            }
-
-            errors.push_back(max_error);
-            std::cout << "degree: " << degree << " max_error: " << max_error << "\n";
-            // Check convergence
-            if (max_error < tolerance || next_support_idx == -1) {
-                break;
-            }
-
-            // Add new support point
-            support_points.push_back(sample_points[next_support_idx]);
-            function_values.push_back(f_values[next_support_idx]);
-            is_support[next_support_idx] = true;
-
-            // Compute new weights using least squares
-            computeWeights(sample_points, f_values, is_support);
-        }
-
-        // Return results
-        AAAResult result;
-        result.support_points = support_points;
-        result.weights = weights;
-        result.function_values = function_values;
-        result.errors = errors;
-        result.degree = support_points.size();
-
-        return result;
-    }
-
 private:
-    // Evaluate approximation at a non-support point during iteration
-    Complex evaluateAtNonSupportPoint(
-        Complex z,
-        const std::vector<Complex>& sample_points,
-        const std::vector<Complex>& f_values,
-        const std::vector<bool>& is_support) const
-    {
 
-        if (support_points.size() == 1)
-        {
-            return function_values[0];
-        }
-
-        Complex numerator(0.0);
-        Complex denominator(0.0);
-
-        for (size_t i = 0; i < support_points.size(); ++i) {
-            if (std::abs(z - support_points[i]) < 1e-14) {
-                return function_values[i];  // Exact match
-            }
-
-            Complex term = weights[i] / (z - support_points[i]);
-            numerator += function_values[i] * term;
-            denominator += term;
-        }
-
-        return numerator / denominator;
-    }
-
-    // Compute weights using least squares approach
-    void computeWeights(
-        const std::vector<Complex>& sample_points,
-        const std::vector<Complex>& f_values,
-        const std::vector<bool>& is_support)
-    {
-
-        int m = support_points.size();  // Number of support points
-        int n = sample_points.size();   // Total number of points
-
-        if (m == 1)
-        {
-            weights = {Complex(1.0)};
-            return;
-        }
-
-        // Count non-support points
-        int num_nonsupport = 0;
-        for (bool is_supp : is_support)
-        {
-            if (!is_supp) num_nonsupport++;
-        }
-
-        if (num_nonsupport == 0)
-        {
-            // All points are support points, use simple weights
-            weights.assign(m, Complex(1.0));
-            return;
-        }
-
-        // Set up least squares system: A * w = b
-        Matrix A(num_nonsupport, m);
-        VectorEig b(num_nonsupport);
-
-        int row = 0;
-        for (int i = 0; i < n; ++i)
-        {
-            if (!is_support[i]) {
-                Complex zi = sample_points[i];
-                Complex fi = f_values[i];
-
-                for (int j = 0; j < m; ++j)
-                {
-                    Complex zj = support_points[j];
-                    Complex fj = function_values[j];
-                    A(row, j) = (fi - fj) / (zi - zj);
-                }
-                b(row) = -fi;
-                row++;
-            }
-        }
-
-        // Solve least squares system
-        VectorEig w = A.colPivHouseholderQr().solve(b);
-
-        // Store weights
-        weights.clear();
-        for (int i = 0; i < m; ++i) {
-            weights.push_back(w(i));
-        }
-    }
 };
 
+// this was written by AmazonQ and doesn't seem to work great...
+std::vector<Complex> barycentricToMonomial(
+    const std::vector<Complex>& support_points,  // zi
+    const std::vector<Complex>& weights,         // wi
+    const std::vector<Complex>& function_values  // fi
+) {
+    int n = support_points.size();
 
+    // Initialize coefficient array
+    std::vector<Complex> coeffs(n, Complex(0.0));
+
+    // Convert using Lagrange interpolation approach
+    for (int i = 0; i < n; ++i) {
+        // Compute Lagrange basis polynomial for point i
+        std::vector<Complex> basis_poly = {Complex(1.0)};
+
+        for (int j = 0; j < n; ++j) {
+            if (i != j) {
+                // Multiply by (z - z_j) / (z_i - z_j)
+                std::vector<Complex> new_poly(basis_poly.size() + 1, Complex(0.0));
+                Complex factor = 1.0 / (support_points[i] - support_points[j]);
+
+                for (size_t k = 0; k < basis_poly.size(); ++k) {
+                    new_poly[k] += basis_poly[k] * (-support_points[j]) * factor;
+                    new_poly[k+1] += basis_poly[k] * factor;
+                }
+                basis_poly = new_poly;
+            }
+        }
+
+        // Add contribution to final polynomial
+        for (size_t k = 0; k < basis_poly.size() && k < coeffs.size(); ++k) {
+            coeffs[k] += function_values[i] * basis_poly[k];
+        }
+    }
+    return coeffs;
+}
+
+// this is my attempt following https://people.inf.ethz.ch/gander/papers/changing.pdf ??
+std::vector<Complex> barycentricToMonomial2(
+    const std::vector<Complex>& support_points,  // zi
+    const std::vector<Complex>& weights,         // wi
+    const std::vector<Complex>& function_values  // fi
+) {
+    int n = support_points.size();
+
+    // Initialize coefficient array
+    std::vector<Complex> coeffs(n, Complex(0.0));
+
+    // Monomial polynomial
+    // V a = f where V is Vandermonde matrix
+    // P = a^T m(x)  with m(x) = (1, x, x^2, ..., x^n)
+
+    // Lagrange polynomial
+    // P = f^T l(x)
+
+    // First convert from Barycentric form to Lagrange polynomial
+    // mu_i(z) = wi / (z-zi)
+    // Pn(z) = sum(mu_i(z) * fi) / sum(mu_i(z))
+    // li(z) = mu_i(z) / sum(mu_i(z))
+
+    return coeffs;
+}
+
+std::vector<Complex> polynomialInterpolation(
+ const std::vector<Complex>& support_points,  // zi
+ const std::vector<Complex>& function_values  // fi
+)
+{
+  int n = support_points.size();
+
+  // Initialize coefficient array
+  std::vector<Complex> coeffs(n, Complex(0.0));
+
+  // Vandermonde matrix
+  Matrix V(n,n);
+  VectorEig f(n), a(n);
+  for (int i = 0; i < n; i++)
+  {
+    f(i) = function_values[i];
+    for (int j = 0; j < n; j++)
+    {
+      V(i,j) = std::pow(support_points[i], j);
+    }
+  }
+
+  a = V.inverse() * f;
+  std::cout << "monomial coefficients: " << a << "\n";
+  for (int i = 0; i < n; i++)
+  {
+    coeffs[i] = a(i);
+  }
+  return coeffs;
+}
+
+
+Complex evalMonomial(const std::vector<Complex>& coeffs, const Complex &z)
+{
+  int n = coeffs.size();
+  Complex result = 0.0;
+  for (int i = 0; i < n; i++)
+  {
+    result += coeffs[i] * std::pow(z, i);
+  }
+  return result;
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -442,13 +393,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //std::unique_ptr<ComplexOperator> Knew, Cnew, Mnew;
   std::vector<std::complex<double>> xs;
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j;
+  std::unique_ptr<nleps::Interpolation> newton_interp;
   if (has_A2)
   {
     Mpi::Print("Test RationalA2 inside eigensolver.cpp\n");
-    const double target_max = 3.0 * target; // get 3.0 from config file!
+     const int npoints = 3;
+    const double target_max = 2.0 * target; // get 3.0 from config file!
+
+    newton_interp = std::make_unique<nleps::NewtonInterpolation>(space_op);
+    newton_interp->Interpolate(npoints-1, 1i * target, 1i * target_max);
+
     // Compute rational interpolation and add matrices to K, C, M???
     // Currently copied code here but maybe should live elsewhere?
-    const int npoints = 3;
+
     xs.resize(npoints);
     for (int j = 0; j < npoints; j++)
     {
@@ -467,7 +424,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         else
         {
-          std::complex<double> denom = (xs[j+k] - xs[j]).imag();
+          //std::complex<double> denom = (xs[j+k] - xs[j]).imag();
+          std::complex<double> denom = (xs[j+k] - xs[j]);
           auto A2dd = space_op.GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
           D_j[k].push_back(std::move(A2dd));
         }
@@ -503,24 +461,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Define your black box function
     auto f = [&](Complex z) -> Complex
     {
-        ComplexVector A2v; A2v.SetSize(K->Height()); A2v.UseDevice(true);
-        auto A2z = space_op.GetExtraSystemMatrix<ComplexOperator>(z.imag(), Operator::DIAG_ZERO);
-        A2z->Mult(v, A2v);
-        return linalg::Dot(space_op.GetComm(), u, A2v);
+      auto A2z = space_op.GetExtraSystemMatrix<ComplexOperator>(std::abs(z.imag()), Operator::DIAG_ZERO);
+      //auto Az = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), z, z * z, K.get(), C.get(), M.get(), A2z.get());
+      ComplexVector Av; Av.SetSize(K->Height()); Av.UseDevice(true);
+      //Az->Mult(v, Av);
+      A2z->Mult(v, Av);
+      return linalg::Dot(space_op.GetComm(), u, Av);
     };
 
     // Create sample points (you can customize this)
     std::vector<Complex> sample_points;
     int n_samples = 100;
+    double y_max = (target_max - target) / 2.0;
+    double y_min = - y_max;
     for (int i = 0; i < n_samples; ++i)
     {
         double x = target + i * (target_max - target) / (n_samples - 1);
         sample_points.push_back(Complex(0.0, x));
+        //sample_points.push_back(Complex(y_min, x));
+        //sample_points.push_back(Complex(y_max, x));
+        //double y = y_min*1.01 + i * (y_max*0.99 - y_min*1.01) / (n_samples - 1);
+        //sample_points.push_back(Complex(y, target));
+        //sample_points.push_back(Complex(y, target_max));
     }
-
+    /*
     // Apply AAA algorithm
     AAAApproximation aaa;
-    auto result = aaa.computeAAA2(f, sample_points, 1e-8);
+    auto result = aaa.computeAAA(f, sample_points, 1e-8, n_samples);
 
     // Print results
     std::cout << "AAA Approximation Results:" << std::endl;
@@ -531,17 +498,82 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                   << ", w[" << i << "] = " << result.weights[i]
                   << ", f[" << i << "] = " << result.function_values[i] << std::endl;
     }
+    std::cout << "z_min: " << target << " zmax: " << target_max << "\n";
+
+    //std::vector<Complex> coeffs1 = barycentricToMonomial(result.support_points, result.weights, result.function_values);
+    //std::vector<Complex> coeffs2 = polynomialInterpolation(result.support_points, result.function_values);
 
     // Test the approximation
     Complex test_point(0.0, 0.5*(target+target_max));
     Complex exact_value = f(test_point);
     Complex approx_value = aaa.evaluate(test_point);
+    //Complex approx_value1 = evalMonomial(coeffs1, test_point);
+    //Complex approx_value2 = evalMonomial(coeffs2, test_point);
 
     std::cout << "\nTest at z = " << test_point << std::endl;
     std::cout << "Exact value: " << exact_value << std::endl;
     std::cout << "Approximation: " << approx_value << std::endl;
+    //std::cout << "Approximation1: " << approx_value1 << std::endl;
+    //std::cout << "Approximation2: " << approx_value2 << std::endl;
     std::cout << "Error: " << std::abs(exact_value - approx_value) << std::endl;
-    exit(0);
+
+    std::cout << "Num poles: " << result.poles.size();
+
+    // Use singularities and sample points to identify Leja-bagby points
+    int max_it = 10;//???
+    int n_poles = result.poles.size();
+    std::vector<Complex> s(n_samples), nrs(n_samples), nrxi(n_samples), beta(n_samples); //?
+    std::vector<Complex> xi(n_poles);
+
+    s[0] = sample_points[0];
+    xi[0] = result.poles[0];
+    if (std::abs(xi[0]) < 10 * std::numeric_limits<double>::epsilon())
+    {
+      std::cout << "\n\n\n ERROR SINGULARITY CLOSE TO 0\n\n\n";
+      exit(0);
+    }
+    beta[0] = 1.0;
+    std::cout << "Leja-Bagby point " << 0 << " s: " << s[0] << " xi: " << xi[0] << " beta: " << beta[0] << "\n";
+    for (int i = 0; i < n_samples; i++)
+    {
+      nrs[i] = 1.0;
+      nrxi[i] = 1.0;
+    }
+    for (int k = 1; k < max_it; k++)
+    {
+      double maxnrs = 0.0;
+      double minnrxi = mfem::infinity();
+      for (int i = 0; i < n_samples; i++)
+      {
+        nrs[i] *= ((sample_points[i] - s[k-1])/(1.0 - sample_points[i]/xi[k-1])) / beta[k-1];
+        if (std::abs(nrs[i]) > maxnrs)
+        {
+          maxnrs = std::abs(nrs[i]);
+          s[k] = sample_points[i];
+        }
+      }
+      if (n_poles > k)
+      {
+        for (int i = 1; i < n_poles; i++)
+        {
+          nrxi[i] *= ((result.poles[i] - s[k-1])/(1.0 - result.poles[i]/xi[k-1])) / beta[k-1];
+          if (std::abs(nrxi[i]) < minnrxi)
+          {
+            minnrxi = std::abs(nrxi[i]);
+            xi[k] = result.poles[i];
+          }
+        }
+      }
+      else
+      {
+        xi[k] = mfem::infinity();
+      }
+      beta[k] = maxnrs;
+      std::cout << "Leja-Bagby point " << k << " s: " << s[k] << " xi: " << xi[k] << " beta: " << beta[k] << "\n";
+    }
+
+    //exit(0);
+    */
   }
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
@@ -595,11 +627,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("Using SLEPc NEP solver\n");
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
+      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::INTERPOL);  //only works with split operators (no callbacks)
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::CISS); //only supports computing all Eigs
       //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::RII);  //requires Jacobian and TARGET_MAGNITUDE.
-      //slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE. Works-ish when updating pc shell, but kinda slow...
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);  //requires Jacobian and TARGET_MAGNITUDE. Works-ish when updating pc shell, but kinda slow...
       // slepc->SetType(slepc::SlepcEigenvalueSolver::Type::NARNOLDI); //only works with split operators (no callbacks)
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
       //slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::RATIONAL);//test
@@ -652,6 +684,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       Mpi::Print("SetLinearA2Operators\n");
       eigen->SetLinearA2Operators(*D_j[0][0], *D_j[1][0], *D_j[2][0]);
+      eigen->SetA2Interpolation(newton_interp);
       Mpi::Print("Done SetLinearA2Operators\n");
     }
     // set NLEIGS numdegrees?
@@ -907,16 +940,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::exit(0);
   */
 
-  /*
+  /**/
   // Further rational interpolation tests
-  double target_min = target, target_max = 10.0*target;
-  int max_npoints = 6;//10;
+    Mpi::Print("\n Test Newton polynomial interpolation\n");
+  double target_min = target, target_max = 5.0*target;
+  int max_npoints = 3;//6;//6;//10;
   std::vector<double> res_vec(max_npoints, 0.0);
-  for (int npoints = 2; npoints <= max_npoints; npoints++)
+  for (int npoints = max_npoints; npoints <= max_npoints; npoints++)
   {
   // interpolation points
-  std::vector<double> xs(npoints);
-  for (int j = 0; j < npoints; j++) xs[j] = target_min + j * (target_max - target_min) / (npoints - 1);
+  std::vector<std::complex<double>> xs(npoints);
+  //for (int j = 0; j < npoints; j+=2)
+  for (int j = 0; j < npoints; j++)
+  {
+    xs[j] = std::complex<double>(0.0, target_min + j * (target_max - target_min) / (npoints - 1));
+    //xs[j] = std::complex<double>(-target_min, target_min + j * (target_max - target_min) / (npoints - 1));
+    //xs[j+1] = std::complex<double>(target_min, target_min + j * (target_max - target_min) / (npoints - 1));
+    Mpi::Print("Interpolation point: {}+{}i\n", xs[j].real(), xs[j].imag());
+    //Mpi::Print("Interpolation point: {}+{}i\n", xs[j+1].real(), xs[j+1].imag());
+  }
   // Divided difference matrices (order 0 -> A2, order > 0 divided differences)
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j(npoints);
   for (int k = 0; k < npoints; k++) // Order
@@ -925,17 +967,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       if (k == 0)
       {
-        auto A2i = space_op.GetExtraSystemMatrix<ComplexOperator>(xs[j], Operator::DIAG_ZERO);
+        auto A2i = space_op.GetExtraSystemMatrix<ComplexOperator>(xs[j].imag(), Operator::DIAG_ZERO);
         D_j[k].push_back(std::move(A2i));
       }
       else
       {
-        auto A2dd = space_op.GetExtraSystemMatrixJacobian<ComplexOperator>((xs[j+k]-xs[j]), 1, D_j[k-1][j+1].get(), D_j[k-1][j].get());
+        std::complex<double> denom = (xs[j+k]-xs[j]);
+        auto A2dd = space_op.GetDividedDifferenceMatrix<ComplexOperator>(denom, D_j[k-1][j+1].get(), D_j[k-1][j].get(), Operator::DIAG_ZERO);
         D_j[k].push_back(std::move(A2dd));
       }
     }
   }
-  Mpi::Print("\n Done building Dj operators\n");
+  Mpi::Print("\n Done building Dj operators, now trying test points\n");
   // Polynomial coefficients
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> C_j(npoints);
   // Initialize Cj
@@ -969,23 +1012,41 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   //
   // Test points
-  std::vector<double> test_p = {target*1.01, target*1.1, target*1.5, target*2, target*3.01, target*5, target*6.01, target*9};
+  std::vector<std::complex<double>> test_p = {
+    1i*target*1.0001,
+    std::complex<double>(target, target*1.0001),
+    1i*target*1.01,
+    1i*target*1.1,
+    1i*target*1.5,
+    std::complex<double>(0.01*target, target*1.5),
+    1i*target*2.0,
+    1i*target*3.01,
+    std::complex<double>(-0.2*target, target*3.01),
+    std::complex<double>(0.2*target, target*3.01),
+    std::complex<double>(0.5*target, target*3.01),
+    std::complex<double>(1.0*target, target*3.01),
+    std::complex<double>(-1.0*target, target*3.01),
+    1i*target*5.0,
+    std::complex<double>(0.3*target, target*5.0),
+    std::complex<double>(target, target*5.0),
+    std::complex<double>(-target, target*5.0)
+  };
   double total_res = 0.0;
   for (auto l : test_p)
   {
-    auto A2_l = space_op.GetExtraSystemMatrix<ComplexOperator>(l, Operator::DIAG_ZERO);
+    auto A2_l = space_op.GetExtraSystemMatrix<ComplexOperator>(l.imag(), Operator::DIAG_ZERO);
     ComplexVector tt(A2->Height());
     tt = std::complex<double>(1.23, 1.23);
     ComplexVector x1(A2->Height()), x2(A2->Height()), diff(A2->Height());
     x1 = 0.0; x2 = 0.0;
     A2_l->Mult(tt, x1);
     double normx1 = linalg::Norml2(space_op.GetComm(), x1);
-    Mpi::Print("test lambda: {}, with {} interpolation points\n", l, npoints);
+    Mpi::Print("test lambda: {}+{}i, with {} interpolation points\n", l.real(), l.imag(), npoints);
     //for (int k = 0; k < npoints; k++)
     int k = npoints-1;
     {
       x2 = 0.0;
-      double coeff = 1.0;
+      std::complex<double> coeff = 1.0;
       for(int j = 0; j <= k; j++)
       {
         D_j[j][0]->AddMult(tt, x2, coeff);
@@ -1003,18 +1064,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("Order {}, total_res: {}\n", npoints-1, total_res / test_p.size());
   res_vec[npoints] = total_res / test_p.size();
   }
-  for (int i = 2; i <= max_npoints; i++)
-  {
-    Mpi::Print("Order {}, total_res: {}\n", i-1, res_vec[i]);
-  }
-  //std::exit(0);
-  */
+  //for (int i = 2; i <= max_npoints; i++)
+ // {
+ //   Mpi::Print("Order {}, total_res: {}\n", i-1, res_vec[i]);
+ // }
+  std::exit(0);
+  /**/
 
   /*
   // Test Chebyshev interpolation
   Mpi::Print("\n\n Now testing Chebyshev interpolation!\n\n");
   double target_min = target, target_max = 10.0*target;
-  int d = 5;
+  int d = 3;
   double a = target_min, b = target_max;
   std::vector<double> nodes(d+1);
   for (int i = 0; i <= d; i++)
@@ -1029,6 +1090,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     A2_i[i] = std::move(A2i);
   }
   std::vector<std::vector<double>> P_coeffs(d+1);
+  //std::vector<std::vector<std::complex<double>>> P_coeffs(d+1);
   for (std::size_t i = 0; i <= d; i++)
   {
     const double p = (i > 0) ? 2.0 : 1.0;
@@ -1036,6 +1098,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       const double xj = (2.0 * (nodes[j] - a) / (b - a)) - 1.0;
       const double coeff = p / (d + 1.0) * std::cos(i * std::acos(xj));
+      //P_coeffs[i].push_back(std::complex<double>(coeff, 0.0));
       P_coeffs[i].push_back(coeff);
       Mpi::Print("Polynomial coeff {}, {}: {}\n", i, j, coeff);
       //P[i] += (p / (d + 1.0) * std::cos(i * std::acos(xj))) * T[j];
@@ -1044,9 +1107,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<std::unique_ptr<ComplexOperator>> Pi(d+1);
   for (int i = 0; i <= d; i++)
   {
-    auto cheb = space_op.GetExtraSystemMatrixSum2(P_coeffs[i], A2_i);
+    auto cheb = space_op.GetExtraSystemMatrixSum2(P_coeffs[i], A2_i, Operator::DIAG_ZERO);
     Pi[i] = std::move(cheb);
   }
+
+  // T0 = 1, T1 = x, T2 = 2x^2 - 1, Tn+1 = 2xTn - Tn-1
+  // T3 = 2xT2 - T1 = 2x(2x^2-1) - x = 4x^3-2x
+  // c0 * T0 + c1 * T1 + c2 * T2 = a0 * 1 + a1 *
 
   std::vector<double> test_p = {target*1.01, target*1.1, target*1.5, target*2, target*3.01, target*5, target*6.01, target*9};
   double total_res = 0.0;
@@ -1077,7 +1144,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   Mpi::Print("Cheb Order {}, total_res: {}\n", d, total_res / test_p.size());
-  //std::exit(0);
+  std::exit(0);
   */
 
   Mpi::Print("Create A and P and call eigen->SetLinearSolver\n");
@@ -1119,7 +1186,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  /**/
+  /*
   Mpi::Print("Setting up Quasi-Newton solver\n");
   std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
   qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
@@ -1145,7 +1212,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen = std::move(qn); //?
   eigen->Solve();
   Mpi::Print("Done with QuasiNewton Solve\n");
-  /**/
+  */
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
