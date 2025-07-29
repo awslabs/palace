@@ -13,6 +13,7 @@
 #include "linalg/rap.hpp" // test for ComplexParOperator
 #include "linalg/orthog.hpp" // test for orthog
 #include <Eigen/Dense> // test for deflation
+#include "linalg/nleps.hpp" // test for newton interp?
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -3933,10 +3934,10 @@ PetscErrorCode __mat_apply_PEPRat_A0(Mat A, Vec x, Vec y)
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->has_A2)
   {
-    //opA2interp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opA2_0->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opA2_1->AddMult(ctx->x1, ctx->y1, -ctx->xs[0]);
-    ctx->opA2_2->AddMult(ctx->x1, ctx->y1, ctx->xs[0]*ctx->xs[1]);
+    ctx->opA2interp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //ctx->opA2_0->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //ctx->opA2_1->AddMult(ctx->x1, ctx->y1, -ctx->xs[0]);
+    //ctx->opA2_2->AddMult(ctx->x1, ctx->y1, ctx->xs[0]*ctx->xs[1]);
     //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[0][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[0][i]);}
   }
   //ctx->D_j[0][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
@@ -3959,9 +3960,9 @@ PetscErrorCode __mat_apply_PEPRat_A1(Mat A, Vec x, Vec y)
   if (ctx->has_A2)
   {
     std::cerr << "__mat_apply_PEPRat_A1 with opA2\n";
-    //opA2interp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opA2_1->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opA2_2->AddMult(ctx->x1, ctx->y1, -(ctx->xs[0] + ctx->xs[1]));
+    ctx->opA2interp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //ctx->opA2_1->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //ctx->opA2_2->AddMult(ctx->x1, ctx->y1, -(ctx->xs[0] + ctx->xs[1]));
     //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[1][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[1][i]);}
   }
   //ctx->D_j[1][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
@@ -3983,8 +3984,8 @@ PetscErrorCode __mat_apply_PEPRat_A2(Mat A, Vec x, Vec y)
   if (ctx->has_A2)
   {
     std::cerr << "__mat_apply_PEPRat_A2 with opA2\n";
-    //opA2interp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opA2_2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opA2interp->AddMult(2, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    //ctx->opA2_2->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     //for (int i = 0; i < 3; i++) {if (ctx->cheb_to_mono[2][i] != 0.0) ctx->opA2_cheb[i]->AddMult(ctx->x1, ctx->y1, ctx->cheb_to_mono[2][i]);}
   }
   //ctx->D_j[2][0]->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));

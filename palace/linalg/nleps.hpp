@@ -16,8 +16,8 @@
 namespace palace
 {
 
-namespace nleps
-{
+//namespace nleps
+//{
 
 //
 // Abstract base class for nonlinear eigensolvers.
@@ -71,7 +71,7 @@ protected:
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  /*const*/ ComplexKspSolver *opInv;
+  ComplexKspSolver *opInv;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -123,7 +123,7 @@ public:
 
   // The linear solver will be configured to compute the
   // action of T(σ)⁻¹ where σ is the current eigenvalue
-  void SetLinearSolver(/*const*/ ComplexKspSolver &ksp) override;
+  void SetLinearSolver(ComplexKspSolver &ksp) override;
   void SetIoData(const IoData &iodata) override; // remove this later!
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -222,18 +222,19 @@ public:
 };
 
 //
-// Interpolation operators for the nonlinear A2 operator.
+// Interpolation operators to approximate the nonlinear A2 operator.
 //
-
 class Interpolation
 {
   public:
-    virtual void Mult(const int order, const ComplexVector &x, ComplexVector &y) = 0;
-    virtual void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0) = 0;
+    Interpolation() = default;
+    virtual ~Interpolation() = default;
     virtual void Interpolate(const int order, const std::complex<double> sigma_min, const std::complex<double> sigma_max) = 0;
+    virtual void Mult(const int order, const ComplexVector &x, ComplexVector &y) const = 0;
+    virtual void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0) const = 0;
 };
 
-// Newton polynomial interpolation to approximate nonlinear A2 operator.
+// Newton polynomial interpolation to approximate the nonlinear A2 operator.
 class NewtonInterpolation : public Interpolation
 {
   private:
@@ -262,11 +263,9 @@ class NewtonInterpolation : public Interpolation
     void Interpolate(const int order, const std::complex<double> sigma_min, const std::complex<double> sigma_max);
 
     // Perform multiplication with interpolation operator of specified order.
-    void Mult(const int order, const ComplexVector &x, ComplexVector &y);
-    void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0);
+    void Mult(const int order, const ComplexVector &x, ComplexVector &y) const;
+    void AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a = 1.0) const;
 };
-
-}  // namespace nleps
 
 }  // namespace palace
 

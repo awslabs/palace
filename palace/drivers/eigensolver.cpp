@@ -393,14 +393,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //std::unique_ptr<ComplexOperator> Knew, Cnew, Mnew;
   std::vector<std::complex<double>> xs;
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> D_j;
-  std::unique_ptr<nleps::Interpolation> newton_interp;
+  std::unique_ptr<Interpolation> newton_interp;
   if (has_A2)
   {
     Mpi::Print("Test RationalA2 inside eigensolver.cpp\n");
      const int npoints = 3;
     const double target_max = 2.0 * target; // get 3.0 from config file!
 
-    newton_interp = std::make_unique<nleps::NewtonInterpolation>(space_op);
+    newton_interp = std::make_unique<NewtonInterpolation>(space_op);
     newton_interp->Interpolate(npoints-1, 1i * target, 1i * target_max);
 
     // Compute rational interpolation and add matrices to K, C, M???
@@ -684,7 +684,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       Mpi::Print("SetLinearA2Operators\n");
       eigen->SetLinearA2Operators(*D_j[0][0], *D_j[1][0], *D_j[2][0]);
-      eigen->SetA2Interpolation(newton_interp);
+      eigen->SetA2Interpolation(*newton_interp);
       Mpi::Print("Done SetLinearA2Operators\n");
     }
     // set NLEIGS numdegrees?
@@ -940,7 +940,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::exit(0);
   */
 
-  /**/
+  /*
   // Further rational interpolation tests
     Mpi::Print("\n Test Newton polynomial interpolation\n");
   double target_min = target, target_max = 5.0*target;
@@ -1069,7 +1069,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
  //   Mpi::Print("Order {}, total_res: {}\n", i-1, res_vec[i]);
  // }
   std::exit(0);
-  /**/
+  */
 
   /*
   // Test Chebyshev interpolation

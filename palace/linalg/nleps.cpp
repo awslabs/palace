@@ -12,7 +12,7 @@
 #include "utils/communication.hpp"
 
 
-namespace palace::nleps
+namespace palace
 {
 
 // Base class methods.
@@ -743,7 +743,7 @@ void NewtonInterpolation::Interpolate(const int order, const std::complex<double
   }
 }
 
-void NewtonInterpolation::Mult(const int order, const ComplexVector &x, ComplexVector &y)
+void NewtonInterpolation::Mult(const int order, const ComplexVector &x, ComplexVector &y) const
 {
   MFEM_VERIFY(order >= 0 && order < num_points,
     "Order must be greater than or equal to 0 and smaller than the number of interpolation points!");
@@ -752,16 +752,17 @@ void NewtonInterpolation::Mult(const int order, const ComplexVector &x, ComplexV
   {
     if (coeffs[order][j] != 0.0)
     {
-      ops[order][0]->AddMult(x, y, coeffs[order][j]);
+      ops[j][0]->AddMult(x, y, coeffs[order][j]);
     }
   }
 }
 
-void NewtonInterpolation::AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a)
+void NewtonInterpolation::AddMult(const int order, const ComplexVector &x, ComplexVector &y, std::complex<double> a) const
 {
+  rhs = 0.0;
   this->Mult(order, x, rhs);
   rhs *= a;
   y += rhs;
 }
 
-}  // namespace palace::nleps
+}  // namespace palace
