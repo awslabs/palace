@@ -256,8 +256,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                             target);
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+      std::complex<double>(1.0, 0.0), 1i * target,
+      std::complex<double>(-target * target, 0.0), target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
