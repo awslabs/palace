@@ -10,6 +10,7 @@
 #include <slepc.h>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
+#include "linalg/nleps.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -319,12 +320,15 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
   sinvert = false;
   region = true;
-  sigma = 0.0;
+  sigma = 0.0;  // add sigma_max?
   gamma = delta = 1.0;
+  has_A2 = false;
 
   opInv = nullptr;
   opProj = nullptr;
   opB = nullptr;
+  space_op = nullptr;
+  opInterp = nullptr;
 
   B0 = nullptr;
   v0 = nullptr;
@@ -351,7 +355,20 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
-void SlepcEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
+void SlepcEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                         const ComplexOperator &C, const ComplexOperator &M,
+                                         EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
+}
+
+void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
+{
+  opInterp = &interp;
+  has_A2 = true;  // is there a better place to set this?
+}
+
+void SlepcEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
   opInv = &ksp;
 }
@@ -636,6 +653,7 @@ void SlepcEPSSolverBase::SetType(SlepcEigenvalueSolver::Type type)
     case Type::TOAR:
     case Type::STOAR:
     case Type::QARNOLDI:
+    case Type::LINEAR:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }
@@ -844,7 +862,8 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
   normK = normC = normM = 0.0;
 }
 
-void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
+                                        const ComplexOperator &K, const ComplexOperator &C,
                                         const ComplexOperator &M,
                                         EigenvalueSolver::ScaleType type)
 {
@@ -854,6 +873,7 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   opK = &K;
   opC = &C;
   opM = &M;
+  space_op = &space_op_ref;
 
   if (first)
   {
@@ -1111,6 +1131,9 @@ void SlepcPEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
       PalacePetscCall(PEPSetType(pep, PEPJD));
       region = false;
       break;
+    case Type::LINEAR:
+      PalacePetscCall(PEPSetType(pep, PEPLINEAR));
+      break;
     case Type::KRYLOVSCHUR:
     case Type::POWER:
     case Type::SUBSPACE:
@@ -1221,8 +1244,8 @@ SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &pref
   normK = normC = normM = 0.0;
 }
 
-void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                  const ComplexOperator &M,
+void SlepcPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                  const ComplexOperator &C, const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled operators which define the quadratic polynomial
@@ -1231,6 +1254,7 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   opK = &K;
   opC = &C;
   opM = &M;
+  space_op = &space_op_ref;
 
   if (first)
   {
@@ -1418,8 +1442,16 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
   ctx->opC->Mult(ctx->x2, ctx->y2);
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
+  }
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(0, ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  }
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -1438,6 +1470,10 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(2, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
+  }
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -1500,6 +1536,10 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    if (ctx->has_A2)
+    {
+      ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    }
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -1531,6 +1571,10 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -1545,6 +1589,10 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opC->Mult(ctx->x1, ctx->y1);
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -1559,6 +1607,10 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
+  if (ctx->has_A2)
+  {
+    ctx->opInterp->AddMult(2, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);

@@ -12,6 +12,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
@@ -48,6 +49,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   E.UseDevice(true);
   B.UseDevice(true);
 
+  // Check if there are nonlinear terms and, if so, setup interpolation operator.
+  const double target = iodata.solver.eigenmode.target;
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
+  bool has_A2 = (A2 != nullptr);
+  std::unique_ptr<Interpolation> interp_op;
+  if (has_A2)
+  {
+    const int npoints = 3;                   // Second order interpolation
+    const double target_max = 2.0 * target;  // Get from config file!!!!
+    interp_op = std::make_unique<NewtonInterpolationOperator>(space_op);
+    interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
+  }
+
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
@@ -77,7 +91,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
 #if defined(PALACE_WITH_ARPACK)
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
-    if (C)
+    if (C || has_A2)
     {
       eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
@@ -94,13 +108,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
     std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (C)
+    if (C || has_A2)
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
         slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::LINEAR);
+        // also need to turn off scaling? or better implement it
       }
       else
       {
@@ -124,9 +139,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (C)
+  if (C || has_A2)
   {
-    eigen->SetOperators(*K, *C, *M, scale);
+    // eigen->SetOperators(*K, *C, *M, scale);
+    eigen->SetOperators(space_op, *K, *C, *M, scale);
+    if (has_A2)
+    {
+      eigen->SetNLInterpolation(*interp_op);
+    }
   }
   else
   {
@@ -210,13 +230,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
-  const double target = iodata.solver.eigenmode.target;
   {
     const double f_target =
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C)
+  if (C || has_A2)
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
@@ -281,6 +300,33 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
+
+  /*
+  Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
+  std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
+  qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(),
+  iodata.problem.verbose); qn->SetTol(iodata.solver.eigenmode.tol);
+  qn->SetMaxIter(iodata.solver.eigenmode.max_it);
+  qn->SetOperators(space_op, *K, *C, *M, scale); // currently not using scaling but maybe
+  try to make it work? qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); //
+  second input not actually used qn->SetLinearSolver(*ksp); qn->SetShiftInvert(1i * target);
+  // Use linear eigensolve solution as initial guess.
+  std::vector<std::complex<double>> init_eigs;
+  std::vector<ComplexVector> init_V;
+  for (int i = 0; i < num_conv; i++)
+  {
+    ComplexVector v0;
+    v0.SetSize(Curl.Width());
+    v0.UseDevice(true);
+    eigen->GetEigenvector(i, v0);
+    init_eigs.push_back(eigen->GetEigenvalue(i));
+    init_V.push_back(v0);
+  }
+  qn->SetInitialGuess(init_eigs, init_V);
+  eigen = std::move(qn); //?
+  eigen->Solve();
+  */
+
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
@@ -302,7 +348,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::complex<double> omega = eigen->GetEigenvalue(i);
     double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (!C)
+    if (!C && !has_A2)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
       omega = std::sqrt(omega);

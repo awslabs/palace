@@ -14,6 +14,8 @@ namespace palace
 
 template <typename VecType>
 class DivFreeSolver;
+class SpaceOperator;
+class Interpolation;
 
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or
@@ -52,17 +54,21 @@ public:
   EigenvalueSolver() = default;
   virtual ~EigenvalueSolver() = default;
 
-  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
-  // eigenvalue problem.
+  // Set operators for the generalized eigenvalue problem, quadratic polynomial
+  // eigenvalue problem, or nonlinear eigenvalue problem.
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                             ScaleType type) = 0;
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type) = 0;
+  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                            const ComplexOperator &C, const ComplexOperator &M,
+                            ScaleType type) = 0;
+  virtual void SetNLInterpolation(const Interpolation &interp) = 0;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  virtual void SetLinearSolver(const ComplexKspSolver &ksp) = 0;
+  virtual void SetLinearSolver(ComplexKspSolver &ksp) = 0;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   virtual void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) = 0;
