@@ -394,7 +394,7 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
   {
     PalacePetscCall(STSetType(st, STSINVERT));
   }
-  PalacePetscCall(STSetTransform(st, PETSC_TRUE));
+  //PalacePetscCall(STSetTransform(st, PETSC_TRUE)); // fails with PEP with type LINEAR
   PalacePetscCall(STSetMatMode(st, ST_MATMODE_SHELL));
   sigma = s;  // Wait until solve time to call EPS/PEPSetTarget
   sinvert = true;
@@ -978,6 +978,11 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   opK->Mult(x, r);
   opC->AddMult(x, r, l);
   opM->AddMult(x, r, l * l);
+  if (has_A2)
+  {
+    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
+    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1329,6 +1334,11 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   opK->Mult(x, r);
   opC->AddMult(x, r, l);
   opM->AddMult(x, r, l * l);
+  if (has_A2)
+  {
+    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO); //std:abs???
+    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
   return linalg::Norml2(GetComm(), r);
 }
 
