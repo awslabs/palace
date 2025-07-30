@@ -91,6 +91,8 @@ jobs:
                 require: ~hdf5
               rocblas:
                 require: ~tensile
+              cmake:
+                require: @4:
             repos:
             - spack/local
             mirrors:
@@ -113,6 +115,7 @@ jobs:
           #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
           #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
           spack -e . external find --all \
+            --exclude cmake \
             --exclude openssl \
             --exclude openssh \
             --exclude python \
