@@ -92,7 +92,7 @@ jobs:
               rocblas:
                 require: ~tensile
               cmake:
-                require: @4:
+                require: '@4:'
             repos:
             - spack/local
             mirrors:
