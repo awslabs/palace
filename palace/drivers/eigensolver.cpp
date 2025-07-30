@@ -39,16 +39,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-
-  const auto &Curl = space_op.GetCurlMatrix();
-  SaveMetadata(space_op.GetNDSpaces());
-
-  // Configure objects for postprocessing.
-  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  ComplexVector E(Curl.Width()), B(Curl.Height());
-  E.UseDevice(true);
-  B.UseDevice(true);
-
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
   const double target = iodata.solver.eigenmode.target;
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
@@ -61,6 +51,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     interp_op = std::make_unique<NewtonInterpolationOperator>(space_op);
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
   }
+
+  const auto &Curl = space_op.GetCurlMatrix();
+  SaveMetadata(space_op.GetNDSpaces());
+
+  // Configure objects for postprocessing.
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  ComplexVector E(Curl.Width()), B(Curl.Height());
+  E.UseDevice(true);
+  B.UseDevice(true);
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
@@ -274,7 +273,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // to the complex system matrix.
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
                                     std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get());
+                                    C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       std::complex<double>(1.0, 0.0), 1i * target,
       std::complex<double>(-target * target, 0.0), target);
