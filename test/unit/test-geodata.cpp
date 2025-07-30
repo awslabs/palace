@@ -9,7 +9,7 @@ namespace palace
 {
 using namespace Catch;
 
-TEST_CASE("TwoDimensionalDiagonalSquare", "[geodata]")
+TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
 {
   std::vector<Eigen::Vector3d> vertices{
       {-0.19942181818181828, -0.5838274545454543, 0},
@@ -131,4 +131,23 @@ TEST_CASE("TwoDimensionalDiagonalSquare", "[geodata]")
   CHECK(normals[1][2] == Approx(ax1[2]).margin(1e-4));
   CHECK(box.planar);
 }
+
+TEST_CASE("TetToHex", "[geodata]")
+{
+  SECTION("Linear")
+  {
+    // Pull from the mfem externals data folder.
+    mfem::Mesh single_tet("../../../extern/mfem/data/ref-tetrahedron.mesh");
+    auto four_hex = mesh::MeshTetToHex(single_tet);
+    CHECK(four_hex.GetNE() == 4);
+
+    mfem::Vector vert_coord;
+    single_tet.GetVertices(vert_coord);
+    fmt::print("{} {} {}", single_tet.GetVertex(0)[0], single_tet.GetVertex(0)[1], single_tet.GetVertex(0)[2]);
+    fmt::print("{}", vert_coord);
+    four_hex.GetVertices(vert_coord);
+  }
+
+}
+
 }  // namespace palace
