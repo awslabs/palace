@@ -361,7 +361,7 @@ int QuasiNewtonSolver::Solve()
   }
 
   const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
-  space_op->GetWavePortOp().SetSuppressOutput(true);      // suppressoutput?
+  space_op->GetWavePortOp().SetSuppressOutput(true);  // suppressoutput?
 
   Eigen::MatrixXcd H;
   Eigen::VectorXcd u2, z2, c2, w2, v2;
@@ -403,7 +403,7 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       linalg::SetRandom(GetComm(), v);
     }
-    eig_opInv = eig; // eigenvalue estimate used in the (lagged) preconditioner
+    eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
     linalg::SetRandom(GetComm(), c, seed);  // Set seed for deterministic behavior
