@@ -394,7 +394,7 @@ index da98594ca2..507de42639 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 2d6f7288dc..dd127d9f83 100644
+index 4190b37ecb..57ba80a644 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -379,12 +379,12 @@ protected:
