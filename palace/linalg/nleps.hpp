@@ -35,7 +35,7 @@ protected:
   // Relative eigenvalue error convergence tolerance for the solver.
   double rtol;
 
-  // Maximum number of Arnoldi update iterations.
+  // Maximum number of iterations.
   int nleps_it;
 
   // Specifies which part of the spectrum to search for.
@@ -114,7 +114,7 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
-
+  void SetNLInterpolation(const Interpolation &interp) override;
   // The linear solver will be configured to compute the
   // action of T(σ)⁻¹ where σ is the current eigenvalue
   void SetLinearSolver(ComplexKspSolver &ksp) override;
@@ -138,6 +138,12 @@ public:
 
   // Set maximum number of Arnoldi update iterations.
   void SetMaxIter(int max_it) override;
+
+  // Set the update frequency of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
@@ -172,7 +178,7 @@ public:
   void RescaleEigenvectors(int num_eig) override;
 };
 
-// Quasi-Newton nonlinear eigenvalue problem solver: T(λ) x = (K + λ C + λ² M + A2(λ)) x = 0
+// Quasi-Newton nonlinear eigenvalue solver: T(λ) x = (K + λ C + λ² M + A2(λ)) x = 0
 // .
 class QuasiNewtonSolver : public NonLinearEigenvalueSolver
 {
@@ -190,11 +196,13 @@ private:
   // Workspace vectors for operator applications. // ??? See if needed??
   mutable ComplexVector x2, y2;
 
-protected:
-  // do we need these??
-  // void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const override;
-  // void ApplyOpB(const std::complex<double> *px, std::complex<double> *py) const override;
+  // Update frequency of the preconditioner during Newton iterations.
+  int preconditioner_lag;
 
+  // Maximum number of Newton attempts with the same initial guess.
+  int max_restart;
+
+protected:
   double GetResidualNorm(std::complex<double> l, const ComplexVector &x,
                          ComplexVector &r) const override;
 
@@ -209,6 +217,12 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
+
+  // Set the update frequency of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
 
   // Solve the nonlinear eigenvalue problem.
   int Solve() override;
