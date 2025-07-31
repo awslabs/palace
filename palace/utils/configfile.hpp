@@ -707,6 +707,15 @@ public:
   // problems.
   bool pep_linear = true;
 
+  // Upper end of the target range for nonlinear eigenvalue solver [GHz].
+  double target_upper = -1;
+
+  // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
+  int preconditioner_lag = 5;
+
+  // Maximum number of failed attempts with a given initial guess in the quasi-Newton nonlinear eigenvalue solver.
+  int max_restart = 2;
+
   void SetUp(json &solver);
 };
 

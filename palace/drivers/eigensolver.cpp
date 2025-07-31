@@ -46,8 +46,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   if (has_A2)
   {
-    const int npoints = 3;                   // Second order interpolation
-    const double target_max = 2.0 * target;  // Get from config file!!!!
+    const int npoints = 3; // Always use second order interpolation for now
+    const double target_max = iodata.solver.eigenmode.target_upper;
     interp_op = std::make_unique<NewtonInterpolationOperator>(space_op);
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
   }
@@ -302,15 +302,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  /*
+  /**/
   Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-  std::unique_ptr<nleps::NonLinearEigenvalueSolver> qn;
-  qn = std::make_unique<nleps::QuasiNewtonSolver>(space_op.GetComm(),
+  std::unique_ptr<NonLinearEigenvalueSolver> qn;
+  qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(),
   iodata.problem.verbose); qn->SetTol(iodata.solver.eigenmode.tol);
   qn->SetMaxIter(iodata.solver.eigenmode.max_it);
-  qn->SetOperators(space_op, *K, *C, *M, scale); // currently not using scaling but maybe
-  try to make it work? qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); //
-  second input not actually used qn->SetLinearSolver(*ksp); qn->SetShiftInvert(1i * target);
+  qn->SetOperators(space_op, *K, *C, *M, scale); // currently not using scaling but maybe try to make it work?
+  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size); //second input not actually used
+  qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
+  qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
+  qn->SetLinearSolver(*ksp);
+  qn->SetShiftInvert(1i * target);
   // Use linear eigensolve solution as initial guess.
   std::vector<std::complex<double>> init_eigs;
   std::vector<ComplexVector> init_V;
@@ -325,8 +328,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   qn->SetInitialGuess(init_eigs, init_V);
   eigen = std::move(qn); //?
-  eigen->Solve();
-  */
+  num_conv = eigen->Solve();
+  /**/
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);

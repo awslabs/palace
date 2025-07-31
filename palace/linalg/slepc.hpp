@@ -165,6 +165,12 @@ public:
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
 
+  // Set the update frequency of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
+
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
 
