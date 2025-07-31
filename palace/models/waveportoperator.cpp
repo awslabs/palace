@@ -865,9 +865,9 @@ void WavePortData::Initialize(double omega)
     int num_conv = eigen->Solve();
     if (num_conv < mode_idx)
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE); // hack
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);  // hack
       num_conv = eigen->Solve();
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL); // reset
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);  // reset
       MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
     }
     lambda = eigen->GetEigenvalue(mode_idx - 1);
