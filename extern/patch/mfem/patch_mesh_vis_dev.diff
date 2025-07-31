@@ -427,10 +427,10 @@ index 67eb8524d4..da98594ca2 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 9301a0ad25..2d6f7288dc 100644
+index 563c448709..4190b37ecb 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2522,7 +2522,7 @@ public:
+@@ -2525,7 +2525,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,

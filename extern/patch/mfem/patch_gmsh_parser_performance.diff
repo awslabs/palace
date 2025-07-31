@@ -1,8 +1,8 @@
 diff --git a/mesh/mesh_readers.cpp b/mesh/mesh_readers.cpp
-index 1acabc8f03..55f719ae35 100644
+index 14cb7d3838..093f548c8b 100644
 --- a/mesh/mesh_readers.cpp
 +++ b/mesh/mesh_readers.cpp
-@@ -1549,7 +1549,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1539,7 +1539,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
     // A map between a serial number of the vertex and its number in the file
     // (there may be gaps in the numbering, and also Gmsh enumerates vertices
     // starting from 1, not 0)
@@ -11,7 +11,7 @@ index 1acabc8f03..55f719ae35 100644
  
     // A map containing names of physical curves, surfaces, and volumes.
     // The first index is the dimension of the physical manifold, the second
-@@ -1567,9 +1567,10 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1557,9 +1557,10 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
     // is non-trivial. Note that with these assumptions a 2D mesh parallel to the
     // yz plane will be considered a surface mesh embedded in 3D whereas the same
     // 2D mesh parallel to the xy plane will be considered a 2D mesh.
@@ -25,7 +25,7 @@ index 1acabc8f03..55f719ae35 100644
  
     // Mesh order
     int mesh_order = 1;
-@@ -1590,7 +1591,6 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1580,7 +1581,6 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
           getline(input, buff);
           vertices.SetSize(NumOfVertices);
           int serial_number;
@@ -33,7 +33,7 @@ index 1acabc8f03..55f719ae35 100644
           real_t coord[gmsh_dim];
           for (int ver = 0; ver < NumOfVertices; ++ver)
           {
-@@ -1652,7 +1652,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1642,7 +1642,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
  
           // number of nodes for each type of Gmsh elements, type is the index of
           // the array + 1
@@ -42,7 +42,7 @@ index 1acabc8f03..55f719ae35 100644
           {
              2,   // 2-node line.
              3,   // 3-node triangle.
-@@ -1862,97 +1862,324 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1852,97 +1852,324 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
  
               This corresponds to the quad9 mapping below.
           */
@@ -443,7 +443,7 @@ index 1acabc8f03..55f719ae35 100644
              while (n_elem_part < num_of_all_elements)
              {
                 input.read(reinterpret_cast<char*>(header),
-@@ -1960,11 +2187,10 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1950,11 +2177,10 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                 type_of_element = header[0];
                 n_elem_one_type = header[1];
                 n_tags          = header[2];
@@ -456,7 +456,7 @@ index 1acabc8f03..55f719ae35 100644
                 for (int el = 0; el < n_elem_one_type; ++el)
                 {
                    input.read(reinterpret_cast<char*>(&data[0]),
-@@ -1982,218 +2208,26 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -1972,218 +2198,26 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                    n_partitions = (n_tags > 2) ? data[dd++] : 0;
                    // we currently just skip the partitions if they exist, and go
                    // directly to vertices describing the mesh element
@@ -680,7 +680,7 @@ index 1acabc8f03..55f719ae35 100644
                 for (int i = 0; i < n_tags; ++i) { input >> data[i]; }
                 // physical domain - the most important value (to distinguish
                 // materials with different properties)
-@@ -2207,210 +2241,19 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -2197,210 +2231,19 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                 // we currently just skip the partitions if they exist, and go
                 // directly to vertices describing the mesh element
                 const int n_elem_nodes = nodes_of_gmsh_element[type_of_element-1];
@@ -896,7 +896,7 @@ index 1acabc8f03..55f719ae35 100644
              } // el (all elements)
           } // if ASCII
  
-@@ -2534,81 +2377,106 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -2524,81 +2367,106 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
              Nodes_gf.SetSpace(nfes);
              Nodes_gf.MakeOwner(nfec);
  
@@ -1026,7 +1026,7 @@ index 1acabc8f03..55f719ae35 100644
                       }
                       vm = ho_pyr[el_order];
                       break;
-@@ -2616,62 +2484,47 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -2606,62 +2474,47 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                       MFEM_WARNING("Unsupported Gmsh element type.");
                       break;
                 }
@@ -1121,7 +1121,7 @@ index 1acabc8f03..55f719ae35 100644
           }
  
           // Suppress warnings (MFEM_CONTRACT_VAR does not work here with nvcc):
-@@ -2809,7 +2662,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
+@@ -2799,7 +2652,7 @@ void Mesh::ReadGmshMesh(std::istream &input, int &curved, int &read_gf)
                 v[j] = v2v[v[j]];
              }
           }

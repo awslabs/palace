@@ -106,7 +106,7 @@ index 5145391657..f710f6c688 100644
     }
  
 diff --git a/fem/dfem/util.hpp b/fem/dfem/util.hpp
-index 88cdae65b2..fb2f1dc8ca 100644
+index d4f7099758..21db62d9d1 100644
 --- a/fem/dfem/util.hpp
 +++ b/fem/dfem/util.hpp
 @@ -568,7 +568,7 @@ struct ThreadBlocks
@@ -114,7 +114,7 @@ index 88cdae65b2..fb2f1dc8ca 100644
  };
  
 -#if (defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP))
-+#if ((defined(MFEM_USE_CUDA) && defined(__CUDACC__)) || (defined(MFEM_USE_HIP) && defined(__HIP__)))
++#if defined(MFEM_USE_CUDA_OR_HIP)
  template <typename func_t>
  __global__ void forall_kernel_shmem(func_t f, int n)
  {
@@ -123,7 +123,7 @@ index 88cdae65b2..fb2f1dc8ca 100644
         Device::Allows(Backend::HIP_MASK))
     {
 -#if (defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP))
-+#if (defined(MFEM_USE_CUDA) && defined(__CUDACC__)) || (defined(MFEM_USE_HIP) && defined(__HIP__))
++#if defined(MFEM_USE_CUDA_OR_HIP)
        // int gridsize = (N + Z - 1) / Z;
        int num_bytes = num_shmem * sizeof(decltype(shmem));
        dim3 block_size(blocks.x, blocks.y, blocks.z);
@@ -229,18 +229,9 @@ index 0ace04b740..c02ec212b7 100644
     {                           \
        printf(__VA_ARGS__);     \
 diff --git a/general/forall.hpp b/general/forall.hpp
-index 164582d80b..231321cb47 100644
+index 164582d80b..4202e632ac 100644
 --- a/general/forall.hpp
 +++ b/general/forall.hpp
-@@ -93,7 +93,7 @@ struct DofQuadLimits_CPU
- ///
- /// @sa For accessing the limits according to the runtime configuration of the
- /// Device, see DeviceDofQuadLimits.
--#if defined(__CUDA_ARCH__)
-+#if defined(__CUDACC__)
- using DofQuadLimits = internal::DofQuadLimits_CUDA;
- #elif defined(__HIP_DEVICE_COMPILE__)
- using DofQuadLimits = internal::DofQuadLimits_HIP;
 @@ -158,8 +158,8 @@ private:
  #define MFEM_PRAGMA(X) _Pragma(#X)
  
@@ -278,7 +269,12 @@ index 164582d80b..231321cb47 100644
  
  template <typename BODY> __global__ static
  void CuKernel1D(const int N, BODY body)
-@@ -577,7 +577,7 @@ struct CuWrap<3>
+@@ -573,11 +573,11 @@ struct CuWrap<3>
+    }
+ };
+ 
+-#endif // MFEM_USE_CUDA
++#endif // defined(MFEM_USE_CUDA) && defined(__CUDACC__)
  
  
  /// HIP backend
@@ -287,6 +283,15 @@ index 164582d80b..231321cb47 100644
  
  template <typename BODY> __global__ static
  void HipKernel1D(const int N, BODY body)
+@@ -668,7 +668,7 @@ struct HipWrap<3>
+    }
+ };
+ 
+-#endif // MFEM_USE_HIP
++#endif // defined(MFEM_USE_HIP) && defined(__HIP__)
+ 
+ 
+ /// The forall kernel body wrapper
 @@ -701,7 +701,7 @@ inline void ForallWrap(const bool use_dev, const int N,
     }
  #endif
@@ -344,7 +349,7 @@ index 3c3c4dbdee..3a94a48973 100644
  {
  
 diff --git a/general/reducers.hpp b/general/reducers.hpp
-index dde3bd4e5d..5130e4887e 100644
+index dde3bd4e5d..50f357fa02 100644
 --- a/general/reducers.hpp
 +++ b/general/reducers.hpp
 @@ -537,7 +537,7 @@ void reduce(int N, T &res, B &&body, const R &reducer, bool use_dev,
@@ -352,7 +357,7 @@ index dde3bd4e5d..5130e4887e 100644
     }
  
 -#if defined(MFEM_USE_HIP) || defined(MFEM_USE_CUDA)
-+#if (defined(MFEM_USE_HIP) && defined(__HIP__)) || (defined(MFEM_USE_CUDA) && defined(__CUDACC__))
++#if defined(MFEM_USE_CUDA_OR_HIP)
     if (use_dev &&
         mfem::Device::Allows(Backend::CUDA | Backend::HIP | Backend::RAJA_CUDA |
                              Backend::RAJA_HIP))
@@ -376,21 +381,8 @@ index 8ea4fd75f2..2c36e378b7 100644
  typedef DeviceTensor<1,int> DeviceArray;
  typedef DeviceTensor<1,const int> ConstDeviceArray;
  
-diff --git a/linalg/sparsemat.hpp b/linalg/sparsemat.hpp
-index 095ba5a471..1dda5988bf 100644
---- a/linalg/sparsemat.hpp
-+++ b/linalg/sparsemat.hpp
-@@ -95,7 +95,7 @@ protected:
-    // Initialize cuSPARSE/hipSPARSE
-    void InitGPUSparse();
- 
--#ifdef MFEM_USE_CUDA_OR_HIP
-+#if (defined(MFEM_USE_CUDA) && defined(__CUDACC__)) || (defined(MFEM_USE_HIP) && defined(__HIP__))
-    // common for hipSPARSE and cuSPARSE
-    static int SparseMatrixCount;
-    static size_t bufferSize;
 diff --git a/miniapps/hooke/kernels/kernel_helpers.hpp b/miniapps/hooke/kernels/kernel_helpers.hpp
-index 44d09386a3..090dd10c68 100644
+index 44d09386a3..caa73d1a2e 100644
 --- a/miniapps/hooke/kernels/kernel_helpers.hpp
 +++ b/miniapps/hooke/kernels/kernel_helpers.hpp
 @@ -26,7 +26,7 @@ using mfem::future::tensor;
@@ -398,7 +390,7 @@ index 44d09386a3..090dd10c68 100644
  // MFEM_SHARED_3D_BLOCK_TENSOR definition
  // Should be moved in backends/cuda/hip header files.
 -#if defined(__CUDA_ARCH__)
-+#if defined(__CUDACC__) || defined(__HIP__)
++#if defined(MFEM_USE_CUDA_OR_HIP)
  #define MFEM_SHARED_3D_BLOCK_TENSOR(name,T,bx,by,bz,...)\
  MFEM_SHARED tensor<T,bx,by,bz,__VA_ARGS__> name;\
  name(threadIdx.x, threadIdx.y, threadIdx.z) = tensor<T,__VA_ARGS__> {};
