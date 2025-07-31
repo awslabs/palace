@@ -66,6 +66,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("c", type="build")
     depends_on("cxx", type="build")
     depends_on("cmake@3.21:", type="build")
+    depends_on("cmake@3.21:3.29", type="build, when="@0.13.0")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("zlib-api")
