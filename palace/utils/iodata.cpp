@@ -538,6 +538,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 
   // For eigenmode simulations:
   solver.eigenmode.target /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.eigenmode.target_upper /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
 
   // For driven simulations:
   for (auto &f : solver.driven.sample_f)

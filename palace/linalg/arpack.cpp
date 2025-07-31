@@ -209,6 +209,16 @@ void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const Complex
   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
+void ArpackEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+{
+  MFEM_ABORT("SetPreconditionerLag not defined for base class ArpackEigenvalueSolver!");
+}
+
+void ArpackEigenvalueSolver::SetMaxRestart(int max_num_restart)
+{
+  MFEM_ABORT("SetMaxRestart not defined for base class ArpackEigenvalueSolver!");
+}
+
 void ArpackEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
 {
   opInterp = &interp;
