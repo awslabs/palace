@@ -90,6 +90,12 @@ public:
   // Set maximum number of Arnoldi update iterations.
   virtual void SetMaxIter(int max_it) = 0;
 
+  // Set the update frequency of the preconditioner.
+  virtual void SetPreconditionerLag(int preconditioner_update_freq) = 0;
+
+  // Set the maximum number of restarts with the same initial guess.
+  virtual void SetMaxRestart(int max_num_restart) = 0;
+
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
   virtual void SetWhichEigenpairs(WhichType type) = 0;
