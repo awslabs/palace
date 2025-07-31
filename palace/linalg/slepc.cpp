@@ -368,6 +368,16 @@ void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
   has_A2 = true;  // is there a better place to set this?
 }
 
+void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+{
+  MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
+}
+
+void SlepcEigenvalueSolver::SetMaxRestart(int max_num_restart)
+{
+  MFEM_ABORT("SetMaxRestart not defined for base class SlepcEigenvalueSolver!");
+}
+
 void SlepcEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
   opInv = &ksp;

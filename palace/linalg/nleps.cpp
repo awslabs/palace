@@ -62,6 +62,21 @@ void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
   MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
 }
 
+void NonLinearEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
+{
+  MFEM_ABORT("SetNLInterpolation not defined for base class NonLinearEigenvalueSolver!");
+}
+
+void NonLinearEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+{
+  MFEM_ABORT("SetPreconditionerLag not defined for base class NonLinearEigenvalueSolver!");
+}
+
+void NonLinearEigenvalueSolver::SetMaxRestart(int max_num_restart)
+{
+  MFEM_ABORT("SetMaxRestart not defined for base class NonLinearEigenvalueSolver!");
+}
+
 void NonLinearEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
   opInv = &ksp;
@@ -84,11 +99,6 @@ void NonLinearEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
   {
     res.reset();
     xscale.reset();
-  }
-  if (num_eig > 0)
-  {
-    eigenvalues.resize(num_eig);
-    eigenvectors.resize(num_eig);
   }
   nev = num_eig;
 }
@@ -219,12 +229,23 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 }
 
 // Quasi-Newton specific methods.
-
 QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm, int print)
   : NonLinearEigenvalueSolver(comm, print)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
+}
+
+// Set the update frequency of the preconditioner.
+void QuasiNewtonSolver::SetPreconditionerLag(int preconditioner_update_freq)
+{
+  preconditioner_lag = preconditioner_update_freq;
+}
+
+// Set the maximum number of restarts with the same initial guess.
+void QuasiNewtonSolver::SetMaxRestart(int max_num_restart)
+{
+  max_restart = max_num_restart;
 }
 
 void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
@@ -303,8 +324,7 @@ int QuasiNewtonSolver::Solve()
 {
   // Quasi-Newton method for nonlinear eigenvalue problems.
   // Reference: Jarlebring, Koskela, Mele, Disguised and new quasi-Newton methods for
-  // nonlinear
-  //            eigenvalue problems, Numerical Algorithms (2018).
+  //            nonlinear eigenvalue problems, Numerical Algorithms (2018).
   // Using the deflation scheme used by SLEPc's NEP solver with minimality index set to 1.
   // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
   //            eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
@@ -330,16 +350,17 @@ int QuasiNewtonSolver::Solve()
   w0.UseDevice(true);
   z.UseDevice(true);
 
+  // Reset any previously computed eigenpairs.
+  eigenvalues.clear();
+  eigenvectors.clear();
+
   // Set defaults.
   if (nleps_it <= 0)
   {
     nleps_it = 100;
   }
-  const int update_freq = 5;  // Set from config file?
-  const int max_restart = 2;  // Set from config file?
 
-  const auto dl =
-      std::sqrt(std::numeric_limits<double>::epsilon());  // TODO: define only once above
+  const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
   space_op->GetWavePortOp().SetSuppressOutput(true);      // suppressoutput?
 
   Eigen::MatrixXcd H;
@@ -347,7 +368,7 @@ int QuasiNewtonSolver::Solve()
 
   // Set a seed and distribution for random Eigen vectors to ensure the same values on all
   // ranks.
-  unsigned int seed = nev;  // = nev, or some constant value?
+  unsigned int seed = nev;
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
@@ -362,6 +383,7 @@ int QuasiNewtonSolver::Solve()
       if (guess_idx < num_init_guess)
       {
         guess_idx++;
+        restart = 0;
       }
       else
       {
@@ -381,7 +403,7 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       linalg::SetRandom(GetComm(), v);
     }
-    eig_opInv = eig;
+    eig_opInv = eig; // eigenvalue estimate used in the (lagged) preconditioner
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
     linalg::SetRandom(GetComm(), c, seed);  // Set seed for deterministic behavior
@@ -490,11 +512,11 @@ int QuasiNewtonSolver::Solve()
         // Update the invariant pair with normalization.
         const auto scale = linalg::Norml2(GetComm(), v);
         v *= 1.0 / scale;
+        eigenvalues.push_back(eig);
         X.push_back(v);
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;
-        eigenvalues[k] = eig;
         k++;
         // If the eigenvalue is inside the desired range, increment initial guess index
         // Otherwise, use the same initial guess again.
@@ -559,7 +581,7 @@ int QuasiNewtonSolver::Solve()
       z2 = -u2;
 
       //  M (x_k+1 - x_k) = z.
-      if (it > 0 && it % update_freq == 0)
+      if (it > 0 && it % preconditioner_lag == 0)
       {
         eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
@@ -599,7 +621,6 @@ int QuasiNewtonSolver::Solve()
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
-
   perm = std::make_unique<int[]>(nev);  // use this or order below??
   std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()),
       order2(eigenvalues.size());
@@ -616,48 +637,26 @@ int QuasiNewtonSolver::Solve()
 
   // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;
-  for (int k = 0; k < nev; k++)
+  for (int i = 0; i < nev; i++)
   {
-    perm[k] = order[k];  // stupid, only use one of perm and order!
-    Xeig.push_back(eps.eigenvectors().col(order_eigen[k]));
+    perm[i] = order[i];  // stupid, only use one of perm and order!
+    Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
   }
 
   // Recover the eigenvectors of the original problem.
-  for (int k = 0; k < nev; k++)
+  for (int i = 0; i < nev; i++)
   {
-    ComplexVector eigv = MatVecMult(X, Xeig[order2[k]], true);
-    eigenvectors[k] = eigv;
+    ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
+    eigenvectors.push_back(eigv);
   }
 
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
 
   space_op->GetWavePortOp().SetSuppressOutput(false);  // reset?
-  //
+
   return nev;
 }
-
-// void QuasiNewtonSolver::ApplyOp(const std::complex<double> *px,
-//                               std::complex<double> *py) const
-//{
-//
-// }
-
-// void QuasiNewtonSolver::ApplyOpB(const std::complex<double> *px,
-//                                std::complex<double> *py) const
-//{
-//   MFEM_VERIFY(opB, "No B operator for weighted inner product in QuasiNewton solve!");
-//   x1.Set(px, n, false);
-//   x2.Set(px + n, n, false);
-//   opB->Mult(x1.Real(), y1.Real());
-//   opB->Mult(x1.Imag(), y1.Imag());
-//   opB->Mult(x2.Real(), y2.Real());
-//   opB->Mult(x2.Imag(), y2.Imag());
-//   y1 *= delta * gamma * gamma;
-//   y2 *= delta * gamma * gamma;
-//   y1.Get(py, n, false);
-//   y2.Get(py + n, n, false);
-// }
 
 double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,
                                           ComplexVector &r) const
