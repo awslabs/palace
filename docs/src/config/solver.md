@@ -447,26 +447,29 @@ linear systems of equations arising for each simulation type. The available opti
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"MGMaxLevels" [100]` :  Chose whether to enable
-[geometric multigrid preconditioning](https://en.wikipedia.org/wiki/Multigrid_method) which
-uses p- and h-multigrid coarsening as available to construct the multigrid hierarchy. The
-solver specified by `"Type"` is used on the coarsest level. Relaxation on the fine levels
-is performed with Chebyshev smoothing.
+`"MGMaxLevels" [100]` : When greater than 1, enable the [geometric multigrid
+preconditioning](https://en.wikipedia.org/wiki/Multigrid_method), which uses p-
+and h-multigrid coarsening as available to construct the multigrid hierarchy.
+The solver specified by `"Type"` is used on the coarsest level. Relaxation on
+the fine levels is performed with Chebyshev smoothing.
 
 `"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
 
   - `"Logarithmic"`
   - `"Linear"`
 
-`"MGCycleIts" [1]` :  Number of V-cycle iterations per preconditioner application for
-multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or
+`"MGCycleIts" [1]` : Number of V-cycle iterations per preconditioner application
+for multigrid preconditioners (when the geometric multigrid preconditioner is
+enabled, i.e. when `MGMaxLevels` > 1, or when `"Type"` is `"AMS"` or
 `"BoomerAMG"`).
 
-`"MGSmoothIts" [1]` :  Number of pre- and post-smooth iterations used for multigrid
-preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
+`"MGSmoothIts" [1]` : Number of pre- and post-smooth iterations used for
+multigrid preconditioners (when the geometric multigrid preconditioner is
+enabled, i.e. when `MGMaxLevels` > 1, or when `"Type"` is `"AMS"` or
+`"BoomerAMG"`).
 
 `"MGSmoothOrder" [0]` :  Order of polynomial smoothing for geometric multigrid
-preconditioning (when `"UseMultigrid"` is `true`). A value less than 1 defaults to twice
+preconditioning. A value less than 1 defaults to twice
 the solution order given in
 [`config["Solver"]["Order"]`](problem.md#config%5B%22Solver%22%5D) or 4, whichever is
 larger.
