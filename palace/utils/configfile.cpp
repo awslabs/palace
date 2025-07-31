@@ -1936,11 +1936,14 @@ void EigenSolverData::SetUp(json &solver)
   preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
   max_restart = eigenmode->value("MaxRestart", max_restart);
 
-  target_upper = (target_upper < 0) ? 3 * target : target_upper; // default = 3 * target
+  target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target > 0.0, "config[\"Eigenmode\"][\"Target\"] must be strictly positive!");
-  MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be greater than config[\"Eigenmode\"][\"Target\"]!");
-  MFEM_VERIFY(preconditioner_lag >= 0, "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
-  MFEM_VERIFY(max_restart >= 0, "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
+  MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
+                                     "greater than config[\"Eigenmode\"][\"Target\"]!");
+  MFEM_VERIFY(preconditioner_lag >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
+  MFEM_VERIFY(max_restart >= 0,
+              "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
 
   MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
 
