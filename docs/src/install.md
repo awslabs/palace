@@ -13,6 +13,10 @@ Singularity/Apptainer, described in
 compiling from source using [CMake](https://cmake.org/download) is described in
 [Build from source](#Build-from-source).
 
+If you are a user, we recommend you install [*Palace* with
+Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
+source](#Build-from-source) instead.
+
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To install the
