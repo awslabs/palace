@@ -23,6 +23,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = nondim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.phase = nondim_measurement_cache.phase;                          // NONE
 
   measurement_cache.domain_E_field_energy_all =
       units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -125,6 +126,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.phase = dim_measurement_cache.phase;                          // NONE
 
   measurement_cache.domain_E_field_energy_all =
       units.Nondimensionalize<Units::ValueType::ENERGY>(
@@ -886,6 +888,7 @@ auto PostOperatorCSV<solver_t>::InitializeEig()
   eig->table.insert("q", "Q");
   eig->table.insert("err_back", "Error (Bkwd.)");
   eig->table.insert("err_abs", "Error (Abs.)");
+  eig->table.insert("phase", "Mean Phase");
   eig->WriteFullTableTrunc();
 }
 
@@ -904,6 +907,7 @@ auto PostOperatorCSV<solver_t>::PrintEig()
   eig->table["q"] << measurement_cache.eigenmode_Q;
   eig->table["err_back"] << measurement_cache.error_bkwd;
   eig->table["err_abs"] << measurement_cache.error_abs;
+  eig->table["phase"] << measurement_cache.phase;
   eig->WriteFullTableTrunc();
 }
 
