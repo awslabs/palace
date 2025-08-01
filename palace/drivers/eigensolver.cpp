@@ -377,8 +377,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, mean_phase, num_conv);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(i, E, B, omega, error_abs,
+                                                          error_bkwd, mean_phase, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
