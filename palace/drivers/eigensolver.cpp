@@ -302,7 +302,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  /**/
   Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
   std::unique_ptr<NonLinearEigenvalueSolver> qn;
   qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
@@ -310,8 +309,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   qn->SetMaxIter(iodata.solver.eigenmode.max_it);
   qn->SetOperators(space_op, *K, *C, *M,
                    scale);  // currently not using scaling but maybe try to make it work?
-  qn->SetNumModes(num_conv,
-                  iodata.solver.eigenmode.max_size);  // second input not actually used
+  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
   qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
   qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
   qn->SetLinearSolver(*ksp);
@@ -325,13 +323,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     v0.SetSize(Curl.Width());
     v0.UseDevice(true);
     eigen->GetEigenvector(i, v0);
+    linalg::NormalizePhase(space_op.GetComm(), v0);
     init_eigs.push_back(eigen->GetEigenvalue(i));
     init_V.push_back(v0);
   }
   qn->SetInitialGuess(init_eigs, init_V);
   eigen = std::move(qn);  //?
   num_conv = eigen->Solve();
-  /**/
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
