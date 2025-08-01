@@ -64,6 +64,10 @@ set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_TEST_MESH_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/mesh\""
 )
+set_property(
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "MFEM_DATA_PATH=\"${MFEM_DATA_PATH}\""
+)
 
 target_compile_definitions(
   unit-tests

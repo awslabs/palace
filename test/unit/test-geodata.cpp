@@ -1,13 +1,21 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_vector.hpp>
+
+#include <vector>
+
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
 
+#include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 
 namespace palace
 {
 using namespace Catch;
+namespace fs = std::filesystem;
 
 TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
 {
@@ -134,20 +142,128 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
 
 TEST_CASE("TetToHex", "[geodata]")
 {
+  // Pull from the mfem externals data folder.
+  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+  mfem::Mesh single_tet(ref_tet_path.string());
+
   SECTION("Linear")
   {
-    // Pull from the mfem externals data folder.
-    mfem::Mesh single_tet("../../../extern/mfem/data/ref-tetrahedron.mesh");
+    int order = 1;
+    single_tet.EnsureNodes();
+    single_tet.SetCurvature(order);
     auto four_hex = mesh::MeshTetToHex(single_tet);
     CHECK(four_hex.GetNE() == 4);
 
-    mfem::Vector vert_coord;
-    single_tet.GetVertices(vert_coord);
-    fmt::print("{} {} {}", single_tet.GetVertex(0)[0], single_tet.GetVertex(0)[1], single_tet.GetVertex(0)[2]);
-    fmt::print("{}", vert_coord);
-    four_hex.GetVertices(vert_coord);
-  }
+    // DOFs are added in vert -> edge -> face order, based on local ordering in vertex,
+    // which has dofs (3,2,1,0).
+    const std::vector<std::array<double, 3>> global_dof_vals{
+        {0.0, 0.0, 0.0},              // in elem 3
+        {1.0, 0.0, 0.0},              // in elem 2
+        {0.0, 1.0, 0.0},              // in elem 1
+        {0.0, 0.0, 1.0},              // in elem 0
+        {0.0, 0.5, 0.5},              // 3 -> 2
+        {0.5, 0.0, 0.5},              // 3 -> 1
+        {0.0, 0.0, 0.5},              // 3 -> 0
+        {0.5, 0.5, 0.0},              // 2 -> 1
+        {0.0, 0.5, 0.0},              // 2 -> 0
+        {0.5, 0.0, 0.0},              // 1 -> 0
+        {1.0 / 3, 1.0 / 3, 0.0},      // opp 3
+        {1.0 / 3, 0.0, 1.0 / 3},      // opp 2
+        {0.0, 1.0 / 3, 1.0 / 3},      // opp 1
+        {1.0 / 3, 1.0 / 3, 1.0 / 3},  // opp 0
+        {0.25, 0.25, 0.25}};
+    // From drawing out dof diagram.
+    const std::vector<std::array<int, 8>> elem_dofs{{3, 4, 13, 5, 6, 12, 14, 11},
+                                                    {2, 7, 13, 4, 8, 10, 14, 12},
+                                                    {1, 5, 13, 7, 9, 11, 14, 10},
+                                                    {0, 9, 10, 8, 6, 11, 14, 12}};
 
+    for (int i = 0; i < 14; i++)
+      for (int j = 0; j < 3; j++)
+      {
+        CHECK((*four_hex.GetNodes())(j + 3 * i) == Approx(global_dof_vals[i][j]));
+      }
+
+    mfem::Vector vdof_vals, col;
+    four_hex.GetNodes()->GetElementDofValues(0, vdof_vals);
+    REQUIRE(four_hex.GetNodes()->FESpace()->GetOrdering() == mfem::Ordering::byVDIM);
+    REQUIRE(vdof_vals.Size() == 3 * 8);
+    mfem::DenseMatrix vdof_vals_mat(vdof_vals.GetData(), 8, 3);
+
+    auto check_mat =
+        [&col, &global_dof_vals, &vdof_vals_mat](const std::array<int, 8> &verts)
+    {
+      for (std::size_t i = 0; i < 3; i++)
+      {
+        vdof_vals_mat.GetColumn(i, col);
+        for (int j = 0; j < col.Size(); j++)
+        {
+          CAPTURE(i, j, global_dof_vals[verts[j]][i]);
+          CHECK(col(j) == Approx(global_dof_vals[verts[j]][i]));
+        }
+      }
+    };
+
+    for (int i = 0; i < 4; i++)
+    {
+      four_hex.GetNodes()->GetElementDofValues(i, vdof_vals);
+      check_mat(elem_dofs[i]);
+    }
+  }
+#if defined(PALACE_WITH_GSLIB)
+  SECTION("UniformSampler")
+  {
+    // Use GSLIB to find a mapping for the single tet mesh, with some randomly perturbed
+    // position data.
+    int order = GENERATE(2, 3);
+    const int sdim = 3;
+    mfem::Mesh linear_single_tet(single_tet);
+    single_tet.EnsureNodes();
+    single_tet.SetCurvature(order);
+
+    // Randomly perturb the data
+    for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
+    {
+      (*single_tet.GetNodes())(i) += 0.05 * (2.0 * (double)rand() / RAND_MAX - 1.0);
+    }
+
+    auto four_hex = mesh::MeshTetToHex(single_tet);
+    REQUIRE(four_hex.GetNE() == 4);
+
+    // Helper to generate a set of locations to sample tet at.
+    // n_sample is number of points along an edge, thus >= 2.
+    // In byVDIM ordering [x1,y1,z1,x2,y2,z2,...]
+    auto gen_samples = [](int n_sample)
+    {
+      REQUIRE(n_sample >= 2);
+      mfem::Vector xyz_samples(3 * (n_sample * (n_sample + 1) * (n_sample + 2) / 6));
+      int o = 0;
+      for (double k = 0; k < n_sample; k++)
+        for (double j = 0; j < n_sample - k; j++)
+          for (double i = 0; i < n_sample - j - k; i++)
+          {
+            xyz_samples(o) = i / (n_sample - 1);
+            xyz_samples(o + 1) = j / (n_sample - 1);
+            xyz_samples(o + 2) = k / (n_sample - 1);
+            o++;
+          }
+      return xyz_samples;
+    };
+
+    // Use the linear meshes to sample the higher order meshes node functions, using GSLIB.
+    auto xyz_samples = gen_samples(order + 2);
+    mfem::Vector tet_vals(xyz_samples.Size()), hex_vals(xyz_samples.Size());
+    fem::InterpolateFunction(xyz_samples, *single_tet.GetNodes(), tet_vals,
+                             mfem::Ordering::byVDIM);
+    fem::InterpolateFunction(xyz_samples, *four_hex.GetNodes(), hex_vals,
+                             mfem::Ordering::byVDIM);
+
+    for (int i = 0; i < tet_vals.Size(); i++)
+    {
+      CHECK(tet_vals(i) == Approx(hex_vals(i)).margin(1e-9));
+    }
+  }
+#endif
 }
 
 }  // namespace palace

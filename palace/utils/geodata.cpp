@@ -44,12 +44,12 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
                                      const config::BoundaryData &);
 
 // Clean the provided serial mesh by removing unused domain and boundary elements.
-void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &, bool = true);
+void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &);
 
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
 // the high-order nodes with GSLIB.
-void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
+void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordering tools for improved
 // cache usage.
@@ -529,7 +529,6 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
 }
 
-
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
 {
   // Courtesy of https://gist.github.com/pazner/e9376f77055c0918d7c43e034e9e5888, only
@@ -553,8 +552,8 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
   const int ne_tet = orig_mesh.GetNE();
   const int nbe_tet = orig_mesh.GetNBE();
   const int nv = nv_tet + nedge_tet + nface_tet + ne_tet;
-  const int ne = 4 * ne_tet; // 4 hex per tet
-  const int nbe = 3 * nbe_tet; // 3 square per tri
+  const int ne = 4 * ne_tet;    // 4 hex per tet
+  const int nbe = 3 * nbe_tet;  // 3 square per tri
   mfem::Mesh hex_mesh(orig_mesh.Dimension(), nv, ne, nbe, orig_mesh.SpaceDimension());
 
   // Add original vertices.
@@ -625,6 +624,7 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
         hex_v[5] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 1]];
         hex_v[6] = nv_tet + nedge_tet + nface_tet + e;
         hex_v[7] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 2]];
+        fmt::print("hex_v {}\n", hex_v);
         hex_mesh.AddHex(hex_v, orig_mesh.GetAttribute(e));
       }
     }
@@ -666,50 +666,35 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
     const int sdim = orig_mesh.SpaceDimension();
     auto *orig_fespace = orig_mesh.GetNodes()->FESpace();
     hex_mesh.SetCurvature(orig_fespace->GetMaxElementOrder(), orig_fespace->IsDGSpace(),
-        orig_mesh.SpaceDimension(), orig_fespace->GetOrdering());
+                          orig_mesh.SpaceDimension(), orig_fespace->GetOrdering());
 
     // Need to convert the hexahedra local coordinate system into the parent tetrahedra
-    // system. Each hexahedra spans a different set of the tet's reference coordinates
-    //
-    //    Hex 0 -- [0,0.5]x[0,0.5]x[0,0.5]
-    //    Hex 1 -- [0.5,1]x[0,0.5]x[0,0.5]
-    //    Hex 2 -- [0,0.5]x[0.5,1]x[0,0.5]
-    //    Hex 3 -- [0,0.5]x[0,0.5]x[0.5,1]
-    //
-    // The complication is the coordinate systems can also reverse and re-order. We
-    // build a map from the hexahedra coords to the tet coords, knowing the map is always
-    // linear affine. From that we can just interpolate the tet's nodal values into each
-    // hexahedra.
-    //
-    // In the tet, each vertex is (0,0,0), (1,0,0), (0,1,0), (0,0,1). The local coordinate
-    // systems are then:
-    // (0,0,0) + ξ_0 * (0.5,0.0,0.0) + ξ_1 * (0.0,0.5,0.0) + ξ_2 * (0.0,0.0,0.5)
-    // (1,0,0) + ξ_0 * (-0.5,0.5,0.0) + ξ_1 * (-0.5,0.0,0.0) + ξ_2 * (-0.5,0.0,0.5)
-    // (0,1,0) + ξ_0 * (0.0,-0.5,0.0) + ξ_1 * (0.5,-0.5,0.0) + ξ_2 * (0.0,-0.5,0.5)
-    // (0,0,1) + ξ_0 * (0.0,0.5,-0.5) + ξ_1 * (0.5,0.0,-0.5) + ξ_2 * (0.0,0.0,-0.5)
-    //
-    // TODO: Expanding this to other topologies would consist of constructing another delta
-    // and origin set for each of pyramid and prism.
-    constexpr std::array<std::array<std::array<double, 3>, 3>, 4> delta = []() {
-          std::array<std::array<std::array<double, 3>, 3>, 4> delta{};
-          // Hex 0
-          delta[0][0] = { 0.5, 0.0, 0.0};
-          delta[0][1] = { 0.0, 0.5, 0.0};
-          delta[0][2] = { 0.0, 0.0, 0.5};
-          // Hex 1
-          delta[1][0] = {-0.5, 0.5, 0.0};
-          delta[1][1] = {-0.5, 0.0, 0.0};
-          delta[1][2] = {-0.5, 0.0, 0.5};
-          // Hex 2
-          delta[2][0] = { 0.0,-0.5, 0.0};
-          delta[2][1] = { 0.5,-0.5, 0.0};
-          delta[2][2] = { 0.0,-0.5, 0.5};
-          // Hex 3
-          delta[3][0] = { 0.0, 0.5,-0.5};
-          delta[3][1] = { 0.5, 0.0,-0.5};
-          delta[3][2] = { 0.0, 0.0,-0.5};
-          return delta;
-      }();
+    // system. Each hexahedra spans a different set of the tet's reference coordinates. To
+    // convert between, define the reference coordinate locations of each of the vertices
+    // the hexahedra will use, then perform trilinear interpolation in the reference space.
+
+    auto [vert_loc, edge_loc, face_loc] = []()
+    {
+      std::array<std::array<double, 3>, 4> vert_loc{};
+      vert_loc[0] = {0.0, 0.0, 0.0};
+      vert_loc[1] = {1.0, 0.0, 0.0};
+      vert_loc[2] = {0.0, 1.0, 0.0};
+      vert_loc[3] = {0.0, 0.0, 1.0};
+      std::array<std::array<double, 3>, 6> edge_loc{};
+      edge_loc[0] = {0.5, 0.0, 0.0};
+      edge_loc[1] = {0.0, 0.5, 0.0};
+      edge_loc[2] = {0.0, 0.0, 0.5};
+      edge_loc[3] = {0.5, 0.5, 0.0};
+      edge_loc[4] = {0.5, 0.0, 0.5};
+      edge_loc[5] = {0.0, 0.5, 0.5};
+      std::array<std::array<double, 3>, 6> face_loc{};
+      face_loc[0] = {1.0 / 3, 1.0 / 3, 1.0 / 3};
+      face_loc[1] = {0.0, 1.0 / 3, 1.0 / 3};
+      face_loc[2] = {1.0 / 3, 0.0, 1.0 / 3};
+      face_loc[3] = {1.0 / 3, 1.0 / 3, 0.0};
+      return std::make_tuple(vert_loc, edge_loc, face_loc);
+    }();
+    std::array<double, 3> centroid{{0.25, 0.25, 0.25}};
 
     // We assume the Nodes field is of a single order, and there is a single tet originally.
     // The nodes within the reference hex and parent tet are always the same, so we use the
@@ -717,23 +702,64 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
     // linear, and construct the transformation explicitly.
     const auto *orig_FE = orig_mesh.GetNodes()->FESpace()->GetTypicalFE();
     const auto *child_FE = hex_mesh.GetNodes()->FESpace()->GetTypicalFE();
-    mfem::DenseTensor shape(orig_FE->GetDof(), sdim, 4);
-    mfem::Vector col; // For slicing into matrices within shape
+    // Original shape function (i), at new element nodes (j), for each new element (k).
+    mfem::DenseTensor shape(orig_FE->GetDof(), child_FE->GetDof(), 4);
+    mfem::Vector col;  // For slicing into matrices within shape
     for (int i = 0; i < 4; i++)
     {
-      // Define the "origin" of the hex system
-      std::array<double,3> origin{{i==1 ? 1.0 : 0.0, i==2 ? 1.0 : 0.0, i==3 ? 1.0 : 0.0}};
+      // Collect the vertices of the new hex within the tet.
+      std::array<std::array<double, 3>, 8> hex_verts;
+      hex_verts[0] = vert_loc[i];
+      hex_verts[1] = edge_loc[tet_vertex_edge_map[3 * i + 0]];
+      hex_verts[2] = face_loc[tet_vertex_face_map[3 * i + 0]];
+      hex_verts[3] = edge_loc[tet_vertex_edge_map[3 * i + 1]];
+      hex_verts[4] = edge_loc[tet_vertex_edge_map[3 * i + 2]];
+      hex_verts[5] = face_loc[tet_vertex_face_map[3 * i + 1]];
+      hex_verts[6] = centroid;
+      hex_verts[7] = face_loc[tet_vertex_face_map[3 * i + 2]];
       for (int j = 0; j < child_FE->GetNodes().Size(); j++)
       {
-        const auto &child_node = child_FE->GetNodes()[j];
-        mfem::IntegrationPoint child_node_in_orig;
-        child_node_in_orig.Set3(
-          origin[0] + child_node.x * delta[i][0][0] + child_node.y * delta[i][1][0] + child_node.z * delta[i][2][0],
-          origin[1] + child_node.x * delta[i][0][1] + child_node.y * delta[i][1][1] + child_node.z * delta[i][2][1],
-          origin[2] + child_node.x * delta[i][0][2] + child_node.y * delta[i][1][2] + child_node.z * delta[i][2][2]
-        );
+        const auto &cn = child_FE->GetNodes()[j];
+        mfem::IntegrationPoint cn_in_orig;
+
+        // Perform trilinear interpolation from (u,v,w) the unit ref coords in the new hex,
+        // and the corresponding nodes in the containing tet.
+        // clang-format off
+        // x component
+        cn_in_orig.x =
+          hex_verts[0][0] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][0] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][0] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][0] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][0] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][0] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][0] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][0] * (1-cn.x) * cn.y     * cn.z;
+
+        // y component
+        cn_in_orig.y =
+          hex_verts[0][1] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][1] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][1] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][1] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][1] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][1] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][1] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][1] * (1-cn.x) * cn.y     * cn.z;
+
+        // z component
+        cn_in_orig.z =
+          hex_verts[0][2] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][2] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][2] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][2] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][2] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][2] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][2] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][2] * (1-cn.x) * cn.y     * cn.z;
+        // clang-format on
         shape(i).GetColumnReference(j, col);
-        orig_FE->CalcShape(child_node_in_orig, col);
+        orig_FE->CalcShape(cn_in_orig, col);
       }
     }
 
@@ -741,17 +767,22 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
     // within the containing tet. Extracting the specific element dof values, and applying
     // to the correct shape slice will now give the requisite higher order dofs evaluated at
     // the refined elements nodes.
-    mfem::Array<int> vertices, edges, faces, orients, hex_dofs;
-    mfem::DenseMatrix point_matrix(child_FE->GetDof(), sdim); // sdim x nnode_child
+    mfem::Array<int> hex_dofs;
+    mfem::DenseMatrix point_matrix(child_FE->GetDof(), sdim);  // nnode_child x sdim
     mfem::Vector dof_vals(orig_FE->GetDof() * sdim);
     mfem::DenseMatrix dof_vals_mat(dof_vals.GetData(), orig_FE->GetDof(), sdim);
     for (int e = 0; e < ne_tet; ++e)
     {
+      // Returns byNODES no matter what, because FiniteElementSpace::GetElementVDofs does.
+      // Matches the GetElementVDofs call below, which similarly always uses byNODES.
       orig_mesh.GetNodes()->GetElementDofValues(e, dof_vals);
       for (int i = 0; i < 4; i++)
       {
+        // shape(i) : orig_FE->GetDof() x hex_FE->GetDof()
+        // dof_vals_mat : orig_FE->GetDof() x sdim
+        // point_matrix : child_FE->GetDof() x sdim
         MultAtB(shape(i), dof_vals_mat, point_matrix);
-        hex_mesh.GetNodes()->FESpace()->GetElementVDofs(4*e + i, hex_dofs);
+        hex_mesh.GetNodes()->FESpace()->GetElementVDofs(4 * e + i, hex_dofs);
         hex_mesh.GetNodes()->SetSubVector(hex_dofs, point_matrix.GetData());
       }
     }
@@ -879,7 +910,7 @@ void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
         continue;
       }
       MFEM_VERIFY(attr > 0, "Attribute number less than one!");
-      MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
+      MFEM_VERIFY(marker[attr - 1] == 0, "Repeated attribute in attribute list!");
       marker[attr - 1] = 1;
     }
   }
@@ -1807,7 +1838,7 @@ void TransferHighOrderNodes(const mfem::Mesh &orig_mesh, mfem::Mesh &new_mesh,
 }
 
 void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
-               const std::vector<int> &mat_attr_list, bool preserve_curvature)
+               const std::vector<int> &mat_attr_list)
 {
   auto mat_marker = mesh::AttrToMarker(
       orig_mesh->attributes.Size() ? orig_mesh->attributes.Max() : 0, mat_attr_list, true);
@@ -1903,7 +1934,7 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
 }
 
 void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex,
-                       bool make_hex, bool preserve_curvature)
+                       bool make_hex)
 {
   if (!make_simplex && !make_hex)
   {
