@@ -904,7 +904,10 @@ void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    if (opC)
+    {
+      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    }
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
@@ -986,7 +989,10 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
-  opC->AddMult(x, r, l);
+  if (opC)
+  {
+    opC->AddMult(x, r, l);
+  }
   opM->AddMult(x, r, l * l);
   if (has_A2)
   {
@@ -1005,7 +1011,7 @@ PetscReal SlepcPEPLinearSolver::GetBackwardScaling(PetscScalar l) const
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
   }
-  if (normC <= 0.0)
+  if (normC <= 0.0 && opC)
   {
     normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
   }
@@ -1297,7 +1303,10 @@ void SlepcPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    if (opC)
+    {
+      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    }
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
@@ -1343,7 +1352,10 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
   opK->Mult(x, r);
-  opC->AddMult(x, r, l);
+  if (opC)
+  {
+    opC->AddMult(x, r, l);
+  }
   opM->AddMult(x, r, l * l);
   if (has_A2)
   {
@@ -1362,7 +1374,7 @@ PetscReal SlepcPEPSolver::GetBackwardScaling(PetscScalar l) const
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
   }
-  if (normC <= 0.0)
+  if (normC <= 0.0 && opC)
   {
     normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
   }
@@ -1463,7 +1475,14 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x2;
-  ctx->opC->Mult(ctx->x2, ctx->y2);
+  if (ctx->opC)
+  {
+    ctx->opC->Mult(ctx->x2, ctx->y2);
+  }
+  else
+  {
+    ctx->y2 = 0.0;
+  }
   if (ctx->has_A2)
   {
     ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
@@ -1610,7 +1629,14 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
   PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opC->Mult(ctx->x1, ctx->y1);
+  if (ctx->opC)
+  {
+    ctx->opC->Mult(ctx->x1, ctx->y1);
+  }
+  else
+  {
+    ctx->y1 = 0.0;
+  }
   if (ctx->has_A2)
   {
     ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
