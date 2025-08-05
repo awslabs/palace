@@ -32,15 +32,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "openmp", default=False, description="Use OpenMP for shared-memory parallelism"
     )
     variant(
-        "superlu-dist",
-        default=True,
-        description="Build with SuperLU_DIST sparse direct solver",
+        "superlu-dist", default=True, description="Build with SuperLU_DIST sparse direct solver"
     )
-    variant(
-        "strumpack",
-        default=False,
-        description="Build with STRUMPACK sparse direct solver",
-    )
+    variant("strumpack", default=False, description="Build with STRUMPACK sparse direct solver")
     variant(
         "sundials",
         default=True,
@@ -81,10 +75,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("eigen")
 
     ## -- Sparse Direct Solvers --
-    conflicts(
-        "~superlu-dist~strumpack~mumps",
-        msg="Need at least one sparse direct solver",
-    )
+    conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
 
     ## -- MUMPS --
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
@@ -202,9 +193,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP"
     )
     conflicts(
-        "cuda_arch=none",
-        when="+cuda",
-        msg="palace: Please specify a CUDA arch value / values",
+        "cuda_arch=none", when="+cuda", msg="palace: Please specify a CUDA arch value / values"
     )
     conflicts(
         "amdgpu_target=none",
