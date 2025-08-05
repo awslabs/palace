@@ -32,9 +32,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "openmp", default=False, description="Use OpenMP for shared-memory parallelism"
     )
     variant(
-        "superlu-dist", default=True, description="Build with SuperLU_DIST sparse direct solver"
+        "superlu-dist",
+        default=True,
+        description="Build with SuperLU_DIST sparse direct solver",
     )
-    variant("strumpack", default=False, description="Build with STRUMPACK sparse direct solver")
+    variant(
+        "strumpack",
+        default=False,
+        description="Build with STRUMPACK sparse direct solver",
+    )
     variant(
         "sundials",
         default=True,
@@ -53,11 +59,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build with GSLIB library for high-order field interpolation",
     )
 
-    ## -- Patches for Spack Build System --
+    # -- Patches for Spack Build System --
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
 
-    ## -- Core Dependencies --
+    # -- Core Dependencies --
     # NOTE: We can't depend on git tagged versions here
     #       https://github.com/spack/spack/issues/50171
     #       Instead, version in environment / spec
@@ -74,10 +80,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared")
     depends_on("eigen")
 
-    ## -- Sparse Direct Solvers --
-    conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
+    # -- Sparse Direct Solvers --
+    conflicts(
+        "~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver"
+    )
 
-    ## -- MUMPS --
+    # -- MUMPS --
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("mumps+metis+parmetis")
@@ -86,7 +94,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps+openmp", when="+openmp")
         depends_on("mumps~openmp", when="~openmp")
 
-    ## -- SuperLU-Dist --
+    # -- SuperLU-Dist --
     with when("+superlu-dist"):
         depends_on("superlu-dist+parmetis~cuda~rocm")
         depends_on("superlu-dist+shared", when="+shared")
@@ -96,7 +104,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("superlu-dist+openmp", when="+openmp")
         depends_on("superlu-dist~openmp", when="~openmp")
 
-    ## -- Strumpack --
+    # -- Strumpack --
     with when("+strumpack"):
         depends_on("strumpack+butterflypack+zfp+parmetis~cuda~rocm")
         depends_on("strumpack+shared", when="+shared")
@@ -104,10 +112,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
-    ## -- Eigenvalue Solvers --
+    # -- Eigenvalue Solvers --
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
-    ## -- SLEPc --
+    # -- SLEPc --
     with when("+slepc"):
         depends_on("slepc~arpack")
         depends_on("slepc~cuda", when="~cuda")
@@ -122,26 +130,26 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("petsc~cuda", when="~cuda")
         depends_on("petsc~rocm", when="~rocm")
 
-    ## -- Arpack --
+    # -- Arpack --
     with when("+arpack"):
         depends_on("arpack-ng+mpi+icb")
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
 
-    ## -- gslib --
+    # -- gslib --
     with when("+gslib @0.14:"):
         depends_on("gslib+mpi")
         depends_on("gslib+shared", when="+shared")
         depends_on("gslib~shared", when="~shared")
 
-    ## -- METIS --
+    # -- METIS --
     depends_on("metis@5:")
     depends_on("metis+shared", when="+shared")
     depends_on("metis~shared", when="~shared")
     depends_on("metis+int64", when="+int64")
     depends_on("metis~int64", when="~int64")
 
-    ## -- HYPRE --
+    # -- HYPRE --
     conflicts(
         "^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers"
     )
@@ -155,7 +163,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~cuda", when="~cuda")
     depends_on("hypre~rocm", when="~rocm")
 
-    ## -- libxsmm --
+    # -- libxsmm --
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
         depends_on("libxsmm@=main blas=0")
@@ -165,10 +173,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # https://github.com/libxsmm/libxsmm/issues/883
         depends_on("libxsmm+shared")
 
-    ## -- libCEED --
+    # -- libCEED --
     depends_on("libceed@0.13:", when="@0.14:")
 
-    ## -- Sundials --
+    # -- Sundials --
     with when("+sundials @0.14:"):
         depends_on("sundials")
         depends_on("sundials+shared", when="+shared")
@@ -178,7 +186,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("sundials~cuda", when="~cuda")
         depends_on("sundials~rocm", when="~rocm")
 
-    ## -- GPU --
+    # -- GPU --
     conflicts(
         "+cuda",
         when="@:0.12",
@@ -193,7 +201,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP"
     )
     conflicts(
-        "cuda_arch=none", when="+cuda", msg="palace: Please specify a CUDA arch value / values"
+        "cuda_arch=none",
+        when="+cuda",
+        msg="palace: Please specify a CUDA arch value / values",
     )
     conflicts(
         "amdgpu_target=none",
@@ -201,7 +211,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         msg="palace: Please specify an AMD GPU target / targets",
     )
 
-    ## -- Magma --
+    # -- Magma --
     with when("+cuda") or when("+rocm"):
         depends_on("magma")
         depends_on("magma+shared", when="+shared")
@@ -295,17 +305,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             )
 
         if self.spec.satisfies("@:0.13"):
-            # In v0.13 and prior libCEED and gslib were internally built and required the libxsmm and
-            # magma build information be passed in.
+            # In v0.13 and prior libCEED and gslib were internally built and required the libxsmm
+            # and magma build information be passed in.
             if "+libxsmm" in self.spec:
-                args.append(self.define("LIBXSMM_DIR", self.spec["libxsmm"].prefix))  # type: ignore
+                args.append(self.define("LIBXSMM_DIR", self.spec["libxsmm"].prefix))
             if "+cuda" in self.spec or "+rocm" in self.spec:
-                args.append(self.define("MAGMA_DIR", self.spec["magma"].prefix))  # type: ignore
+                args.append(self.define("MAGMA_DIR", self.spec["magma"].prefix))
         else:
             # After v 0.13 gslib and libceed is built externally and the directories passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
             if "+gslib" in self.spec:
-                args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))  # type: ignore
+                args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         return args
 
