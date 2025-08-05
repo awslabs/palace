@@ -706,7 +706,7 @@ public:
   double target_upper = -1;
 
   // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
-  int preconditioner_lag = 5;
+  int preconditioner_lag = 50;
 
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.
