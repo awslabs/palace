@@ -671,8 +671,8 @@ ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   normK = normC = normM = 0.0;
 }
 
-void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K, const ComplexOperator &C,
-                                   const ComplexOperator &M,
+void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                   const ComplexOperator &C, const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
@@ -883,7 +883,8 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
   opM->AddMult(x, r, l * l);
   if (has_A2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()), Operator::DIAG_ZERO);
+    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+                                                              Operator::DIAG_ZERO);
     A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   return linalg::Norml2(comm, r);

@@ -254,8 +254,9 @@ public:
   ArpackPEPSolver(MPI_Comm comm, int print);
 
   using ArpackEigenvalueSolver::SetOperators;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
 
   int Solve() override;
 };
