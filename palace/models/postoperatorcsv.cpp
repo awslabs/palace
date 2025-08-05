@@ -250,7 +250,7 @@ std::string LabelIndexCol(const ProblemType solver_t)
     case ProblemType::TRANSIENT:
       return "t (ns)";
     default:
-      return "unkown";
+      return "unknown";
   }
 }
 int PrecIndexCol(const ProblemType solver_t)
