@@ -48,8 +48,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
+  PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
@@ -214,8 +213,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
+  PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
