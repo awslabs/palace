@@ -72,6 +72,7 @@ set_property(
 target_compile_definitions(
   unit-tests
   PUBLIC "PALACE_TEST_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+  PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
 )
 
 # Status messages for test target

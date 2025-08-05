@@ -624,7 +624,6 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
         hex_v[5] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 1]];
         hex_v[6] = nv_tet + nedge_tet + nface_tet + e;
         hex_v[7] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 2]];
-        fmt::print("hex_v {}\n", hex_v);
         hex_mesh.AddHex(hex_v, orig_mesh.GetAttribute(e));
       }
     }
