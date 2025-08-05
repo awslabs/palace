@@ -45,14 +45,6 @@ void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
   MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
 }
 
-// void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
-//   const ComplexOperator &K,
-//   const ComplexOperator &M,
-//   EigenvalueSolver::ScaleType type)
-//{
-// MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-// }
-
 void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
                                              const ComplexOperator &K,
                                              const ComplexOperator &C,
@@ -99,6 +91,7 @@ void NonLinearEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
   {
     res.reset();
     xscale.reset();
+    perm.reset();
   }
   nev = num_eig;
 }
@@ -159,21 +152,18 @@ void NonLinearEigenvalueSolver::SetInitialGuess(
 
 std::complex<double> NonLinearEigenvalueSolver::GetEigenvalue(int i) const
 {
-  // MFEM_VERIFY(eig && i >= 0 && i < nev,
   MFEM_VERIFY(i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
   const int &j = perm.get()[i];
-  return eigenvalues[j];  // eig.get()[j];
+  return eigenvalues[j];
 }
 
 void NonLinearEigenvalueSolver::GetEigenvector(int i, ComplexVector &x) const
 {
-  // MFEM_VERIFY(eig && i >= 0 && i < nev,
   MFEM_VERIFY(i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
   MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
   const int &j = perm.get()[i];
-  // x.Set(V.get() + j * n, n, false);
   x = eigenvectors[j];
   if (xscale.get()[j] > 0.0)
   {
@@ -196,7 +186,6 @@ double NonLinearEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &x,
 
 double NonLinearEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
-  // MFEM_VERIFY(eig && i >= 0 && i < nev,
   MFEM_VERIFY(i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
   const int &j = perm.get()[i];
@@ -205,10 +194,8 @@ double NonLinearEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType ty
     case ErrorType::ABSOLUTE:
       return res.get()[j];
     case ErrorType::RELATIVE:
-      // return res.get()[j] / std::abs(eig.get()[j]);
       return res.get()[j] / std::abs(eigenvalues[j]);
     case ErrorType::BACKWARD:
-      // return res.get()[j] / GetBackwardScaling(eig.get()[j]);
       return res.get()[j] / GetBackwardScaling(eigenvalues[j]);
   }
   return 0.0;
@@ -220,10 +207,8 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
   xscale = std::make_unique<double[]>(num_eig);
   for (int i = 0; i < num_eig; i++)
   {
-    // x1.Set(V.get() + i * n, n, false);
     x1 = eigenvectors[i];
     xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
-    // res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
     res.get()[i] = GetResidualNorm(eigenvalues[i], x1, y1) / linalg::Norml2(comm, x1);
   }
 }
@@ -283,12 +268,10 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexO
   x2.SetSize(opK->Height());
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
-  // z1.SetSize(opK->Height());
   x1.UseDevice(true);
   x2.UseDevice(true);
   y1.UseDevice(true);
   y2.UseDevice(true);
-  // z1.UseDevice(true);
 }
 
 namespace
@@ -318,7 +301,6 @@ ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::Vecto
                           zi[i] += y(j).imag() * XR[i] + y(j).real() * XI[i];
                         });
   }
-  //std::cout << "L318 " << " zr[11]: " << zr[11] << " zi[11]: " << zi[11] << "\n";
   return z;
 }
 
@@ -338,6 +320,7 @@ int QuasiNewtonSolver::Solve()
   // store the extended solution: [v, v2] where v is a ComplexVector distributed across all
   // processes and v2 is an Eigen::VectorXcd stored redundantly on all processes.
 
+  // Palace ComplexVectors of size n.
   ComplexVector v, u, w, c, w0, z;
   std::vector<ComplexVector> X;
   v.SetSize(n);
@@ -353,10 +336,13 @@ int QuasiNewtonSolver::Solve()
   w0.UseDevice(true);
   z.UseDevice(true);
 
+  // Eigen Matrix/Vectors for extended operator of size k.
+  Eigen::MatrixXcd H;
+  Eigen::VectorXcd u2, z2, c2, w2, v2;
+
   // Reset any previously computed eigenpairs.
   eigenvalues.clear();
   eigenvectors.clear();
-  eigenvalues.reserve(nev);
   eigenvectors.reserve(nev);
   X.reserve(nev);
 
@@ -366,11 +352,11 @@ int QuasiNewtonSolver::Solve()
     nleps_it = 100;
   }
 
-  const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
-  space_op->GetWavePortOp().SetSuppressOutput(true);  // suppressoutput?
+  // Delta used in to compute divided difference Jacobian.
+  const auto delta = std::sqrt(std::numeric_limits<double>::epsilon());
 
-  Eigen::MatrixXcd H;
-  Eigen::VectorXcd u2, z2, c2, w2, v2;
+  // Suppress wave port output during Newton iterations.
+  space_op->GetWavePortOp().SetSuppressOutput(true);
 
   // Set a seed and distribution for random Eigen vectors to ensure the same values on all
   // ranks.
@@ -378,49 +364,10 @@ int QuasiNewtonSolver::Solve()
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
-  bool deflation = true;
-  const double deflation_tol = rtol;// * 100.0; // test
-
-  /**/
-  // not sure where to put it
-  auto extractEigenpair = [&](const int eig_idx, std::complex<double> &lambda, ComplexVector &eigv)
-  {
-    const int num_eig = eigenvalues.size();
-    MFEM_VERIFY(eig_idx < num_eig, "Desired eigenvalue index exceeds the size of the invariant pair!");
-    // Eigenpair extraction from the invariant pair (X, H).
-    Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-    eps.compute(H);
-    perm = std::make_unique<int[]>(num_eig);  // use this or order below??
-    std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()),
-        order2(eigenvalues.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::iota(order_eigen.begin(), order_eigen.end(), 0);
-    std::iota(order2.begin(), order2.end(), 0);
-    std::sort(order.begin(), order.end(), [&eigen_values = this->eigenvalues](auto l, auto r)
-             { return eigen_values[l].imag() < eigen_values[r].imag(); });
-    std::sort(order_eigen.begin(), order_eigen.end(),
-              [&epseig = eps.eigenvalues()](auto l, auto r)
-              { return epseig(l).imag() < epseig(r).imag(); });
-    std::sort(order2.begin(), order2.end(),
-              [&order](auto l, auto r) { return order[l] < order[r]; });
-
-    // Sort Eigen eigenvectors.
-    std::vector<Eigen::VectorXcd> Xeig;
-    for (int i = 0; i < num_eig; i++)
-    {
-      perm[i] = order[i];  // stupid, only use one of perm and order!
-      Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
-    }
-    lambda = eigenvalues[eig_idx];
-    eigv = MatVecMult(X, Xeig[order2[eig_idx]], true);
-  };
-  /**/
-
   const int num_init_guess = init_eigenvalues.size();
   int k = 0, restart = 0, guess_idx = 0;
   while (k < nev)
   {
-    deflation = true;  // false; // just for tests!
     // If > max_restart with the same initial guess, skip to next initial guess.
     // If we tried all initial guesses and the random guess, end search even if k < nev.
     if (restart > max_restart)
@@ -449,33 +396,26 @@ int QuasiNewtonSolver::Solve()
       space_op->GetRandomInitialVector(v);
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
-    //std::cout << "L409 eig: " << eig.real() << "+" << eig.imag() << "i mean(v): " << linalg::Mean(GetComm(), v) << "\n";
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
     linalg::SetRandom(GetComm(), c, seed);  // Set seed for deterministic behavior
-    // c = 1.0;
-    // space_op->GetRandomInitialVector(c); //?
-    //space_op->GetConstantInitialVector(c);  //?
     c2.conservativeResize(k);
     v2.conservativeResize(k);
     for (int i = 0; i < k; i++)
     {
-      c2(i) = std::complex<double>(dis(gen), dis(gen)); // 1.0?
-      v2(i) = std::complex<double>(dis(gen), dis(gen)); // 0.0?
+      c2(i) = std::complex<double>(dis(gen), dis(gen));
+      v2(i) = std::complex<double>(dis(gen), dis(gen));
     }
 
+    // Normalize random c vector.
+    double norm_c = std::sqrt(linalg::Norml2(GetComm(), c, true) + c2.squaredNorm());
+    c *= 1.0 / norm_c;
+    c2 *= 1.0 / norm_c;
+
     // Normalize eigenvector estimate.
-    double norm_v; //= std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-    if (deflation)
-    {
-      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-      v2 *= 1.0 / norm_v;
-    }
-    else
-    {
-      norm_v = linalg::Norml2(GetComm(), v);
-    }
+    double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
     v *= 1.0 / norm_v;
+    v2 *= 1.0 / norm_v;
 
     // Set the linear solver operators.
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
@@ -497,7 +437,7 @@ int QuasiNewtonSolver::Solve()
       // x2 = SS^-1 (b2 - A x1) where SS = (B - A T^-1 U) = - X^* X S^-1
       // x1 = x1 - X S x2
       opInv->Mult(b1, x1);
-      if (k == 0 or !deflation)
+      if (k == 0)  // no deflation
       {
         return;
       }
@@ -514,21 +454,18 @@ int QuasiNewtonSolver::Solve()
           SS(i, j) = linalg::Dot(GetComm(), X[i], X[j]);
         }
       }
-      //const auto S = (eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
-      const auto S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
-      // SS = - SS * S;
-      SS = -SS * S.inverse(); // can we avoid this inverse?
-      //x2 = SS.inverse() * x2;
-      x2 = SS.colPivHouseholderQr().solve(x2);
-      //ComplexVector XSx2 = MatVecMult(X, S * x2, true);
-      ComplexVector XSx2 = MatVecMult(X, S.colPivHouseholderQr().solve(x2), true);
+      const Eigen::MatrixXcd S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
+      SS = -S.fullPivLu().solve(SS);
+      x2 = SS.fullPivLu().solve(x2);
+      const ComplexVector XSx2 = MatVecMult(X, S.fullPivLu().solve(x2), true);
       linalg::AXPY(-1.0, XSx2, x1);
-      //std::cout << "L469 rank: " << Mpi::Rank(GetComm()) << " b2: " << b2 << "\n";
-      //std::cout << "L470 rank: " << Mpi::Rank(GetComm()) << " x2: " << x2 << "\n";
     };
 
-    // Compute w0 = T^-1 c.
+    // Compute w0 = T^-1 c and normalize it.
     deflated_solve(c, c2, w0, w2);
+    double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
+    w0 *= 1.0 / norm_w0;
+    w2 *= 1.0 / norm_w0;
 
     // Newton iterations.
     double res = mfem::infinity();
@@ -541,24 +478,18 @@ int QuasiNewtonSolver::Solve()
       auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig,
                                          opK, opC, opM, A2n.get());
       A->Mult(v, u);
-      if (k > 0 && deflation)  // Deflation
+      if (k > 0)  // Deflation
       {
         // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
-        //const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
-        const auto S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-        //ComplexVector XSv2 = MatVecMult(X, S * v2, true);
-        ComplexVector XSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(v2), true);
+        const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
+        const ComplexVector XSv2 = MatVecMult(X, S.fullPivLu().solve(v2), true);
         A->AddMult(XSv2, u, 1.0);
         // u2 = X^* v1
         u2.conservativeResize(k);
         for (int j = 0; j < k; j++)
         {
           u2(j) = linalg::Dot(GetComm(), v, X[j]);
-          //std::cout << "L501 rank: " << Mpi::Rank(GetComm())
-          //          << " mean(v): " << linalg::Mean(GetComm(), v)
-          //          << " norm X[j]: " << linalg::Mean(GetComm(), X[j]) << "\n";
         }
-        //std::cout << "L503 rank: " << Mpi::Rank(GetComm()) << " u2: " << u2 << "\n";
       }
 
       // Compute residual.
@@ -569,6 +500,7 @@ int QuasiNewtonSolver::Solve()
                    "{:d} NLEPS (nconv={:d}, restart={:d}) residual norm {:.6e}\n", it, k,
                    restart, res);
       }
+
       // End if residual below tolerance and eigenvalue above the target.
       if (res < rtol)
       {
@@ -585,24 +517,20 @@ int QuasiNewtonSolver::Solve()
         eigenvalues[k] = eig;
         X.resize(k + 1);
         X[k] = v;
-        //eigenvalues.push_back(eig);
-        //X.push_back(v);
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        std::cout << "replacing H("<<k<<") with v2: " << v2 / scale << "\n";
         H.col(k).head(k) = v2 / scale;
         H(k, k) = eig;
-        std::cout << "replacing H(k, k) to eig: " << eig.real() <<"+" << eig.imag() << "i\n";
-        //std::cout << "L529 rank: " << Mpi::Rank(GetComm()) << " H: " << H << "\n";
         k++;
         // If the eigenvalue is inside the desired range, increment initial guess index
-        // Otherwise, use the same initial guess again.
+        // Otherwise, use the same initial guess again and increment number of desired
+        // eigenvalues.
         if (eig.imag() > sigma.imag())
         {
           guess_idx++;
         }
         else
         {
-          nev++;  // increment number of desired eigenvalues
+          nev++;
         }
         restart = 0;  // reset restart counter
         break;
@@ -621,75 +549,45 @@ int QuasiNewtonSolver::Solve()
         restart++;
         break;
       }
-/**/
-      if (deflation && k > 0 && res < deflation_tol) // turn off deflation
-      {
-        Mpi::Print("\n\n TURNING OFF DEFLATION \n\n");
-        deflation = false;
-        // add to X, H
-        // copied from above, make it a separate function?
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        eigenvalues.resize(k + 1);
-        eigenvalues[k] = eig;
-        X.resize(k + 1);
-        X[k] = v;
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        std::cout << "setting H("<<k<<") to v2: " << v2 / scale << "\n";
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        std::cout << "setting H(k, k) to eig: " << eig.real() <<"+" << eig.imag() << "i\n";
 
-        // extract eigenpair from invariant pair
-        Mpi::Print("eig before extract: {}+{}i\n", eig.real(), eig.imag());
-        extractEigenpair(k, eig, v);
-        Mpi::Print("eig after extract: {}+{}i\n", eig.real(), eig.imag());
-        //u2.setZero(); // or not ?
-        //v2.setZero(); // or not ?
-      }
-/**/
       // Compute w = J * v.
       auto opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(
-          std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO);
-      // std::complex<double> denom = dl * std::abs(eig.imag());
-      std::complex<double> denom =
-          std::complex<double>(0.0, dl * std::abs(eig.imag()));  // ??? test
+          std::abs(eig.imag()) * (1.0 + delta), Operator::DIAG_ZERO);
+      const std::complex<double> denom =
+          std::complex<double>(0.0, delta * std::abs(eig.imag()));
       auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
           denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
       auto opJ = space_op->GetSystemMatrix(
           std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0),
           std::complex<double>(2.0, 0.0) * eig, opK, opC, opM, opAJ.get());
       opJ->Mult(v, w);
-      if (k > 0 && deflation)  // Deflation
+      if (k > 0)  // Deflation
       {
         // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2
-        //const auto S = (eig * Eigen::MatrixXcd::Identity(k, k) - H).inverse();
-        const auto S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-        //ComplexVector XSv2 = MatVecMult(X, S * v2, true);
-        ComplexVector XSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(v2), true);
-        //ComplexVector XSSv2 = MatVecMult(X, S * S * v2, true);
-        ComplexVector XSSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(S.colPivHouseholderQr().solve(v2)), true);
+        const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
+        const Eigen::VectorXcd Sv2 = S.fullPivLu().solve(v2);
+        const ComplexVector XSv2 = MatVecMult(X, Sv2, true);
+        const ComplexVector XSSv2 = MatVecMult(X, S.fullPivLu().solve(Sv2), true);
         opJ->AddMult(XSv2, w, 1.0);
         A->AddMult(XSSv2, w, -1.0);
       }
 
       // Compute delta = - dot(w0, u) / dot(w0, w).
-      std::complex<double> u2_w0 =
-          deflation ? std::complex<double>(w2.adjoint() * u2) : 0.0;
-      //std::cout << "L583 rank: " << Mpi::Rank(GetComm()) << " u2_w0: " << u2_w0 << "\n";
-      std::complex<double> delta =
+      const std::complex<double> u2_w0 = std::complex<double>(w2.adjoint() * u2);
+      const std::complex<double> delta =
           -(linalg::Dot(GetComm(), u, w0) + u2_w0) / linalg::Dot(GetComm(), w, w0);
 
       // Update eigenvalue.
       eig += delta;
-      //std::cout << "L589 rank: " << Mpi::Rank(GetComm()) << " eig: " << eig.real() << "+"
-      //          << eig.imag() << "i\n";
 
       // Compute z = -(delta * w + u).
       z.AXPBYPCZ(-delta, w, -1.0, u, 0.0);
       z2 = -u2;
 
-      //  M (x_k+1 - x_k) = z.
+      //  Update preconditioner if needed. In most cases, updating the preconditioner as
+      //  infrequently as possible gives the best performance and robustness. Updating the
+      //  preconditioner frequently, especially when close to an eigenvalue, can lead to
+      //  numerical instability.
       if (it > 0 && it % preconditioner_lag == 0)
       {
         eig_opInv = eig;
@@ -700,27 +598,23 @@ int QuasiNewtonSolver::Solve()
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
             std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
+        // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
+        double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
+        w0 *= 1.0 / norm_w0;
+        w2 *= 1.0 / norm_w0;
       }
+
+      // Solve M (v_k+1 - v_k) = z.
       deflated_solve(z, z2, u, u2);
 
       // Update and normalize eigenvector estimate.
-      if (deflation) v2 += u2;
-      //std::cout << "L614 rank: " << Mpi::Rank(GetComm()) << " u2: " << u2 << "\n";
-      //std::cout << "L615 rank: " << Mpi::Rank(GetComm()) << " v2: " << v2 << "\n";
       v += u;
-      if (deflation)
-      {
-        norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-        v2 *= 1.0 / norm_v;
-      }
-      else
-      {
-        norm_v = linalg::Norml2(GetComm(), v);
-      }
+      v2 += u2;
+      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
       v *= 1.0 / norm_v;
+      v2 *= 1.0 / norm_v;
 
-      //std::cout << "L620 rank: " << Mpi::Rank(GetComm()) << " v2: " << v2 << "\n";
       it++;
       if (it == nleps_it)
       {
@@ -738,54 +632,39 @@ int QuasiNewtonSolver::Solve()
   nev = k;  // in case some guesses did not converge
 
   // Eigenpair extraction from the invariant pair (X, H).
-  /*
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
-  perm = std::make_unique<int[]>(nev);  // use this or order below??
-  std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()),
-      order2(eigenvalues.size());
-  std::iota(order.begin(), order.end(), 0);
+  // EPS eigenvectors are ordered arbitrarily, need to match them to our order.
+  perm = std::make_unique<int[]>(nev);
+  std::vector<int> order_eigen(nev), order2(nev);
+  std::iota(perm.get(), perm.get() + nev, 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
   std::iota(order2.begin(), order2.end(), 0);
-  std::sort(order.begin(), order.end(), [&eigen_values = this->eigenvalues](auto l, auto r)
+  std::sort(perm.get(), perm.get() + nev, [&eigen_values = this->eigenvalues](auto l, auto r)
             { return eigen_values[l].imag() < eigen_values[r].imag(); });
   std::sort(order_eigen.begin(), order_eigen.end(),
             [&epseig = eps.eigenvalues()](auto l, auto r)
             { return epseig(l).imag() < epseig(r).imag(); });
-  std::sort(order2.begin(), order2.end(),
-            [&order](auto l, auto r) { return order[l] < order[r]; });
+  std::sort(order2.begin(), order2.end(), [&](auto l, auto r) { return perm[l] < perm[r]; });
 
   // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;
   for (int i = 0; i < nev; i++)
   {
-    perm[i] = order[i];  // stupid, only use one of perm and order!
     Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
   }
-  */
-
 
   // Recover the eigenvectors of the original problem.
   for (int i = 0; i < nev; i++)
   {
-    std::complex<double> eig;
-    extractEigenpair(i, eig, v);
-    eigenvectors.push_back(v);
-    //ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
-    //if (deflation) // this is bad/stupid?
-    //{
-    //  eigenvectors.push_back(eigv);
-    //}
-    //else
-    //{
-    //  eigenvectors.push_back(X[i]);
-    //}
+    ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
+    eigenvectors.push_back(eigv);
   }
 
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
 
-  space_op->GetWavePortOp().SetSuppressOutput(false);  // reset?
+  space_op->GetWavePortOp().SetSuppressOutput(false);
 
   return nev;
 }
@@ -826,563 +705,6 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
   double t = std::abs(l);
   return normK + t * normC + t * t * normM;
 }
-
-
-
-// Residual Inverse Iteration specific methods.
-RIINewtonSolver::RIINewtonSolver(MPI_Comm comm, int print)
-  : NonLinearEigenvalueSolver(comm, print)
-{
-  opK = opC = opM = nullptr;
-  normK = normC = normM = 0.0;
-}
-
-// Set the update frequency of the preconditioner.
-void RIINewtonSolver::SetPreconditionerLag(int preconditioner_update_freq)
-{
-  preconditioner_lag = preconditioner_update_freq;
-}
-
-// Set the maximum number of restarts with the same initial guess.
-void RIINewtonSolver::SetMaxRestart(int max_num_restart)
-{
-  max_restart = max_num_restart;
-}
-
-void RIINewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
-                                     const ComplexOperator &C, const ComplexOperator &M,
-                                     EigenvalueSolver::ScaleType type)
-{
-  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
-  bool first = (opK == nullptr);
-  opK = &K;
-  opC = &C;
-  opM = &M;
-  space_op = &space_op_ref;
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    if (opC)
-    {
-      normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
-    }
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
-                "Invalid matrix norms for Quasi-Newton scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / (normK + gamma * normC);
-    }
-  }
-
-  n = opK->Height();
-
-  // Set up workspace.
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  // z1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
-  // z1.UseDevice(true);
-}
-
-int RIINewtonSolver::Solve()
-{
-  // Residual inverse iteration REFERENCE HERE??!!?!!
-  // Using the deflation scheme used by SLEPc's NEP solver with minimality index set to 1.
-  // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
-  //            eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
-  // The deflation scheme solves an extended problem of size n + k, where n is the original
-  // problem size and k is the number of converged eigenpairs. The extended operators are
-  // never explicitly constructed and two separate vectors of length n and k are used to
-  // store the extended solution: [v, v2] where v is a ComplexVector distributed across all
-  // processes and v2 is an Eigen::VectorXcd stored redundantly on all processes.
-
-  ComplexVector u, v, w;
-  std::vector<ComplexVector> X;
-  v.SetSize(n);
-  u.SetSize(n);
-  w.SetSize(n);
-  v.UseDevice(true);
-  u.UseDevice(true);
-  w.UseDevice(true);
-
-  // Reset any previously computed eigenpairs.
-  eigenvalues.clear();
-  eigenvectors.clear();
-  eigenvalues.reserve(nev);
-  eigenvectors.reserve(nev);
-  X.reserve(nev);
-
-  // Set defaults.
-  if (nleps_it <= 0)
-  {
-    nleps_it = 40;
-  }
-
-  const auto dl = std::sqrt(std::numeric_limits<double>::epsilon());
-  space_op->GetWavePortOp().SetSuppressOutput(true);  // suppressoutput?
-
-  Eigen::MatrixXcd H;
-  Eigen::VectorXcd u2, v2, w2;
-
-  // Set a seed and distribution for random Eigen vectors to ensure the same values on all
-  // ranks.
-  unsigned int seed = nev;
-  std::mt19937 gen(seed);
-  std::uniform_real_distribution<> dis(-1.0, 1.0);
-
-  bool deflation = true;
-  const double deflation_tol = rtol;// * 100.0; // test
-
-  /**/
-  // not sure where to put it
-  auto extractEigenpair = [&](const int eig_idx, std::complex<double> &lambda, ComplexVector &eigv)
-  {
-    const int num_eig = eigenvalues.size();
-    MFEM_VERIFY(eig_idx < num_eig, "Desired eigenvalue index exceeds the size of the invariant pair!");
-    // Eigenpair extraction from the invariant pair (X, H).
-    Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-    eps.compute(H);
-    perm = std::make_unique<int[]>(num_eig);  // use this or order below??
-    std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()),
-        order2(eigenvalues.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::iota(order_eigen.begin(), order_eigen.end(), 0);
-    std::iota(order2.begin(), order2.end(), 0);
-    std::sort(order.begin(), order.end(), [&eigen_values = this->eigenvalues](auto l, auto r)
-             { return eigen_values[l].imag() < eigen_values[r].imag(); });
-    std::sort(order_eigen.begin(), order_eigen.end(),
-              [&epseig = eps.eigenvalues()](auto l, auto r)
-              { return epseig(l).imag() < epseig(r).imag(); });
-    std::sort(order2.begin(), order2.end(),
-              [&order](auto l, auto r) { return order[l] < order[r]; });
-
-    // Sort Eigen eigenvectors.
-    std::vector<Eigen::VectorXcd> Xeig;
-    for (int i = 0; i < num_eig; i++)
-    {
-      perm[i] = order[i];  // stupid, only use one of perm and order!
-      Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
-    }
-    lambda = eigenvalues[eig_idx];
-    eigv = MatVecMult(X, Xeig[order2[eig_idx]], true);
-  };
-  /**/
-
-  const int num_init_guess = init_eigenvalues.size();
-  int k = 0, restart = 0, guess_idx = 0;
-  while (k < nev)
-  {
-    deflation = true;  // false; // just for tests!
-    // If > max_restart with the same initial guess, skip to next initial guess.
-    // If we tried all initial guesses and the random guess, end search even if k < nev.
-    if (restart > max_restart)
-    {
-      if (guess_idx < num_init_guess)
-      {
-        guess_idx++;
-        restart = 0;
-      }
-      else
-      {
-        break;
-      }
-    }
-
-    // Set the eigenpair estimate to the initial guess.
-    std::complex<double> eig, eig_opInv;
-    if (guess_idx < num_init_guess)
-    {
-      eig = init_eigenvalues[guess_idx];
-      v = init_eigenvectors[guess_idx];
-    }
-    else
-    {
-      eig = sigma;
-      space_op->GetRandomInitialVector(v);
-    }
-    eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
-
-    v2.conservativeResize(k);
-    for (int i = 0; i < k; i++)
-    {
-      v2(i) = std::complex<double>(dis(gen), dis(gen)); // 0.0?
-    }
-
-    // Normalize eigenvector estimate.
-    double norm_v; //= std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-    if (deflation)
-    {
-      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-      v2 *= 1.0 / norm_v;
-    }
-    else
-    {
-      norm_v = linalg::Norml2(GetComm(), v);
-    }
-    v *= 1.0 / norm_v;
-
-    // Set the linear solver operators.
-    opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                           Operator::DIAG_ZERO);
-    opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
-                                    opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0),
-                                                             eig, eig * eig, eig.imag());
-    opInv->SetOperators(*opA, *opP);
-
-    // Linear solve with the extended operator of the deflated problem.
-    auto deflated_solve = [&](const ComplexVector &b1, const Eigen::VectorXcd &b2,
-                              ComplexVector &x1, Eigen::VectorXcd &x2)
-    {
-      // Solve the block linear system
-      // |T(σ) U(σ)| |x1| = |b1|
-      // |A(σ) B(σ)| |x2|   |b2|
-      // x1 = T^-1 b1
-      // x2 = SS^-1 (b2 - A x1) where SS = (B - A T^-1 U) = - X^* X S^-1
-      // x1 = x1 - X S x2
-      opInv->Mult(b1, x1);
-      if (k == 0 or !deflation)
-      {
-        return;
-      }
-      x2.conservativeResize(k);
-      for (int j = 0; j < k; j++)
-      {
-        x2(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);
-      }
-      Eigen::MatrixXcd SS(k, k);
-      for (int i = 0; i < k; i++)
-      {
-        for (int j = 0; j < k; j++)
-        {
-          SS(i, j) = linalg::Dot(GetComm(), X[i], X[j]);
-        }
-      }
-      const auto S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
-      SS = -SS * S.inverse(); // can we avoid this inverse?
-      x2 = SS.colPivHouseholderQr().solve(x2);
-      ComplexVector XSx2 = MatVecMult(X, S.colPivHouseholderQr().solve(x2), true);
-      linalg::AXPY(-1.0, XSx2, x1);
-    };
-
-    // Newton iterations.
-    const int max_inner_it = 10; // 10 is SLEPc's default
-    double res = mfem::infinity();
-    int it = 0, diverged_it = 0;
-    while (it < nleps_it)
-    {
-      int inner_it = 0;
-      while (inner_it < max_inner_it)
-      {
-        // Compute u = A * v.
-        auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                                   Operator::DIAG_ZERO);
-        auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig,
-                                           opK, opC, opM, A2n.get());
-        A->Mult(v, u);
-        if (k > 0 && deflation)  // Deflation
-        {
-          // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
-          const auto S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-          ComplexVector XSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(v2), true);
-          A->AddMult(XSv2, u, 1.0);
-          u2.conservativeResize(k);
-          for (int j = 0; j < k; j++)
-          {
-            u2(j) = linalg::Dot(GetComm(), v, X[j]);
-          }
-        }
-
-        deflated_solve(u, u2, w, w2);
-        std::complex<double> v2_w2 = deflation ? std::complex<double>(v2.adjoint() * w2) : 0.0;
-        const std::complex<double> num = linalg::Dot(GetComm(), w, v) + v2_w2; // figure out order
-
-        // Compute u = J * v.
-        auto opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(
-            std::abs(eig.imag()) * (1.0 + dl), Operator::DIAG_ZERO);
-        std::complex<double> denom =
-            std::complex<double>(0.0, dl * std::abs(eig.imag()));
-        auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
-            denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
-        auto opJ = space_op->GetSystemMatrix(
-            std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0),
-            std::complex<double>(2.0, 0.0) * eig, opK, opC, opM, opAJ.get());
-        opJ->Mult(v, u);
-        if (k > 0 && deflation)  // Deflation
-        {
-          // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2
-          const auto S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-          ComplexVector XSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(v2), true);
-          ComplexVector XSSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(S.colPivHouseholderQr().solve(v2)), true);
-          opJ->AddMult(XSv2, u, 1.0);
-          A->AddMult(XSSv2, u, -1.0);
-        }
-
-        deflated_solve(u, u2, w, w2);
-        v2_w2 = deflation ? std::complex<double>(v2.adjoint() * w2) : 0.0;
-        const std::complex<double> den = linalg::Dot(GetComm(), w, v) + v2_w2; // figure out order
-
-        const auto mu = num / den;
-        Mpi::Print(GetComm(), "RII inner iteration {:d}.{:d}.{:d}, abs(mu)/abs(eig): {}, eig.imag(): {}\n", k, it, inner_it, std::abs(mu)/std::abs(eig), eig.imag());
-        if (std::abs(mu) < dl * std::abs(eig))
-        {
-          Mpi::Print(GetComm(), "RII inner iteration {:d}.{:d}.{:d} reached tolerance\n", k, it, inner_it);
-          break;
-        }
-
-        eig -= mu;
-        inner_it++;
-      }
-
-      // Compute u = A * v.
-      auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                                 Operator::DIAG_ZERO);
-      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig,
-                                         opK, opC, opM, A2n.get());
-      A->Mult(v, u);
-      if (k > 0 && deflation)  // Deflation
-      {
-        // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
-        const auto S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-        ComplexVector XSv2 = MatVecMult(X, S.colPivHouseholderQr().solve(v2), true);
-        A->AddMult(XSv2, u, 1.0);
-        u2.conservativeResize(k);
-        for (int j = 0; j < k; j++)
-        {
-          u2(j) = linalg::Dot(GetComm(), v, X[j]);
-        }
-      }
-
-      // Compute residual.
-      res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm());
-      if (print > 0)
-      {
-        Mpi::Print(GetComm(),
-                   "{:d} NLEPS RII outer (nconv={:d}, restart={:d}) residual norm {:.6e}\n", it, k,
-                   restart, res);
-      }
-      // End if residual below tolerance and eigenvalue above the target.
-      if (res < rtol)
-      {
-        if (print > 0)
-        {
-          Mpi::Print(GetComm(),
-                     "Eigenvalue {:d}, RII Quasi-Newton converged in {:d} iterations.\n", k,
-                     it);
-        }
-        // Update the invariant pair with normalization.
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        eigenvalues.resize(k + 1);
-        eigenvalues[k] = eig;
-        X.resize(k + 1);
-        X[k] = v;
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        k++;
-        // If the eigenvalue is inside the desired range, increment initial guess index
-        // Otherwise, use the same initial guess again.
-        if (eig.imag() > sigma.imag())
-        {
-          Mpi::Print(GetComm(), "Eigenvalue is inside the desired range\n");
-          guess_idx++;
-        }
-        else
-        {
-          Mpi::Print(GetComm(), "Eigenvalue is outside the desired range\n");
-          nev++;  // increment number of desired eigenvalues
-        }
-        restart = 0;  // reset restart counter
-        break;
-      }
-      // Stop if large residual for 10 consecutive iterations.
-      diverged_it = (res > 0.9) ? diverged_it + 1 : 0;
-      if (diverged_it > 10)
-      {
-        if (print > 0)
-        {
-          Mpi::Print(GetComm(),
-                     "Eigenvalue {:d}, Quasi-Newton not converging after {:d} iterations, "
-                     "restarting.\n",
-                     k, it);
-        }
-        restart++;
-        break;
-      }
-/**/
-      if (deflation && k > 0 && res < deflation_tol) // turn off deflation
-      {
-        Mpi::Print("\n\n TURNING OFF DEFLATION \n\n");
-        deflation = false;
-        // add to X, H
-        // copied from above, make it a separate function?
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        eigenvalues.resize(k + 1);
-        eigenvalues[k] = eig;
-        X.resize(k + 1);
-        X[k] = v;
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        std::cout << "setting H("<<k<<") to v2: " << v2 / scale << "\n";
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        std::cout << "setting H(k, k) to eig: " << eig.real() <<"+" << eig.imag() << "i\n";
-
-        // extract eigenpair from invariant pair
-        Mpi::Print("eig before extract: {}+{}i\n", eig.real(), eig.imag());
-        extractEigenpair(k, eig, v);
-        Mpi::Print("eig after extract: {}+{}i\n", eig.real(), eig.imag());
-        //u2.setZero(); // or not ?
-        //v2.setZero(); // or not ?
-      }
-/**/
-      //  M (v_k+1 - v_k) = u.
-      if (it > 0 && it % preconditioner_lag == 0)
-      {
-        Mpi::Print("Updating preconditioner at iteration {}\n", it);
-        eig_opInv = eig;
-        opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                               Operator::DIAG_ZERO);
-        opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
-                                        opC, opM, opA2.get());
-        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
-            std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
-        opInv->SetOperators(*opA, *opP);
-      }
-      deflated_solve(u, u2, w, w2);
-
-      // Update and normalize eigenvector estimate.
-      // v -= w
-      if (deflation) v2 -= w2;
-      linalg::AXPBY(std::complex<double>(-1.0, 0.0), w, std::complex<double>(1.0, 0.0), v);
-
-      if (deflation)
-      {
-        norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
-        v2 *= 1.0 / norm_v;
-      }
-      else
-      {
-        norm_v = linalg::Norml2(GetComm(), v);
-      }
-      v *= 1.0 / norm_v;
-
-      it++;
-      if (it == nleps_it)
-      {
-        if (print > 0)
-        {
-          Mpi::Print(GetComm(),
-                     "Eigenvalue {:d}, Quasi-Newton did not converge in {:d} iterations, "
-                     "restarting.\n",
-                     k, nleps_it);
-        }
-        restart++;
-      }
-    }
-  }
-  nev = k;  // in case some guesses did not converge
-
-  // Eigenpair extraction from the invariant pair (X, H).
-  /*
-  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  eps.compute(H);
-  perm = std::make_unique<int[]>(nev);  // use this or order below??
-  std::vector<int> order(eigenvalues.size()), order_eigen(eps.eigenvalues().size()),
-      order2(eigenvalues.size());
-  std::iota(order.begin(), order.end(), 0);
-  std::iota(order_eigen.begin(), order_eigen.end(), 0);
-  std::iota(order2.begin(), order2.end(), 0);
-  std::sort(order.begin(), order.end(), [&eigen_values = this->eigenvalues](auto l, auto r)
-            { return eigen_values[l].imag() < eigen_values[r].imag(); });
-  std::sort(order_eigen.begin(), order_eigen.end(),
-            [&epseig = eps.eigenvalues()](auto l, auto r)
-            { return epseig(l).imag() < epseig(r).imag(); });
-  std::sort(order2.begin(), order2.end(),
-            [&order](auto l, auto r) { return order[l] < order[r]; });
-
-  // Sort Eigen eigenvectors.
-  std::vector<Eigen::VectorXcd> Xeig;
-  for (int i = 0; i < nev; i++)
-  {
-    perm[i] = order[i];  // stupid, only use one of perm and order!
-    Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
-  }
-  */
-
-
-  // Recover the eigenvectors of the original problem.
-  for (int i = 0; i < nev; i++)
-  {
-    std::complex<double> eig;
-    extractEigenpair(i, eig, v);
-    eigenvectors.push_back(v);
-    //ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
-    //if (deflation) // this is bad/stupid?
-    //{
-    //  eigenvectors.push_back(eigv);
-    //}
-    //else
-    //{
-    //  eigenvectors.push_back(X[i]);
-    //}
-  }
-
-  // Compute the eigenpair residuals for eigenvalue λ.
-  RescaleEigenvectors(nev);
-
-  space_op->GetWavePortOp().SetSuppressOutput(false);  // reset?
-
-  return nev;
-}
-
-double RIINewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,
-                                          ComplexVector &r) const
-{
-  // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M + A2(λ)) x ||₂
-  // for eigenvalue λ.
-  opK->Mult(x, r);
-  if (opC)
-  {
-    opC->AddMult(x, r, l);
-  }
-  opM->AddMult(x, r, l * l);
-  auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                            Operator::DIAG_ZERO);
-  A2->AddMult(x, r, 1.0);
-  return linalg::Norml2(comm, r);
-}
-
-double RIINewtonSolver::GetBackwardScaling(std::complex<double> l) const
-{
-  // Make sure not to use norms from scaling as this can be confusing if they are different.
-  // Note that SLEPc uses ||.||∞, not the 2-norm.
-  if (normK <= 0.0)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-  }
-  if (normC <= 0.0 && opC)
-  {
-    normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
-  }
-  if (normM <= 0.0)
-  {
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-  }
-  double t = std::abs(l);
-  return normK + t * normC + t * t * normM;
-}
-
-
 
 NewtonInterpolationOperator::NewtonInterpolationOperator(SpaceOperator &space_op)
   : space_op(&space_op)
