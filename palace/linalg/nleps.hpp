@@ -230,6 +230,57 @@ public:
   MPI_Comm GetComm() const override { return comm; }
 };
 
+// Residual Inverse Iteration (RII) nonlinear eigenvalue solver: T(λ) x = (K + λ C + λ² M + A2(λ)) x = 0.
+class RIINewtonSolver : public NonLinearEigenvalueSolver
+{
+private:
+  // References to matrices defining the nonlinear eigenvalue problem
+  // (not owned).
+  const ComplexOperator *opK, *opC, *opM;
+
+  // Operators used in the iterative linear solver.
+  std::unique_ptr<ComplexOperator> opA2, opA, opP;
+
+  // Operator norms for scaling.
+  mutable double normK, normC, normM;
+
+  // Workspace vectors for operator applications. // ??? See if needed??
+  mutable ComplexVector x2, y2;
+
+  // Update frequency of the preconditioner during Newton iterations.
+  int preconditioner_lag;
+
+  // Maximum number of Newton attempts with the same initial guess.
+  int max_restart;
+
+protected:
+  double GetResidualNorm(std::complex<double> l, const ComplexVector &x,
+                         ComplexVector &r) const override;
+
+  double GetBackwardScaling(std::complex<double> l) const override;
+
+  const char *GetName() const override { return "QuasiNewton"; }
+
+public:
+  RIINewtonSolver(MPI_Comm comm, int print);
+
+  using NonLinearEigenvalueSolver::SetOperators;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
+
+  // Set the update frequency of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
+
+  // Solve the nonlinear eigenvalue problem.
+  int Solve() override;
+
+  MPI_Comm GetComm() const override { return comm; }
+};
+
 //
 // Interpolation operators to approximate the nonlinear A2 operator.
 //
