@@ -13,7 +13,7 @@ index 5d451eff02..3f74e0a0c5 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index da98594ca2..507de42639 100644
+index cab5ac8b5e..97a30c3c70 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -2382,7 +2382,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
@@ -394,7 +394,7 @@ index da98594ca2..507de42639 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 4190b37ecb..57ba80a644 100644
+index b7f935ac48..70a2387289 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -379,12 +379,12 @@ protected:

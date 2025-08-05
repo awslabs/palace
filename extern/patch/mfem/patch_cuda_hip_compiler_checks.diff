@@ -128,7 +128,7 @@ index d4f7099758..21db62d9d1 100644
        int num_bytes = num_shmem * sizeof(decltype(shmem));
        dim3 block_size(blocks.x, blocks.y, blocks.z);
 diff --git a/general/backends.hpp b/general/backends.hpp
-index 632017eedf..0e9a546235 100644
+index 632017eedf..2778feed38 100644
 --- a/general/backends.hpp
 +++ b/general/backends.hpp
 @@ -14,7 +14,7 @@
@@ -149,6 +149,15 @@ index 632017eedf..0e9a546235 100644
  #include <hip/hip_runtime.h>
  #endif
  #include "hip.hpp"
+@@ -43,7 +43,7 @@
+ #endif
+ #endif
+ 
+-#if !(defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP))
++#if !defined(MFEM_USE_CUDA_OR_HIP)
+ #define MFEM_DEVICE
+ #define MFEM_HOST
+ #define MFEM_LAMBDA
 @@ -55,7 +55,7 @@
  #endif
  
@@ -177,7 +186,7 @@ index 632017eedf..0e9a546235 100644
  #else
     T old = add;
 diff --git a/general/cuda.hpp b/general/cuda.hpp
-index 1dbf79fbcd..4535e9da72 100644
+index 1dbf79fbcd..d41557cc9a 100644
 --- a/general/cuda.hpp
 +++ b/general/cuda.hpp
 @@ -18,7 +18,7 @@
@@ -189,7 +198,7 @@ index 1dbf79fbcd..4535e9da72 100644
  #define MFEM_USE_CUDA_OR_HIP
  #define MFEM_DEVICE __device__
  #define MFEM_HOST __host__
-@@ -37,10 +37,8 @@
+@@ -37,10 +37,9 @@
                                __FILE__, __LINE__);                             \
      }                                                                          \
    } while (0)
@@ -197,14 +206,16 @@ index 1dbf79fbcd..4535e9da72 100644
  
  // Define the MFEM inner threading macros
 -#if defined(MFEM_USE_CUDA) && defined(__CUDA_ARCH__)
++#if defined(__CUDA_ARCH__)
  #define MFEM_SHARED __shared__
  #define MFEM_SYNC_THREAD __syncthreads()
  #define MFEM_BLOCK_ID(k) blockIdx.k
-@@ -48,12 +46,12 @@
+@@ -48,12 +47,13 @@
  #define MFEM_THREAD_SIZE(k) blockDim.k
  #define MFEM_FOREACH_THREAD(i,k,N) for(int i=threadIdx.k; i<N; i+=blockDim.k)
  #define MFEM_FOREACH_THREAD_DIRECT(i,k,N) if(const int i=threadIdx.k; i<N)
 -#endif
++#endif // defined(__CUDA_ARCH__)
 +#endif // defined(MFEM_USE_CUDA) && defined(__CUDACC__)
  
  namespace mfem
@@ -311,7 +322,7 @@ index 164582d80b..4202e632ac 100644
     if (Device::Allows(Backend::HIP))
     {
 diff --git a/general/hip.hpp b/general/hip.hpp
-index 3c3c4dbdee..3a94a48973 100644
+index 3c3c4dbdee..98829bf004 100644
 --- a/general/hip.hpp
 +++ b/general/hip.hpp
 @@ -18,7 +18,7 @@
@@ -323,7 +334,7 @@ index 3c3c4dbdee..3a94a48973 100644
  #define MFEM_USE_CUDA_OR_HIP
  #define MFEM_DEVICE __device__
  #define MFEM_HOST __host__
-@@ -37,21 +37,18 @@
+@@ -37,21 +37,20 @@
                               __FILE__, __LINE__);                              \
      }                                                                          \
    } while (0)
@@ -331,6 +342,7 @@ index 3c3c4dbdee..3a94a48973 100644
  
  // Define the MFEM inner threading macros
 -#if defined(MFEM_USE_HIP) && defined(__HIP_DEVICE_COMPILE__)
++#if defined(__HIP_DEVICE_COMPILE__)
  #define MFEM_SHARED __shared__
  #define MFEM_SYNC_THREAD __syncthreads()
  #define MFEM_BLOCK_ID(k) hipBlockIdx_ ##k
@@ -344,6 +356,7 @@ index 3c3c4dbdee..3a94a48973 100644
 -#endif
 -
 +  if(const int i=hipThreadIdx_ ##k; i<N)
++#endif // defined(__HIP_DEVICE_COMPILE__)
 +#endif // defined(MFEM_USE_HIP) && defined(__HIP__)
  namespace mfem
  {
@@ -381,16 +394,3 @@ index 8ea4fd75f2..2c36e378b7 100644
  typedef DeviceTensor<1,int> DeviceArray;
  typedef DeviceTensor<1,const int> ConstDeviceArray;
  
-diff --git a/miniapps/hooke/kernels/kernel_helpers.hpp b/miniapps/hooke/kernels/kernel_helpers.hpp
-index 44d09386a3..caa73d1a2e 100644
---- a/miniapps/hooke/kernels/kernel_helpers.hpp
-+++ b/miniapps/hooke/kernels/kernel_helpers.hpp
-@@ -26,7 +26,7 @@ using mfem::future::tensor;
- 
- // MFEM_SHARED_3D_BLOCK_TENSOR definition
- // Should be moved in backends/cuda/hip header files.
--#if defined(__CUDA_ARCH__)
-+#if defined(MFEM_USE_CUDA_OR_HIP)
- #define MFEM_SHARED_3D_BLOCK_TENSOR(name,T,bx,by,bz,...)\
- MFEM_SHARED tensor<T,bx,by,bz,__VA_ARGS__> name;\
- name(threadIdx.x, threadIdx.y, threadIdx.z) = tensor<T,__VA_ARGS__> {};
