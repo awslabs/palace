@@ -302,34 +302,38 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-  std::unique_ptr<NonLinearEigenvalueSolver> qn;
-  qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
-  qn->SetTol(iodata.solver.eigenmode.tol);
-  qn->SetMaxIter(iodata.solver.eigenmode.max_it);
-  qn->SetOperators(space_op, *K, *C, *M,
-                   scale);  // currently not using scaling but maybe try to make it work?
-  qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
-  qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
-  qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
-  qn->SetLinearSolver(*ksp);
-  qn->SetShiftInvert(1i * target);
-  // Use linear eigensolve solution as initial guess.
-  std::vector<std::complex<double>> init_eigs;
-  std::vector<ComplexVector> init_V;
-  for (int i = 0; i < num_conv; i++)
+  if (has_A2)
   {
-    ComplexVector v0;
-    v0.SetSize(Curl.Width());
-    v0.UseDevice(true);
-    eigen->GetEigenvector(i, v0);
-    linalg::NormalizePhase(space_op.GetComm(), v0);
-    init_eigs.push_back(eigen->GetEigenvalue(i));
-    init_V.push_back(v0);
+    Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
+    std::unique_ptr<NonLinearEigenvalueSolver> qn;
+    qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+    //qn = std::make_unique<RIINewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+    qn->SetTol(iodata.solver.eigenmode.tol);
+    qn->SetMaxIter(iodata.solver.eigenmode.max_it);
+    qn->SetOperators(space_op, *K, *C, *M,
+                     EigenvalueSolver::ScaleType::NONE);  // currently not using scaling but maybe try to make it work?
+    qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
+    qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
+    qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
+    qn->SetLinearSolver(*ksp);
+    qn->SetShiftInvert(1i * target);
+    // Use linear eigensolve solution as initial guess.
+    std::vector<std::complex<double>> init_eigs;
+    std::vector<ComplexVector> init_V;
+    for (int i = 0; i < num_conv; i++)
+    {
+      ComplexVector v0;
+      v0.SetSize(Curl.Width());
+      v0.UseDevice(true);
+      eigen->GetEigenvector(i, v0);
+      linalg::NormalizePhase(space_op.GetComm(), v0);
+      init_eigs.push_back(eigen->GetEigenvalue(i));
+      init_V.push_back(v0);
+    }
+    qn->SetInitialGuess(init_eigs, init_V);
+    eigen = std::move(qn);  //?
+    num_conv = eigen->Solve();
   }
-  qn->SetInitialGuess(init_eigs, init_V);
-  eigen = std::move(qn);  //?
-  num_conv = eigen->Solve();
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
