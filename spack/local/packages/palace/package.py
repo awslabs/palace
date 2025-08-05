@@ -1,9 +1,13 @@
-# Copyright 2013-2024 Lawrence Livermore National Security, LLC and other
-# Spack Project Developers. See the top-level COPYRIGHT file for details.
+# Copyright Spack Project Developers. See COPYRIGHT file for details.
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
+from spack_repo.builtin.build_systems.cmake import CMakePackage
+from spack_repo.builtin.build_systems.cuda import CudaPackage
+from spack_repo.builtin.build_systems.rocm import ROCmPackage
+
 from spack.package import *
+
 
 class Palace(CMakePackage, CudaPackage, ROCmPackage):
     """3D finite element solver for computational electromagnetics"""
@@ -41,7 +45,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "sundials",
         default=True,
         description="Build with SUNDIALS differential/algebraic equations solver",
-        when="@0.14:"
+        when="@0.14:",
     )
     variant("mumps", default=False, description="Build with MUMPS sparse direct solver")
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
@@ -184,10 +188,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("sundials~rocm", when="~rocm")
 
     ## -- GPU --
-    conflicts('+cuda', when='@:0.12',
-            msg='CUDA is only supported for Palace versions 0.13 and above')
-    conflicts('+rocm', when='@:0.12',
-            msg='ROCm is only supported for Palace versions 0.13 and above')
+    conflicts(
+        "+cuda",
+        when="@:0.12",
+        msg="CUDA is only supported for Palace versions 0.13 and above",
+    )
+    conflicts(
+        "+rocm",
+        when="@:0.12",
+        msg="ROCm is only supported for Palace versions 0.13 and above",
+    )
     conflicts(
         "+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP"
     )
@@ -216,7 +226,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
-            depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
+            depends_on(
+                f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:"
+            )
             depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
 
@@ -227,7 +239,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
-            depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
+            depends_on(
+                f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:"
+            )
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
 
@@ -246,20 +260,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
-            self.define("PALACE_BUILD_EXTERNAL_DEPS", False)
+            self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
         ]
 
         # We guarantee that there are arch specs with conflicts above
         if "+cuda" in self.spec:
             args.append(
                 self.define(
-                    "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
+                    "CMAKE_CUDA_ARCHITECTURES",
+                    ";".join(self.spec.variants["cuda_arch"].value),
                 )
             )
         if "+rocm" in self.spec:
             args.append(
                 self.define(
-                    "CMAKE_HIP_ARCHITECTURES", ";".join(self.spec.variants["amdgpu_target"].value)
+                    "CMAKE_HIP_ARCHITECTURES",
+                    ";".join(self.spec.variants["amdgpu_target"].value),
                 )
             )
 
@@ -289,7 +305,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 self.define("MUMPS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran")
             )
 
-        if self.spec.satisfies('@:0.13'):
+        if self.spec.satisfies("@:0.13"):
             # In v0.13 and prior libCEED and gslib were internally built and required the libxsmm and
             # magma build information be passed in.
             if "+libxsmm" in self.spec:
