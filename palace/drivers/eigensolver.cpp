@@ -301,17 +301,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
-
-  if (has_A2)
+  /**/
+  if (has_A2)  // add a option to skip nonlinear refinement?!
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;
     qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
-    //qn = std::make_unique<RIINewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+    // qn = std::make_unique<RIINewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     qn->SetOperators(space_op, *K, *C, *M,
-                     EigenvalueSolver::ScaleType::NONE);  // currently not using scaling but maybe try to make it work?
+                     EigenvalueSolver::ScaleType::NONE);  // currently not using scaling but
+                                                          // maybe try to make it work?
     qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
@@ -334,7 +335,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen = std::move(qn);  //?
     num_conv = eigen->Solve();
   }
-
+  /**/
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
