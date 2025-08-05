@@ -890,6 +890,7 @@ void WavePortData::Initialize(double omega)
     if (port_comm != MPI_COMM_NULL)
     {
       eigen->GetEigenvector(mode_idx - 1, e0);
+      linalg::NormalizePhase(port_comm, e0);
     }
     else
     {
