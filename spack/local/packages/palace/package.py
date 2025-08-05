@@ -312,7 +312,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if "+cuda" in self.spec or "+rocm" in self.spec:
                 args.append(self.define("MAGMA_DIR", self.spec["magma"].prefix))
         else:
-            # After v 0.13 gslib and libceed is built externally and the directories passed explicitly.
+            # After v 0.13 gslib and libceed is built externally and
+            # so the directories for these are passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
             if "+gslib" in self.spec:
                 args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
