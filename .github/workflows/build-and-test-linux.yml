@@ -459,3 +459,14 @@ jobs:
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
+
+      - name: Check antenna postprocessing example
+        run: |
+          # Ubuntu 22.04 on ARM doesn't package paraview correctly/consistently
+          # and installing paraview does not install the Python bindings. For
+          # this reason, we need to manually install `python3-paraview` and call
+          # python3 instead of pvpython
+          sudo apt-get install -y paraview python3-paraview
+          python3 examples/antenna/extract_farfield.py --radius 0.8 --postpro examples/antenna/postpro
+          python3 examples/antenna/plot_radiation_pattern.py farfield_r0.80.csv
+          python3 examples/antenna/farfield_csv2pvd.py examples/antenna/postpro/farfield*
