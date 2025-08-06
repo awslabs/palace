@@ -1,2 +1,3 @@
 repo:
-  namespace: 'local'
+  namespace: loca
+  api: v2.0
