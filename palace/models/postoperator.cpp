@@ -927,7 +927,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
                                                 const ComplexVector &b,
                                                 std::complex<double> omega,
                                                 double error_abs, double error_bkwd,
-                                                int num_conv)
+                                                double phase, int num_conv)
     -> std::enable_if_t<U == ProblemType::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -940,6 +940,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
+  measurement_cache.phase = phase;
 
   // Mini pretty-print table of eig summaries: always print with header since other
   // measurements may log their results.
@@ -947,7 +948,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   {
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
-    table.col_options = {6, 6};
+    table.col_options = {7, 7};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
                  << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()));
@@ -956,6 +957,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    table.insert(Column("phase", "Mean Phase") << phase);
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
@@ -1095,7 +1097,7 @@ template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType:
 template auto
 PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(
     int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
-    double error_abs, double error_bkwd, int num_conv) -> double;
+    double error_abs, double error_bkwd, double phase, int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::ELECTROSTATIC>::MeasureAndPrintAll<ProblemType::ELECTROSTATIC>(
