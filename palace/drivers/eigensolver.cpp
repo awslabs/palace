@@ -301,7 +301,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2)  // add a option to skip nonlinear refinement?!
+  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;
@@ -309,14 +309,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
-    qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
+    qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+    qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
+                             iodata.solver.eigenmode.preconditioner_lag_tol);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
     qn->SetLinearSolver(*ksp);
-    qn->SetDivFreeProjector(*divfree); // test, not sure if we want/need to this?
-    //if... SetBMat()?? do we ever want to use B in the nonlinear eigensolve? if so need to add applyopB in nleps.cpp
+    qn->SetDivFreeProjector(*divfree);  // test, not sure if we want/need to this?
+    // if... SetBMat()?? do we ever want to use B in the nonlinear eigensolve? if so need to
+    // add applyopB in nleps.cpp
     qn->SetShiftInvert(1i * target);
-    // Use linear eigensolve solution as initial guess.
+    // Use linearized eigensolve solution as initial guess.
     std::vector<std::complex<double>> init_eigs;
     std::vector<ComplexVector> init_V;
     for (int i = 0; i < num_conv; i++)
