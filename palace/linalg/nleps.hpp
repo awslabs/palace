@@ -11,7 +11,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "models/spaceoperator.hpp"  // not sure?
+#include "models/spaceoperator.hpp"
 
 namespace palace
 {
@@ -51,8 +51,7 @@ protected:
   // Storage for computed eigenvalues and eigenvectors.
   std::vector<std::complex<double>> eigenvalues;
   std::vector<ComplexVector> eigenvectors;
-  std::unique_ptr<std::complex<double>[]> eig;  // use this or eigenvalues above?
-  std::unique_ptr<int[]> perm;                  // this or the order std::vector?
+  std::unique_ptr<int[]> perm;
 
   // Storage for eigenpairs initial guesses.
   std::vector<std::complex<double>> init_eigenvalues;
@@ -61,13 +60,7 @@ protected:
   // Storage for computed residual norms and eigenvector scalings.
   std::unique_ptr<double[]> res, xscale;
 
-  // On input used to define optional initial guess, on output stores final residual
-  // vector.
-  std::unique_ptr<std::complex<double>[]> r;  // unused in Newton solver? remove this?
-
-  // Reference to linear solver used for operator action for M⁻¹ (with no spectral
-  // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
-  // (polynomial with shift-and-invert) (not owned).
+  // Reference to linear solver used for operator action of P(σ)⁻¹ (not owned).
   ComplexKspSolver *opInv;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
@@ -82,7 +75,7 @@ protected:
   const Operator *opB;
 
   // Workspace vector for operator applications.
-  mutable ComplexVector x1, y1;  // MAKE SURE THESE ARE USED, OTHERWISE REMOVE!
+  mutable ComplexVector x1, y1;
 
   // Helper routine for computing the eigenvector normalization.
   double GetEigenvectorNorm(const ComplexVector &x, ComplexVector &Bx) const;
@@ -107,16 +100,14 @@ public:
   // eigenvalue problem.
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
-  // void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-  //                   const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
   void SetNLInterpolation(const Interpolation &interp) override;
-  // The linear solver will be configured to compute the
-  // action of T(σ)⁻¹ where σ is the current eigenvalue
+  // The linear solver will be configured to compute the action of T(σ)⁻¹
+  // where σ is the current eigenvalue estimate.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -124,7 +115,7 @@ public:
 
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.
-  void SetBMat(const Operator &B) override;  // not defined/used anyhwere...
+  void SetBMat(const Operator &B) override;
 
   // Get scaling factors used by the solver.
   double GetScalingGamma() const override { return gamma; }
@@ -147,7 +138,7 @@ public:
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
-  void SetWhichEigenpairs(WhichType type) override;  // not needed?
+  void SetWhichEigenpairs(WhichType type) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
@@ -192,7 +183,7 @@ private:
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
-  // Workspace vectors for operator applications. // ??? See if needed??
+  // Workspace vectors for operator applications. // ??? See if needed?? BMat??
   mutable ComplexVector x2, y2;
 
   // Update frequency of the preconditioner during Newton iterations.
