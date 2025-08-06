@@ -90,8 +90,9 @@ public:
   // Set maximum number of Arnoldi update iterations.
   virtual void SetMaxIter(int max_it) = 0;
 
-  // Set the update frequency of the preconditioner.
-  virtual void SetPreconditionerLag(int preconditioner_update_freq) = 0;
+  // Set the update frequency and tolerance of the preconditioner.
+  virtual void SetPreconditionerLag(int preconditioner_update_freq,
+                                    double preconditioner_update_tol) = 0;
 
   // Set the maximum number of restarts with the same initial guess.
   virtual void SetMaxRestart(int max_num_restart) = 0;

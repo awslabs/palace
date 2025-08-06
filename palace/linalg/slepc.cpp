@@ -368,7 +368,8 @@ void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
   has_A2 = true;
 }
 
-void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+                                                 double preconditioner_update_tol)
 {
   MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
 }
@@ -995,8 +996,8 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   opM->AddMult(x, r, l * l);
   if (has_A2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(
-        std::abs(l.imag()), Operator::DIAG_ZERO);
+    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+                                                              Operator::DIAG_ZERO);
     A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   return linalg::Norml2(GetComm(), r);
@@ -1355,8 +1356,8 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   opM->AddMult(x, r, l * l);
   if (has_A2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(
-        std::abs(l.imag()), Operator::DIAG_ZERO);
+    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+                                                              Operator::DIAG_ZERO);
     A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   return linalg::Norml2(GetComm(), r);
