@@ -1,7 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 
 #include <vector>
 
@@ -199,7 +198,8 @@ TEST_CASE("TetToHex", "[geodata]")
         for (int j = 0; j < col.Size(); j++)
         {
           CAPTURE(i, j, global_dof_vals[verts[j]][i]);
-          CHECK(col(j) == Approx(global_dof_vals[verts[j]][i]));
+          CHECK(((col(j) == Approx(global_dof_vals[verts[j]][i])) ||
+                 (col(j) == 0.0 && global_dof_vals[verts[j]][i] == 0.0)));
         }
       }
     };
@@ -230,7 +230,8 @@ TEST_CASE("TetToHex", "[geodata]")
     single_tet.EnsureNodes();
     single_tet.SetCurvature(order);
 
-    // Randomly perturb the data
+    // Randomly perturb the non-vertex data with positive values (ensures non-zeros in later
+    // comparison).
     for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
     {
       (*single_tet.GetNodes())(i) += 0.05 * (1.0 + (double)rand() / RAND_MAX);
@@ -259,11 +260,11 @@ TEST_CASE("TetToHex", "[geodata]")
       return xyz_samples;
     };
 
-    // Uniform sampling over the tet, as integration points, and as xyz coords.
+    // Uniform sampling over the tet as "xyz" coords of the original reference tet.
     auto xyz_samples = gen_samples(order + 2);
 
-    // Create FESpaces on the linear meshes, with the same dofs from the higher mesh nodes.
-    // Then sample the node functions using coordinates from the linear meshes.
+    // Create FiniteElementSpace on the linear meshes, with the same dofs from the higher
+    // mesh nodes, then sample the node functions using coordinates from the linear meshes.
     // These should be equal to each other, as the sample points correspond to the original
     // reference space on the tet.
     const auto &tet_FESpace = single_tet.GetNodes()->FESpace();
@@ -279,13 +280,11 @@ TEST_CASE("TetToHex", "[geodata]")
     tet_nodes_on_linear_tet = *single_tet.GetNodes();
     hex_nodes_on_linear_hex = *four_hex.GetNodes();
 
-    // Sample the higher order node functions on the linear mesh "single tet refspace".
     mfem::Vector tet_vals(xyz_samples.Size()), hex_vals(xyz_samples.Size());
     fem::InterpolateFunction(xyz_samples, tet_nodes_on_linear_tet, tet_vals,
-                             mfem::Ordering::byVDIM);
+                             tet_FESpace->GetOrdering());
     fem::InterpolateFunction(xyz_samples, hex_nodes_on_linear_hex, hex_vals,
-                             mfem::Ordering::byVDIM);
-
+                             hex_FESpace->GetOrdering());
     for (int i = 0; i < tet_vals.Size(); i++)
     {
       CHECK(tet_vals(i) == Approx(hex_vals(i)).margin(1e-9));
