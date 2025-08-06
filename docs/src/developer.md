@@ -140,6 +140,8 @@ workflows. Also run as part of the CI are regression tests based on the provided
 applications in the [`examples/`](https://github.com/awslabs/palace/blob/main/examples/)
 directory. These are executed based on the code in
 [`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/).
+See [`README`](https://github.com/awslabs/palace/tree/main/test/examples/) in the test
+folder for more information about how to run the reproducibility tests.
 
 ## Changelog
 

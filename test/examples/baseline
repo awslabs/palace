@@ -124,7 +124,7 @@ fi
 for TEST_DIR in $TEST_DIRS; do
     # Run test case
     export TEST_CASES=$TEST_DIR
-    $JULIA $SCRIPT_DIR/runtests.jl
+    $JULIA --project=$SCRIPT_DIR $SCRIPT_DIR/runtests.jl
     if [[ -n "$DRY_RUN" ]]; then
         continue
     fi

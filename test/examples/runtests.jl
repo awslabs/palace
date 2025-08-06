@@ -8,7 +8,14 @@ include("testcase.jl")
 if "PALACE_TEST" in keys(ENV)
     palace = String.(split(ENV["PALACE_TEST"], ' '))
 else
-    palace = "palace"
+    palace = ["palace"]
+end
+
+if isnothing(Base.Sys.which(first(palace)))
+    error(
+        "Executable `$palace` not found. " *
+        "You can customize the path by setting the PALACE_TEST environment variable"
+    )
 end
 
 if "NUM_PROC_TEST" in keys(ENV)
