@@ -59,7 +59,8 @@ void NonLinearEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
   MFEM_ABORT("SetNLInterpolation not defined for base class NonLinearEigenvalueSolver!");
 }
 
-void NonLinearEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+void NonLinearEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+                                                     double preconditioner_update_tol)
 {
   MFEM_ABORT("SetPreconditionerLag not defined for base class NonLinearEigenvalueSolver!");
 }
@@ -215,9 +216,11 @@ QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm, int print)
 }
 
 // Set the update frequency of the preconditioner.
-void QuasiNewtonSolver::SetPreconditionerLag(int preconditioner_update_freq)
+void QuasiNewtonSolver::SetPreconditionerLag(int preconditioner_update_freq,
+                                             double preconditioner_update_tol)
 {
   preconditioner_lag = preconditioner_update_freq;
+  preconditioner_tol = preconditioner_update_tol;
 }
 
 // Set the maximum number of restarts with the same initial guess.
@@ -315,7 +318,6 @@ int QuasiNewtonSolver::Solve()
 
   // Palace ComplexVectors of size n.
   ComplexVector v, u, w, c, w0, z;
-  std::vector<ComplexVector> X;
   v.SetSize(n);
   u.SetSize(n);
   w.SetSize(n);
@@ -332,6 +334,10 @@ int QuasiNewtonSolver::Solve()
   // Eigen Matrix/Vectors for extended operator of size k.
   Eigen::MatrixXcd H;
   Eigen::VectorXcd u2, z2, c2, w2, v2;
+
+  // Storage for eigenpairs.
+  std::vector<ComplexVector> X;
+  std::vector<std::complex<double>> eigs;
 
   // Reset any previously computed eigenpairs.
   eigenvalues.clear();
@@ -506,8 +512,8 @@ int QuasiNewtonSolver::Solve()
         // Update the invariant pair with normalization.
         const auto scale = linalg::Norml2(GetComm(), v);
         v *= 1.0 / scale;
-        eigenvalues.resize(k + 1);
-        eigenvalues[k] = eig;
+        eigs.resize(k + 1);
+        eigs[k] = eig;
         X.resize(k + 1);
         X[k] = v;
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
@@ -577,11 +583,10 @@ int QuasiNewtonSolver::Solve()
       z.AXPBYPCZ(-delta, w, -1.0, u, 0.0);
       z2 = -u2;
 
-      //  Update preconditioner if needed. In most cases, updating the preconditioner as
-      //  infrequently as possible gives the best performance and robustness. Updating the
-      //  preconditioner frequently, especially when close to an eigenvalue, can lead to
-      //  numerical instability.
-      if (it > 0 && it % preconditioner_lag == 0)
+      //  Update preconditioner if needed. Updating the preconditioner as infrequently as
+      //  possible gives the best performance and robustness. Updating the preconditioner
+      //  close to an eigenvalue can lead to numerical instability.
+      if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
@@ -591,7 +596,7 @@ int QuasiNewtonSolver::Solve()
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
             std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
-        // Recompute w0 and normalize.
+        // Recompute w0 and normalize. ?????
         deflated_solve(c, c2, w0, w2);
         double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
         w0 *= 1.0 / norm_w0;
@@ -627,18 +632,18 @@ int QuasiNewtonSolver::Solve()
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
-  // EPS eigenvectors are ordered arbitrarily, need to match them to order of X.
-  perm = std::make_unique<int[]>(nev);
-  std::vector<int> order_eigen(nev), order2(nev);
-  std::iota(perm.get(), perm.get() + nev, 0);
+  // H eigenvectors are ordered arbitrarily, need to match them to order of X.
+  std::vector<int> order(nev), order_eigen(nev), order2(nev);
+  std::iota(order.begin(), order.end(), 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
   std::iota(order2.begin(), order2.end(), 0);
-  std::sort(perm.get(), perm.get() + nev, [&eigen_values = this->eigenvalues](auto l, auto r)
-            { return eigen_values[l].imag() < eigen_values[r].imag(); });
+  std::sort(order.begin(), order.end(),
+            [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
   std::sort(order_eigen.begin(), order_eigen.end(),
             [&epseig = eps.eigenvalues()](auto l, auto r)
             { return epseig(l).imag() < epseig(r).imag(); });
-  std::sort(order2.begin(), order2.end(), [&](auto l, auto r) { return perm[l] < perm[r]; });
+  std::sort(order2.begin(), order2.end(),
+            [&](auto l, auto r) { return order[l] < order[r]; });
 
   // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;
@@ -647,12 +652,23 @@ int QuasiNewtonSolver::Solve()
     Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
   }
 
-  // Recover the eigenvectors of the original problem.
+  // Recover the eigenvectors in the target range.
   for (int i = 0; i < nev; i++)
   {
-    ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
-    eigenvectors.push_back(eigv);
+    if (eigs[i].imag() > sigma.imag())
+    {
+      ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
+      eigenvalues.push_back(eigs[i]);
+      eigenvectors.push_back(eigv);
+    }
   }
+  nev = eigenvalues.size();
+
+  // Get ordering of the reported eigenpairs.
+  perm = std::make_unique<int[]>(nev);
+  std::iota(perm.get(), perm.get() + nev, 0);
+  std::sort(perm.get(), perm.get() + nev, [&eig = this->eigenvalues](auto l, auto r)
+            { return eig[l].imag() < eig[r].imag(); });
 
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
@@ -784,6 +800,7 @@ void NewtonInterpolationOperator::Mult(const int order, const ComplexVector &x,
               "Order must be greater than or equal to 0 and smaller than the number of "
               "interpolation points!");
 
+  y = 0.0;
   for (int j = 0; j < num_points; j++)
   {
     if (coeffs[order][j] != 0.0)
@@ -796,7 +813,6 @@ void NewtonInterpolationOperator::Mult(const int order, const ComplexVector &x,
 void NewtonInterpolationOperator::AddMult(const int order, const ComplexVector &x,
                                           ComplexVector &y, std::complex<double> a) const
 {
-  rhs = 0.0;
   this->Mult(order, x, rhs);
   rhs *= a;
   y += rhs;

@@ -707,11 +707,18 @@ public:
   // problems.
   bool pep_linear = true;
 
+  // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
+  bool refine_nonlinear = true;
+
   // Upper end of the target range for nonlinear eigenvalue solver [GHz].
   double target_upper = -1;
 
   // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
-  int preconditioner_lag = 50;
+  int preconditioner_lag = 10;
+
+  // Relative tolerance below which the preconditioner is not updated, regardless of the
+  // lag.
+  double preconditioner_lag_tol = 1e-4;
 
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.

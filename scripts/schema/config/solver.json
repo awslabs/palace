@@ -27,14 +27,15 @@
         "Save": { "type": "integer" },
         "Type": { "type": "string" },
         "PEPLinear": { "type": "boolean" },
-        "ContourNPoints": { "type": "integer" },
-        "ContourTargetUpper": { "type": "number" },
-        "ContourAspectRatio": { "type": "number" },
-        "ContourMoments": { "type": "integer" },
         "Scaling": { "type": "boolean" },
         "StartVector": { "type": "boolean" },
         "StartVectorConstant": { "type": "boolean" },
-        "MassOrthogonal": { "type": "boolean" }
+        "MassOrthogonal": { "type": "boolean" },
+        "RefineNonlinear": { "type": "boolean" },
+        "TargetUpper": { "type": "number" },
+        "PreconditionerLag": { "type" : "integer", "minimum": 0 },
+        "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
+        "MaxRestart": { "type" : "integer", "minimum": 0 }
       }
     },
     "Driven":

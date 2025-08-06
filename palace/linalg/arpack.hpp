@@ -159,8 +159,9 @@ public:
   // Set maximum number of Arnoldi update iterations.
   void SetMaxIter(int max_it) override;
 
-  // Set the update frequency of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq) override;
+  // Set the update frequency and tolerance of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq,
+                            double preconditioner_update_tol) override;
 
   // Set the maximum number of restarts with the same initial guess.
   void SetMaxRestart(int max_num_restart) override;
