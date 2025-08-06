@@ -210,7 +210,8 @@ void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const Complex
   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
-void ArpackEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
+void ArpackEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+                                                  double preconditioner_update_tol)
 {
   MFEM_ABORT("SetPreconditionerLag not defined for base class ArpackEigenvalueSolver!");
 }

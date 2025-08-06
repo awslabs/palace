@@ -1932,8 +1932,10 @@ void EigenSolverData::SetUp(json &solver)
   init_v0 = eigenmode->value("StartVector", init_v0);
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
+  refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
   target_upper = eigenmode->value("TargetUpper", target_upper);
   preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
+  preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode->value("MaxRestart", max_restart);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
@@ -1942,6 +1944,8 @@ void EigenSolverData::SetUp(json &solver)
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
   MFEM_VERIFY(preconditioner_lag >= 0,
               "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
+  MFEM_VERIFY(preconditioner_lag_tol >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLagTol\"] must be non-negative!");
   MFEM_VERIFY(max_restart >= 0,
               "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
 
@@ -1960,8 +1964,10 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("StartVector");
   eigenmode->erase("StartVectorConstant");
   eigenmode->erase("MassOrthogonal");
+  eigenmode->erase("RefineNonlinear");
   eigenmode->erase("TargetUpper");
   eigenmode->erase("PreconditionerLag");
+  eigenmode->erase("PreconditionerLagTol");
   eigenmode->erase("MaxRestart");
   MFEM_VERIFY(eigenmode->empty(),
               "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
@@ -1982,8 +1988,10 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "StartVector: " << init_v0 << '\n';
     std::cout << "StartVectorConstant: " << init_v0_const << '\n';
     std::cout << "MassOrthogonal: " << mass_orthog << '\n';
+    std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
     std::cout << "TargetUpper: " << target_upper << '\n';
     std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
+    std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
     std::cout << "MaxRestart: " << max_restart << '\n';
   }
 }
