@@ -180,7 +180,9 @@ TEST_CASE("TetToHex", "[geodata]")
     for (int i = 0; i < 14; i++)
       for (int j = 0; j < 3; j++)
       {
-        CHECK((*four_hex.GetNodes())(j + 3 * i) == Approx(global_dof_vals[i][j]));
+        // margin(1e-12) for comparing zeros.
+        CHECK((*four_hex.GetNodes())(j + 3 * i) ==
+              Approx(global_dof_vals[i][j]).margin(1e-12));
       }
 
     mfem::Vector vdof_vals, col;
@@ -197,9 +199,9 @@ TEST_CASE("TetToHex", "[geodata]")
         vdof_vals_mat.GetColumn(i, col);
         for (int j = 0; j < col.Size(); j++)
         {
-          CAPTURE(i, j, global_dof_vals[verts[j]][i]);
-          CHECK(((col(j) == Approx(global_dof_vals[verts[j]][i])) ||
-                 (col(j) == 0.0 && global_dof_vals[verts[j]][i] == 0.0)));
+          CAPTURE(i, j, global_dof_vals[verts[j]][i], col(j));
+          // margin(1e-12) for comparing zeros.
+          CHECK(col(j) == Approx(global_dof_vals[verts[j]][i]).margin(1e-12));
         }
       }
     };
