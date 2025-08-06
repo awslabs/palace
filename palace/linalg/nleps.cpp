@@ -26,8 +26,8 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   sigma = 0.0;
 
   opInv = nullptr;
-  opProj = nullptr;  // use or not?
-  opB = nullptr;     // figure out whether we should keep or not
+  opProj = nullptr;
+  opB = nullptr;
 }
 
 void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
@@ -121,14 +121,7 @@ void NonLinearEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool prec
 
 void NonLinearEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
 {
-  MFEM_VERIFY(n > 0, "Must call SetOperators before using SetInitialSpace for nonlinear "
-                     "eigenvalue solver!");
-  if (!r)
-  {
-    r = std::make_unique<std::complex<double>[]>(n);
-  }
-  MFEM_VERIFY(v.Size() == n, "Invalid size mismatch for provided initial space vector!");
-  v.Get(r.get(), n, false);
+  MFEM_ABORT("SetInitialSpace not defined for base class NonLinearEigenvalueSolver!");
 }
 
 void NonLinearEigenvalueSolver::SetInitialGuess(
@@ -634,7 +627,7 @@ int QuasiNewtonSolver::Solve()
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
   eps.compute(H);
-  // EPS eigenvectors are ordered arbitrarily, need to match them to our order.
+  // EPS eigenvectors are ordered arbitrarily, need to match them to order of X.
   perm = std::make_unique<int[]>(nev);
   std::vector<int> order_eigen(nev), order2(nev);
   std::iota(perm.get(), perm.get() + nev, 0);

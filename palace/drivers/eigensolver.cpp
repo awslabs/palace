@@ -113,8 +113,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::LINEAR);
-        // also need to turn off scaling? or better implement it
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
       }
       else
       {
@@ -301,22 +300,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
-  /**/
+
   if (has_A2)  // add a option to skip nonlinear refinement?!
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;
     qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
-    // qn = std::make_unique<RIINewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
-    qn->SetOperators(space_op, *K, *C, *M,
-                     EigenvalueSolver::ScaleType::NONE);  // currently not using scaling but
-                                                          // maybe try to make it work?
+    qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
     qn->SetNumModes(num_conv, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
     qn->SetLinearSolver(*ksp);
+    qn->SetDivFreeProjector(*divfree); // test, not sure if we want/need to this?
+    //if... SetBMat()?? do we ever want to use B in the nonlinear eigensolve? if so need to add applyopB in nleps.cpp
     qn->SetShiftInvert(1i * target);
     // Use linear eigensolve solution as initial guess.
     std::vector<std::complex<double>> init_eigs;
@@ -332,10 +330,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       init_V.push_back(v0);
     }
     qn->SetInitialGuess(init_eigs, init_V);
-    eigen = std::move(qn);  //?
+    eigen = std::move(qn);
     num_conv = eigen->Solve();
   }
-  /**/
+
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
