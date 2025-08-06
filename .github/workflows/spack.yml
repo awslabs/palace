@@ -51,9 +51,6 @@ jobs:
           ref: develop
           buildcache: true
           color: true
-          # This seems unnecessary, but otherwise we clone into ./spack
-          # This then would override the spack local repo dir, and break CI
-          path: spack-path
 
       - name: Setup Environment
         run: |
@@ -94,7 +91,7 @@ jobs:
               rocblas:
                 require: ~tensile
             repos:
-            - spack/local
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
