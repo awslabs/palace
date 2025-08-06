@@ -71,8 +71,7 @@ public:
     TOAR,
     STOAR,
     QARNOLDI,
-    JD,
-    LINEAR
+    JD
   };
 
   // Workspace vector for operator applications.

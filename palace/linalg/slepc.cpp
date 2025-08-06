@@ -320,7 +320,7 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
   sinvert = false;
   region = true;
-  sigma = 0.0;  // add sigma_max?
+  sigma = 0.0;
   gamma = delta = 1.0;
   has_A2 = false;
 
@@ -365,7 +365,7 @@ void SlepcEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexO
 void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
 {
   opInterp = &interp;
-  has_A2 = true;  // is there a better place to set this?
+  has_A2 = true;
 }
 
 void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq)
@@ -663,7 +663,6 @@ void SlepcEPSSolverBase::SetType(SlepcEigenvalueSolver::Type type)
     case Type::TOAR:
     case Type::STOAR:
     case Type::QARNOLDI:
-    case Type::LINEAR:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }
@@ -997,7 +996,7 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   if (has_A2)
   {
     auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(
-        std::abs(l.imag()), Operator::DIAG_ZERO);  // std:abs???
+        std::abs(l.imag()), Operator::DIAG_ZERO);
     A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   return linalg::Norml2(GetComm(), r);
@@ -1152,9 +1151,6 @@ void SlepcPEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
     case Type::JD:
       PalacePetscCall(PEPSetType(pep, PEPJD));
       region = false;
-      break;
-    case Type::LINEAR:
-      PalacePetscCall(PEPSetType(pep, PEPLINEAR));
       break;
     case Type::KRYLOVSCHUR:
     case Type::POWER:
@@ -1360,7 +1356,7 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   if (has_A2)
   {
     auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(
-        std::abs(l.imag()), Operator::DIAG_ZERO);  // std:abs???
+        std::abs(l.imag()), Operator::DIAG_ZERO);
     A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
   }
   return linalg::Norml2(GetComm(), r);
