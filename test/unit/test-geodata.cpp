@@ -217,14 +217,23 @@ TEST_CASE("TetToHex", "[geodata]")
     // position data.
     int order = GENERATE(2, 3);
     const int sdim = 3;
+    // Create linear meshes, to copy the nodes to.
     mfem::Mesh linear_single_tet(single_tet);
+    auto linear_four_hex = mesh::MeshTetToHex(linear_single_tet);
+    linear_single_tet.EnsureNodes();
+    linear_four_hex.EnsureNodes();
+    REQUIRE(linear_single_tet.GetNodes());
+    REQUIRE(linear_single_tet.GetNodes()->FESpace()->GetMaxElementOrder() == 1);
+    REQUIRE(linear_four_hex.GetNodes());
+    REQUIRE(linear_four_hex.GetNodes()->FESpace()->GetMaxElementOrder() == 1);
+
     single_tet.EnsureNodes();
     single_tet.SetCurvature(order);
 
     // Randomly perturb the data
     for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
     {
-      (*single_tet.GetNodes())(i) += 0.05 * (2.0 * (double)rand() / RAND_MAX - 1.0);
+      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + (double)rand() / RAND_MAX);
     }
 
     auto four_hex = mesh::MeshTetToHex(single_tet);
@@ -250,12 +259,31 @@ TEST_CASE("TetToHex", "[geodata]")
       return xyz_samples;
     };
 
-    // Use the linear meshes to sample the higher order meshes node functions, using GSLIB.
+    // Uniform sampling over the tet, as integration points, and as xyz coords.
     auto xyz_samples = gen_samples(order + 2);
+
+    // Create FESpaces on the linear meshes, with the same dofs from the higher mesh nodes.
+    // Then sample the node functions using coordinates from the linear meshes.
+    // These should be equal to each other, as the sample points correspond to the original
+    // reference space on the tet.
+    const auto &tet_FESpace = single_tet.GetNodes()->FESpace();
+    const auto &hex_FESpace = four_hex.GetNodes()->FESpace();
+    mfem::FiniteElementSpace linear_tet_FESpace(&linear_single_tet, tet_FESpace->FEColl(),
+                                                sdim, tet_FESpace->GetOrdering());
+    mfem::FiniteElementSpace linear_hex_FESpace(&linear_four_hex, hex_FESpace->FEColl(),
+                                                sdim, hex_FESpace->GetOrdering());
+    mfem::GridFunction tet_nodes_on_linear_tet(&linear_tet_FESpace);
+    mfem::GridFunction hex_nodes_on_linear_hex(&linear_hex_FESpace);
+    REQUIRE(tet_nodes_on_linear_tet.Size() == single_tet.GetNodes()->Size());
+    REQUIRE(hex_nodes_on_linear_hex.Size() == four_hex.GetNodes()->Size());
+    tet_nodes_on_linear_tet = *single_tet.GetNodes();
+    hex_nodes_on_linear_hex = *four_hex.GetNodes();
+
+    // Sample the higher order node functions on the linear mesh "single tet refspace".
     mfem::Vector tet_vals(xyz_samples.Size()), hex_vals(xyz_samples.Size());
-    fem::InterpolateFunction(xyz_samples, *single_tet.GetNodes(), tet_vals,
+    fem::InterpolateFunction(xyz_samples, tet_nodes_on_linear_tet, tet_vals,
                              mfem::Ordering::byVDIM);
-    fem::InterpolateFunction(xyz_samples, *four_hex.GetNodes(), hex_vals,
+    fem::InterpolateFunction(xyz_samples, hex_nodes_on_linear_hex, hex_vals,
                              mfem::Ordering::byVDIM);
 
     for (int i = 0; i < tet_vals.Size(); i++)
