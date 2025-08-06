@@ -131,7 +131,8 @@ public:
   void SetMaxIter(int max_it) override;
 
   // Set the update frequency of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq) override;
+  void SetPreconditionerLag(int preconditioner_update_freq,
+                            double preconditioner_update_tol) override;
 
   // Set the maximum number of restarts with the same initial guess.
   void SetMaxRestart(int max_num_restart) override;
@@ -189,6 +190,9 @@ private:
   // Update frequency of the preconditioner during Newton iterations.
   int preconditioner_lag;
 
+  // Update tolerance of the preconditioner (no update below tol).
+  double preconditioner_tol;
+
   // Maximum number of Newton attempts with the same initial guess.
   int max_restart;
 
@@ -209,7 +213,8 @@ public:
                     ScaleType type) override;
 
   // Set the update frequency of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq) override;
+  void SetPreconditionerLag(int preconditioner_update_freq,
+                            double preconditioner_update_tol) override;
 
   // Set the maximum number of restarts with the same initial guess.
   void SetMaxRestart(int max_num_restart) override;
