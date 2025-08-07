@@ -66,19 +66,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
   EigenSolverBackend type = iodata.solver.eigenmode.type;
+  NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
 #if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
   if (type == EigenSolverBackend::DEFAULT)
   {
     type = EigenSolverBackend::SLEPC;
   }
 #elif defined(PALACE_WITH_ARPACK)
-  if (iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC)
+  if (type == EigenSolverBackend::SLEPC)
   {
     Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
   }
   type = EigenSolverBackend::ARPACK;
+  if (nonlinear_type == NonlinearEigenSolver::SLP)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver not available, using Hybrid!\n");
+  }
+  nonlinear_type = NonlinearEigenSolver::HYBRID;
 #elif defined(PALACE_WITH_SLEPC)
-  if (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK)
+  if (type == EigenSolverBackend::ARPACK)
   {
     Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
   }
@@ -107,28 +113,38 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
     std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (C || has_A2)
+    if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
-      if (!iodata.solver.eigenmode.pep_linear)
-      {
-        slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
-      }
-      else
-      {
-        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
-                                                              iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-      }
+      slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
+                                                     iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
+      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
     }
     else
     {
-      slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
-                                                      iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+      if (C || has_A2)
+      {
+        if (!iodata.solver.eigenmode.pep_linear)
+        {
+          slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
+                                                          iodata.problem.verbose);
+          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+        }
+        else
+        {
+          slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
+                                                                iodata.problem.verbose);
+          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+        }
+      }
+      else
+      {
+        slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+      }
+      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     }
-    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
                                 iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
     eigen = std::move(slepc);
@@ -137,7 +153,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (C || has_A2)
+  if (nonlinear_type == NonlinearEigenSolver::SLP)
+  {
+    eigen->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+  }
+  else if (C || has_A2)
   {
     // eigen->SetOperators(*K, *C, *M, scale);
     eigen->SetOperators(space_op, *K, *C, *M, scale);
@@ -233,7 +253,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C || has_A2)
+  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
@@ -243,6 +263,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
       // λ with frequency close to but not below the target σ.
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
+    }
+    else if (nonlinear_type == NonlinearEigenSolver::SLP)
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
     }
     else
     {
@@ -291,6 +315,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
+  std::cout << "Solve\n";
   int num_conv = eigen->Solve();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
@@ -301,7 +326,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear)
+  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear && nonlinear_type != NonlinearEigenSolver::SLP)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;
