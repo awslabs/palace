@@ -707,6 +707,9 @@ public:
   // problems.
   bool pep_linear = true;
 
+  // Nonlinear eigenvalue solver type.
+  NonlinearEigenSolver nonlinear_type = NonlinearEigenSolver::DEFAULT;
+
   // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
   bool refine_nonlinear = true;
 
