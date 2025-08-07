@@ -128,6 +128,8 @@ eigenvalues as
 \omega_d = \text{Re}\{\omega\} \,, \qquad Q = \frac{|\omega|}{2|\text{Im}\{\omega\}|} \,.
 ```
 
+The eigenmodes are normalized such that they have unit norm and their mean phase is a positive real number.
+
 ## Lumped ports and wave ports
 
 For lumped port boundaries, the surface impedance can be related to an equivalent circuit
