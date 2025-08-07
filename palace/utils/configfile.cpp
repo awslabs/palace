@@ -74,6 +74,11 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "D
                                                 {EigenSolverBackend::SLEPC, "SLEPc"},
                                                 {EigenSolverBackend::ARPACK, "ARPACK"}})
 
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::DEFAULT, "Default"},
+                                                {NonlinearEigenSolver::HYBRID, "Hybrid"},
+                                                {NonlinearEigenSolver::SLP, "SLP"}})
+
 // Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                          {SurfaceFlux::MAGNETIC, "Magnetic"},
@@ -1932,6 +1937,7 @@ void EigenSolverData::SetUp(json &solver)
   init_v0 = eigenmode->value("StartVector", init_v0);
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
+  nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
   refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
   target_upper = eigenmode->value("TargetUpper", target_upper);
   preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
@@ -1964,6 +1970,7 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("StartVector");
   eigenmode->erase("StartVectorConstant");
   eigenmode->erase("MassOrthogonal");
+  eigenmode->erase("NonlinearType");
   eigenmode->erase("RefineNonlinear");
   eigenmode->erase("TargetUpper");
   eigenmode->erase("PreconditionerLag");
@@ -1988,6 +1995,7 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "StartVector: " << init_v0 << '\n';
     std::cout << "StartVectorConstant: " << init_v0_const << '\n';
     std::cout << "MassOrthogonal: " << mass_orthog << '\n';
+    std::cout << "NonlinearType: " << nonlinear_type << '\n';
     std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
     std::cout << "TargetUpper: " << target_upper << '\n';
     std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
