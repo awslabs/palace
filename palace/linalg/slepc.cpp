@@ -26,6 +26,17 @@ static PetscErrorCode __mat_apply_PEP_A1(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEP_A2(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_PEP_B(Mat, Vec, Vec);
 static PetscErrorCode __pc_apply_PEP(PC, Vec, Vec);
+// for NEP
+static PetscErrorCode __mat_apply_NEP_A(Mat, Vec, Vec);
+static PetscErrorCode __mat_destroy_NEP_A(Mat);
+static PetscErrorCode __mat_duplicate_NEP_A(Mat, MatDuplicateOption, Mat *);
+static PetscErrorCode __mat_apply_NEP_J(Mat, Vec, Vec);
+static PetscErrorCode __mat_destroy_NEP_J(Mat);
+static PetscErrorCode __mat_duplicate_NEP_J(Mat, MatDuplicateOption, Mat *);
+static PetscErrorCode __mat_apply_NEP_B(Mat, Vec, Vec);
+static PetscErrorCode __pc_apply_NEP(PC, Vec, Vec); // test
+static PetscErrorCode __form_NEP_function(NEP, PetscScalar, Mat, Mat, void *);
+static PetscErrorCode __form_NEP_jacobian(NEP, PetscScalar, Mat, void *);
 
 namespace
 {
@@ -405,7 +416,7 @@ void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
   {
     PalacePetscCall(STSetType(st, STSINVERT));
   }
-  // PalacePetscCall(STSetTransform(st, PETSC_TRUE)); // fails with PEP with type LINEAR
+  PalacePetscCall(STSetTransform(st, PETSC_TRUE));
   PalacePetscCall(STSetMatMode(st, ST_MATMODE_SHELL));
   sigma = s;  // Wait until solve time to call EPS/PEPSetTarget
   sinvert = true;
@@ -639,6 +650,7 @@ void SlepcEPSSolverBase::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
       break;
     case ProblemType::HYPERBOLIC:
     case ProblemType::GYROSCOPIC:
+    case ProblemType::GENERAL:
       MFEM_ABORT("Problem type not implemented!");
       break;
   }
@@ -664,6 +676,8 @@ void SlepcEPSSolverBase::SetType(SlepcEigenvalueSolver::Type type)
     case Type::TOAR:
     case Type::STOAR:
     case Type::QARNOLDI:
+    case Type::SLP:
+    case Type::NLEIGS:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }
@@ -1125,6 +1139,7 @@ void SlepcPEPSolverBase::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
     case ProblemType::NON_HERMITIAN:
     case ProblemType::GEN_INDEFINITE:
     case ProblemType::GEN_NON_HERMITIAN:
+    case ProblemType::GENERAL:
       PalacePetscCall(PEPSetProblemType(pep, PEP_GENERAL));
       break;
     case ProblemType::HYPERBOLIC:
@@ -1156,6 +1171,8 @@ void SlepcPEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
     case Type::KRYLOVSCHUR:
     case Type::POWER:
     case Type::SUBSPACE:
+    case Type::SLP:
+    case Type::NLEIGS:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }
@@ -1382,6 +1399,433 @@ PetscReal SlepcPEPSolver::GetBackwardScaling(PetscScalar l) const
   PetscReal t = PetscAbsScalar(l);
   return normK + t * normC + t * t * normM;
 }
+
+// NEP specific methods.
+
+SlepcNEPSolverBase::SlepcNEPSolverBase(MPI_Comm comm, int print, const std::string &prefix)
+  : SlepcEigenvalueSolver(print)
+{
+  PalacePetscCall(NEPCreate(comm, &nep));
+  PalacePetscCall(NEPSetOptionsPrefix(nep, prefix.c_str()));
+  if (print > 0)
+  {
+    std::string opts = "-nep_monitor";
+    if (print > 2)
+    {
+      opts.append(" -nep_view");
+    }
+    if (prefix.length() > 0)
+    {
+      PetscOptionsPrefixPush(nullptr, prefix.c_str());
+    }
+    PetscOptionsInsertString(nullptr, opts.c_str());
+    if (prefix.length() > 0)
+    {
+      PetscOptionsPrefixPop(nullptr);
+    }
+  }
+  A = J = nullptr;
+}
+
+SlepcNEPSolverBase::~SlepcNEPSolverBase()
+{
+  PalacePetscCall(NEPDestroy(&nep));
+  PalacePetscCall(MatDestroy(&A));
+  PalacePetscCall(MatDestroy(&J));
+}
+
+void SlepcNEPSolverBase::SetNumModes(int num_eig, int num_vec)
+{
+  PalacePetscCall(NEPSetDimensions(nep, num_eig, (num_vec > 0) ? num_vec : PETSC_DEFAULT,
+                                   PETSC_DEFAULT));
+}
+
+void SlepcNEPSolverBase::SetTol(PetscReal tol)
+{
+  PalacePetscCall(NEPSetTolerances(nep, tol, PETSC_DEFAULT));
+  PalacePetscCall(NEPSetConvergenceTest(nep, NEP_CONV_REL));
+}
+
+void SlepcNEPSolverBase::SetMaxIter(int max_it)
+{
+  PalacePetscCall(
+      NEPSetTolerances(nep, PETSC_DEFAULT, (max_it > 0) ? max_it : PETSC_DEFAULT));
+}
+
+void SlepcNEPSolverBase::SetShiftInvert(std::complex<double> s, bool precond)
+{
+  sigma = s;  // Wait until solve time to call NEPSetTarget
+  sinvert = false;
+}
+
+void SlepcNEPSolverBase::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
+{
+  switch (type)
+  {
+    case WhichType::LARGEST_MAGNITUDE:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_LARGEST_MAGNITUDE));
+      region = false;
+      break;
+    case WhichType::SMALLEST_MAGNITUDE:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_SMALLEST_MAGNITUDE));
+      region = false;
+      break;
+    case WhichType::LARGEST_REAL:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_LARGEST_REAL));
+      break;
+    case WhichType::SMALLEST_REAL:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_SMALLEST_REAL));
+      break;
+    case WhichType::LARGEST_IMAGINARY:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_LARGEST_IMAGINARY));
+      break;
+    case WhichType::SMALLEST_IMAGINARY:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_SMALLEST_IMAGINARY));
+      break;
+    case WhichType::TARGET_MAGNITUDE:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_TARGET_MAGNITUDE));
+      region = false;
+      break;
+    case WhichType::TARGET_REAL:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_TARGET_REAL));
+      break;
+    case WhichType::TARGET_IMAGINARY:
+      PalacePetscCall(NEPSetWhichEigenpairs(nep, NEP_TARGET_IMAGINARY));
+      break;
+  }
+}
+
+void SlepcNEPSolverBase::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
+{
+  switch (type)
+  {
+    case ProblemType::GENERAL:
+      PalacePetscCall(NEPSetProblemType(nep, NEP_GENERAL));
+      break;
+    case ProblemType::HERMITIAN:
+    case ProblemType::GEN_HERMITIAN:
+    case ProblemType::NON_HERMITIAN:
+    case ProblemType::GEN_INDEFINITE:
+    case ProblemType::GEN_NON_HERMITIAN:
+    case ProblemType::HYPERBOLIC:
+    case ProblemType::GYROSCOPIC:
+      MFEM_ABORT("Problem type not implemented!");
+      break;
+  }
+}
+
+void SlepcNEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
+{
+  switch (type)
+  {
+    case Type::SLP:
+      PalacePetscCall(NEPSetType(nep, NEPSLP));
+      break;
+    case Type::NLEIGS:
+      PalacePetscCall(NEPSetType(nep, NEPNLEIGS));
+      PalacePetscCall(NEPNLEIGSSetFullBasis(nep, PETSC_TRUE));
+      PalacePetscCall(NEPNLEIGSSetInterpolation(nep, 1e-6, 30));  // get from config? here or elswhere?
+      break;
+    case Type::KRYLOVSCHUR:
+    case Type::POWER:
+    case Type::SUBSPACE:
+    case Type::JD:
+    case Type::TOAR:
+    case Type::STOAR:
+    case Type::QARNOLDI:
+      MFEM_ABORT("Eigenvalue solver type not implemented!");
+      break;
+  }
+}
+
+void SlepcNEPSolverBase::SetInitialSpace(const ComplexVector &v)
+{
+  MFEM_VERIFY(
+      A && J,
+      "Must call SetOperators before using SetInitialSpace for SLEPc eigenvalue solver!");
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A, nullptr, &v0));
+  }
+  PalacePetscCall(ToPetscVec(v, v0));
+  Vec is[1] = {v0};
+  PalacePetscCall(NEPSetInitialSpace(nep, 1, is));
+}
+
+void SlepcNEPSolverBase::Customize()
+{
+  // Configure the region based on the given target if necessary.
+  // NLEIGS requires a bounded region (can't use infinity bounds) and region = false for Newton methods.
+  if (region)
+  {
+    const double upper_bound = 10.0; // set this from config file?
+    const double width = 1.0;  // set this from config file?
+    if (PetscImaginaryPart(sigma) == 0.0)
+    {
+      PetscReal sr = PetscRealPart(sigma);
+      double bound = upper_bound * std::abs(sr) / gamma;
+      if (sr > 0.0)
+      {
+        ConfigureRG(GetRG(), sr / gamma, bound, -bound*width, bound*width);
+      }
+      else if (sr < 0.0)
+      {
+        ConfigureRG(GetRG(), -bound, sr / gamma, -bound*width, bound*width);
+      }
+    }
+    else if (PetscRealPart(sigma) == 0.0)
+    {
+      PetscReal si = PetscImaginaryPart(sigma);
+      double bound = upper_bound * std::abs(si) / gamma;
+      if (si > 0.0)
+      {
+        ConfigureRG(GetRG(), -bound*width, bound*width, si / gamma, bound);
+      }
+      else if (si < 0.0)
+      {
+        ConfigureRG(GetRG(), -bound*width, bound*width, -bound, si / gamma);
+      }
+    }
+    else
+    {
+      MFEM_ABORT("Shift-and-invert with general complex eigenvalue target is unsupported!");
+    }
+  }
+
+  PalacePetscCall(NEPSetTarget(nep, sigma / gamma));
+  if (!cl_custom)
+  {
+    PalacePetscCall(NEPSetFromOptions(nep));
+    if (print > 0)
+    {
+      PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm()));
+      Mpi::Print(GetComm(), "\n");
+    }
+    cl_custom = true;
+  }
+}
+
+int SlepcNEPSolverBase::Solve()
+{
+  MFEM_VERIFY(A && J && opInv, "Operators are not set for SlepcNEPSolverBase!");
+
+  // Solve the eigenvalue problem.
+  PetscInt num_conv;
+  Customize();
+  PalacePetscCall(NEPSolve(nep));
+  PalacePetscCall(NEPGetConverged(nep, &num_conv));
+  if (print > 0)
+  {
+    Mpi::Print(GetComm(), "\n");
+    PalacePetscCall(NEPConvergedReasonView(nep, PETSC_VIEWER_STDOUT_(GetComm())));
+    Mpi::Print(GetComm(),
+               " Total number of linear systems solved: {:d}\n"
+               " Total number of linear solver iterations: {:d}\n",
+               opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+  }
+
+  // Compute and store the eigenpair residuals.
+  RescaleEigenvectors(num_conv);
+  return (int)num_conv;
+}
+
+std::complex<double> SlepcNEPSolverBase::GetEigenvalue(int i) const
+{
+  PetscScalar l;
+  PalacePetscCall(NEPGetEigenpair(nep, i, &l, nullptr, nullptr, nullptr));
+  return l * gamma;
+}
+
+void SlepcNEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
+{
+  MFEM_VERIFY(
+      v0,
+      "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
+  PalacePetscCall(NEPGetEigenpair(nep, i, nullptr, nullptr, v0, nullptr));
+  PalacePetscCall(FromPetscVec(v0, x));
+  if (xscale.get()[i] > 0.0)
+  {
+    x *= xscale.get()[i];
+  }
+}
+
+BV SlepcNEPSolverBase::GetBV() const
+{
+  BV bv;
+  PalacePetscCall(NEPGetBV(nep, &bv));
+  return bv;
+}
+
+ST SlepcNEPSolverBase::GetST() const
+{
+  ST st;
+  // NEPGetST does not exist.
+  return st;
+}
+
+RG SlepcNEPSolverBase::GetRG() const
+{
+  RG rg;
+  PalacePetscCall(NEPGetRG(nep, &rg));
+  return rg;
+}
+
+SlepcNEPSolver::SlepcNEPSolver(MPI_Comm comm, int print, const std::string &prefix)
+  : SlepcNEPSolverBase(comm, print, prefix)
+{
+  opK = opC = opM = nullptr;
+  normK = normC = normM = 0.0;
+}
+
+void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                  const ComplexOperator &C, const ComplexOperator &M,
+                                  EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the quadratic polynomial
+  // eigenvalue problem.
+  std::cerr << "SlepcNEPSolver SetOperators\n";
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opC = &C;
+  opM = &M;
+  space_op = &space_op_ref;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &J));
+    PalacePetscCall(
+        MatShellSetOperation(A, MATOP_MULT, (void (*)(void))__mat_apply_NEP_A));
+    PalacePetscCall(
+        MatShellSetOperation(A, MATOP_DUPLICATE, (void (*)(void))__mat_duplicate_NEP_A));
+     PalacePetscCall(
+        MatShellSetOperation(A, MATOP_DESTROY, (void (*)(void))__mat_destroy_NEP_A));
+    PalacePetscCall(
+        MatShellSetOperation(J, MATOP_MULT, (void (*)(void))__mat_apply_NEP_J));
+    PalacePetscCall(
+        MatShellSetOperation(J, MATOP_DUPLICATE, (void (*)(void))__mat_duplicate_NEP_J));
+    PalacePetscCall(
+        MatShellSetOperation(J, MATOP_DESTROY, (void (*)(void))__mat_destroy_NEP_J));
+    PalacePetscCall(MatShellSetVecType(A, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(J, PetscVecType()));
+    PalacePetscCall(NEPSetFunction(nep, A, A, __form_NEP_function, NULL));
+    PalacePetscCall(NEPSetJacobian(nep, J, __form_NEP_jacobian, NULL));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    if (opC)
+    {
+      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    }
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
+                "Invalid matrix norms for NEP scaling!");
+    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+
+  // Configure linear solver.
+  if (first)
+  {
+    PC pc;
+    PetscInt nsolve;
+    // NLEIGS
+    /*
+    KSP *ksp;
+    PalacePetscCall(NEPNLEIGSGetKSPs(nep, &nsolve, &ksp));
+    for (int i = 0; i < nsolve; i++)
+    {
+      PalacePetscCall(KSPSetType(ksp[i], KSPPREONLY));
+      PalacePetscCall(KSPGetPC(ksp[i], &pc));
+      PalacePetscCall(PCSetType(pc, PCSHELL));
+      PalacePetscCall(PCShellSetContext(pc, (void *)this));
+      PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
+    }
+    */
+    // SLP
+    KSP ksp;
+    EPS eps;
+    PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
+    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
+    PalacePetscCall(NEPSLPGetEPS(nep, &eps));
+    PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
+    PalacePetscCall(KSPGetPC(ksp, &pc));
+    PalacePetscCall(PCSetType(pc, PCSHELL));
+    PalacePetscCall(PCShellSetContext(pc, (void *)this));
+    PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
+  }
+}
+
+void SlepcNEPSolver::SetBMat(const Operator &B)
+{
+  SlepcEigenvalueSolver::SetBMat(B);
+
+  const PetscInt n = B.Height();
+  PalacePetscCall(
+      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &B0));
+  PalacePetscCall(MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_NEP_B));
+  PalacePetscCall(MatShellSetVecType(B0, PetscVecType()));
+
+  BV bv = GetBV();
+  PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
+}
+
+PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                          ComplexVector &r) const
+{
+  // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
+  // eigenvalue λ.
+  opK->Mult(x, r);
+  if (opC)
+  {
+    opC->AddMult(x, r, l);
+  }
+  opM->AddMult(x, r, l * l);
+  auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+                                                            Operator::DIAG_ZERO);
+  if (A2)
+  {
+    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  }
+  return linalg::Norml2(GetComm(), r);
+}
+
+PetscReal SlepcNEPSolver::GetBackwardScaling(PetscScalar l) const
+{
+  // Make sure not to use norms from scaling as this can be confusing if they are different.
+  // Note that SLEPc typically uses ||.||∞, not Frobenius.
+  if (normK <= 0.0)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+  }
+  if (normC <= 0.0 && opC)
+  {
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+  }
+  if (normM <= 0.0)
+  {
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+  }
+  PetscReal t = PetscAbsScalar(l);
+  return normK + t * normC + t * t * normM;
+}
+
 
 }  // namespace palace::slepc
 
@@ -1705,6 +2149,273 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   }
   PetscCall(ToPetscVec(ctx->y1, y));
 
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_apply_NEP_A(Mat A, Vec x, Vec y)
+{
+   std::cerr << "__mat_apply_NEP_A\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(FromPetscVec(x, ctx->x1));
+  ctx->opA->Mult(ctx->x1, ctx->y1);
+  PetscCall(ToPetscVec(ctx->y1, y));
+
+  //palace::ComplexVector t1(ctx->opA->Height()), t2(ctx->opA->Height());
+  //t1.UseDevice(true);
+  //t1 = 0.0;
+  //t2.UseDevice(true);
+  //t2 = 0.0;
+  //PetscCall(FromPetscVec(x, t1));
+  //ctx->opA->Mult(t1, t2);  // NEED TO FIGURE OUT WHY IT FAILS WITH x1, y1?!?!!?!?!?!?
+  //PetscCall(ToPetscVec(t2, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_destroy_NEP_A(Mat A)
+{
+   std::cerr << "__mat_destory_NEP_A\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(PetscFree(ctx));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_duplicate_NEP_A(Mat A, MatDuplicateOption op, Mat *B)
+{
+   std::cerr << "__mat_duplicate_NEP_A\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctxA, *ctxB;
+  PetscInt m, n, M, N;
+  MPI_Comm comm;
+  PetscCall(MatShellGetContext(A, (void **)&ctxA));
+  MFEM_VERIFY(ctxA, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(MatGetSize(A, &M, &N));
+  PetscCall(MatGetLocalSize(A, &m, &n));
+
+  PetscCall(PetscNew(&ctxB));
+  ctxB->space_op = ctxA->space_op;
+  ctxB->opK = ctxA->opK;
+  ctxB->opC = ctxA->opC;
+  ctxB->opM = ctxA->opM;
+  ctxB->lambda = ctxA->lambda;
+  ctxB->sigma = ctxA->sigma;
+  ctxB->opInv = ctxA->opInv;
+  // DO WE NEED TO RECOMPUTE OPA2 AND OPA? CAN'T JUST COPY THEM?
+  std::complex<double> lambda = (ctxB->lambda.imag() == 0) ? ctxB->sigma : ctxB->lambda;
+    ctxB->opA2 = ctxB->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
+      std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  ctxB->opA = ctxB->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
+                                              lambda * lambda, ctxB->opK, ctxB->opC,
+                                              ctxB->opM, ctxB->opA2.get());
+
+  ctxB->x1.SetSize(ctxB->opK->Height());  //?
+  ctxB->y1.SetSize(ctxB->opK->Height());  //?
+  //ctxB->x1.UseDevice(true); //??
+  //ctxB->y1.UseDevice(true); //??
+
+  PetscCall(PetscObjectGetComm((PetscObject)A, &comm));
+  PetscCall(MatCreateShell(comm, m, n, M, N, (void *)ctxB, B));
+  PetscCall(MatShellSetOperation(*B, MATOP_MULT, (void (*)(void))__mat_apply_NEP_A));
+  PetscCall(MatShellSetOperation(*B, MATOP_DESTROY, (void (*)(void))__mat_destroy_NEP_A));
+  PetscCall(
+      MatShellSetOperation(*B, MATOP_DUPLICATE, (void (*)(void))__mat_duplicate_NEP_A));
+  PetscCall(MatShellSetVecType(*B, palace::slepc::PetscVecType()));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_duplicate_NEP_J(Mat A, MatDuplicateOption op, Mat *B)
+{
+   std::cerr << "__mat_duplicate_NEP_J\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctxA, *ctxB;
+  PetscInt m, n, M, N;
+  MPI_Comm comm;
+  PetscCall(MatShellGetContext(A, (void **)&ctxA));
+  MFEM_VERIFY(ctxA, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(MatGetSize(A, &M, &N));
+  PetscCall(MatGetLocalSize(A, &m, &n));
+std::cerr << "In  __mat_duplicate_NEP_J \n";
+  PetscCall(PetscNew(&ctxB));
+  ctxB->space_op = ctxA->space_op;
+  ctxB->opK = ctxA->opK;
+  ctxB->opC = ctxA->opC;
+  ctxB->opM = ctxA->opM;
+  ctxB->lambda = ctxA->lambda;
+  ctxB->opInv = ctxA->opInv;
+  ctxB->sigma = ctxA->sigma; //??
+  // why recalculate???? can't we just do ctxB->opJ = ctxA->opJ??
+  std::complex<double> lambda = ctxB->lambda;
+  std::cerr << "In __mat_duplicate_NEP_J ctxA->sigma: " << ctxA->sigma.real() << "+" << ctxA->sigma.imag() <<"i\n";
+  std::cerr << "In __mat_duplicate_NEP_J lambda: " << lambda.real() << "+" << lambda.imag() <<"i\n";
+  ctxB->opA2 = ctxB->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
+      std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
+  ctxB->opA2p = ctxB->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
+      std::abs(lambda.imag()) * (1.0 + eps), palace::Operator::DIAG_ZERO);
+  std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
+  ctxB->opAJ = ctxB->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(denom, ctxB->opA2p.get(), ctxB->opA2.get(), palace::Operator::DIAG_ZERO);
+  ctxB->opJ = ctxB->space_op->GetSystemMatrix(
+      std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2.0 * lambda,
+      ctxB->opK, ctxB->opC, ctxB->opM, ctxB->opAJ.get());
+
+  ctxB->x1.SetSize(ctxB->opK->Height());  //??
+  ctxB->y1.SetSize(ctxB->opK->Height());  //??
+  //ctxB->x1.UseDevice(true); //??
+  //ctxB->y1.UseDevice(true); //??
+  // need anything else?
+
+  PetscCall(PetscObjectGetComm((PetscObject)A, &comm));
+  PetscCall(MatCreateShell(comm, m, n, M, N, (void *)ctxB, B));
+  PetscCall(MatShellSetOperation(*B, MATOP_MULT, (void (*)(void))__mat_apply_NEP_J));
+  PetscCall(MatShellSetOperation(*B, MATOP_DESTROY, (void (*)(void))__mat_destroy_NEP_J));
+  PetscCall(
+      MatShellSetOperation(*B, MATOP_DUPLICATE, (void (*)(void))__mat_duplicate_NEP_J));
+  PetscCall(MatShellSetVecType(*B, palace::slepc::PetscVecType()));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+// Remove if we don't need J
+PetscErrorCode __mat_apply_NEP_J(Mat J, Vec x, Vec y)
+{
+  std::cerr << "__mat_apply_NEP_J\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(MatShellGetContext(J, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(FromPetscVec(x, ctx->x1));
+  ctx->opJ->Mult(ctx->x1, ctx->y1);
+  // ctx->y1 *= ctx->delta * ctx->gamma; //needed?
+  PetscCall(ToPetscVec(ctx->y1, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_destroy_NEP_J(Mat A)
+{
+  std::cerr << "__mat_destroy_NEP_J\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+  PetscCall(PetscFree(ctx));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_apply_NEP_B(Mat A, Vec x, Vec y)
+{
+  std::cerr << "__mat_apply_NEP_B\n";
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
+
+  PetscCall(FromPetscVec(x, ctx->x1));
+  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
+  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
+  ctx->y1 *= ctx->delta * ctx->gamma;
+  PetscCall(ToPetscVec(ctx->y1, y));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
+{
+  //
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPSolver *ctx;
+  PetscCall(PCShellGetContext(pc, (void **)&ctx));
+  MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
+
+  PetscCall(FromPetscVec(x, ctx->x1));
+  /*
+  if (ctx->new_lambda)
+  {
+    if (ctx->lambda.imag() == 0.0) ctx->lambda = ctx->sigma;
+    std::cerr << "__pc_apply_NEP with new ctx->lambda: " << ctx->lambda.real() << "+" << ctx->lambda.imag() <<"i\n";
+    ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(ctx->lambda.imag()), palace::Operator::DIAG_ZERO);
+    ctx->opA_pc = ctx->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get());
+    ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda, ctx->lambda.imag());
+    ctx->new_lambda = false;
+    std::cerr << "before opInv->SetOperators\n";
+    ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
+    std::cerr << "after opInv->SetOperators\n";
+  }
+  */
+  // If I call ctx->opInv->SetOperators I get a segfault, so I'm creating a new ksp object here for testing
+  // This is inefficient and expensive though, so we'd want to do something else instead...
+  //std::cerr << "__pc_apply_NEP make unique ksp\n";
+  // This is needed for Newton-based solvers:
+  //  auto ksp = std::make_unique<palace::ComplexKspSolver>(*ctx->opIodata, ctx->space_op->GetNDSpaces(), &ctx->space_op->GetH1Spaces());
+  //ksp->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
+  //ksp->Mult(ctx->x1, ctx->y1);
+ /**/
+  // For NLEIGS we don't want to change the operators
+  std::cerr << "before opInv->Mult\n";
+  ctx->opInv->Mult(ctx->x1, ctx->y1);
+  std::cerr << "after opInv->Mult\n";
+  //std::cerr << "__pc_apply_NEP after Mult\n";
+  /**/
+  if (!ctx->sinvert)
+  {
+    ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma);
+  }
+  else
+  {
+    ctx->y1 *= 1.0 / ctx->delta;
+  }
+  /**/
+  if (ctx->opProj)
+  {
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    ctx->opProj->Mult(ctx->y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+  }
+
+  PetscCall(ToPetscVec(ctx->y1, y));
+std::cerr << "__pc_apply_NEP done \n";
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, void *ctx)
+{
+  PetscFunctionBeginUser;
+  std::cerr << "In SlepcNepSolver FormFunction with lambda: " << lambda << "\n";
+
+  palace::slepc::SlepcNEPSolver *ctxF;
+  PetscCall(MatShellGetContext(fun, (void **)&ctxF));
+  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
+  ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
+      std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  ctxF->opA = ctxF->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
+                                              lambda * lambda, ctxF->opK, ctxF->opC,
+                                              ctxF->opM, ctxF->opA2.get());
+  ctxF->lambda = lambda;
+  ctxF->new_lambda = true;
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *ctx)
+{
+  PetscFunctionBeginUser;
+  std::cerr << "In SlepcNepSolver FormJacobian with lambda: " << lambda << "\n";
+  palace::slepc::SlepcNEPSolver *ctxF;
+  PetscCall(MatShellGetContext(fun, (void **)&ctxF));
+  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
+  // J(λ) = C + 2 λ M + A2'(Im{λ}).
+  ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
+  ctxF->opA2p = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(std::abs(lambda.imag()) * (1.0 + eps), palace::Operator::DIAG_ZERO);
+  std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
+  ctxF->opAJ = ctxF->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(denom, ctxF->opA2p.get(), ctxF->opA2.get(), palace::Operator::DIAG_ZERO);
+  ctxF->opJ = ctxF->space_op->GetSystemMatrix(std::complex<double>(0.0, 0.0),
+                                              std::complex<double>(1.0, 0.0), 2.0 * lambda,
+                                              ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get());
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
