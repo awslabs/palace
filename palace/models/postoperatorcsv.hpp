@@ -83,7 +83,6 @@ struct Measurement
   double eigenmode_Q = 0.0;
   double error_bkwd = 0.0;
   double error_abs = 0.0;
-  double phase = 0.0;
 
   // "Actual measurements".
 

@@ -318,6 +318,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
     double mean_phase = linalg::NormalizePhase(space_op.GetComm(), E);
+    // Mpi::Print("Mean phase for eigenmode #{:d}: {:.3e}\n", i + 1, mean_phase);
+
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -328,8 +330,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy = post_op.MeasureAndPrintAll(i, E, B, omega, error_abs,
-                                                          error_bkwd, mean_phase, num_conv);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
