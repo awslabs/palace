@@ -212,8 +212,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     )
 
     # -- Magma --
-    with when("+cuda") or when("+rocm"):
-        depends_on("magma")
+    with when("+cuda"):
+        depends_on("magma+shared", when="+shared")
+        depends_on("magma~shared", when="~shared")
+        depends_on("libceed+magma", when="@0.14:")
+
+    with when("+rocm"):
         depends_on("magma+shared", when="+shared")
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
