@@ -128,6 +128,15 @@ eigenvalues as
 \omega_d = \text{Re}\{\omega\} \,, \qquad Q = \frac{|\omega|}{2|\text{Im}\{\omega\}|} \,.
 ```
 
+When wave port, surface conductivity, or second-order absorbing boundary conditions are used,
+a nonlinear eigenvalue problem is solved:
+
+```math
+(\bm{K}+i\omega\bm{C}-\omega^2\bm{M}+\bm{A}_2(\omega))\bm{x} = 0
+```
+
+where the matrix ``\bm{A}_2`` represents the nonlinear frequency-dependent boundary conditions.
+
 ## Lumped ports and wave ports
 
 For lumped port boundaries, the surface impedance can be related to an equivalent circuit
