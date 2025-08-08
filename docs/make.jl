@@ -19,6 +19,7 @@ makedocs(
     authors="Sebastian Grimberg, sjg@amazon.com",
     pages=[
         "Home" => "index.md",
+        "Quick Start" => "quick.md",
         "install.md",
         "run.md",
         "User Guide" => Any[
