@@ -49,11 +49,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build with GSLIB library for high-order field interpolation",
     )
 
-    # -- Patches for Spack Build System --
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
 
-    # -- Core Dependencies --
     # NOTE: We can't depend on git tagged versions here
     #       https://github.com/spack/spack/issues/50171
     #       Instead, version in environment / spec
@@ -70,10 +68,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared")
     depends_on("eigen")
 
-    # -- Sparse Direct Solvers --
     conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
 
-    # -- MUMPS --
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("mumps+metis+parmetis")
@@ -82,7 +78,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps+openmp", when="+openmp")
         depends_on("mumps~openmp", when="~openmp")
 
-    # -- SuperLU-Dist --
     with when("+superlu-dist"):
         depends_on("superlu-dist+parmetis~cuda~rocm")
         depends_on("superlu-dist+shared", when="+shared")
@@ -92,7 +87,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("superlu-dist+openmp", when="+openmp")
         depends_on("superlu-dist~openmp", when="~openmp")
 
-    # -- Strumpack --
     with when("+strumpack"):
         depends_on("strumpack+butterflypack+zfp+parmetis~cuda~rocm")
         depends_on("strumpack+shared", when="+shared")
@@ -100,10 +94,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
-    # -- Eigenvalue Solvers --
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
-    # -- SLEPc --
     with when("+slepc"):
         depends_on("slepc~arpack")
         depends_on("slepc~cuda", when="~cuda")
@@ -118,26 +110,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("petsc~cuda", when="~cuda")
         depends_on("petsc~rocm", when="~rocm")
 
-    # -- Arpack --
     with when("+arpack"):
         depends_on("arpack-ng+mpi+icb")
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
 
-    # -- gslib --
     with when("+gslib @0.14:"):
         depends_on("gslib+mpi")
         depends_on("gslib+shared", when="+shared")
         depends_on("gslib~shared", when="~shared")
 
-    # -- METIS --
     depends_on("metis@5:")
     depends_on("metis+shared", when="+shared")
     depends_on("metis~shared", when="~shared")
     depends_on("metis+int64", when="+int64")
     depends_on("metis~int64", when="~int64")
 
-    # -- HYPRE --
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre~complex")
     depends_on("hypre+shared", when="+shared")
@@ -149,7 +137,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~cuda", when="~cuda")
     depends_on("hypre~rocm", when="~rocm")
 
-    # -- libxsmm --
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
         depends_on("libxsmm@=main blas=0")
@@ -159,10 +146,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # https://github.com/libxsmm/libxsmm/issues/883
         depends_on("libxsmm+shared")
 
-    # -- libCEED --
     depends_on("libceed@0.13:", when="@0.14:")
 
-    # -- Sundials --
     with when("+sundials @0.14:"):
         depends_on("sundials")
         depends_on("sundials+shared", when="+shared")
@@ -172,7 +157,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("sundials~cuda", when="~cuda")
         depends_on("sundials~rocm", when="~rocm")
 
-    # -- GPU --
     conflicts(
         "+cuda", when="@:0.12", msg="CUDA is only supported for Palace versions 0.13 and above"
     )
@@ -189,7 +173,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         msg="palace: Please specify an AMD GPU target / targets",
     )
 
-    # -- Magma --
     with when("+cuda"):
         depends_on("magma+shared", when="+shared")
         depends_on("magma~shared", when="~shared")
@@ -200,7 +183,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
 
-    # -- CUDA --
     with when("+cuda"):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
@@ -211,7 +193,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
 
-    # -- ROCm --
     with when("+rocm"):
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
