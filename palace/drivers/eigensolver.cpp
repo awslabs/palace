@@ -318,7 +318,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
     double mean_phase = linalg::NormalizePhase(space_op.GetComm(), E);
-    // Mpi::Print("Mean phase for eigenmode #{:d}: {:.3e}\n", i + 1, mean_phase);
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
