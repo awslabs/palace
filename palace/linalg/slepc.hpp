@@ -62,7 +62,7 @@ public:
     GEN_NON_HERMITIAN,
     HYPERBOLIC,
     GYROSCOPIC,
-    GENERAL, // for NEP
+    GENERAL,
   };
 
   enum class Type
@@ -74,8 +74,8 @@ public:
     STOAR,
     QARNOLDI,
     JD,
-    SLP, // for NEP
-    NLEIGS // for NEP
+    SLP,
+    NLEIGS
   };
 
   // Workspace vector for operator applications.
@@ -101,10 +101,7 @@ protected:
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  //ComplexKspSolver *opInv; // move it to public as a test... doesn't help
-
-  // Reference to space operator to compute the frequency-dependent A2 operator.
-  //SpaceOperator *space_op; // move it to public cause otherwsie I get errors?
+  ComplexKspSolver *opInv;
 
   // Reference to interpolation operator for nonlinear term (not owned).
   const Interpolation *opInterp;
@@ -210,8 +207,8 @@ public:
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
 
-  SpaceOperator *space_op; // NEP functions complain if this is protected
-  ComplexKspSolver *opInv; // move it to public as a test... doesn't help
+  //Reference to space operator to compute the frequency-dependent A2 operator.
+  SpaceOperator *space_op;
 };
 
 // Base class for SLEPc's EPS problem type.
@@ -454,7 +451,7 @@ protected:
   NEP nep;
 
   // Shell matrices for the nonlinear eigenvalue problem.
-  Mat A, J; //T, TJ;
+  Mat A, J;  // T, TJ;
 
   void Customize() override;
 
@@ -518,17 +515,25 @@ public:
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
 
-  // References to matrices defining the nonlinear eigenvalue problem
+  // References to matrices defining the quadratic eigenvalue problem
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
-  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opP, opAJ, opA2_pc, opA_pc, opP_pc; // ?? remove unneeded
 
-  PetscScalar lambda;  // need? remove? make private?
-  bool new_lambda = true; // need? remove? make private?
+  // Operators for the nonlinear eigenvalue problem.
+  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
+
+  // Eigenvalue estimate at current iteration.
+  PetscScalar lambda;
+
+  // Boolean flag to identify new λ estimate requiring a preconditioner update.
+  bool new_lambda = true;
+
+  // Boolean flag to avoid modifying an unused preconditioner.
+  bool first_pc = true;
 
 private:
   // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM; // not sure if needed??
+  mutable PetscReal normK, normC, normM;
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
