@@ -308,6 +308,12 @@ target_link_libraries(${LIB_TARGET_NAME}
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
 target_link_libraries(${LIB_TARGET_NAME} PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>)
+if(PALACE_WITH_GSLIB)
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_GSLIB
+  )
+endif()
+
 
 # Install target and helper scripts
 install(

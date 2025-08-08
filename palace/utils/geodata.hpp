@@ -238,6 +238,9 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
 
+// Helper for creating a hexahedral mesh from a tetrahedral mesh.
+mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);
+
 }  // namespace mesh
 
 }  // namespace palace
