@@ -130,6 +130,8 @@ The format of this changelog is based on
   - Added `scnlib` as a dependency to Palace.
   - Added parsing ability of existing csv files into the `Table` class. Fix `"Restart"`
     behaviour with the multi-excitation feature of driven solver.
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
+    conditions.
 
 ## [0.13.0] - 2024-05-20
 
