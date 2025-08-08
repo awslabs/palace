@@ -1,6 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Run with `julia --project make.jl` from within the `docs` folder.
+# Output HTML is saved to the `build` folder.
+
 using Documenter
 
 makedocs(
