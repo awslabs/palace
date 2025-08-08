@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_H1D_32_QF_H
 #define PALACE_LIBCEED_HCURL_H1D_32_QF_H
 
-#include "../coeff/coeff_3_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_32_qf.h"
 
 CEED_QFUNCTION(f_apply_hcurlh1d_32)(void *__restrict__ ctx, CeedInt Q,
@@ -16,8 +16,8 @@ CEED_QFUNCTION(f_apply_hcurlh1d_32)(void *__restrict__ ctx, CeedInt Q,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
-    CeedScalar coeff[9], adjJt_loc[6], v_loc[3];
-    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    CeedScalar adjJt_loc[6], v_loc[3];
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultBAx32(adjJt_loc, coeff, u_loc, v_loc);
 

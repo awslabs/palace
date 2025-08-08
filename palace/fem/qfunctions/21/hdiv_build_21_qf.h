@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HDIV_BUILD_21_QF_H
 #define PALACE_LIBCEED_HDIV_BUILD_21_QF_H
 
-#include "../coeff/coeff_2_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_21_qf.h"
 
 CEED_QFUNCTION(f_build_hdiv_21)(void *__restrict__ ctx, CeedInt Q,
@@ -15,8 +15,8 @@ CEED_QFUNCTION(f_build_hdiv_21)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[4], adjJt_loc[2], J_loc[2], qd_loc[1];
-    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    CeedScalar adjJt_loc[2], J_loc[2], qd_loc[1];
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     AdjJt21(adjJt_loc, J_loc);
     MultAtBA21(J_loc, coeff, qd_loc);

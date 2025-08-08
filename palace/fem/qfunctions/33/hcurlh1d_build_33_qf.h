@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_H1D_BUILD_33_QF_H
 #define PALACE_LIBCEED_HCURL_H1D_BUILD_33_QF_H
 
-#include "../coeff/coeff_3_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_33_qf.h"
 
 CEED_QFUNCTION(f_build_hcurlh1d_33)(void *__restrict__ ctx, CeedInt Q,
@@ -15,8 +15,8 @@ CEED_QFUNCTION(f_build_hcurlh1d_33)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[9], adjJt_loc[9], qd_loc[9];
-    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    CeedScalar adjJt_loc[9], qd_loc[9];
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     MultBA33(adjJt_loc, coeff, qd_loc);
 
