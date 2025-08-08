@@ -75,9 +75,10 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "D
                                                 {EigenSolverBackend::ARPACK, "ARPACK"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
-PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::DEFAULT, "Default"},
-                                                {NonlinearEigenSolver::HYBRID, "Hybrid"},
-                                                {NonlinearEigenSolver::SLP, "SLP"}})
+PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver,
+                           {{NonlinearEigenSolver::DEFAULT, "Default"},
+                            {NonlinearEigenSolver::HYBRID, "Hybrid"},
+                            {NonlinearEigenSolver::SLP, "SLP"}})
 
 // Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
