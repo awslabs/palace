@@ -116,7 +116,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
       slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
-                                                     iodata.problem.verbose);
+                                                      iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
     }
@@ -326,7 +326,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear && nonlinear_type != NonlinearEigenSolver::SLP)
+  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear &&
+      nonlinear_type != NonlinearEigenSolver::SLP)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;
