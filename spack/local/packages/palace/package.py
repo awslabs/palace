@@ -91,7 +91,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     ## -- SuperLU-Dist --
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist+parmetis~cuda~rocm")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -101,7 +101,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     ## -- Strumpack --
     with when("+strumpack"):
-        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack+butterflypack+zfp+parmetis~cuda~rocm")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
@@ -113,6 +113,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     ## -- SLEPc --
     with when("+slepc"):
         depends_on("slepc~arpack")
+        depends_on("slepc~cuda", when="~cuda")
+        depends_on("slepc~rocm", when="~rocm")
         depends_on("petsc+mpi+double+complex")
         depends_on("petsc+shared", when="+shared")
         depends_on("petsc~shared", when="~shared")
@@ -120,10 +122,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("petsc~int64", when="~int64")
         depends_on("petsc+openmp", when="+openmp")
         depends_on("petsc~openmp", when="~openmp")
+        depends_on("petsc~cuda", when="~cuda")
+        depends_on("petsc~rocm", when="~rocm")
 
     ## -- Arpack --
     with when("+arpack"):
-        depends_on("arpack-ng+mpi+icb@develop")
+        depends_on("arpack-ng+mpi+icb")
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
 
@@ -174,12 +178,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("sundials~shared", when="~shared")
         depends_on("sundials+openmp", when="+openmp")
         depends_on("sundials~openmp", when="~openmp")
-
-    ## -- arpack --
-    with when("+arpack"):
-        depends_on("arpack-ng+mpi+icb")
-        depends_on("arpack-ng+shared", when="+shared")
-        depends_on("arpack-ng~shared", when="~shared")
+        depends_on("sundials~cuda", when="~cuda")
+        depends_on("sundials~rocm", when="~rocm")
 
     ## -- GPU --
     conflicts('+cuda', when='@:0.12',
@@ -213,11 +213,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             cuda_variant = f"+cuda cuda_arch={arch}"
             depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
-            depends_on(
-                f"superlu-dist{cuda_variant}", when=f"+superlu-dist{cuda_variant}"
-            )
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
-            depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
             depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
@@ -228,11 +224,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
-            depends_on(
-                f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}"
-            )
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
-            depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
