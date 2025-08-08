@@ -237,6 +237,15 @@ inline auto Mean(MPI_Comm comm, const VecType &x)
   return sum[0] / sum[1];
 }
 
+// Normalize a complex vector so its mean is on the positive real axis.
+// Returns the original mean phase.
+inline double NormalizePhase(MPI_Comm comm, ComplexVector &x)
+{
+  std::complex<double> mean = Mean(comm, x);
+  x *= std::conj(mean) / std::abs(mean);
+  return std::atan2(mean.imag(), mean.real());
+}
+
 // Addition y += alpha * x.
 template <typename VecType, typename ScalarType>
 void AXPY(ScalarType alpha, const VecType &x, VecType &y);

@@ -114,6 +114,7 @@ The format of this changelog is based on
   - Fix race condition in `mfem::DenseTensor::operator()` with OpenMP, due to class member
     variable access.
   - Fix race condition in `DofToQuad` methods within mfem.
+  - Normalize eigenmodes so their mean phase is a positive real number.
 
 ## [0.13.0] - 2024-05-20
 
