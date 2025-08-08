@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HDIV_22_QF_H
 #define PALACE_LIBCEED_HDIV_22_QF_H
 
-#include "../coeff/coeff_2_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_22_qf.h"
 
 CEED_QFUNCTION(f_apply_hdiv_22)(void *__restrict__ ctx, CeedInt Q,
@@ -16,8 +16,8 @@ CEED_QFUNCTION(f_apply_hdiv_22)(void *__restrict__ ctx, CeedInt Q,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
-    CeedScalar coeff[4], adjJt_loc[4], J_loc[4], v_loc[2];
-    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    CeedScalar adjJt_loc[4], J_loc[4], v_loc[2];
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     AdjJt22(adjJt_loc, J_loc);
     MultAtBCx22(J_loc, coeff, J_loc, u_loc, v_loc);

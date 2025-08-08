@@ -17,8 +17,8 @@ CEED_QFUNCTION(f_build_l2mass_32)(void *__restrict__ ctx, CeedInt Q,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     {
-      CeedScalar coeff[9], adjJt_loc[6], J_loc[6], qd_loc[4];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      CeedScalar adjJt_loc[6], J_loc[6], qd_loc[4];
+      const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
       MatUnpack32(adjJt + i, Q, adjJt_loc);
       AdjJt32(adjJt_loc, J_loc);
       MultAtBA32(J_loc, coeff, qd_loc);
@@ -30,7 +30,7 @@ CEED_QFUNCTION(f_build_l2mass_32)(void *__restrict__ ctx, CeedInt Q,
     }
     {
       const CeedScalar coeff =
-          CoeffUnpack1(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
       qd2[i] = coeff * qw[i] * qw[i] / wdetJ[i];
     }

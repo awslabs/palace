@@ -22,8 +22,9 @@ CEED_QFUNCTION(f_build_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
       qd1[i + Q * 0] = coeff * wdetJ[i];
     }
     {
-      CeedScalar coeff[9], adjJt_loc[9], qd_loc[9];
-      CoeffUnpack3(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
+      CeedScalar adjJt_loc[9], qd_loc[9];
+      const CeedScalar coeff =
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
       MatUnpack33(adjJt + i, Q, adjJt_loc);
       MultAtBA33(adjJt_loc, coeff, qd_loc);
 

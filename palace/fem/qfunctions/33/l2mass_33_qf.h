@@ -19,8 +19,8 @@ CEED_QFUNCTION(f_apply_l2mass_33)(void *__restrict__ ctx, CeedInt Q,
   {
     {
       const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-      CeedScalar coeff[9], adjJt_loc[9], J_loc[9], v_loc[3];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      CeedScalar adjJt_loc[9], J_loc[9], v_loc[3];
+      const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
       MatUnpack33(adjJt + i, Q, adjJt_loc);
       AdjJt33(adjJt_loc, J_loc);
       MultAtBCx33(J_loc, coeff, J_loc, u_loc, v_loc);
@@ -31,7 +31,7 @@ CEED_QFUNCTION(f_apply_l2mass_33)(void *__restrict__ ctx, CeedInt Q,
     }
     {
       const CeedScalar coeff =
-          CoeffUnpack1(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
       divv[i] = (coeff * qw[i] * qw[i] / wdetJ[i]) * divu[i];
     }

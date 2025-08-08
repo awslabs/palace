@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURLHDIV_ERROR_33_QF_H
 #define PALACE_LIBCEED_HCURLHDIV_ERROR_33_QF_H
 
-#include "../coeff/coeff_3_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_33_qf.h"
 
 CEED_QFUNCTION(f_apply_hcurlhdiv_error_33)(void *__restrict__ ctx, CeedInt Q,
@@ -21,14 +21,14 @@ CEED_QFUNCTION(f_apply_hcurlhdiv_error_33)(void *__restrict__ ctx, CeedInt Q,
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     {
       const CeedScalar u1_loc[3] = {u1[i + Q * 0], u1[i + Q * 1], u1[i + Q * 2]};
-      CeedScalar coeff[9];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
       MultBAx33(adjJt_loc, coeff, u1_loc, v1_loc);
     }
     {
       const CeedScalar u2_loc[3] = {u2[i + Q * 0], u2[i + Q * 1], u2[i + Q * 2]};
-      CeedScalar coeff[9], J_loc[9];
-      CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
+      CeedScalar J_loc[9];
+      const CeedScalar coeff =
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
       AdjJt33(adjJt_loc, J_loc);
       MultBAx33(J_loc, coeff, u2_loc, v2_loc);
     }
@@ -55,15 +55,15 @@ CEED_QFUNCTION(f_apply_hdivhcurl_error_33)(void *__restrict__ ctx, CeedInt Q,
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     {
       const CeedScalar u1_loc[3] = {u1[i + Q * 0], u1[i + Q * 1], u1[i + Q * 2]};
-      CeedScalar coeff[9], J_loc[9];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      CeedScalar J_loc[9];
+      const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
       AdjJt33(adjJt_loc, J_loc);
       MultBAx33(J_loc, coeff, u1_loc, v1_loc);
     }
     {
       const CeedScalar u2_loc[3] = {u2[i + Q * 0], u2[i + Q * 1], u2[i + Q * 2]};
-      CeedScalar coeff[9];
-      CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
+      const CeedScalar coeff =
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
       MultBAx33(adjJt_loc, coeff, u2_loc, v2_loc);
     }
     v2_loc[0] -= v1_loc[0];

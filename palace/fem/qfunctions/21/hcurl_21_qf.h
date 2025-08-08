@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_21_QF_H
 #define PALACE_LIBCEED_HCURL_21_QF_H
 
-#include "../coeff/coeff_2_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_21_qf.h"
 
 CEED_QFUNCTION(f_apply_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
@@ -16,8 +16,8 @@ CEED_QFUNCTION(f_apply_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar u_loc[1] = {u[i + Q * 0]};
-    CeedScalar coeff[4], adjJt_loc[2], v_loc[1];
-    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    CeedScalar adjJt_loc[2], v_loc[1];
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultAtBCx21(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 

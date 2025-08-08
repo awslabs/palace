@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HDIV_MASS_BUILD_33_QF_H
 #define PALACE_LIBCEED_HDIV_MASS_BUILD_33_QF_H
 
-#include "../coeff/coeff_3_qf.h"
+#include "../coeff/coeff_1_qf.h"
 #include "utils_33_qf.h"
 
 CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
@@ -18,8 +18,8 @@ CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar adjJt_loc[9];
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     {
-      CeedScalar coeff[9], qd_loc[9];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      CeedScalar qd_loc[9];
+      const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
       MultAtBA33(adjJt_loc, coeff, qd_loc);
 
       qd1[i + Q * 0] = wdetJ[i] * qd_loc[0];
@@ -33,8 +33,9 @@ CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
       qd1[i + Q * 8] = wdetJ[i] * qd_loc[8];
     }
     {
-      CeedScalar coeff[9], J_loc[9], qd_loc[9];
-      CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
+      CeedScalar J_loc[9], qd_loc[9];
+      const CeedScalar coeff =
+          CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
       AdjJt33(adjJt_loc, J_loc);
       MultAtBA33(J_loc, coeff, qd_loc);
 
