@@ -36,6 +36,7 @@ else
     cases = [
         "spheres",
         "rings",
+        "antenna",
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -73,6 +74,20 @@ if "rings" in cases
     @time testcase(
         "rings",
         "rings.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"]
+    )
+end
+
+if "antenna" in cases
+    @info "Testing antenna..."
+    @time testcase(
+        "antenna",
+        "antenna.json",
         "";
         palace=palace,
         np=numprocs,
