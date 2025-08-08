@@ -22,6 +22,9 @@ env:
 
 jobs:
   build-and-test-singularity:
+    needs: path-filter
+    if: ${{ needs.path-filter.outputs.spack_only != 'true'
+      && needs.path-filter.outputs.docs_only != 'true' }}
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
