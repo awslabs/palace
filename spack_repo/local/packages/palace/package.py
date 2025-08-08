@@ -241,13 +241,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ]
 
         # We guarantee that there are arch specs with conflicts above
-        if "+cuda" in self.spec:
+        if self.spec.satisfies("+cuda"):
             args.append(
                 self.define(
                     "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
                 )
             )
-        if "+rocm" in self.spec:
+        if self.spec.satisfies("+rocm"):
             args.append(
                 self.define(
                     "CMAKE_HIP_ARCHITECTURES", ";".join(self.spec.variants["amdgpu_target"].value)
