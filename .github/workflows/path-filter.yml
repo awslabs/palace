@@ -1,4 +1,6 @@
 name: Path Filter
+permissions:
+  contents: read
 
 on:
   push:
@@ -21,7 +23,7 @@ jobs:
         with:
           filters: |
             spack_only:
-              - 'spack/local/**'
+              - 'spack_repo/local/**'
               - '!**/*'
             singularity_only:
               - 'singularity/local/**'
@@ -34,53 +36,35 @@ jobs:
   # Dummy jobs that succeed when only spack, singularity or docs files change
   build-and-test-linux:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only == 'true'
+    if: |
+      ${{ needs.path-filter.outputs.spack_only == 'true'
       || needs.path-filter.outputs.singularity_only == 'true'
       || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
-        config:
+        include:
           # List of configuration that must be kept in sync with build-and-test-linux.yml
-          - "x86, intel, intelmpi, intelmkl, shared, int64, openmp, slepc, superlu"
-          - "x86, clang, openmpi, aocl, static, int64, serial, slepc, mumps"
-          - "x86, gcc, openmpi, openblas, shared, int64, openmp, slepc, strumpack"
-          - "x86, intel, intelmpi, intelmkl, static, int32, serial, arpack, superlu"
-          - "x86, intel, intelmpi, intelmkl, static, int32, openmp, slepc, strumpack"
-          - "x86, intel, intelmpi, intelmkl, shared, int64, serial, arpack, mumps"
-          - "x86, gcc, openmpi, aocl, shared, int32, serial, arpack, superlu"
-          - "arm, gcc, mpich, openblas, shared, int64, openmp, slepc, superlu"
-          - "arm, clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
-          - "arm, clang, mpich, armpl, shared, int32, serial, arpack, mumps"
-          - "arm, gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
-          - "arm, gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
-          - "arm, clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
-          - "arm, clang, mpich, openblas, static, int64, serial, arpack, superlu"
-          - "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, strumpack"
-          - "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, superlu"
-          - "arm, gcc, openmpi, armpl, shared, int64, openmp, slepc, strumpack"
+          - config: "x86, intel, intelmpi, intelmkl, shared, int64, openmp, slepc, superlu"
+          - config: "x86, clang, openmpi, aocl, static, int64, serial, slepc, mumps"
+          - config: "x86, gcc, openmpi, openblas, shared, int64, openmp, slepc, strumpack"
+          - config: "x86, intel, intelmpi, intelmkl, static, int32, serial, arpack, superlu"
+          - config: "x86, intel, intelmpi, intelmkl, static, int32, openmp, slepc, strumpack"
+          - config: "x86, intel, intelmpi, intelmkl, shared, int64, serial, arpack, mumps"
+          - config: "x86, gcc, openmpi, aocl, shared, int32, serial, arpack, superlu"
+          - config: "arm, gcc, mpich, openblas, shared, int64, openmp, slepc, superlu"
+          - config: "arm, clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
+          - config: "arm, clang, mpich, armpl, shared, int32, serial, arpack, mumps"
+          - config: "arm, gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
+          - config: "arm, gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
+          - config: "arm, clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
+          - config: "arm, clang, mpich, openblas, static, int64, serial, arpack, superlu"
+          - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, strumpack"
+          - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, superlu"
+          - config: "arm, gcc, openmpi, armpl, shared, int64, openmp, slepc, strumpack"
     name: build-and-test-linux (${{ matrix.config }})
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping linux build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
-
-  build-and-test-macos:
-    needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only == 'true'
-      || needs.path-filter.outputs.singularity_only == 'true'
-      || needs.path-filter.outputs.docs_only == 'true' }}
-    strategy:
-      matrix:
-        config:
-          # List of configuration that must be kept in sync with build-and-test-macos.yml
-          - "clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
-          - "gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
-          - "gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
-          - "clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
-          - "clang, mpich, openblas, static, int64, serial, arpack, superlu"
-    name: build-and-test-macos (${{ matrix.config }})
-    runs-on: macos-latest-xlarge
-    steps:
-      - run: echo "Skipping macos build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
 
   build-and-test-spack:
     needs: path-filter
