@@ -63,25 +63,6 @@ jobs:
     steps:
       - run: echo "Skipping linux build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
 
-  build-and-test-macos:
-    needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only == 'true'
-      || needs.path-filter.outputs.singularity_only == 'true'
-      || needs.path-filter.outputs.docs_only == 'true' }}
-    strategy:
-      matrix:
-        config:
-          # List of configuration that must be kept in sync with build-and-test-macos.yml
-          - "clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
-          - "gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
-          - "gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
-          - "clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
-          - "clang, mpich, openblas, static, int64, serial, arpack, superlu"
-    name: build-and-test-macos (${{ matrix.config }})
-    runs-on: macos-latest-xlarge
-    steps:
-      - run: echo "Skipping macos build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
-
   build-and-test-spack:
     needs: path-filter
     if: ${{ needs.path-filter.outputs.singularity_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
