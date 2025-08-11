@@ -39,12 +39,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
   const double target = iodata.solver.eigenmode.target;
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
   bool has_A2 = (A2 != nullptr);
+  NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   std::unique_ptr<Interpolation> interp_op;
-  if (has_A2)
+  if (has_A2 && nonlinear_type != NonlinearEigenSolver::SLP)
   {
     const int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -66,7 +68,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
   EigenSolverBackend type = iodata.solver.eigenmode.type;
-  NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+
 #if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
   if (type == EigenSolverBackend::DEFAULT)
   {
@@ -159,7 +161,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else if (C || has_A2)
   {
-    // eigen->SetOperators(*K, *C, *M, scale);
     eigen->SetOperators(space_op, *K, *C, *M, scale);
     if (has_A2)
     {
@@ -410,8 +411,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(i, E, B, omega, error_abs,
+                                                          error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
