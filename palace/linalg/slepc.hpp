@@ -451,7 +451,10 @@ protected:
   NEP nep;
 
   // Shell matrices for the nonlinear eigenvalue problem.
-  Mat A, J;  // T, TJ;
+  Mat A, J;
+
+  // Order of sorted eigenvalues.
+  std::unique_ptr<int[]> perm;
 
   void Customize() override;
 
