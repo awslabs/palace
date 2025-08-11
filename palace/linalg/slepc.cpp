@@ -1592,8 +1592,8 @@ int SlepcNEPSolverBase::Solve()
     perm[i] = i;
   }
   // Sort by ascending imaginary component.
-  std::sort(perm.get(), perm.get() + nev, [&eig](auto l, auto r)
-            { return eig[l].imag() < eig[r].imag(); });
+  std::sort(perm.get(), perm.get() + nev,
+            [&eig](auto l, auto r) { return eig[l].imag() < eig[r].imag(); });
   RescaleEigenvectors(nev);
   return nev;
 }
