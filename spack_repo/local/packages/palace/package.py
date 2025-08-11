@@ -246,27 +246,27 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         # MPI compiler wrappers are not required, but MFEM test builds need to know to link
         # against MPI libraries.
-        if "+superlu-dist" in self.spec:
+        if self.spec.satisfies("+superlu-dist"):
             args.append(self.define("SuperLUDist_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
-        if "+sundials" in self.spec:
+        if self.spec.satisfies("+sundials"):
             args.append(self.define("SUNDIALS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
-        if "+strumpack" in self.spec:
+        if self.spec.satisfies("+strumpack"):
             args.append(self.define("STRUMPACK_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran"))
-        if "+mumps" in self.spec:
+        if self.spec.satisfies("+mumps"):
             args.append(self.define("MUMPS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran"))
 
         if self.spec.satisfies("@:0.13"):
             # In v0.13 and prior libCEED and gslib were internally built and required the libxsmm
             # and magma build information be passed in.
-            if "+libxsmm" in self.spec:
+            if self.spec.satisfies("+libxsmm"):
                 args.append(self.define("LIBXSMM_DIR", self.spec["libxsmm"].prefix))
-            if "+cuda" in self.spec or "+rocm" in self.spec:
+            if self.spec.satisfies("+cuda") or self.spec.satisfies("+rocm"):
                 args.append(self.define("MAGMA_DIR", self.spec["magma"].prefix))
         else:
             # After v 0.13 gslib and libceed is built externally and
             # so the directories for these are passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
-            if "+gslib" in self.spec:
+            if self.spec.satisfies("+gslib"):
                 args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         return args
