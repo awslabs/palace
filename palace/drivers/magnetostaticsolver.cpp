@@ -159,7 +159,7 @@ void MagnetostaticSolver::PostprocessTerminals(
                                         const mfem::DenseMatrix &mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
-    output.table.insert(Column("i", "i", 0, 2, {}, ""));
+    output.table.insert(Column("i", "i", 0, 0, 2, ""));
     int j = 0;
     for (const auto &[idx2, data2] : surf_j_op)
     {
@@ -184,7 +184,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   // Also write out a file with source current excitations.
   {
     TableWithCSVFile terminal_I(post_dir / "terminal-I.csv");
-    terminal_I.table.insert(Column("i", "i", 0, 2, {}, ""));
+    terminal_I.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_I.table.insert("Iinc", "I_inc[i] (A)");
     int i = 0;
     for (const auto &[idx, data] : surf_j_op)

@@ -197,6 +197,7 @@ directory under the directory specified by
 `"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
 simulation. That is `"Restart": x` will start the frequency sweep from the ``x``-th sample
 rather than the first sample. This indexing is from the *combined* set of frequency samples.
+Not valid for an adaptive fast frequency sweep.
 
 `"AdaptiveTol" [0.0]` :  Relative error convergence tolerance for adaptive frequency sweep.
 If zero, adaptive frequency sweep is disabled and the full-order model is solved at each

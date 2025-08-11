@@ -115,6 +115,9 @@ The format of this changelog is based on
     variable access.
   - Fix race condition in `DofToQuad` methods within mfem.
   - Normalize eigenmodes so their mean phase is a positive real number.
+  - Added `scnlib` as a dependency to Palace.
+  - Added parsing ability of existing csv files into the `Table` class. Fix `"Restart"`
+    behaviour with the multi-excitation feature of driven solver.
 
 ## [0.13.0] - 2024-05-20
 
