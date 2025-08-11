@@ -614,7 +614,7 @@ void DomainMaterialData::SetUp(json &domains)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Materials\" domain in the configuration file!");
-    MaterialData &data = vecdata.emplace_back();
+    MaterialData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
@@ -935,7 +935,7 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(
         it->find("Conductivity") != it->end(),
         "Missing \"Conductivity\" boundary \"Conductivity\" in the configuration file!");
-    ConductivityData &data = vecdata.emplace_back();
+    ConductivityData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.sigma = it->at("Conductivity");  // Required
@@ -979,7 +979,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("Attributes") != it->end(),
                 "Missing \"Attributes\" list for \"Impedance\" boundary in the "
                 "configuration file!");
-    ImpedanceData &data = vecdata.emplace_back();
+    ImpedanceData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.Rs = it->value("Rs", data.Rs);
@@ -1181,7 +1181,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
-    PeriodicData data;
+
+    PeriodicData &data = boundary_pairs.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
@@ -1206,7 +1207,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
-    boundary_pairs.push_back(data);
 
     // Cleanup
     it->erase("DonorAttributes");
