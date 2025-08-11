@@ -316,7 +316,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
-  std::cout << "Solve\n";
   int num_conv = eigen->Solve();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
@@ -411,8 +410,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy = post_op.MeasureAndPrintAll(i, E, B, omega, error_abs,
-                                                          error_bkwd, num_conv);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
