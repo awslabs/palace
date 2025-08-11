@@ -8,8 +8,10 @@
 #include "utils/geodata_impl.hpp"
 
 #include "fem/interpolator.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -293,6 +295,24 @@ TEST_CASE("TetToHex", "[geodata]")
     }
   }
 #endif
+}
+
+TEST_CASE("Default IOData", "[config]")
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+
+  iodata.domains.materials.emplace_back();
+  iodata.domains.materials.back().attributes = {0};
+
+  // Pull from the mfem externals data folder.
+  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+  mfem::Mesh single_tet(ref_tet_path.string());
+  mfem::ParMesh pmesh(Mpi::World(), single_tet);
+
+  MaterialOperator mat_op(iodata, pmesh);
+
+  REQUIRE(mat_op.HasLossTangent() == false);
 }
 
 }  // namespace palace
