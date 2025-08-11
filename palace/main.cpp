@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
   int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
   mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
   ConfigureCeedBackend(iodata.solver.ceed_backend);
-#if defined(HYPRE_WITH_GPU_AWARE_MPI)
+#if defined(PALACE_WITH_GPU_AWARE_MPI)
   device.SetGPUAwareMPI(true);
 #endif
 
