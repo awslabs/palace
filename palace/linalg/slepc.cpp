@@ -1565,6 +1565,7 @@ int SlepcNEPSolverBase::Solve()
   MFEM_VERIFY(A && J && opInv, "Operators are not set for SlepcNEPSolverBase!");
 
   // Solve the eigenvalue problem.
+  perm.reset();
   PetscInt num_conv;
   Customize();
   PalacePetscCall(NEPSolve(nep));
@@ -1579,16 +1580,30 @@ int SlepcNEPSolverBase::Solve()
                opInv->NumTotalMult(), opInv->NumTotalMultIterations());
   }
 
-  // Compute and store the eigenpair residuals.
-  RescaleEigenvectors(num_conv);
-  return (int)num_conv;
+  // Compute and store the ordered eigenpair residuals.
+  const int nev = (int)num_conv;
+  perm = std::make_unique<int[]>(nev);
+  std::vector<std::complex<double>> eig(nev);
+  for (int i = 0; i < nev; i++)
+  {
+    PetscScalar l;
+    PalacePetscCall(NEPGetEigenpair(nep, i, &l, nullptr, nullptr, nullptr));
+    eig[i] = l;
+    perm[i] = i;
+  }
+  // Sort by ascending imaginary component.
+  std::sort(perm.get(), perm.get() + nev, [&eig](auto l, auto r)
+            { return eig[l].imag() < eig[r].imag(); });
+  RescaleEigenvectors(nev);
+  return nev;
 }
 
 std::complex<double> SlepcNEPSolverBase::GetEigenvalue(int i) const
 {
   PetscScalar l;
-  PalacePetscCall(NEPGetEigenpair(nep, i, &l, nullptr, nullptr, nullptr));
-  return l * gamma;
+  const int &j = perm.get()[i];
+  PalacePetscCall(NEPGetEigenpair(nep, j, &l, nullptr, nullptr, nullptr));
+  return l;
 }
 
 void SlepcNEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
@@ -1596,7 +1611,8 @@ void SlepcNEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
   MFEM_VERIFY(
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
-  PalacePetscCall(NEPGetEigenpair(nep, i, nullptr, nullptr, v0, nullptr));
+  const int &j = perm.get()[i];
+  PalacePetscCall(NEPGetEigenpair(nep, j, nullptr, nullptr, v0, nullptr));
   PalacePetscCall(FromPetscVec(v0, x));
   if (xscale.get()[i] > 0.0)
   {
