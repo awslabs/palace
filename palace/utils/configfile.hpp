@@ -29,6 +29,11 @@ protected:
   std::vector<DataType> vecdata = {};
 
 public:
+  template <typename... Args>
+  decltype(auto) emplace_back(Args &&...args)
+  {
+    return vecdata.emplace_back(std::forward<Args>(args)...);
+  }
   [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
   [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
   [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
