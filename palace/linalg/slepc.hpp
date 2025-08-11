@@ -207,7 +207,7 @@ public:
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
 
-  //Reference to space operator to compute the frequency-dependent A2 operator.
+  // Reference to space operator to compute the frequency-dependent A2 operator.
   SpaceOperator *space_op;
 };
 
