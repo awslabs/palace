@@ -46,7 +46,11 @@ else
         "cpw/lumped_uniform",
         "cpw/wave_uniform",
         "cpw/lumped_adaptive",
-        "cpw/wave_adaptive"
+        "cpw/wave_adaptive",
+        "cpw/lumped_eigen",
+        "cpw/wave_eigen",
+        "adapter/hybrid",
+        "adapter/slp"
     ]
 end
 
@@ -193,7 +197,7 @@ if "coaxial/matched" in cases
 end
 
 if "cpw/lumped_uniform" in cases
-    @info "Testing CPW (lumped ports)"
+    @info "Testing CPW (lumped ports)..."
     @time testcase(
         "cpw",
         "cpw_lumped_uniform.json",
@@ -207,7 +211,7 @@ if "cpw/lumped_uniform" in cases
 end
 
 if "cpw/wave_uniform" in cases
-    @info "Testing CPW (wave ports)"
+    @info "Testing CPW (wave ports)..."
     @time testcase(
         "cpw",
         "cpw_wave_uniform.json",
@@ -223,7 +227,7 @@ end
 # Don't check accuracy for adaptive frequency sweep simulations
 
 if "cpw/lumped_adaptive" in cases
-    @info "Testing CPW (lumped ports, adaptive)"
+    @info "Testing CPW (lumped ports, adaptive)..."
     @time testcase(
         "cpw",
         "cpw_lumped_adaptive.json",
@@ -236,7 +240,7 @@ if "cpw/lumped_adaptive" in cases
 end
 
 if "cpw/wave_adaptive" in cases
-    @info "Testing CPW (wave ports, adaptive)"
+    @info "Testing CPW (wave ports, adaptive)..."
     @time testcase(
         "cpw",
         "cpw_wave_adaptive.json",
@@ -245,5 +249,65 @@ if "cpw/wave_adaptive" in cases
         np=numprocs,
         rtol=Inf,
         atol=Inf
+    )
+end
+
+if "cpw/lumped_eigen" in cases
+    @info "Testing CPW (lumped ports, eigenmode)..."
+    @time testcase(
+        "cpw",
+        "cpw_lumped_eigen.json",
+        "lumped_eigen";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
+    )
+end
+
+if "cpw/wave_eigen" in cases
+    @info "Testing CPW (wave ports, eigenmode)..."
+    @time testcase(
+        "cpw",
+        "cpw_wave_eigen.json",
+        "wave_eigen";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
+    )
+end
+
+if "adapter/hybrid" in cases
+    @info "Testing adapter (hybrid)"
+    @time testcase(
+        "adapter",
+        "hybrid.json",
+        "hybrid";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
+    )
+end
+
+if "adapter/slp" in cases
+    @info "Testing adapter (slp)"
+    @time testcase(
+        "adapter",
+        "slp.json",
+        "slp";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
     )
 end
