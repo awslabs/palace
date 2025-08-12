@@ -317,6 +317,11 @@ if(PALACE_WITH_GSLIB)
     PUBLIC PALACE_WITH_GSLIB
   )
 endif()
+if(PALACE_WITH_GPU_AWARE_MPI)
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_GPU_AWARE_MPI
+  )
+endif()
 
 
 # Install target and helper scripts
