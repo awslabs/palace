@@ -83,6 +83,24 @@ CEED_QFUNCTION_HELPER void MultAtBCx33(const CeedScalar A[9], const CeedScalar B
   y[2] = A[6] * z[0] + A[7] * z[1] + A[8] * z[2];
 }
 
+CEED_QFUNCTION_HELPER void MultAlphaAtCx33(const CeedScalar A[9], const CeedScalar alpha,
+                                           const CeedScalar C[9], const CeedScalar x[3],
+                                           CeedScalar y[3])
+{
+  // A, C: 0 3 6
+  //       1 4 7
+  //       2 5 8
+  CeedScalar z[3];
+
+  z[0] = C[0] * x[0] + C[3] * x[1] + C[6] * x[2];
+  z[1] = C[1] * x[0] + C[4] * x[1] + C[7] * x[2];
+  z[2] = C[2] * x[0] + C[5] * x[1] + C[8] * x[2];
+
+  y[0] = alpha * (A[0] * z[0] + A[1] * z[1] + A[2] * z[2]);
+  y[1] = alpha * (A[3] * z[0] + A[4] * z[1] + A[5] * z[2]);
+  y[2] = alpha * (A[6] * z[0] + A[7] * z[1] + A[8] * z[2]);
+}
+
 CEED_QFUNCTION_HELPER void MultBAx33(const CeedScalar A[9], const CeedScalar B[9],
                                      const CeedScalar x[3], CeedScalar y[3])
 {

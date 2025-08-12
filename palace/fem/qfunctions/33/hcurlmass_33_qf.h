@@ -27,7 +27,7 @@ CEED_QFUNCTION(f_apply_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
       CeedScalar coeff[9], adjJt_loc[9], v_loc[3];
       CoeffUnpack3(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
       MatUnpack33(adjJt + i, Q, adjJt_loc);
-      MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
+      MultAlphaAtCx33(adjJt_loc, coeff[0], adjJt_loc, u_loc, v_loc);
 
       gradv[i + Q * 0] = wdetJ[i] * v_loc[0];
       gradv[i + Q * 1] = wdetJ[i] * v_loc[1];
