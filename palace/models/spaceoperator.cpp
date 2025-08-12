@@ -866,7 +866,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   }
   else
   {
-    AssemblePreconditioner(a0, a2, a2, a3, br_vec, br_aux_vec);
+    AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec);
   }
 
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
