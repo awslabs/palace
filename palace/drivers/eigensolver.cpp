@@ -317,30 +317,30 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
-    Curl.Mult(E.Real(), B.Real());
-    Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
-    if (space_op.GetMaterialOp().HasWaveVector())
-    {
-      // Calculate B field correction for Floquet BCs.
-      // B = -1/(iω) ∇ x E + 1/ω kp x E.
-      floquet_corr->AddMult(E, B, 1.0 / omega);
-    }
+    // Curl.Mult(E.Real(), B.Real());
+    // Curl.Mult(E.Imag(), B.Imag());
+    // B *= -1.0 / (1i * omega);
+    // if (space_op.GetMaterialOp().HasWaveVector())
+    // {
+    //   // Calculate B field correction for Floquet BCs.
+    //   // B = -1/(iω) ∇ x E + 1/ω kp x E.
+    //   floquet_corr->AddMult(E, B, 1.0 / omega);
+    // }
 
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
+    // auto total_domain_energy =
+    //     post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
 
-    // Calculate and record the error indicators.
-    if (i < iodata.solver.eigenmode.n)
-    {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
-    }
+    // // Calculate and record the error indicators.
+    // if (i < iodata.solver.eigenmode.n)
+    // {
+    //   // estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    // }
 
-    // Final write: Different condition than end of loop (i = num_conv - 1).
-    if (i == iodata.solver.eigenmode.n - 1)
-    {
-      post_op.MeasureFinalize(indicator);
-    }
+    // // Final write: Different condition than end of loop (i = num_conv - 1).
+    // if (i == iodata.solver.eigenmode.n - 1)
+    // {
+    //   post_op.MeasureFinalize(indicator);
+    // }
   }
   return {indicator, space_op.GlobalTrueVSize()};
 }
