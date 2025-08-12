@@ -340,9 +340,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                              iodata.solver.eigenmode.preconditioner_lag_tol);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
     qn->SetLinearSolver(*ksp);
-    qn->SetDivFreeProjector(*divfree);  // test, not sure if we want/need to this?
-    // if... SetBMat()?? do we ever want to use B in the nonlinear eigensolve? if so need to
-    // add applyopB in nleps.cpp
     qn->SetShiftInvert(1i * target);
     // Use linearized eigensolve solution as initial guess.
     std::vector<std::complex<double>> init_eigs;
