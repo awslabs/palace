@@ -261,13 +261,9 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexO
 
   // Set up workspace.
   x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
   x1.UseDevice(true);
-  x2.UseDevice(true);
   y1.UseDevice(true);
-  y2.UseDevice(true);
 }
 
 namespace
@@ -397,7 +393,7 @@ int QuasiNewtonSolver::Solve()
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
-    linalg::SetRandom(GetComm(), c, seed);  // Set seed for deterministic behavior
+    linalg::SetRandom(GetComm(), c, seed);  // set seed for deterministic behavior
     c2.conservativeResize(k);
     v2.conservativeResize(k);
     for (int i = 0; i < k; i++)
@@ -479,11 +475,11 @@ int QuasiNewtonSolver::Solve()
       A->Mult(v, u);
       if (k > 0)  // Deflation
       {
-        // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2
+        // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2.
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
         const ComplexVector XSv2 = MatVecMult(X, S.fullPivLu().solve(v2), true);
         A->AddMult(XSv2, u, 1.0);
-        // u2 = X^* v1
+        // u2 = X^* v1.
         u2.conservativeResize(k);
         for (int j = 0; j < k; j++)
         {
@@ -506,8 +502,9 @@ int QuasiNewtonSolver::Solve()
         if (print > 0)
         {
           Mpi::Print(GetComm(),
-                     "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations.\n", k,
-                     it);
+                     "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations "
+                     "({:.3e}{:+.3e}i).\n",
+                     k, it, eig.real(), eig.imag());
         }
         // Update the invariant pair with normalization.
         const auto scale = linalg::Norml2(GetComm(), v);
@@ -562,7 +559,7 @@ int QuasiNewtonSolver::Solve()
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
-        // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2
+        // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2.
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
         const Eigen::VectorXcd Sv2 = S.fullPivLu().solve(v2);
         const ComplexVector XSv2 = MatVecMult(X, Sv2, true);
@@ -596,7 +593,7 @@ int QuasiNewtonSolver::Solve()
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
             std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
-        // Recompute w0 and normalize. ?????
+        // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
         double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
         w0 *= 1.0 / norm_w0;

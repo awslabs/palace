@@ -176,25 +176,23 @@
   },
   "Solver":
   {
-      "Order": 2,
+    "Order": 2,
     "Device": "CPU",
     "Eigenmode":
     {
-        "N": 4,
-        "Tol": 1e-6,
-        "Target": 14.0, // 14 is good, 12 is bad
-        "Save": 4,
-//        "RefineNonlinear": false,
-//        "NonlinearType": "SLP",
+      "N": 4,
+      "Tol": 1e-6,
+      "Target": 14.0,
+      "Save": 4
     },
     "Linear":
     {
-        "Type": "Default",
-        "KSPType": "GMRES",
+      "Type": "Default",
+      "KSPType": "GMRES",
       "Tol": 1.0e-8,
       "MaxIts": 1000,
-        "MGMaxLevels": 1,
-        "ComplexCoarseSolve": true
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
     }
   }
 }

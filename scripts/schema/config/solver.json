@@ -31,6 +31,7 @@
         "StartVector": { "type": "boolean" },
         "StartVectorConstant": { "type": "boolean" },
         "MassOrthogonal": { "type": "boolean" },
+        "NonlinearType": { "type": "string" },
         "RefineNonlinear": { "type": "boolean" },
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
