@@ -157,12 +157,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("sundials~cuda", when="~cuda")
         depends_on("sundials~rocm", when="~rocm")
 
-    conflicts(
-        "+cuda", when="@:0.13", msg="CUDA is only supported for Palace versions after 0.13"
-    )
-    conflicts(
-        "+rocm", when="@:0.13", msg="ROCm is only supported for Palace versions after 0.13"
-    )
+    conflicts("+cuda", when="@:0.13", msg="CUDA is only supported for Palace versions after 0.13")
+    conflicts("+rocm", when="@:0.13", msg="ROCm is only supported for Palace versions after 0.13")
     conflicts("+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
     conflicts(
         "cuda_arch=none", when="+cuda", msg="palace: Please specify a CUDA arch value / values"
