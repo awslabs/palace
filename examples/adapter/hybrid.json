@@ -1,0 +1,64 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/hybrid"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/adapter.msh",
+    "L0": 1.0e-2,  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ],
+  },
+  "Boundaries":
+    {
+      "WavePort":
+      [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+      },
+      {
+        "Index": 2,
+        "Attributes": [3],
+        "Mode": 1,
+      }
+      ],
+      "PEC":
+      {
+        "Attributes": [4]
+      }
+  },
+  "Solver":
+  {
+      "Order": 2,
+      "Device": "CPU",
+      "Eigenmode":
+      {
+          "N": 5,
+          "Tol": 1.0e-6,
+          "Target": 7.0,
+          "Save": 5,
+    },
+    "Linear":
+    {
+        "Type": "Default",
+        "KSPType": "GMRES",
+        "Tol": 1.0e-8,
+        "MaxIts": 100,
+    }
+  }
+}
