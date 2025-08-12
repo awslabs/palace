@@ -184,9 +184,6 @@ private:
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
-  // Workspace vectors for operator applications. // ??? See if needed?? BMat??
-  mutable ComplexVector x2, y2;
-
   // Update frequency of the preconditioner during Newton iterations.
   int preconditioner_lag;
 
@@ -228,7 +225,7 @@ public:
 //
 // Interpolation operators to approximate the nonlinear A2 operator.
 //
-class Interpolation  // DON'T LOVE THE NAME, FIND A BETTER ONE!!?!?
+class Interpolation
 {
 public:
   Interpolation() = default;
