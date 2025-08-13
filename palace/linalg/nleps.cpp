@@ -5,9 +5,8 @@
 
 #include <algorithm>
 #include <string>
-#include <Eigen/Dense>  // test for deflation
+#include <Eigen/Dense>
 #include <mfem.hpp>
-#include <mfem/general/forall.hpp>
 #include "linalg/divfree.hpp"
 #include "utils/communication.hpp"
 
@@ -270,28 +269,20 @@ namespace
 {
 // Multiply an (n x k) matrix (vector of size k of ComplexVectors of size n) by a vector of
 // size k, returning a ComplexVector of size n.
-ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y,
-                         bool on_dev)
+ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y)
 {
   MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of input vectors!");
   const size_t k = X.size();
   const size_t n = X[0].Size();
+  const bool use_dev = X[0].UseDevice();
   ComplexVector z;
   z.SetSize(n);
-  z.UseDevice(on_dev);
+  z.UseDevice(use_dev);
   z = 0.0;
-  auto *zr = z.Real().Write(on_dev);
-  auto *zi = z.Imag().Write(on_dev);
   for (int j = 0; j < k; j++)
   {
-    auto *XR = X[j].Real().Read(on_dev);
-    auto *XI = X[j].Imag().Read(on_dev);
-    mfem::forall_switch(on_dev, n,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          zr[i] += y(j).real() * XR[i] - y(j).imag() * XI[i];
-                          zi[i] += y(j).imag() * XR[i] + y(j).real() * XI[i];
-                        });
+    linalg::AXPBYPCZ(y(j).real(), X[j].Real(), -y(j).imag(), X[j].Imag(), 1.0, z.Real());
+    linalg::AXPBYPCZ(y(j).imag(), X[j].Real(),  y(j).real(), X[j].Imag(), 1.0, z.Imag());
   }
   return z;
 }
@@ -452,7 +443,7 @@ int QuasiNewtonSolver::Solve()
       const Eigen::MatrixXcd S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
       SS = -S.fullPivLu().solve(SS);
       x2 = SS.fullPivLu().solve(x2);
-      const ComplexVector XSx2 = MatVecMult(X, S.fullPivLu().solve(x2), true);
+      const ComplexVector XSx2 = MatVecMult(X, S.fullPivLu().solve(x2));
       linalg::AXPY(-1.0, XSx2, x1);
     };
 
@@ -477,7 +468,7 @@ int QuasiNewtonSolver::Solve()
       {
         // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2.
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-        const ComplexVector XSv2 = MatVecMult(X, S.fullPivLu().solve(v2), true);
+        const ComplexVector XSv2 = MatVecMult(X, S.fullPivLu().solve(v2));
         A->AddMult(XSv2, u, 1.0);
         // u2 = X^* v1.
         u2.conservativeResize(k);
@@ -562,8 +553,8 @@ int QuasiNewtonSolver::Solve()
         // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2.
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
         const Eigen::VectorXcd Sv2 = S.fullPivLu().solve(v2);
-        const ComplexVector XSv2 = MatVecMult(X, Sv2, true);
-        const ComplexVector XSSv2 = MatVecMult(X, S.fullPivLu().solve(Sv2), true);
+        const ComplexVector XSv2 = MatVecMult(X, Sv2);
+        const ComplexVector XSSv2 = MatVecMult(X, S.fullPivLu().solve(Sv2));
         opJ->AddMult(XSv2, w, 1.0);
         A->AddMult(XSSv2, w, -1.0);
       }
@@ -654,7 +645,7 @@ int QuasiNewtonSolver::Solve()
   {
     if (eigs[i].imag() > sigma.imag())
     {
-      ComplexVector eigv = MatVecMult(X, Xeig[order2[i]], true);
+      ComplexVector eigv = MatVecMult(X, Xeig[order2[i]]);
       eigenvalues.push_back(eigs[i]);
       eigenvectors.push_back(eigv);
     }
