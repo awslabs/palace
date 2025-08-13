@@ -580,21 +580,22 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  const auto domain_E = units.Dimensionalize<Units::ValueType::ENERGY>(
+      measurement_cache.domain_E_field_energy_all);
+  const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
+      measurement_cache.domain_H_field_energy_all);
   if constexpr (HasEGridFunction<solver_t>() && !HasBGridFunction<solver_t>())
   {
-    Mpi::Print(" Field energy E = {:.3e} J\n", measurement_cache.domain_E_field_energy_all);
+    Mpi::Print(" Field energy E = {:.3e} J\n", domain_E);
   }
   else if constexpr (!HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
-    Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
+    Mpi::Print(" Field energy H = {:.3e} J\n", domain_H);
   }
   else if constexpr (solver_t != ProblemType::EIGENMODE)
   {
-    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
-               measurement_cache.domain_E_field_energy_all,
-               measurement_cache.domain_H_field_energy_all,
-               measurement_cache.domain_E_field_energy_all +
-                   measurement_cache.domain_H_field_energy_all);
+    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", domain_E, domain_H,
+               domain_E + domain_H);
   }
 }
 
