@@ -9,9 +9,11 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "drivers/surfacecurlsolver.hpp"
 
 namespace palace
 {
@@ -46,6 +48,12 @@ private:
 
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
+
+  // Reference to IoData for accessing configuration
+  const IoData &iodata;
+
+  // Cached original matrix for flux loop boundary-interior coupling
+  mutable std::unique_ptr<ParOperator> K_orig_;
 
   mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
@@ -90,6 +98,12 @@ public:
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetExcitationVector(int idx, Vector &RHS);
+
+  // Assemble flux loop excitation vector using boundary values from 2D surface curl problem
+  void GetFluxLoopExcitationVector(const Vector &boundary_values, Vector &RHS);
+
+  // Solve 2D surface curl problem for flux loop boundary conditions
+  std::unique_ptr<Vector> SolveSurfaceCurlProblem() const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
