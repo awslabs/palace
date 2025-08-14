@@ -1703,9 +1703,8 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
   // Configure linear solver.
   if (first)
   {
-    PC pc;
-    PetscInt nsolve;
     // SLP.
+    PC pc;
     KSP ksp;
     EPS eps;
     PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
