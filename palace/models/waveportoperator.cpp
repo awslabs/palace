@@ -865,9 +865,10 @@ void WavePortData::Initialize(double omega)
     int num_conv = eigen->Solve();
     if (num_conv < mode_idx)
     {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);  // hack
-      num_conv = eigen->Solve();
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);  // reset
+      //Mpi::Print("SMALLEST_REAL DID NOT CONVERGE, SWITCHING TO LARGEST_MAGNITUDE\n");
+      //eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);  // hack
+      //num_conv = eigen->Solve();
+      //eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);  // reset
       MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
     }
     lambda = eigen->GetEigenvalue(mode_idx - 1);
@@ -880,6 +881,7 @@ void WavePortData::Initialize(double omega)
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // 1 / (-kₙ² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
+  Mpi::Print("kn0: {:.3e}{:+.3e}i, lambda: {:.3e}{:+.3e}i, sqrt(|sigma|): {:.3e}\n", kn0.real(), kn0.imag(), lambda.real(), lambda.imag(), std::sqrt(std::abs(sigma)));
   omega0 = omega;
 
   // Separate the computed field out into eₜ and eₙ and and transform back to true
