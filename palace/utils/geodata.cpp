@@ -3054,4 +3054,209 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
 
 }  // namespace
 
+namespace mesh
+{
+
+void MatchBoundaryEdges(const mfem::ParMesh& mesh,
+                        const mfem::ParSubMesh& boundary_submesh,
+                        const mfem::Array<int>& submesh_boundary_edge_ids,
+                        const std::unordered_map<int, int>& submesh_to_parent_bdr_edge_map,
+                        const std::vector<std::unordered_map<int, int>>& hole_dof_to_edge_maps,
+                        std::vector<mfem::Array<int>>& hole_boundary_edges)
+{
+    MPI_Comm comm = mesh.GetComm(); 
+    int num_holes = static_cast<int>(hole_dof_to_edge_maps.size());
+    int num_procs = Mpi::Size(comm);
+    
+    // Initialize output arrays
+    hole_boundary_edges.resize(num_holes);
+    
+    // Create edge sets for O(1) lookup
+    std::vector<std::unordered_set<int>> hole_edge_sets(num_holes);
+    for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
+    {
+        for (const auto& pair : hole_dof_to_edge_maps[hole_idx])
+        {
+            hole_edge_sets[hole_idx].insert(pair.second);
+        }
+    }
+    
+    // Local matching - single pass through submesh edges
+    std::vector<std::unordered_set<int>> matched_hole_edges(num_holes);
+    for (int submesh_edge : submesh_boundary_edge_ids)
+    {
+        auto it = submesh_to_parent_bdr_edge_map.find(submesh_edge);
+        MFEM_VERIFY(it != submesh_to_parent_bdr_edge_map.end(), 
+                    "Submesh edge " << submesh_edge << " not found in parent mapping!");
+        int parent_edge = it->second;
+        for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
+        {
+            if (hole_edge_sets[hole_idx].count(parent_edge))
+            {
+                hole_boundary_edges[hole_idx].Append(submesh_edge);
+                matched_hole_edges[hole_idx].insert(parent_edge);
+                break;
+            }
+        }
+    }
+    
+    // Find unmatched edges for each hole
+    std::vector<std::vector<int>> unmatched_hole_edges(num_holes);
+    for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
+    {
+        for (int edge : hole_edge_sets[hole_idx])
+        {
+            if (!matched_hole_edges[hole_idx].count(edge))
+            {
+                unmatched_hole_edges[hole_idx].push_back(edge);
+            }
+        }
+    }
+    
+    // Get global edge indices
+    mfem::Array<HYPRE_BigInt> global_edge_indices;
+    mesh.GetGlobalEdgeIndices(global_edge_indices);
+    
+    // Cross-processor matching for each hole
+    for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
+    {
+        // Convert to global indices
+        std::vector<HYPRE_BigInt> local_unmatched;
+        for (int local_edge : unmatched_hole_edges[hole_idx])
+        {
+            local_unmatched.push_back(global_edge_indices[local_edge]);
+        }
+        
+        // Gather sizes from all processors
+        int local_size = local_unmatched.size();
+        std::vector<int> all_sizes(num_procs);
+        MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT, mesh.GetComm());
+        
+        // Calculate displacements
+        int total_size = 0;
+        std::vector<int> displs(num_procs);
+        for (int i = 0; i < num_procs; i++)
+        {
+            displs[i] = total_size;
+            total_size += all_sizes[i];
+        }
+        
+        // Gather all unmatched edges
+        if (total_size > 0)
+        {
+            std::vector<HYPRE_BigInt> all_unmatched(total_size);
+            MPI_Allgatherv(local_unmatched.data(), local_size, MPI_LONG_LONG,
+                           all_unmatched.data(), all_sizes.data(), displs.data(), 
+                           MPI_LONG_LONG, mesh.GetComm());
+            
+            std::unordered_set<HYPRE_BigInt> unmatched_set(all_unmatched.begin(), all_unmatched.end());
+            
+            // Find matches in submesh
+            for (int submesh_edge : submesh_boundary_edge_ids)
+            {
+                auto it = submesh_to_parent_bdr_edge_map.find(submesh_edge);
+                MFEM_VERIFY(it != submesh_to_parent_bdr_edge_map.end(), 
+                            "Submesh edge " << submesh_edge << " not found in parent mapping!");
+                int parent_edge = it->second;
+                if (unmatched_set.count(global_edge_indices[parent_edge]))
+                {
+                    hole_boundary_edges[hole_idx].Append(submesh_edge);
+                }
+            }
+        }
+    }
+}
+
+void ComputeSubmeshBoundaryEdgeOrientations(const mfem::ParSubMesh& submesh,
+                                            const mfem::Array<int>& inner_boundary_edges,
+                                            const mfem::Vector& loop_normal,
+                                            std::unordered_map<int, int>& edge_orientations,
+                                            std::unordered_map<int, double>& edge_oriented_lengths)
+{
+    edge_orientations.clear();
+    edge_oriented_lengths.clear();
+    
+    for (int i = 0; i < inner_boundary_edges.Size(); i++)
+    {
+        int submesh_edge = inner_boundary_edges[i];
+        
+        // Find interior element adjacent to this boundary edge
+        int adj_elem = -1;
+        for (int j = 0; j < submesh.GetNE(); j++)
+        {
+            mfem::Array<int> elem_edges, orientations;
+            submesh.GetElementEdges(j, elem_edges, orientations);
+            for (int k = 0; k < elem_edges.Size(); k++)
+            {
+                if (elem_edges[k] == submesh_edge)
+                {
+                    adj_elem = j;
+                    break;
+                }
+            }
+            if (adj_elem != -1) break;
+        }
+        
+        MFEM_VERIFY(adj_elem != -1, "No adjacent element found for boundary edge " << submesh_edge);
+        
+        // Get edge and element vertices
+        mfem::Array<int> edge_vertices, elem_vertices;
+        submesh.GetEdgeVertices(submesh_edge, edge_vertices);
+        submesh.GetElementVertices(adj_elem, elem_vertices);
+        
+        // Find third vertex (not on the edge)
+        int third_vertex = -1;
+        for (int v : elem_vertices)
+        {
+            if (v != edge_vertices[0] && v != edge_vertices[1])
+            {
+                third_vertex = v;
+                break;
+            }
+        }
+        
+        MFEM_VERIFY(third_vertex != -1, "Could not find third vertex for element " << adj_elem);
+        
+        // Get coordinates
+        const double *v0 = submesh.GetVertex(edge_vertices[0]);
+        const double *v1 = submesh.GetVertex(edge_vertices[1]);
+        const double *v2 = submesh.GetVertex(third_vertex);
+        
+        // Edge vector and length
+        double edge_vec[3];
+        double edge_length = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+            edge_vec[d] = v1[d] - v0[d];
+            edge_length += edge_vec[d] * edge_vec[d];
+        }
+        edge_length = sqrt(edge_length);
+        
+        // Vector from third vertex to edge midpoint
+        double to_edge_vec[3];
+        for (int d = 0; d < 3; d++)
+        {
+            double edge_midpoint = (v0[d] + v1[d]) * 0.5;
+            to_edge_vec[d] = edge_midpoint - v2[d];
+        }
+        
+        // Cross product: to_edge_vec × edge_vec
+        double cross_product[3];
+        cross_product[0] = to_edge_vec[1] * edge_vec[2] - to_edge_vec[2] * edge_vec[1];
+        cross_product[1] = to_edge_vec[2] * edge_vec[0] - to_edge_vec[0] * edge_vec[2];
+        cross_product[2] = to_edge_vec[0] * edge_vec[1] - to_edge_vec[1] * edge_vec[0];
+        
+        // Check alignment with loop normal via dot product
+        double dot_product = cross_product[0] * loop_normal[0] + 
+                           cross_product[1] * loop_normal[1] + 
+                           cross_product[2] * loop_normal[2];
+        
+        int orientation = (dot_product > 0) ? 1 : -1;
+        edge_orientations[submesh_edge] = orientation;
+        edge_oriented_lengths[submesh_edge] = orientation * edge_length;
+    }
+}
+
+}  // namespace mesh
+
 }  // namespace palace
