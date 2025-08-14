@@ -5,6 +5,8 @@ on:
     branches:
       - main
   pull_request:
+    paths-ignore:
+      - '**.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

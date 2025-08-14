@@ -210,7 +210,7 @@ auto BuildCeedGeomFactorData(
   // element geometry type and corresponding geometry factor data. libCEED operators will be
   // constructed in parallel over threads, where each thread builds a composite operator
   // with sub-operators for each geometry.
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  const std::size_t nt = ceed::internal::NumCeeds();
   auto it = std::find(ceed::internal::GetCeedObjects().begin(),
                       ceed::internal::GetCeedObjects().end(), ceed);
   MFEM_VERIFY(it != ceed::internal::GetCeedObjects().end(),

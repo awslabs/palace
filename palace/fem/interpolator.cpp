@@ -19,16 +19,11 @@ constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
 }  // namespace
-
-#if defined(MFEM_USE_GSLIB)
 InterpolationOperator::InterpolationOperator(const IoData &iodata,
                                              FiniteElementSpace &nd_space)
-  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
-#else
-InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh)
-#endif
-{
 #if defined(MFEM_USE_GSLIB)
+  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
+{
   auto &mesh = nd_space.GetParMesh();
   // Set up probes interpolation. All processes search for all points.
   if (iodata.domains.postpro.probe.empty())
@@ -66,11 +61,15 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
                     ", "));
     }
   }
+}
 #else
+{
+  MFEM_CONTRACT_VAR(GSLIB_BB_TOL);
+  MFEM_CONTRACT_VAR(GSLIB_NEWTON_TOL);
   MFEM_VERIFY(iodata.domains.postpro.probe.empty(),
               "InterpolationOperator class requires MFEM_USE_GSLIB!");
-#endif
 }
+#endif
 
 std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {

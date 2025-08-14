@@ -19,6 +19,11 @@ const std::vector<Ceed> &GetCeedObjects()
   return ceeds;
 }
 
+std::size_t NumCeeds()
+{
+  return GetCeedObjects().size();
+}
+
 }  // namespace internal
 
 void Initialize(const char *resource, const char *jit_source_dir)

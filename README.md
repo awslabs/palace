@@ -74,7 +74,19 @@ System requirements:
 The documentation for *Palace* provides full instructions for building the solver and
 running electromagnetic simulations.
 
-To build a local version of the documentation, run `julia make.jl` from within the
+### Building a local copy of the documentation
+
+[Julia](https://julialang.org) with
+[Documenter](https://documenter.juliadocs.org/) is required to build a local
+version of the documentation. Obtain Julia following the [official
+instructions](https://julialang.org/install/) and install Documenter by
+instantiating the `docs` environment
+
+```sh
+julia --project=docs -e "using Pkg; Pkg.instantiate()"
+```
+
+Then, generate the documentation with `julia --project make.jl` from within the
 [`docs/`](./docs) directory.
 
 ## Examples

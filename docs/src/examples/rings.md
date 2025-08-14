@@ -48,7 +48,7 @@ The configuration file for the *Palace* simulation is
 [`rings.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings.json). The
 simulation `"Type"` is `"Magnetostatic"`, and we add `"SurfaceCurrent"` boundaries for
 applying a surface current to drive the inner or outer ring. The rest of the ring
-boundaries are labeled as `"PEC"` boundaries, which prescibes a zero magnetic flux, or
+boundaries are labeled as `"PEC"` boundaries, which prescribes a zero magnetic flux, or
 magnetic insulation, boundary condition. The farfield is also prescribed the `"PEC"`
 boundary condition. We seek a second-order solution and use the geometric multigrid AMS
 solver.

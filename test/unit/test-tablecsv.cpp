@@ -1,11 +1,39 @@
 #include <iterator>
 #include <fmt/format.h>
+#include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
 
 using namespace palace;
+
+// Small tests for parsing using scn library that checks assumptions implemented in table.
+TEST_CASE("CheckScnCases", "[tablecsv]")
+{
+  {
+    auto result = scn::scan<double>("-1.00", "{}");
+    CHECK(result->value() == -1.0);
+  }
+  {
+    auto result = scn::scan<double>("+1.00", "{}");
+    CHECK(result->value() == 1.0);
+  }
+  {
+    auto result = scn::scan<double>("2", "{}");
+    CHECK(result->value() == 2.0);
+  }
+  {
+    auto result = scn::scan<double>("+2.00E-03", "{}");
+    CHECK(result->value() == 2.00E-03);
+  }
+  {
+    auto result = scn::scan<double>("-2.00E+03", "{}");
+    CHECK(result->value() == -2.00E+03);
+  }
+}
 
 TEST_CASE("TableCSV", "[tablecsv]")
 {
@@ -115,4 +143,157 @@ TEST_CASE("TableCSV", "[tablecsv]")
   CHECK(table.format_table() == table_str1);
 
   //   REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
+}
+
+TEST_CASE("TableCSVParsing1_Basic", "[tablecsv]")
+{
+  Table table_expected{};
+  {
+    table_expected.insert("col_1", "Header Col 1");
+
+    table_expected.insert("col_2", "Header Col 2");
+    table_expected["col_2"] << 20.0;
+
+    table_expected.insert("col_3", "Header Col 3");
+    table_expected["col_3"] << -3.0 << 6.0;
+  }
+
+  auto table_str1 = std::string(
+      "            Header Col 1,            Header Col 2,            Header Col 3\n"
+      "                    NULL,        +2.000000000e+01,        -3.000000000e+00\n"
+      "                    NULL,                    NULL,        +6.000000000e+00\n");
+
+  Table table_parse(table_str1);
+
+  CHECK(table_parse.n_cols() == table_expected.n_cols());
+  CHECK(table_parse[0].data == table_expected[0].data);
+  CHECK(table_parse[1].data == table_expected[1].data);
+  CHECK(table_parse[2].data == table_expected[2].data);
+
+  CHECK(table_parse[0].header_text == table_expected[0].header_text);
+  CHECK(table_parse[1].header_text == table_expected[1].header_text);
+  CHECK(table_parse[2].header_text == table_expected[2].header_text);
+}
+
+TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv]")
+{
+  using namespace std::literals;
+
+  Table table_expected{};
+  {
+    table_expected.insert("col_1", "Header Col 1");
+
+    table_expected.insert("col_2", "Header Col 2");
+    table_expected["col_2"] << 20.0;
+
+    table_expected.insert("col_3", "Header Col 3");
+    table_expected["col_3"] << -3.0 << 6.0;
+  }
+
+  auto table_str1 = std::string(
+      "            Header Col 1;            Header Col 2;            Header Col 3\r"
+      "                    NULL;        +2.000000000e+01;        -3.000000000e+00\r"
+      "                    NULL;                    NULL;        +6.000000000e+00\r");
+
+  Table table_parse(table_str1, ";"sv, "\r"sv);
+
+  CHECK(table_parse.n_cols() == table_expected.n_cols());
+  CHECK(table_parse[0].data == table_expected[0].data);
+  CHECK(table_parse[1].data == table_expected[1].data);
+  CHECK(table_parse[2].data == table_expected[2].data);
+
+  CHECK(table_parse[0].header_text == table_expected[0].header_text);
+  CHECK(table_parse[1].header_text == table_expected[1].header_text);
+  CHECK(table_parse[2].header_text == table_expected[2].header_text);
+}
+
+TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
+{
+  Table table_expected{};
+  {
+    table_expected.insert("col_1", "Header Col 1");
+
+    table_expected.insert("col_2", "Header Col 2");
+    table_expected["col_2"] << 20.0;
+
+    table_expected.insert("col_3", "Header Col 3");
+    table_expected["col_3"] << 3.0;
+  }
+
+  auto table_str1 = std::string(
+      "            Header Col 1,            Header Col 2,            Header Col 3\n"
+      "                        ,        2.000000000e+01,        3.000000000e+00\n"
+      "                    NULL,                    NULL,         \n");
+
+  Table table_parse(table_str1);
+
+  CHECK(table_parse.n_cols() == table_expected.n_cols());
+  CHECK(table_parse[0].data == table_expected[0].data);
+  CHECK(table_parse[1].data == table_expected[1].data);
+  CHECK(table_parse[2].data == table_expected[2].data);
+
+  CHECK(table_parse[0].header_text == table_expected[0].header_text);
+  CHECK(table_parse[1].header_text == table_expected[1].header_text);
+  CHECK(table_parse[2].header_text == table_expected[2].header_text);
+}
+
+TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
+{
+  Table table_expected{};
+  {
+    table_expected.insert("col_1", "Header Col 1");
+
+    table_expected.insert("col_2", "Header Col 2");
+    table_expected["col_2"] << 20.0;
+
+    table_expected.insert("col_3", "Header Col 3");
+    table_expected["col_3"] << 3.0;
+  }
+
+  auto table_str1 = std::string(
+      "            Header Col 1   ,            Header Col 2 ,            Header Col 3 \n  "
+      "                         ,        2.000000000e+01  ,        3.000000000e+00\n  "
+      "                    NULL  ,                    NULL ,         \n  ");
+
+  Table table_parse(table_str1);
+
+  CHECK(table_parse.n_cols() == table_expected.n_cols());
+  CHECK(table_parse[0].data == table_expected[0].data);
+  CHECK(table_parse[1].data == table_expected[1].data);
+  CHECK(table_parse[2].data == table_expected[2].data);
+
+  CHECK(table_parse[0].header_text == table_expected[0].header_text);
+  CHECK(table_parse[1].header_text == table_expected[1].header_text);
+  CHECK(table_parse[2].header_text == table_expected[2].header_text);
+}
+
+TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
+{
+  // Make these tests serial to avoid duplicate file access.
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  SECTION("Empty File")
+  {
+    auto no_file = fs::path(PALACE_TEST_DIR) /
+                   "postoperatorcsv_restart/restart1_all/does-not-exists.csv";
+    REQUIRE(!fs::exists(no_file));
+    TableWithCSVFile table_w(no_file, true);
+    CHECK(table_w.table.empty());
+  }
+
+  SECTION("Normal File")
+  {
+    auto test_file =
+        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
+    REQUIRE(fs::exists(test_file));
+
+    TableWithCSVFile table_w(test_file, true);
+
+    CHECK(table_w.table.n_rows() == 6);
+    CHECK(table_w.table.n_cols() == 8);
+    CHECK(table_w.table[0].data == std::vector<double>{2, 8, 14, 20, 26, 32});
+    CHECK(table_w.table[1].data == std::vector<double>{1, 1, 1, 1, 1, 1});
+  }
 }

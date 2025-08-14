@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "825b2e42af56f6f27bc00756395651823d3d7857" CACHE STRING
+  "435e042d5355a55ebb460fea6d02846fd0274d1e" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "8b000dd22294056730b434191d78c9695c5c40d0" CACHE STRING
+  "597cba8d374bb2ff0d8f1ad1aa43dc460b155db0" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -258,6 +258,12 @@ set(EXTERN_JSON_URL
 set(EXTERN_FMT_URL
   "https://github.com/fmtlib/fmt/releases/download/10.2.1/fmt-10.2.1.zip" CACHE STRING
   "URL for external fmt build"
+)
+
+# scn
+set(EXTERN_SCN_URL
+  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v4.0.1.zip" CACHE STRING
+  "URL for external scn build"
 )
 
 # Eigen

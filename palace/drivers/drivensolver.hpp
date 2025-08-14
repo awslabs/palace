@@ -24,11 +24,9 @@ class SpaceOperator;
 class DrivenSolver : public BaseSolver
 {
 private:
-  ErrorIndicator SweepUniform(SpaceOperator &space_op,
-                              const std::vector<double> &omega_sample) const;
+  ErrorIndicator SweepUniform(SpaceOperator &space_op) const;
 
-  ErrorIndicator SweepAdaptive(SpaceOperator &space_op,
-                               const std::vector<double> &omega_sample) const;
+  ErrorIndicator SweepAdaptive(SpaceOperator &space_op) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

@@ -24,8 +24,8 @@ and run:
 spack install palace
 ```
 
-More information about about the available configuration options and dependencies can be
-found using `spack info palace`.
+More information about the available configuration options and dependencies can
+be found using `spack info palace`.
 
 ## Build using Singularity/Apptainer
 
@@ -177,8 +177,8 @@ If the installation path of OpenBLAS is non-standard or is not found by default,
 set using the `OPENBLAS_DIR` or `OPENBLASROOT` environment variables, or added to
 `CMAKE_PREFIX_PATH` when calling CMake.
 
-It is recommended in most cases to use a serial BLAS and LAPACK builds (not multithreaded),
-as the standard parallelization in approach in *Palace* is to use pure MPI parallelism.
+It is recommended in most cases to use serial BLAS and LAPACK builds (not multithreaded),
+as the standard parallelization approach in *Palace* is to use pure MPI parallelism.
 
 ## Dependencies
 

@@ -48,7 +48,7 @@ std::string ParaviewFoldername(const ProblemType solver_t)
 template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
   : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
-    post_op_csv(this),
+    post_op_csv(iodata, fem_op_),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
         [&iodata, &fem_op_]()
@@ -129,7 +129,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   InitializeParaviewDataCollection();
 
   // Initialize CSV files for measurements.
-  post_op_csv.InitializeCSVDataCollection();
+  post_op_csv.InitializeCSVDataCollection(*this);
 }
 
 template <ProblemType solver_t>
@@ -580,21 +580,22 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  const auto domain_E = units.Dimensionalize<Units::ValueType::ENERGY>(
+      measurement_cache.domain_E_field_energy_all);
+  const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
+      measurement_cache.domain_H_field_energy_all);
   if constexpr (HasEGridFunction<solver_t>() && !HasBGridFunction<solver_t>())
   {
-    Mpi::Print(" Field energy E = {:.3e} J\n", measurement_cache.domain_E_field_energy_all);
+    Mpi::Print(" Field energy E = {:.3e} J\n", domain_E);
   }
   else if constexpr (!HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
-    Mpi::Print(" Field energy H = {:.3e} J\n", measurement_cache.domain_H_field_energy_all);
+    Mpi::Print(" Field energy H = {:.3e} J\n", domain_H);
   }
   else if constexpr (solver_t != ProblemType::EIGENMODE)
   {
-    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
-               measurement_cache.domain_E_field_energy_all,
-               measurement_cache.domain_H_field_energy_all,
-               measurement_cache.domain_E_field_energy_all +
-                   measurement_cache.domain_H_field_energy_all);
+    Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", domain_E, domain_H,
+               domain_E + domain_H);
   }
 }
 
@@ -907,7 +908,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   MeasureAllImpl();
 
   omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
-  post_op_csv.PrintAllCSVData(measurement_cache, omega.real(), step, ex_idx);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -948,7 +949,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
     table.col_options = {6, 6};
-    table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
+    table.insert(Column("idx", "m", idx_pad, {}, {}) << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
                  << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()));
     table.insert(Column("f_im", "Im{f} (GHz)")
@@ -962,7 +963,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   MeasureAllImpl();
 
   int print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
     WriteFields(step, print_idx);
@@ -986,7 +987,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
   MeasureAllImpl();
 
   int print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1010,7 +1011,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
   MeasureAllImpl();
 
   int print_idx = step + 1;
-  post_op_csv.PrintAllCSVData(measurement_cache, print_idx, step);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1038,7 +1039,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   // Time must be converted before passing into csv due to the shared PrintAllCSVData
   // method.
   time = units.Dimensionalize<Units::ValueType::TIME>(time);
-  post_op_csv.PrintAllCSVData(measurement_cache, time, step);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, time, step);
   if (write_paraview_fields(step))
   {
     Mpi::Print("\n");
@@ -1054,7 +1055,7 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
   auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
-  post_op_csv.PrintErrorIndicator(indicator_stats);
+  post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
   if (write_paraview_fields())
   {
     WriteFieldsFinal(&indicator);

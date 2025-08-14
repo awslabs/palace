@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "geodata.hpp"
+#include "geodata_impl.hpp"
 
 #include <algorithm>
 #include <array>
 #include <limits>
 #include <numeric>
 #include <queue>
-#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -44,12 +44,12 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
                                      const config::BoundaryData &);
 
 // Clean the provided serial mesh by removing unused domain and boundary elements.
-void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &, bool = true);
+void CleanMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &);
 
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
 // the high-order nodes with GSLIB.
-void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
+void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordering tools for improved
 // cache usage.
@@ -529,6 +529,267 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
 }
 
+mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
+{
+  // Courtesy of https://gist.github.com/pazner/e9376f77055c0918d7c43e034e9e5888, only
+  // supports tetrahedral elements for now. Eventually should be expanded to support prism
+  // and pyramid elements but this mixed mesh support requires a bit more work.
+  MFEM_VERIFY(orig_mesh.Dimension() == 3, "Tet-to-hex conversion only supports 3D meshes!");
+  {
+    // This checks the local mesh on each process, but the assertion failing on any single
+    // process will terminate the program.
+    mfem::Array<mfem::Geometry::Type> geoms;
+    orig_mesh.GetGeometries(3, geoms);
+    MFEM_VERIFY(geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON,
+                "Tet-to-hex conversion only works for pure tetrahedral meshes!");
+  }
+
+  // Add new vertices in every edge, face, and volume. Each tet is subdivided into 4 hexes,
+  // and each triangular face subdivided into 3 quads.
+  const int nv_tet = orig_mesh.GetNV();
+  const int nedge_tet = orig_mesh.GetNEdges();
+  const int nface_tet = orig_mesh.GetNFaces();
+  const int ne_tet = orig_mesh.GetNE();
+  const int nbe_tet = orig_mesh.GetNBE();
+  const int nv = nv_tet + nedge_tet + nface_tet + ne_tet;
+  const int ne = 4 * ne_tet;    // 4 hex per tet
+  const int nbe = 3 * nbe_tet;  // 3 square per tri
+  mfem::Mesh hex_mesh(orig_mesh.Dimension(), nv, ne, nbe, orig_mesh.SpaceDimension());
+
+  // Add original vertices.
+  for (int v = 0; v < nv_tet; v++)
+  {
+    hex_mesh.AddVertex(orig_mesh.GetVertex(v));
+  }
+
+  // Add midpoints of edges, faces, and elements.
+  auto AddCentroid = [&orig_mesh, &hex_mesh](const int *verts, int nv)
+  {
+    double coord[3] = {0.0, 0.0, 0.0};
+    for (int i = 0; i < nv; i++)
+    {
+      for (int d = 0; d < orig_mesh.SpaceDimension(); d++)
+      {
+        coord[d] += orig_mesh.GetVertex(verts[i])[d] / nv;
+      }
+    }
+    hex_mesh.AddVertex(coord);
+  };
+  {
+    mfem::Array<int> verts;
+    for (int e = 0; e < nedge_tet; ++e)
+    {
+      orig_mesh.GetEdgeVertices(e, verts);
+      AddCentroid(verts.GetData(), verts.Size());
+    }
+  }
+  for (int f = 0; f < nface_tet; ++f)
+  {
+    AddCentroid(orig_mesh.GetFace(f)->GetVertices(), orig_mesh.GetFace(f)->GetNVertices());
+  }
+  for (int e = 0; e < ne_tet; ++e)
+  {
+    AddCentroid(orig_mesh.GetElement(e)->GetVertices(),
+                orig_mesh.GetElement(e)->GetNVertices());
+  }
+
+  // Connectivity of tetrahedron vertices to the edges. The vertices of the new mesh are
+  // ordered so that the original tet vertices are first, then the vertices splitting each
+  // edge, then the vertices at the center of each triangle face, then the center of the
+  // tet. Thus the edge/face/element numbers can be used to index into the new array of
+  // vertices, and the element local edge/face can be used to extract the global edge/face
+  // index, and thus the corresponding vertex.
+  constexpr int tet_vertex_edge_map[4 * 3] = {0, 1, 2, 3, 0, 4, 1, 3, 5, 5, 4, 2};
+  constexpr int tet_vertex_face_map[4 * 3] = {3, 2, 1, 3, 0, 2, 3, 1, 0, 0, 1, 2};
+  constexpr int tri_vertex_edge_map[3 * 2] = {0, 2, 1, 0, 2, 1};
+
+  // Add four hexahedra for each tetrahedron.
+  {
+    mfem::Array<int> edges, faces, orients;
+    for (int e = 0; e < ne_tet; ++e)
+    {
+      const int *verts = orig_mesh.GetElement(e)->GetVertices();
+      orig_mesh.GetElementEdges(e, edges, orients);
+      orig_mesh.GetElementFaces(e, faces, orients);
+
+      // One hex for each vertex of the tet.
+      for (int i = 0; i < 4; ++i)
+      {
+        int hex_v[8];
+        hex_v[0] = verts[i];
+        hex_v[1] = nv_tet + edges[tet_vertex_edge_map[3 * i + 0]];
+        hex_v[2] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 0]];
+        hex_v[3] = nv_tet + edges[tet_vertex_edge_map[3 * i + 1]];
+        hex_v[4] = nv_tet + edges[tet_vertex_edge_map[3 * i + 2]];
+        hex_v[5] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 1]];
+        hex_v[6] = nv_tet + nedge_tet + nface_tet + e;
+        hex_v[7] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 2]];
+        hex_mesh.AddHex(hex_v, orig_mesh.GetAttribute(e));
+      }
+    }
+  }
+
+  // Add the boundary elements.
+  {
+    mfem::Array<int> edges, orients;
+    for (int be = 0; be < nbe_tet; ++be)
+    {
+      int f, o;
+      const int *verts = orig_mesh.GetBdrElement(be)->GetVertices();
+      orig_mesh.GetBdrElementEdges(be, edges, orients);
+      orig_mesh.GetBdrElementFace(be, &f, &o);
+
+      // One quad for each vertex of the tri.
+      for (int i = 0; i < 3; ++i)
+      {
+        int quad_v[4];
+        quad_v[0] = verts[i];
+        quad_v[1] = nv_tet + edges[tri_vertex_edge_map[2 * i + 0]];
+        quad_v[2] = nv_tet + nedge_tet + f;
+        quad_v[3] = nv_tet + edges[tri_vertex_edge_map[2 * i + 1]];
+        hex_mesh.AddBdrQuad(quad_v, orig_mesh.GetBdrAttribute(be));
+      }
+    }
+  }
+
+  // Finalize the hex mesh topology. The mesh will be marked for refinement later on.
+  constexpr bool generate_bdr = false;
+  hex_mesh.FinalizeTopology(generate_bdr);
+
+  // All elements have now been added, can construct the higher order field.
+  if (orig_mesh.GetNodes())
+  {
+    hex_mesh.EnsureNodes();
+    // Higher order associated to vertices are unchanged, and those for
+    // previously existing edges. DOFs associated to new elements need to be set.
+    const int sdim = orig_mesh.SpaceDimension();
+    auto *orig_fespace = orig_mesh.GetNodes()->FESpace();
+    hex_mesh.SetCurvature(orig_fespace->GetMaxElementOrder(), orig_fespace->IsDGSpace(),
+                          orig_mesh.SpaceDimension(), orig_fespace->GetOrdering());
+
+    // Need to convert the hexahedra local coordinate system into the parent tetrahedra
+    // system. Each hexahedra spans a different set of the tet's reference coordinates. To
+    // convert between, define the reference coordinate locations of each of the vertices
+    // the hexahedra will use, then perform trilinear interpolation in the reference space.
+
+    auto [vert_loc, edge_loc, face_loc] = []()
+    {
+      std::array<std::array<double, 3>, 4> vert_loc{};
+      vert_loc[0] = {0.0, 0.0, 0.0};
+      vert_loc[1] = {1.0, 0.0, 0.0};
+      vert_loc[2] = {0.0, 1.0, 0.0};
+      vert_loc[3] = {0.0, 0.0, 1.0};
+      std::array<std::array<double, 3>, 6> edge_loc{};
+      edge_loc[0] = {0.5, 0.0, 0.0};
+      edge_loc[1] = {0.0, 0.5, 0.0};
+      edge_loc[2] = {0.0, 0.0, 0.5};
+      edge_loc[3] = {0.5, 0.5, 0.0};
+      edge_loc[4] = {0.5, 0.0, 0.5};
+      edge_loc[5] = {0.0, 0.5, 0.5};
+      std::array<std::array<double, 3>, 6> face_loc{};
+      face_loc[0] = {1.0 / 3, 1.0 / 3, 1.0 / 3};
+      face_loc[1] = {0.0, 1.0 / 3, 1.0 / 3};
+      face_loc[2] = {1.0 / 3, 0.0, 1.0 / 3};
+      face_loc[3] = {1.0 / 3, 1.0 / 3, 0.0};
+      return std::make_tuple(vert_loc, edge_loc, face_loc);
+    }();
+    std::array<double, 3> centroid{{0.25, 0.25, 0.25}};
+
+    // We assume the Nodes field is of a single order, and there is a single tet originally.
+    // The nodes within the reference hex and parent tet are always the same, so we use the
+    // typical FE. We then exploit the fact the map between reference spaces is always
+    // linear, and construct the transformation explicitly.
+    const auto *orig_FE = orig_mesh.GetNodes()->FESpace()->GetTypicalFE();
+    const auto *child_FE = hex_mesh.GetNodes()->FESpace()->GetTypicalFE();
+    // Original shape function (i), at new element nodes (j), for each new element (k).
+    mfem::DenseTensor shape(orig_FE->GetDof(), child_FE->GetDof(), 4);
+    mfem::Vector col;  // For slicing into matrices within shape
+    for (int i = 0; i < 4; i++)
+    {
+      // Collect the vertices of the new hex within the tet.
+      std::array<std::array<double, 3>, 8> hex_verts;
+      hex_verts[0] = vert_loc[i];
+      hex_verts[1] = edge_loc[tet_vertex_edge_map[3 * i + 0]];
+      hex_verts[2] = face_loc[tet_vertex_face_map[3 * i + 0]];
+      hex_verts[3] = edge_loc[tet_vertex_edge_map[3 * i + 1]];
+      hex_verts[4] = edge_loc[tet_vertex_edge_map[3 * i + 2]];
+      hex_verts[5] = face_loc[tet_vertex_face_map[3 * i + 1]];
+      hex_verts[6] = centroid;
+      hex_verts[7] = face_loc[tet_vertex_face_map[3 * i + 2]];
+      for (int j = 0; j < child_FE->GetNodes().Size(); j++)
+      {
+        const auto &cn = child_FE->GetNodes()[j];
+        mfem::IntegrationPoint cn_in_orig;
+
+        // Perform trilinear interpolation from (u,v,w) the unit ref coords in the new hex,
+        // and the corresponding nodes in the containing tet.
+        // clang-format off
+        // x component
+        cn_in_orig.x =
+          hex_verts[0][0] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][0] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][0] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][0] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][0] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][0] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][0] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][0] * (1-cn.x) * cn.y     * cn.z;
+
+        // y component
+        cn_in_orig.y =
+          hex_verts[0][1] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][1] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][1] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][1] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][1] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][1] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][1] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][1] * (1-cn.x) * cn.y     * cn.z;
+
+        // z component
+        cn_in_orig.z =
+          hex_verts[0][2] * (1-cn.x) * (1-cn.y) * (1-cn.z) +
+          hex_verts[1][2] * cn.x     * (1-cn.y) * (1-cn.z) +
+          hex_verts[2][2] * cn.x     * cn.y     * (1-cn.z) +
+          hex_verts[3][2] * (1-cn.x) * cn.y     * (1-cn.z) +
+          hex_verts[4][2] * (1-cn.x) * (1-cn.y) * cn.z     +
+          hex_verts[5][2] * cn.x     * (1-cn.y) * cn.z     +
+          hex_verts[6][2] * cn.x     * cn.y     * cn.z     +
+          hex_verts[7][2] * (1-cn.x) * cn.y     * cn.z;
+        // clang-format on
+        shape(i).GetColumnReference(j, col);
+        orig_FE->CalcShape(cn_in_orig, col);
+      }
+    }
+
+    // Each submatrix of shape tensor now encodes the reference coordinates of each hex
+    // within the containing tet. Extracting the specific element dof values, and applying
+    // to the correct shape slice will now give the requisite higher order dofs evaluated at
+    // the refined elements nodes.
+    mfem::Array<int> hex_dofs;
+    mfem::DenseMatrix point_matrix(child_FE->GetDof(), sdim);  // nnode_child x sdim
+    mfem::Vector dof_vals(orig_FE->GetDof() * sdim);
+    mfem::DenseMatrix dof_vals_mat(dof_vals.GetData(), orig_FE->GetDof(), sdim);
+    for (int e = 0; e < ne_tet; ++e)
+    {
+      // Returns byNODES no matter what, because FiniteElementSpace::GetElementVDofs does.
+      // Matches the GetElementVDofs call below, which similarly always uses byNODES.
+      orig_mesh.GetNodes()->GetElementDofValues(e, dof_vals);
+      for (int i = 0; i < 4; i++)
+      {
+        // shape(i) : orig_FE->GetDof() x hex_FE->GetDof()
+        // dof_vals_mat : orig_FE->GetDof() x sdim
+        // point_matrix : child_FE->GetDof() x sdim
+        MultAtB(shape(i), dof_vals_mat, point_matrix);
+        hex_mesh.GetNodes()->FESpace()->GetElementVDofs(4 * e + i, hex_dofs);
+        hex_mesh.GetNodes()->SetSubVector(hex_dofs, point_matrix.GetData());
+      }
+    }
+  }
+
+  return hex_mesh;
+}
+
 namespace
 {
 
@@ -648,7 +909,7 @@ void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
         continue;
       }
       MFEM_VERIFY(attr > 0, "Attribute number less than one!");
-      MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
+      MFEM_VERIFY(marker[attr - 1] == 0, "Repeated attribute in attribute list!");
       marker[attr - 1] = 1;
     }
   }
@@ -845,586 +1106,6 @@ std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direc
   }
   return deviation_deg;
 }
-
-namespace
-{
-
-// Compute a lexicographic comparison of Eigen Vector3d.
-bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-{
-  return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
-}
-
-// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
-// bounding balls. Returns the dominant rank, for which the vertices argument will be
-// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
-// certain floating point precision.
-int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, std::vector<Eigen::Vector3d> &vertices)
-{
-  if (!mesh.GetNodes())
-  {
-    // Linear mesh, work with element vertices directly.
-    PalacePragmaOmp(parallel)
-    {
-      std::unordered_set<int> vertex_indices;
-      if (bdr)
-      {
-        PalacePragmaOmp(for schedule(static))
-        for (int i = 0; i < mesh.GetNBE(); i++)
-        {
-          if (!marker[mesh.GetBdrAttribute(i) - 1])
-          {
-            continue;
-          }
-          const int *verts = mesh.GetBdrElement(i)->GetVertices();
-          vertex_indices.insert(verts, verts + mesh.GetBdrElement(i)->GetNVertices());
-        }
-      }
-      else
-      {
-        PalacePragmaOmp(for schedule(static))
-        for (int i = 0; i < mesh.GetNE(); i++)
-        {
-          if (!marker[mesh.GetAttribute(i) - 1])
-          {
-            continue;
-          }
-          const int *verts = mesh.GetElement(i)->GetVertices();
-          vertex_indices.insert(verts, verts + mesh.GetElement(i)->GetNVertices());
-        }
-      }
-      PalacePragmaOmp(critical(PointCloud))
-      {
-        for (auto i : vertex_indices)
-        {
-          const auto &vx = mesh.GetVertex(i);
-          vertices.emplace_back(vx[0], vx[1], vx[2]);
-        }
-      }
-    }
-  }
-  else
-  {
-    // Curved mesh, need to process point matrices.
-    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto AddPoints = [&](mfem::GeometryRefiner &refiner, mfem::ElementTransformation &T,
-                         mfem::DenseMatrix &pointmat,
-                         std::vector<Eigen::Vector3d> &loc_vertices)
-    {
-      mfem::RefinedGeometry *RefG = refiner.Refine(T.GetGeometryType(), ref);
-      T.Transform(RefG->RefPts, pointmat);
-      for (int j = 0; j < pointmat.Width(); j++)
-      {
-        loc_vertices.emplace_back(pointmat(0, j), pointmat(1, j), pointmat(2, j));
-      }
-    };
-    PalacePragmaOmp(parallel)
-    {
-      mfem::GeometryRefiner refiner;
-      mfem::IsoparametricTransformation T;
-      mfem::DenseMatrix pointmat;  // 3 x N
-      std::vector<Eigen::Vector3d> loc_vertices;
-      if (bdr)
-      {
-        PalacePragmaOmp(for schedule(static))
-        for (int i = 0; i < mesh.GetNBE(); i++)
-        {
-          if (!marker[mesh.GetBdrAttribute(i) - 1])
-          {
-            continue;
-          }
-          mesh.GetBdrElementTransformation(i, &T);
-          AddPoints(refiner, T, pointmat, loc_vertices);
-        }
-      }
-      else
-      {
-        PalacePragmaOmp(for schedule(static))
-        for (int i = 0; i < mesh.GetNE(); i++)
-        {
-          if (!marker[mesh.GetAttribute(i) - 1])
-          {
-            continue;
-          }
-          mesh.GetElementTransformation(i, &T);
-          AddPoints(refiner, T, pointmat, loc_vertices);
-        }
-      }
-      PalacePragmaOmp(critical(PointCloud))
-      {
-        for (const auto &v : loc_vertices)
-        {
-          vertices.push_back(v);
-        }
-      }
-    }
-  }
-
-  // dominant_rank will perform the calculation.
-  MPI_Comm comm = mesh.GetComm();
-  const auto num_vertices = int(vertices.size());
-  const int dominant_rank = [&]()
-  {
-    int vert = num_vertices, rank = Mpi::Rank(comm);
-    Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
-    return rank;
-  }();
-  std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
-  std::vector<Eigen::Vector3d> collected_vertices;
-  MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
-             comm);
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    // First displacement is zero, then after is the partial sum of recv_counts.
-    displacements.resize(Mpi::Size(comm));
-    displacements[0] = 0;
-    std::partial_sum(recv_counts.begin(), recv_counts.end() - 1, displacements.begin() + 1);
-
-    // Add on slots at the end of vertices for the incoming data.
-    collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
-
-    // MPI transfer will be done with MPI_DOUBLE, so duplicate all these values.
-    for (auto &x : displacements)
-    {
-      x *= 3;
-    }
-    for (auto &x : recv_counts)
-    {
-      x *= 3;
-    }
-  }
-
-  // Gather the data to the dominant rank.
-  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
-  MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
-              recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
-
-  // Deduplicate vertices. Given floating point precision, need a tolerance.
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    auto vertex_equality = [](const auto &x, const auto &y)
-    {
-      constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
-      return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
-             std::abs(x[2] - y[2]) < tolerance;
-    };
-    vertices = std::move(collected_vertices);
-    std::sort(vertices.begin(), vertices.end(), EigenLE);
-    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
-                   vertices.end());
-  }
-  else
-  {
-    vertices.clear();
-  }
-
-  return dominant_rank;
-}
-
-// Compute the distance from a point orthogonal to the list of normal axes, relative to
-// the given origin.
-auto PerpendicularDistance(const std::initializer_list<Eigen::Vector3d> &normals,
-                           const Eigen::Vector3d &origin, const Eigen::Vector3d &v)
-{
-  Eigen::Vector3d v0 = v - origin;
-  for (const auto &n : normals)
-  {
-    v0 -= n.dot(v0) * n;
-  }
-  return v0.norm();
-}
-
-// Calculates a bounding box from a point cloud, result is broadcast across all processes.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
-                                      const std::vector<Eigen::Vector3d> &vertices,
-                                      int dominant_rank)
-{
-  BoundingBox box;
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
-    // floating point precision if the box is axis aligned, but not floating point exact.
-    // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
-    // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
-    // box. Verify that p_111 is also the maximum distance from p_000 -> a diagonal is
-    // found.
-    MFEM_VERIFY(vertices.size() >= 4,
-                "A bounding box requires a minimum of four vertices for this algorithm!");
-    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
-    auto p_111 =
-        std::max_element(vertices.begin(), vertices.end(),
-                         [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                         { return (x - *p_000).norm() < (y - *p_000).norm(); });
-    p_000 = std::max_element(vertices.begin(), vertices.end(),
-                             [p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                             { return (x - *p_111).norm() < (y - *p_111).norm(); });
-    MFEM_ASSERT(std::max_element(vertices.begin(), vertices.end(),
-                                 [p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                 { return (x - *p_000).norm() < (y - *p_000).norm(); }) ==
-                    p_111,
-                "p_000 and p_111 must be mutually opposing points!");
-
-    // Define a diagonal of the ASSUMED cuboid bounding box.
-    const auto &v_000 = *p_000;
-    const auto &v_111 = *p_111;
-    MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
-    const Eigen::Vector3d origin = v_000;
-    const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
-
-    // Find the vertex furthest from the diagonal axis. We cannot know yet if this defines
-    // (001) or (011).
-    const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(),
-                                        [&](const auto &x, const auto &y)
-                                        {
-                                          return PerpendicularDistance({n_1}, origin, x) <
-                                                 PerpendicularDistance({n_1}, origin, y);
-                                        });
-    MFEM_VERIFY(&t_0 != &v_000 && &t_0 != &v_111, "Vertices are degenerate!");
-
-    // Use the discovered vertex to define a second direction and thus a plane. n_1 and n_2
-    // now define a planar coordinate system intersecting the main diagonal, and two
-    // opposite edges of the cuboid.
-    const Eigen::Vector3d n_2 =
-        ((t_0 - origin) - ((t_0 - origin).dot(n_1) * n_1)).normalized();
-
-    // Collect the furthest point from the plane to determine if the box is planar. Look for
-    // a component that maximizes distance from the planar system: complete the axes with a
-    // cross, then use a dot product to pick the greatest deviation.
-    constexpr double rel_tol = 1.0e-6;
-    auto max_distance = PerpendicularDistance(
-        {n_1, n_2}, origin,
-        *std::max_element(vertices.begin(), vertices.end(),
-                          [&](const auto &x, const auto &y)
-                          {
-                            return PerpendicularDistance({n_1, n_2}, origin, x) <
-                                   PerpendicularDistance({n_1, n_2}, origin, y);
-                          }));
-    box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
-
-    // For the non-planar case, collect points furthest from the plane and choose the one
-    // closest to the origin as the next vertex which might be (001) or (011).
-    const auto &t_1 = [&]()
-    {
-      if (box.planar)
-      {
-        return t_0;
-      }
-      std::vector<Eigen::Vector3d> vertices_out_of_plane;
-      std::copy_if(vertices.begin(), vertices.end(),
-                   std::back_inserter(vertices_out_of_plane),
-                   [&](const auto &v)
-                   {
-                     return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
-                                     max_distance) < rel_tol * max_distance;
-                   });
-      return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
-                               [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                               { return (x - origin).norm() < (y - origin).norm(); });
-    }();
-
-    // Given candidates t_0 and t_1, the closer to origin defines v_001.
-    const bool t_0_gt_t_1 = (t_0 - origin).norm() > (t_1 - origin).norm();
-    const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
-    const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
-
-    // Compute the center as halfway along the main diagonal.
-    Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
-
-    if constexpr (false)
-    {
-      fmt::print("box.center {}!\n", box.center);
-      fmt::print("v_000 {}!\n", v_000);
-      fmt::print("v_001 {}!\n", v_001);
-      fmt::print("v_011 {}!\n", v_011);
-      fmt::print("v_111 {}!\n", v_111);
-    }
-
-    // Compute the box axes. Using the 4 extremal points, we find the first two axes as the
-    // edges which are closest to perpendicular. For a perfect rectangular prism point
-    // cloud, we could instead compute the axes and length in each direction using the
-    // found edges of the cuboid, but this does not work for non-rectangular prism
-    // cross-sections or pyramid shapes.
-    {
-      const auto [e_0, e_1] = [&v_000, &v_001, &v_011, &v_111]()
-      {
-        std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
-        Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
-        double dot_min = mfem::infinity();
-        for (int i_0 = 0; i_0 < 4; i_0++)
-        {
-          for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
-          {
-            for (int i_1 = 0; i_1 < 4; i_1++)
-            {
-              for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
-              {
-                if ((i_1 == i_0 && j_1 == j_0) || verts[i_0] == verts[j_0] ||
-                    verts[i_1] == verts[j_1])
-                {
-                  continue;
-                }
-                const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
-                const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
-                const auto dot = std::abs(e_ij_0.dot(e_ij_1));
-                if (dot < dot_min)
-                {
-                  if constexpr (false)
-                  {
-                    fmt::print("i_0 {} i_1 {} j_0 {} j_1 {}\n", i_0, i_1, j_0, j_1);
-                    fmt::print("e_ij_0 {}, e_ij_1 {}!\n", e_ij_0, e_ij_1);
-                  }
-                  dot_min = dot;
-                  e_0 = e_ij_0;
-                  e_1 = e_ij_1;
-                  if (dot_min < rel_tol)
-                  {
-                    return std::make_pair(e_0, e_1);
-                  }
-                }
-              }
-            }
-          }
-        }
-        return std::make_pair(e_0, e_1);
-      }();
-
-      if constexpr (false)
-      {
-        fmt::print("e_0 {}, e_1 {}!\n", e_0, e_1);
-      }
-
-      Vector3dMap(box.axes[0].data()) = e_0;
-      Vector3dMap(box.axes[1].data()) = e_1;
-      Vector3dMap(box.axes[2].data()) =
-          box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
-    }
-
-    // Scale axes by length of the box in each direction.
-    std::array<double, 3> l = {0.0};
-    for (const auto &v : {v_000, v_001, v_011, v_111})
-    {
-      const auto v_0 = v - Vector3dMap(box.center.data());
-      l[0] = std::max(l[0], std::abs(v_0.dot(Vector3dMap(box.axes[0].data()))));
-      l[1] = std::max(l[1], std::abs(v_0.dot(Vector3dMap(box.axes[1].data()))));
-      l[2] = std::max(l[2], std::abs(v_0.dot(Vector3dMap(box.axes[2].data()))));
-    }
-    Vector3dMap(box.axes[0].data()) *= l[0];
-    Vector3dMap(box.axes[1].data()) *= l[1];
-    Vector3dMap(box.axes[2].data()) *= l[2];
-
-    // Make sure the longest dimension comes first.
-    std::sort(box.axes.begin(), box.axes.end(), [](const auto &x, const auto &y)
-              { return CVector3dMap(x.data()).norm() > CVector3dMap(y.data()).norm(); });
-  }
-
-  // Broadcast result to all processors.
-  Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
-  Mpi::Broadcast(3 * 3, box.axes.data()->data(), dominant_rank, comm);
-  Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
-
-  return box;
-}
-
-// For the public interface, we can use a BoundingBox as a generalization of a BoundingBall.
-// Internally, however, it's nice to work with a specific ball data type.
-struct BoundingBall
-{
-  Eigen::Vector3d origin;
-  double radius;
-  bool planar;
-};
-
-// Use 4 points to define a sphere in 3D. If the points are coplanar, 3 of them are used to
-// define a circle which is interpreted as the equator of the sphere. We assume the points
-// are unique and not collinear.
-BoundingBall SphereFromPoints(const std::vector<std::size_t> &indices,
-                              const std::vector<Eigen::Vector3d> &vertices)
-{
-  // Given 0 or 1 points, just return a radius of 0.
-  MFEM_VERIFY(
-      indices.size() <= 4,
-      "Determining a sphere in 3D requires 4 points (and a circle requires 3 points)!");
-  BoundingBall ball;
-  ball.planar = (indices.size() < 4);
-  if (indices.size() < 2)
-  {
-    ball.origin = Eigen::Vector3d::Zero();
-    ball.radius = 0.0;
-    return ball;
-  }
-
-  // For two points, construct a circle with the segment as its diameter. This could also
-  // handle the collinear case for more than 2 points.
-  if (indices.size() == 2)
-  {
-    ball.origin = 0.5 * (vertices[indices[0]] + vertices[indices[1]]);
-    ball.radius = (vertices[indices[0]] - ball.origin).norm();
-    return ball;
-  }
-
-  // Check for coplanarity.
-  constexpr double rel_tol = 1.0e-6;
-  const Eigen::Vector3d AB = vertices[indices[1]] - vertices[indices[0]];
-  const Eigen::Vector3d AC = vertices[indices[2]] - vertices[indices[0]];
-  const Eigen::Vector3d ABAC = AB.cross(AC);
-  Eigen::Vector3d AD = Eigen::Vector3d::Zero();
-  if (!ball.planar)
-  {
-    AD = vertices[indices[3]] - vertices[indices[0]];
-    ball.planar = (std::abs(AD.dot(ABAC)) < rel_tol * AD.norm() * ABAC.norm());
-  }
-
-  // Construct a circle passing through 3 points.
-  // See: https://en.wikipedia.org/wiki/Circumcircle#Higher_dimensions.
-  if (ball.planar)
-  {
-    ball.origin = (0.5 / ABAC.squaredNorm()) *
-                  ((AB.squaredNorm() * AC) - (AC.squaredNorm() * AB)).cross(ABAC);
-    ball.radius = ball.origin.norm();
-    ball.origin += vertices[indices[0]];
-#if defined(MFEM_DEBUG)
-    const auto r1 = (vertices[indices[1]] - ball.origin).norm();
-    const auto r2 = (vertices[indices[2]] - ball.origin).norm();
-    MFEM_VERIFY((1.0 - rel_tol) * ball.radius < r1 && r1 < (1.0 + rel_tol) * ball.radius &&
-                    (1.0 - rel_tol) * ball.radius < r2 &&
-                    r2 < (1.0 + rel_tol) * ball.radius,
-                "Invalid circle calculated from 3 points!");
-#endif
-    return ball;
-  }
-
-  // Construct a sphere passing through 4 points.
-  // See: https://steve.hollasch.net/cgindex/geometry/sphere4pts.html.
-  Eigen::Matrix3d C;
-  Eigen::Vector3d d;
-  const auto s = vertices[indices[0]].squaredNorm();
-  C.row(0) = AB.transpose();
-  C.row(1) = AC.transpose();
-  C.row(2) = AD.transpose();
-  d(0) = 0.5 * (vertices[indices[1]].squaredNorm() - s);
-  d(1) = 0.5 * (vertices[indices[2]].squaredNorm() - s);
-  d(2) = 0.5 * (vertices[indices[3]].squaredNorm() - s);
-  ball.origin = C.inverse() * d;  // 3x3 matrix inverse might be faster than general LU
-                                  // if Eigen uses the explicit closed-form solution
-  ball.radius = (vertices[indices[0]] - ball.origin).norm();
-#if defined(MFEM_DEBUG)
-  const auto r1 = (vertices[indices[1]] - ball.origin).norm();
-  const auto r2 = (vertices[indices[2]] - ball.origin).norm();
-  const auto r3 = (vertices[indices[3]] - ball.origin).norm();
-  MFEM_VERIFY((1.0 - rel_tol) * ball.radius < r1 && r1 < (1.0 + rel_tol) * ball.radius &&
-                  (1.0 - rel_tol) * ball.radius < r2 &&
-                  r2 < (1.0 + rel_tol) * ball.radius &&
-                  (1.0 - rel_tol) * ball.radius < r3 && r3 < (1.0 + rel_tol) * ball.radius,
-              "Invalid sphere calculated from 3 points!");
-#endif
-  return ball;
-}
-
-BoundingBall Welzl(std::vector<std::size_t> P, std::vector<std::size_t> R,
-                   const std::vector<Eigen::Vector3d> &vertices)
-{
-  // Base case.
-  if (R.size() == 4 || P.empty())
-  {
-    return SphereFromPoints(R, vertices);
-  }
-
-  // Choose a p ∈ P randomly, and recurse for (P \ {p}, R). The set P has already been
-  // randomized on input.
-  const std::size_t p = P.back();
-  P.pop_back();
-  BoundingBall D = Welzl(P, R, vertices);
-
-  // If p is outside the sphere, recurse for (P \ {p}, R U {p}).
-  constexpr double rel_tol = 1.0e-6;
-  if ((vertices[p] - D.origin).norm() >= (1.0 + rel_tol) * D.radius)
-  {
-    R.push_back(p);
-    D = Welzl(P, R, vertices);
-  }
-
-  return D;
-}
-
-// Calculates a bounding ball from a point cloud using Welzl's algorithm, result is
-// broadcast across all processes. We don't operate on the convex hull, since the number of
-// points should be small enough that operating on the full set should be OK. If only three
-// points are provided, the bounding circle is computed (likewise for if the points are
-// coplanar).
-BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
-                                       const std::vector<Eigen::Vector3d> &vertices,
-                                       int dominant_rank)
-{
-  BoundingBox ball;
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    MFEM_VERIFY(vertices.size() >= 3,
-                "A bounding ball requires a minimum of three vertices for this algorithm!");
-    std::vector<std::size_t> indices(vertices.size());
-    std::iota(indices.begin(), indices.end(), 0);
-
-    // Acceleration from https://informatica.vu.lt/journal/INFORMATICA/article/1251. Allow
-    // for duplicate points and just add the 4 points to the end of the indicies list to be
-    // considered first. The two points are not necessarily the maximizer of the distance
-    // between all pairs, but they should be a good estimate.
-    {
-      auto p_1 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
-      auto p_2 = std::max_element(vertices.begin(), vertices.end(),
-                                  [p_1](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                  { return (x - *p_1).norm() < (y - *p_1).norm(); });
-      p_1 = std::max_element(vertices.begin(), vertices.end(),
-                             [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                             { return (x - *p_2).norm() < (y - *p_2).norm(); });
-
-      // Find the next point as the vertex furthest from the initial axis.
-      const Eigen::Vector3d n_1 = (*p_2 - *p_1).normalized();
-      auto p_3 = std::max_element(vertices.begin(), vertices.end(),
-                                  [&](const auto &x, const auto &y)
-                                  {
-                                    return PerpendicularDistance({n_1}, *p_1, x) <
-                                           PerpendicularDistance({n_1}, *p_1, y);
-                                  });
-      auto p_4 = std::max_element(vertices.begin(), vertices.end(),
-                                  [p_3](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                  { return (x - *p_3).norm() < (y - *p_3).norm(); });
-      MFEM_VERIFY(p_3 != p_1 && p_3 != p_2 && p_4 != p_1 && p_4 != p_2,
-                  "Vertices are degenerate!");
-
-      // Start search with these points, which should be roughly extremal. With the search
-      // for p_3 done in an orthogonal direction, p_1, p_2, p_3, and p_4 should all be
-      // unique.
-      std::swap(indices[indices.size() - 1], indices[p_1 - vertices.begin()]);
-      std::swap(indices[indices.size() - 2], indices[p_2 - vertices.begin()]);
-      std::swap(indices[indices.size() - 3], indices[p_3 - vertices.begin()]);
-      std::swap(indices[indices.size() - 4], indices[p_4 - vertices.begin()]);
-    }
-
-    // Randomly permute the point set.
-    {
-      std::random_device rd;
-      std::mt19937 g(rd());
-      std::shuffle(indices.begin(), indices.end() - 4, g);
-    }
-
-    // Compute the bounding ball.
-    BoundingBall min_ball = Welzl(indices, {}, vertices);
-    Vector3dMap(ball.center.data()) = min_ball.origin;
-    Vector3dMap(ball.axes[0].data()) = Eigen::Vector3d(min_ball.radius, 0.0, 0.0);
-    Vector3dMap(ball.axes[1].data()) = Eigen::Vector3d(0.0, min_ball.radius, 0.0);
-    Vector3dMap(ball.axes[2].data()) = Eigen::Vector3d(0.0, 0.0, min_ball.radius);
-    ball.planar = min_ball.planar;
-  }
-
-  // Broadcast result to all processors.
-  Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
-  Mpi::Broadcast(3 * 3, ball.axes.data()->data(), dominant_rank, comm);
-  Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
-
-  return ball;
-}
-
-}  // namespace
 
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr)
@@ -2156,7 +1837,7 @@ void TransferHighOrderNodes(const mfem::Mesh &orig_mesh, mfem::Mesh &new_mesh,
 }
 
 void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
-               const std::vector<int> &mat_attr_list, bool preserve_curvature)
+               const std::vector<int> &mat_attr_list)
 {
   auto mat_marker = mesh::AttrToMarker(
       orig_mesh->attributes.Size() ? orig_mesh->attributes.Max() : 0, mat_attr_list, true);
@@ -2251,132 +1932,8 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   orig_mesh = std::move(new_mesh);
 }
 
-mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
-{
-  // Courtesy of https://gist.github.com/pazner/e9376f77055c0918d7c43e034e9e5888, only
-  // supports tetrahedral elements for now. Eventually should be expanded to support prism
-  // and pyramid elements but this mixed mesh support requires a bit more work.
-  MFEM_VERIFY(orig_mesh.Dimension() == 3, "Tet-to-hex conversion only supports 3D meshes!");
-  {
-    // This checks the local mesh on each process, but the assertion failing on any single
-    // process will terminate the program.
-    mfem::Array<mfem::Geometry::Type> geoms;
-    orig_mesh.GetGeometries(3, geoms);
-    MFEM_VERIFY(geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON,
-                "Tet-to-hex conversion only works for pure tetrahedral meshes!");
-  }
-
-  // Add new vertices in every edge, face, and volume. Each tet is subdivided into 4 hexes,
-  // and each triangular face subdivided into 3 quads.
-  const int nv_tet = orig_mesh.GetNV();
-  const int nedge_tet = orig_mesh.GetNEdges();
-  const int nface_tet = orig_mesh.GetNFaces();
-  const int ne_tet = orig_mesh.GetNE();
-  const int nbe_tet = orig_mesh.GetNBE();
-  const int nv = nv_tet + nedge_tet + nface_tet + ne_tet;
-  const int ne = 4 * ne_tet;
-  const int nbe = 3 * nbe_tet;
-  mfem::Mesh hex_mesh(orig_mesh.Dimension(), nv, ne, nbe, orig_mesh.SpaceDimension());
-
-  // Add original vertices.
-  for (int v = 0; v < nv_tet; v++)
-  {
-    hex_mesh.AddVertex(orig_mesh.GetVertex(v));
-  }
-
-  // Add midpoints of edges, faces, and elements.
-  auto AddCentroid = [&orig_mesh, &hex_mesh](const int *verts, int nv)
-  {
-    double coord[3] = {0.0, 0.0, 0.0};
-    for (int i = 0; i < nv; i++)
-    {
-      for (int d = 0; d < orig_mesh.SpaceDimension(); d++)
-      {
-        coord[d] += orig_mesh.GetVertex(verts[i])[d] / nv;
-      }
-    }
-    hex_mesh.AddVertex(coord);
-  };
-  {
-    mfem::Array<int> verts;
-    for (int e = 0; e < nedge_tet; ++e)
-    {
-      orig_mesh.GetEdgeVertices(e, verts);
-      AddCentroid(verts.GetData(), verts.Size());
-    }
-  }
-  for (int f = 0; f < nface_tet; ++f)
-  {
-    AddCentroid(orig_mesh.GetFace(f)->GetVertices(), orig_mesh.GetFace(f)->GetNVertices());
-  }
-  for (int e = 0; e < ne_tet; ++e)
-  {
-    AddCentroid(orig_mesh.GetElement(e)->GetVertices(),
-                orig_mesh.GetElement(e)->GetNVertices());
-  }
-
-  // Connectivity of tetrahedron vertices to the edges.
-  constexpr int tet_vertex_edge_map[4 * 3] = {0, 1, 2, 3, 0, 4, 1, 3, 5, 5, 4, 2};
-  constexpr int tet_vertex_face_map[4 * 3] = {3, 2, 1, 3, 0, 2, 3, 1, 0, 0, 1, 2};
-  constexpr int tri_vertex_edge_map[3 * 2] = {0, 2, 1, 0, 2, 1};
-
-  // Add four hexahedra for each tetrahedron.
-  {
-    mfem::Array<int> edges, faces, orients;
-    for (int e = 0; e < ne_tet; ++e)
-    {
-      const int *verts = orig_mesh.GetElement(e)->GetVertices();
-      orig_mesh.GetElementEdges(e, edges, orients);
-      orig_mesh.GetElementFaces(e, faces, orients);
-
-      // One hex for each vertex of the tet.
-      for (int i = 0; i < 4; ++i)
-      {
-        int hex_v[8];
-        hex_v[0] = verts[i];
-        hex_v[1] = nv_tet + edges[tet_vertex_edge_map[3 * i + 0]];
-        hex_v[2] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 0]];
-        hex_v[3] = nv_tet + edges[tet_vertex_edge_map[3 * i + 1]];
-        hex_v[4] = nv_tet + edges[tet_vertex_edge_map[3 * i + 2]];
-        hex_v[5] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 1]];
-        hex_v[6] = nv_tet + nedge_tet + nface_tet + e;
-        hex_v[7] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 2]];
-        hex_mesh.AddHex(hex_v, orig_mesh.GetAttribute(e));
-      }
-    }
-  }
-
-  // Add the boundary elements.
-  {
-    mfem::Array<int> edges, orients;
-    for (int be = 0; be < nbe_tet; ++be)
-    {
-      int f, o;
-      const int *verts = orig_mesh.GetBdrElement(be)->GetVertices();
-      orig_mesh.GetBdrElementEdges(be, edges, orients);
-      orig_mesh.GetBdrElementFace(be, &f, &o);
-
-      // One quad for each vertex of the tri.
-      for (int i = 0; i < 3; ++i)
-      {
-        int quad_v[4];
-        quad_v[0] = verts[i];
-        quad_v[1] = nv_tet + edges[tri_vertex_edge_map[2 * i + 0]];
-        quad_v[2] = nv_tet + nedge_tet + f;
-        quad_v[3] = nv_tet + edges[tri_vertex_edge_map[2 * i + 1]];
-        hex_mesh.AddBdrQuad(quad_v, orig_mesh.GetBdrAttribute(be));
-      }
-    }
-  }
-
-  // Finalize the hex mesh topology. The mesh will be marked for refinement later on.
-  constexpr bool generate_bdr = false;
-  hex_mesh.FinalizeTopology(generate_bdr);
-  return hex_mesh;
-}
-
 void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex,
-                       bool make_hex, bool preserve_curvature)
+                       bool make_hex)
 {
   if (!make_simplex && !make_hex)
   {
@@ -2384,21 +1941,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
   }
   mfem::Mesh *mesh = orig_mesh.get();
   mfem::Mesh new_mesh;
-
-  // In order to track the mapping from parent mesh element to split mesh elements for
-  // high-order node interpolation, we use a unique attribute per parent mesh element. No
-  // need to call mfem::Mesh::SetAttributes at the end, since we won't use the attribute
-  // list data structure.
-  mfem::Array<int> orig_mesh_attr;
-  auto BackUpAttributes = [&orig_mesh_attr](mfem::Mesh &mesh)
-  {
-    orig_mesh_attr.SetSize(mesh.GetNE());
-    for (int e = 0; e < mesh.GetNE(); e++)
-    {
-      orig_mesh_attr[e] = mesh.GetAttribute(e);
-      mesh.SetAttribute(e, 1 + e);
-    }
-  };
 
   // Convert all element types to simplices.
   if (make_simplex)
@@ -2412,10 +1954,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       MFEM_VERIFY(
           !element_types.has_pyramids,
           "Splitting mesh elements to simplices does not support pyramid elements yet!");
-      if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
-      {
-        BackUpAttributes(*mesh);
-      }
       int ne = mesh->GetNE();
       new_mesh = mfem::Mesh::MakeSimplicial(*mesh);
       Mpi::Print("Added {:d} elements to the mesh during conversion to simplices\n",
@@ -2436,12 +1974,8 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       MFEM_VERIFY(!element_types.has_prisms && !element_types.has_pyramids,
                   "Splitting mesh elements to hexahedra only supports simplex elements "
                   "(tetrahedra) for now!");
-      if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
-      {
-        BackUpAttributes(*mesh);
-      }
       int ne = mesh->GetNE();
-      new_mesh = MeshTetToHex(*mesh);
+      new_mesh = mesh::MeshTetToHex(*mesh);
       Mpi::Print("Added {:d} elements to the mesh during conversion to hexahedra\n",
                  new_mesh.GetNE() - ne);
       mesh = &new_mesh;
@@ -2453,140 +1987,8 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
   {
     return;
   }
-
-  // The previous splitting functions remove curvature information from the new mesh. So, if
-  // needed, we interpolate it onto the new mesh with GSLIB. The topology of the mesh must
-  // be finalized for this to work (assumes FinalizeTopology has been called on the new
-  // mesh).
-  if (preserve_curvature && orig_mesh->GetNodes())
-  {
-    // Prepare to interpolate the grid function for high-order nodes from the old mesh to
-    // the new one. This first sets up the new mesh as a linear mesh and constructs a
-    // separate high-order grid function for storing the interpolated nodes.
-    new_mesh.EnsureNodes();
-    const mfem::GridFunction *nodes = orig_mesh->GetNodes();
-    const mfem::FiniteElementSpace *fespace = nodes->FESpace();
-    mfem::Ordering::Type ordering = fespace->GetOrdering();
-    int order = fespace->GetMaxElementOrder();
-    int sdim = orig_mesh->SpaceDimension();
-    bool discont =
-        (dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr);
-    mfem::FiniteElementSpace new_fespace(&new_mesh, fespace->FEColl(), sdim, ordering);
-    mfem::GridFunction new_nodes(&new_fespace);
-
-    mfem::Array<int> vdofs;
-    mfem::Vector vals, elem_vals, xyz;
-    mfem::DenseMatrix pointmat;
-    int start = 0;
-    for (int e = 0; e < orig_mesh->GetNE(); e++)
-    {
-      // Get the high-order nodes restricted to this parent element, always returned
-      // byNODES.
-      fespace->GetElementVDofs(e, vdofs);
-      nodes->GetSubVector(vdofs, vals);
-
-      // Find all child elements of this parent in the split mesh and restore their correct
-      // original attribute. This works because child elements are added in contiguous
-      // batches in the same order as the parents.
-      int attr = new_mesh.GetAttribute(start);
-      int end = start;
-      while (end < new_mesh.GetNE() && new_mesh.GetAttribute(end) == attr)
-      {
-        new_mesh.SetAttribute(end++, orig_mesh_attr[e]);
-      }
-
-      // Special case: Parent element is unsplit, no interpolation is needed.
-      if (end == start + 1)
-      {
-        new_fespace.GetElementVDofs(start, vdofs);
-        new_nodes.SetSubVector(vdofs, vals);
-        start = end;
-        continue;
-      }
-
-      // Create a list of points at which to interpolate the high order node information.
-      int npts = 0, offset = 0;
-      for (int i = start; i < end; i++)
-      {
-        npts += new_fespace.GetFE(i)->GetNodes().GetNPoints();
-      }
-      xyz.SetSize(npts * sdim);
-      for (int i = start; i < end; i++)
-      {
-        const mfem::FiniteElement &fe = *new_fespace.GetFE(i);
-        mfem::ElementTransformation &T = *new_mesh.GetElementTransformation(i);
-        T.Transform(fe.GetNodes(), pointmat);
-        for (int d = 0; d < sdim; d++)
-        {
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            // Use default ordering byNODES.
-            xyz(d * npts + offset + j) = pointmat(d, j);
-          }
-        }
-        offset += pointmat.Width();
-      }
-
-      // Create a single element linear mesh for interpolation.
-      const mfem::Element *el = orig_mesh->GetElement(e);
-      mfem::Mesh parent_mesh(orig_mesh->Dimension(), el->GetNVertices(), 1, 0,
-                             orig_mesh->SpaceDimension());
-      parent_mesh.AddElement(el->Duplicate(&parent_mesh));
-      for (int i = 0; i < el->GetNVertices(); i++)
-      {
-        int v = parent_mesh.AddVertex(orig_mesh->GetVertex(el->GetVertices()[i]));
-        parent_mesh.GetElement(0)->GetVertices()[i] = v;
-      }
-      constexpr bool generate_bdr = false;
-      parent_mesh.FinalizeTopology(generate_bdr);
-
-      // Create a grid function on the single element parent mesh with the high-order nodal
-      // grid function to interpolate.
-      parent_mesh.EnsureNodes();
-      mfem::FiniteElementSpace parent_fespace(&parent_mesh, fespace->FEColl(), sdim,
-                                              mfem::Ordering::byNODES);
-      mfem::GridFunction parent_nodes(&parent_fespace);
-      MFEM_ASSERT(parent_nodes.Size() == vals.Size(),
-                  "Unexpected size mismatch for high-order node interpolation!");
-      parent_nodes = vals;
-
-      // Interpolate the high-order nodes grid function and copy into the new mesh nodes
-      // grid function.
-      vals.SetSize(npts * sdim);
-      fem::InterpolateFunction(xyz, parent_nodes, vals, mfem::Ordering::byNODES);
-      offset = 0;
-      for (int i = start; i < end; i++)
-      {
-        const int elem_npts = new_fespace.GetFE(i)->GetNodes().GetNPoints();
-        elem_vals.SetSize(elem_npts * sdim);
-        for (int d = 0; d < sdim; d++)
-        {
-          for (int j = 0; j < elem_npts; j++)
-          {
-            // Arrange element values byNODES to align with GetElementVDofs.
-            elem_vals(d * elem_npts + j) = vals(d * npts + offset + j);
-          }
-        }
-        new_fespace.GetElementVDofs(i, vdofs);
-        MFEM_ASSERT(vdofs.Size() == elem_vals.Size(),
-                    "Unexpected size mismatch for high-order node interpolation!");
-        new_nodes.SetSubVector(vdofs, elem_vals);
-        offset += elem_npts;
-      }
-
-      // Prepare for next parent element.
-      start = end;
-    }
-    MFEM_VERIFY(start == new_mesh.GetNE(),
-                "Premature abort for high-order curvature in mesh splitting!");
-
-    // Finally, copy the nodal grid function to the new mesh.
-    new_mesh.SetCurvature(order, discont, sdim, ordering);
-    MFEM_VERIFY(new_mesh.GetNodes()->Size() == new_nodes.Size(),
-                "Unexpected size mismatch for nodes!");
-    new_mesh.SetNodes(new_nodes);
-  }
   orig_mesh = std::make_unique<mfem::Mesh>(std::move(new_mesh));  // Call move constructor
+  orig_mesh->FinalizeTopology();
 }
 
 void ReorderMeshElements(mfem::Mesh &mesh, bool print)

@@ -107,6 +107,10 @@ message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json
 find_package(fmt REQUIRED CONFIG)
 message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
 
+# Find scn
+find_package(scn REQUIRED CONFIG)
+message(STATUS "Found scn: ${scn_VERSION} in ${scn_DIR}")
+
 # Find Eigen
 find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
@@ -304,10 +308,21 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(${LIB_TARGET_NAME}
-  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt
+  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
 target_link_libraries(${LIB_TARGET_NAME} PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>)
+if(PALACE_WITH_GSLIB)
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_GSLIB
+  )
+endif()
+if(PALACE_WITH_GPU_AWARE_MPI)
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_GPU_AWARE_MPI
+  )
+endif()
+
 
 # Install target and helper scripts
 install(

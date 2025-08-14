@@ -70,6 +70,9 @@ namespace internal
 // Access the Ceed objects initialized by CeedInit.
 const std::vector<Ceed> &GetCeedObjects();
 
+// Convenience method for number of ceeds.
+std::size_t NumCeeds();
+
 }  // namespace internal
 
 }  // namespace palace::ceed

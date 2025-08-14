@@ -5,6 +5,8 @@ on:
     branches:
       - main
   pull_request:
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Note that each spack version needs it's own registry
+  # Note that each spack version needs its own registry
   SPACK_VERSION: develop
   REGISTRY: ghcr.io/awslabs/palace
   GITHUB_USER: ${{ github.actor }}
@@ -49,9 +51,6 @@ jobs:
           ref: develop
           buildcache: true
           color: true
-          # This seems unecessary, but otherwise we clone into ./spack
-          # This then would override the spack local repo dir, and break CI
-          path: spack-path
 
       - name: Setup Environment
         run: |
@@ -92,7 +91,7 @@ jobs:
               rocblas:
                 require: ~tensile
             repos:
-            - spack/local
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
