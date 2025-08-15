@@ -17,7 +17,8 @@ class FiniteElementSpace;
 // Solve 2D surface curl problem for flux loop initial condition
 std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata,
                                                 const Mesh &mesh,
-                                                const FiniteElementSpace &nd_fespace);
+                                                const FiniteElementSpace &nd_fespace,
+                                                int flux_loop_idx);
 
 // Verify flux through holes using computed magnetic field B
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,

@@ -21,10 +21,11 @@ namespace palace
 
 std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata,
                                                 const Mesh &mesh,
-                                                const FiniteElementSpace &nd_fespace)
+                                                const FiniteElementSpace &nd_fespace,
+                                                int flux_loop_idx)
 {
-    // Extract flux loop configuration from iodata
-    const auto& flux_data = iodata.boundaries.fluxloop.begin()->second; // First flux loop
+    // Extract flux loop configuration from iodata for specific index
+    const auto& flux_data = iodata.boundaries.fluxloop.at(flux_loop_idx);
     
     std::vector<double> flux_values = flux_data.flux_amounts;
     std::vector<int> surface_attrs = flux_data.metal_surface_attributes;

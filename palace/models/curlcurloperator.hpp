@@ -103,7 +103,7 @@ public:
   void GetFluxLoopExcitationVector(const Vector &boundary_values, Vector &RHS);
 
   // Solve 2D surface curl problem for flux loop boundary conditions
-  std::unique_ptr<Vector> SolveSurfaceCurlProblem() const;
+  std::unique_ptr<Vector> SolveSurfaceCurlProblem(int flux_loop_idx) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
