@@ -118,6 +118,8 @@ The format of this changelog is based on
   - Added `scnlib` as a dependency to Palace.
   - Added parsing ability of existing csv files into the `Table` class. Fix `"Restart"`
     behaviour with the multi-excitation feature of driven solver.
+  - Change wave port eigenproblem shift and sorting so the modes are ranked in descending
+    order from the TEM limit.
 
 ## [0.13.0] - 2024-05-20
 
