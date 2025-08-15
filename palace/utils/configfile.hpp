@@ -29,6 +29,11 @@ protected:
   std::vector<DataType> vecdata = {};
 
 public:
+  template <typename... Args>
+  decltype(auto) emplace_back(Args &&...args)
+  {
+    return vecdata.emplace_back(std::forward<Args>(args)...);
+  }
   [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
   [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
   [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
@@ -604,6 +609,21 @@ public:
   void SetUp(json &postpro);
 };
 
+struct FarFieldPostData
+{
+public:
+  // List of boundary attributes to use for the surface integral.
+  std::vector<int> attributes = {};
+
+  // List of (theta, phi) where the wave-zone fields should be evaluated.
+  // Units are radians.
+  std::vector<std::pair<double, double>> thetaphis = {};
+
+  void SetUp(json &postpro);
+
+  bool empty() const { return thetaphis.empty(); };
+};
+
 struct BoundaryPostData
 {
 public:
@@ -613,6 +633,7 @@ public:
   // Boundary postprocessing objects.
   SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
+  FarFieldPostData farfield = {};
 
   void SetUp(json &boundaries);
 };

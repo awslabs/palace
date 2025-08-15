@@ -467,6 +467,31 @@ where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operator
 orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
 discretized by Nédélec and Raviart-Thomas elements, respectively.
 
+## Far-field extraction
+
+This feature is based upon Stratton-Chu's transformations in the limit for ``kr >> 1`` (with `k``wave number and``r`` observation distance). One can show that, in this
+limit,
+
+```math
+r \mathbf{E}_p = \frac{jk}{4\pi} \mathbf{r}_0 \times \int [\mathbf{n} \times \mathbf{E} - \eta \mathbf{r}_0 \times (\mathbf{n} \times \mathbf{H})] \exp(jk\mathbf{r} \cdot \mathbf{r}_0) dS
+```
+
+where:
+
+  - ``E_p`` is the electric field at the observation point
+  - ``k`` is the wave number
+  - ``r₀`` is the unit vector from source to observation point, parameterized by ``(\theta, \phi)``
+  - ``n`` is the surface normal (to ``S``)
+  - ``E, H`` are the tangential fields on the surface
+  - ``η`` is the impedance
+
+The integral is over the surface ``S``.
+
+Note, we obtain ``r \mathbf{E}_p`` because the electric field decays with ``exp(jkr)/r``, so multiplying it by ``r`` ensures that the quantity is finite. Note also that the solution is defined up to a global phase factor.
+
+This equation relies on an analytic form for Green's function and is only valid
+for isotropic materials.
+
 ## References
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,

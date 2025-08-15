@@ -614,7 +614,7 @@ void DomainMaterialData::SetUp(json &domains)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Materials\" domain in the configuration file!");
-    MaterialData &data = vecdata.emplace_back();
+    MaterialData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
@@ -935,7 +935,7 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(
         it->find("Conductivity") != it->end(),
         "Missing \"Conductivity\" boundary \"Conductivity\" in the configuration file!");
-    ConductivityData &data = vecdata.emplace_back();
+    ConductivityData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.sigma = it->at("Conductivity");  // Required
@@ -979,7 +979,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("Attributes") != it->end(),
                 "Missing \"Attributes\" list for \"Impedance\" boundary in the "
                 "configuration file!");
-    ImpedanceData &data = vecdata.emplace_back();
+    ImpedanceData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.Rs = it->value("Rs", data.Rs);
@@ -1185,7 +1185,7 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
-    PeriodicData &data = vecdata.emplace_back();
+    PeriodicData &data = emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
@@ -1488,6 +1488,93 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
   }
 }
+void FarFieldPostData::SetUp(json &postpro)
+{
+  auto farfield = postpro.find("FarField");
+  if (farfield == postpro.end())
+  {
+    return;
+  }
+
+  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
+              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
+              "configuration file!");
+
+  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+
+  auto nsample_json = farfield->find("NSample");
+  int nsample = 0;
+  if (nsample_json != farfield->end())
+  {
+    nsample = nsample_json->get<int>();
+    if (nsample > 0)
+    {
+      // Generate points uniformly distributed on a sphere.
+      int n_theta = std::sqrt(nsample);
+      // Compute n_phi with ceiling division, ensuring that n_theta * n_phhi >= nsample.
+      int n_phi = (nsample + n_theta - 1) / n_theta;
+
+      int count = 0;
+      for (int i = 0; i < n_theta && count < nsample; ++i)
+      {
+        double theta = std::acos(1.0 - 2.0 * i / (n_theta - 1.0));
+        for (int j = 0; j < n_phi && count < nsample; ++j)
+        {
+          double phi = 2.0 * M_PI * j / n_phi;
+          thetaphis.emplace_back(theta, phi);
+          ++count;
+        }
+      }
+    }
+  }
+
+  auto thetaphis_json = farfield->find("ThetaPhis");
+  if (thetaphis_json != farfield->end())
+  {
+    MFEM_VERIFY(thetaphis_json->is_array(),
+                "\"ThetaPhis\" should specify an array in the configuration file!");
+
+    // JSON does not support the notion of pair, so we read the theta and phis as vectors
+    // of vectors, and then cast them to vectors of pairs.
+    //
+    // Convert to radians in the process.
+    auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
+    for (const auto &vec : vec_of_vec)
+    {
+      thetaphis.emplace_back(std::make_pair(vec[0] * M_PI / 180, vec[1] * M_PI / 180));
+    }
+  }
+
+  // Remove duplicate entries with numerical tolerance.
+  constexpr double tol = 1e-6;
+  std::sort(thetaphis.begin(), thetaphis.end());
+  auto it = std::unique(
+      thetaphis.begin(), thetaphis.end(), [tol](const auto &a, const auto &b)
+      { return std::abs(a.first - b.first) < tol && std::abs(a.second - b.second) < tol; });
+  thetaphis.erase(it, thetaphis.end());
+
+  if (thetaphis.empty())
+  {
+    MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
+  }
+
+  // Cleanup
+  farfield->erase("Attributes");
+  farfield->erase("NSample");
+  farfield->erase("ThetaPhis");
+  MFEM_VERIFY(farfield->empty(),
+              "Found an unsupported configuration file keyword under \"FarField\"!\n"
+                  << farfield->dump(2));
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "Attributes: " << attributes << '\n';
+    std::cout << "NSample: " << nsample << '\n';
+    std::cout << "ThetaPhis: " << thetaphis << '\n';
+  }
+}
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1497,6 +1584,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
+  farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1507,6 +1595,10 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+
+  attributes.insert(attributes.end(), farfield.attributes.begin(),
+                    farfield.attributes.end());
+
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
@@ -1514,6 +1606,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Cleanup
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
+  postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));
