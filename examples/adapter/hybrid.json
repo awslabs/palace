@@ -44,21 +44,23 @@
   },
   "Solver":
   {
-      "Order": 2,
-      "Device": "CPU",
-      "Eigenmode":
-      {
-          "N": 5,
-          "Tol": 1.0e-6,
-          "Target": 7.0,
-          "Save": 5,
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 5,
+      "Tol": 1.0e-6,
+      "Target": 7.0,
+      "Save": 5,
     },
     "Linear":
     {
-        "Type": "Default",
-        "KSPType": "GMRES",
-        "Tol": 1.0e-8,
-        "MaxIts": 100,
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100,
+      "MGMaxLevels": 1, // Can be faster for small meshes, but much slower for large meshes
+      "ComplexCoarseSolve": true // Can be faster, but requires more memory
     }
   }
 }
