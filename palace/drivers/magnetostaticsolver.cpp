@@ -38,12 +38,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
   PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
-  int n_step = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
-  // Allow flux-loop-only simulations (no excitation current source needed)
-  bool flux_loop_only = (n_step == 0 && !iodata.boundaries.fluxloop.empty());
-  if (flux_loop_only) {
-    n_step = static_cast<int>(iodata.boundaries.fluxloop.size());
-  }
+  int n_current_steps = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
+  int n_flux_steps = static_cast<int>(iodata.boundaries.fluxloop.size());
+  int n_step = n_current_steps + n_flux_steps;
+  
   MFEM_VERIFY(n_step > 0,
               "No surface current boundaries or flux loops specified for magnetostatic simulation!");
 
@@ -52,21 +50,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
 
-  // If using flux loop analysis
-  std::unique_ptr<Vector> initial_condition;
-  if (!iodata.boundaries.fluxloop.empty())
-  {
-    // Set up the 2D system, and solve for initial condition.
-    initial_condition = std::make_unique<Vector>();
-    initial_condition->SetSize(RHS.Size());
-    initial_condition->UseDevice(true);
-
-    const auto& flux_data = iodata.boundaries.fluxloop.begin()->second; // First flux loop
-    
-    // Solve 2D surface curl problem for initial condition
-    initial_condition = curlcurl_op.SolveSurfaceCurlProblem(); 
-  }
-
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator estimator(
       curlcurl_op.GetMaterialOp(), curlcurl_op.GetRTSpace(), curlcurl_op.GetNDSpaces(),
@@ -74,84 +57,64 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
-  // Main loop over current source boundaries.
+  // Unified loop over all excitation sources (current + flux loops)
   Mpi::Print("\nComputing magnetostatic fields for {:d} source {}\n", n_step,
              (n_step > 1) ? "boundaries" : "boundary");
-  int step = 0;
   auto t0 = Timer::Now();
-  if (flux_loop_only) 
+  
+  for (int step = 0; step < n_step; step++)
   {
-    // Handle flux-loop-only case
-    step = 0;
-    for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop) 
+    A[step].SetSize(RHS.Size());
+    A[step].UseDevice(true);
+    A[step] = 0.0;
+    
+    if (step < n_current_steps)
     {
+      // Current source excitation
+      const auto &[idx, data] = *std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step);
+      Mpi::Print("\nIt {:d}/{:d}: Current Index = {:d} (elapsed time = {:.2e} s)\n", 
+                step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
+      
+      curlcurl_op.GetExcitationVector(idx, RHS);
+      I_inc[step] = data.GetExcitationCurrent();
+    }
+    else
+    {
+      // Flux loop excitation
+      int flux_idx = step - n_current_steps;
+      const auto &[idx, flux_data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n", 
                 step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
       
-      A[step].SetSize(RHS.Size());
-      A[step].UseDevice(true);
-
-      // Use flux loop excitation vector with boundary conditions
-      curlcurl_op.GetFluxLoopExcitationVector(*initial_condition, RHS);
-      A[step] = 0.0;
-      ksp.Mult(RHS, A[step]);
-
-      // Compute B = ∇ x A on the true dofs.
-      Curl.Mult(A[step], B);
-
-      // Verify flux through holes using solved magnetic field B
+      // Solve 2D surface curl problem for this specific flux loop
+      auto flux_solution = curlcurl_op.SolveSurfaceCurlProblem(idx);
+      curlcurl_op.GetFluxLoopExcitationVector(*flux_solution, RHS);
+      I_inc[step] = 0.0; // Zero current for flux loops
+    }
+    
+    // Solve 3D magnetostatic problem
+    ksp.Mult(RHS, A[step]);
+    
+    // Common post-processing
+    Curl.Mult(A[step], B);
+    
+    // Flux verification for flux loops
+    if (step >= n_current_steps)
+    {
+      int flux_idx = step - n_current_steps;
+      const auto &[idx, flux_data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
       VerifyFluxThroughHoles(B_gf, flux_data.hole_attributes, flux_data.flux_amounts, 
                             curlcurl_op.GetMesh(), curlcurl_op.GetComm());
-
-      I_inc[step] = 0.0; // zero current for flux loops
-      
-      auto total_domain_energy = post_op.MeasureAndPrintAll(step, A[step], B, idx);
-      estimator.AddErrorIndicator(B, total_domain_energy, indicator);
-      step++;
     }
-  } 
-  else{
-    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
-    {
-      Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, n_step,
-                idx, Timer::Duration(Timer::Now() - t0).count());
-
-      // Form and solve the linear system for a prescribed current on the specified source.
-      Mpi::Print("\n");
-      if (initial_condition) {A[step] = *initial_condition;}
-      else 
-      {
-        A[step].SetSize(RHS.Size());
-        A[step].UseDevice(true);
-        A[step] = 0.0;
-      }
-      curlcurl_op.GetExcitationVector(idx, RHS);
-      ksp.Mult(RHS, A[step]);
-
-      // Start Post-processing.
-      BlockTimer bt2(Timer::POSTPRO);
-      Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
-                linalg::Norml2(curlcurl_op.GetComm(), A[step]),
-                linalg::Norml2(curlcurl_op.GetComm(), RHS));
-
-      // Compute B = ∇ x A on the true dofs.
-      Curl.Mult(A[step], B);
-
-      // Save excitation current for inductance matrix calculation.
-      I_inc[step] = data.GetExcitationCurrent();
-
-      // Measurement and printing.
-      auto total_domain_energy = post_op.MeasureAndPrintAll(step, A[step], B, idx);
-
-      // Calculate and record the error indicators.
-      Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(B, total_domain_energy, indicator);
-
-      // Next source.
-      step++;
-    }
+    
+    // Energy calculation and error estimation
+    int terminal_idx = (step < n_current_steps) ? 
+      std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step)->first :
+      std::next(iodata.boundaries.fluxloop.begin(), step - n_current_steps)->first;
+    auto total_domain_energy = post_op.MeasureAndPrintAll(step, A[step], B, terminal_idx);
+    estimator.AddErrorIndicator(B, total_domain_energy, indicator);
   }
 
   // Postprocess the inductance matrix from the computed field solutions.

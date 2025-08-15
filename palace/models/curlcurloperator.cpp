@@ -96,6 +96,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
     dbc_bcs.Append(attr);
   }
   // Add flux loop boundary attributes as essential boundaries
+  /*
   for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
   {
     for (auto attr : flux_data.metal_surface_attributes)
@@ -105,6 +106,21 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
         dbc_bcs.Append(attr);
       }
     }
+  }*/
+  std::set<int> flux_attrs;
+  for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
+  {
+    for (auto attr : flux_data.metal_surface_attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
+      {
+        flux_attrs.insert(attr);  // SOLUTION: Set automatically deduplicates
+      }
+    }
+  }
+  for (auto attr : flux_attrs)
+  {
+    dbc_bcs.Append(attr);  // Each attribute added only once
   }
   return dbc_bcs;
 }
@@ -260,9 +276,9 @@ void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), boundary_values);
 }
 
-std::unique_ptr<Vector> CurlCurlOperator::SolveSurfaceCurlProblem() const
+std::unique_ptr<Vector> CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
 {
-  return palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace());
+  return palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
 }
 
 }  // namespace palace
