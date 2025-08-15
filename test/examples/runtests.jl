@@ -40,6 +40,7 @@ else
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
         "cylinder/floquet",
+        "cylinder/driven_wave",
         "coaxial/open",
         "coaxial/matched",
         "cpw/lumped_uniform",
@@ -145,6 +146,20 @@ end
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
 abstol = 2.0e-12
+
+if "cylinder/driven_wave" in cases
+    @info "Testing cylinder/driven_wave..."
+    @time testcase(
+        "cylinder",
+        "waveguide_driven_wave.json",
+        "driven_wave";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"]
+    )
+end
 
 if "coaxial/open" in cases
     @info "Testing coaxial (open)..."
