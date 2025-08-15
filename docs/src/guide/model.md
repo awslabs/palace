@@ -67,5 +67,5 @@ field via Ohm's law.
 
 Modeling of superconducting domains is performed using the current-field constitutive
 relations given by the London equations. The user can specify a London penetration depth to
-activate this model. It can also be used in conjunction with a materal conductivity when
+activate this model. It can also be used in conjunction with a material conductivity when
 wishing to model both superconducting and normal currents.
