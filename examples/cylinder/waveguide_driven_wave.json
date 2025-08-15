@@ -40,12 +40,13 @@
         "Index": 1,
         "Attributes": [2],
         "Mode": 1,
-        "Excitation": true,
+        "Excitation": 1,
       },
       {
         "Index": 2,
         "Attributes": [3],
         "Mode": 1,
+        "Excitation": false
       }
       ],
     "PEC":
