@@ -312,6 +312,24 @@
               "LossTan": { "type": "number" }
             }
           }
+        },
+        "FarField": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": { "$ref": "#/$defs/Attributes" },
+            "NSample": { "type": "integer", "minimum": 0 },
+            "ThetaPhis": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
         }
       }
     }
@@ -383,4 +401,3 @@
     }
   }
 }
-

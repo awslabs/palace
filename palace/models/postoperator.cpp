@@ -69,7 +69,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
+                 fem_op->GetNDSpace()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -823,6 +824,20 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   {
     measurement_cache.surface_flux_i.emplace_back(Measurement::FluxData{
         idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFarField() const
+{
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+
+    // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
+    measurement_cache.farfield.E_field =
+        surf_post_op.GetFarFieldrE(measurement_cache.farfield.thetaphis, E.get(), B.get(),
+                                   measurement_cache.freq.real());
   }
 }
 

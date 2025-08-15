@@ -27,6 +27,7 @@ makedocs(
             "guide/problem.md",
             "guide/model.md",
             "guide/boundaries.md",
+            "guide/farfield.md",
             "guide/postprocessing.md",
             "guide/parallelism.md"
         ],
