@@ -7,18 +7,84 @@ on:
     tags: '*'
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# We need spack so that we can install palace for the tutorials
+env:
+  SPACK_VERSION: develop
+  REGISTRY: ghcr.io/awslabs/palace
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   build-docs:
     permissions:
+      packages: write
       contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Spack
+        uses: spack/setup-spack@v2
+        with:
+          ref: develop
+          buildcache: true
+          color: true
+
+      - name: Setup Environment
+        run: |
+          # Spack.yaml with most / all settings configured
+          cat << EOF > spack.yaml
+          spack:
+            specs:
+              - palace
+            view: false
+            config:
+              install_tree:
+                root: /opt/spack
+                padded_length: False
+            concretizer:
+              reuse: false
+              unify: true
+              targets:
+                granularity: generic
+            packages:
+              petsc:
+                require: ~hdf5
+            mirrors:
+              spack:
+                binary: true
+                url: https://binaries.spack.io/${SPACK_VERSION}
+              local-buildcache:
+                binary: true
+                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+
+      - name: Configure Binary Mirror Keys
+        run: spack -e . buildcache keys --install --trust
+
+      - name: Bootstrap Spack
+        run: spack  -e . bootstrap now
+
+      - name: Concretize
+        run: spack -e . concretize -f
+
+        # Relies on cache-hit
+      - name: Install Palace
+        run: spack -e . install --only-concrete --keep-stage --show-log-on-error
+
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          eval $(spack -e . load --sh palace)
           julia --project=docs -e 'using Pkg; Pkg.instantiate()'
           julia --project=docs --color=yes docs/make.jl
 
