@@ -146,6 +146,125 @@ public:
   }
 };
 
+class BdrFarFieldBatchCoefficient : public BdrGridFunctionCoefficient
+{
+private:
+  const GridFunction &E, &B;
+  const MaterialOperator &mat_op;
+  const double omega;
+  std::vector<std::array<double, 3>> r_naughts;  // Multiple directions
+
+  // Cross product helper functions
+  static std::array<std::complex<double>, 3>
+  cross_complex(const mfem::Vector &a, const std::array<std::complex<double>, 3> &b)
+  {
+    return {
+        {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
+  }
+
+public:
+  static std::array<std::complex<double>, 3>
+  cross_complex_arr(const std::array<double, 3> &a,
+                    const std::array<std::complex<double>, 3> &b)
+  {
+    return {
+        {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
+  }
+
+  const std::array<double, 3> &GetRNaught(size_t index) const { return r_naughts[index]; }
+
+  BdrFarFieldBatchCoefficient(const GridFunction &E, const GridFunction &B,
+                              const MaterialOperator &mat_op, double omega,
+                              const std::vector<std::pair<double, double>> &theta_phi_pairs)
+    : BdrGridFunctionCoefficient(*E.Real().ParFESpace()->GetParMesh()), E(E), B(B),
+      mat_op(mat_op), omega(omega)
+  {
+    r_naughts.reserve(theta_phi_pairs.size());
+    for (const auto &[theta, phi] : theta_phi_pairs)
+    {
+      r_naughts.push_back({{std::sin(theta) * std::cos(phi),
+                            std::sin(theta) * std::sin(phi), std::cos(theta)}});
+    }
+  }
+
+  std::vector<std::array<std::complex<double>, 3>>
+  EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+  {
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
+
+    mfem::Vector r_phys(3);
+    T.Transform(ip, r_phys);
+
+    // Evaluate E and B fields ONCE per integration point
+    mfem::Vector E_real(3), E_imag(3), B_real(3), B_imag(3);
+    E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_real);
+    E.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_imag);
+    B.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_real);
+    B.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_imag);
+
+    std::array<std::complex<double>, 3> E_complex{
+        {std::complex<double>(E_real[0], E_imag[0]),
+         std::complex<double>(E_real[1], E_imag[1]),
+         std::complex<double>(E_real[2], E_imag[2])}};
+
+    // Cache common computations
+    double wave_speed = mat_op.GetLightSpeedMax(FET.Elem1->Attribute);
+    double k = omega / wave_speed;
+
+    std::complex<double> scale(0, k / (4 * M_PI));
+
+    // Convert B to H properly
+    mfem::Vector H_real(3), H_imag(3);
+    mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(B_real, H_real);
+    mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(B_imag, H_imag);
+
+    std::array<std::complex<double>, 3> H_complex{
+        {std::complex<double>(H_real[0], H_imag[0]),
+         std::complex<double>(H_real[1], H_imag[1]),
+         std::complex<double>(H_real[2], H_imag[2])}};
+
+    mfem::Vector normal(3);
+    GetNormal(T, normal, ori);
+
+    // Compute direction-independent parts
+    auto nE = cross_complex(normal, E_complex);
+    auto nH = cross_complex(normal, H_complex);
+
+    std::vector<std::array<std::complex<double>, 3>> results;
+    results.reserve(r_naughts.size());
+
+    // Process all directions with the same E,B evaluation
+    for (const auto &r_naught : r_naughts)
+    {
+      double phase =
+          k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
+
+      auto rnH = cross_complex_arr(r_naught, nH);
+
+      std::array<std::complex<double>, 3> bracket;
+      for (int i = 0; i < 3; i++)
+      {
+        // TODO: impedance is set to 1 here!
+        double impedance = 1;
+        bracket[i] = nE[i] - impedance * rnH[i];
+      }
+
+      std::complex<double> phase_factor{std::cos(phase), std::sin(phase)};
+      phase_factor *= scale;
+
+      // Store bracket scaled by phase factor for cross product outside integration
+      for (auto &val : bracket)
+      {
+        val *= phase_factor;
+      }
+
+      results.push_back(bracket);
+    }
+
+    return results;
+  }
+};
+
 // Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.

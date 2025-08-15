@@ -184,17 +184,28 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   return {};  // For compiler warning
 }
 
+SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
+                                                const mfem::ParMesh &mesh,
+                                                const mfem::Array<int> &bdr_attr_marker)
+  : thetaphis(data.thetaphis)
+{
+  // Store boundary attributes for this postprocessing boundary.
+  attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+}
+
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op,
-                                         mfem::ParFiniteElementSpace &h1_fespace)
-  : mat_op(mat_op), h1_fespace(h1_fespace)
+                                         mfem::ParFiniteElementSpace &h1_fespace,
+                                         mfem::ParFiniteElementSpace &nd_fespace)
+  : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace)
 {
   // Check that boundary attributes have been specified correctly.
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.postpro.flux.empty() ||
-      !iodata.boundaries.postpro.dielectric.empty())
+      !iodata.boundaries.postpro.dielectric.empty() ||
+      !iodata.boundaries.postpro.farfield.thetaphis.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -227,6 +238,14 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   {
     eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
   }
+
+  // FarField postprocessing.
+  MFEM_VERIFY(iodata.problem.type == ProblemType::DRIVEN ||
+                  iodata.problem.type == ProblemType::EIGENMODE,
+              "Far-field extraction is only available for driven or eigenmode problems!");
+
+  farfield = FarFieldData(iodata.boundaries.postpro.farfield, *h1_fespace.GetParMesh(),
+                          bdr_attr_marker);
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
@@ -299,6 +318,77 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
   s.Assemble();
   s.UseDevice(true);
   return linalg::LocalSum(s);
+}
+
+std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldrE(
+    const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
+    const GridFunction *B, double omega) const
+{
+  BdrFarFieldBatchCoefficient coeff(*E, *B, mat_op, omega, theta_phi_pairs);
+
+  const auto &mesh = *nd_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
+
+  std::vector<std::array<std::complex<double>, 3>> integrals(theta_phi_pairs.size());
+  for (auto &integral : integrals)
+  {
+    integral.fill({0.0, 0.0});
+  }
+
+  // Single integration loop for all directions
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
+      continue;
+
+    auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(i);
+    const auto *fe = nd_fespace.GetBE(i);
+    const auto *ir = &mfem::IntRules.Get(fe->GetGeomType(), 2 * fe->GetOrder() + 1);
+
+    for (int j = 0; j < ir->GetNPoints(); j++)
+    {
+      const auto &ip = ir->IntPoint(j);
+      T->SetIntPoint(&ip);
+
+      auto f_vals = coeff.EvalComplexBatch(*T, ip);
+
+      double w = ip.weight * T->Weight();
+      for (size_t k = 0; k < theta_phi_pairs.size(); k++)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          integrals[k][d] += w * f_vals[k][d];
+        }
+      }
+    }
+  }
+
+  // Apply cross product outside integration for efficiency
+  std::vector<std::array<std::complex<double>, 3>> final_integrals(theta_phi_pairs.size());
+  for (size_t k = 0; k < theta_phi_pairs.size(); k++)
+  {
+    const auto &r_naught = coeff.GetRNaught(k);
+    final_integrals[k] = coeff.cross_complex_arr(r_naught, integrals[k]);
+  }
+
+  // MPI reduction
+  for (auto &integral : final_integrals)
+  {
+    for (auto &val : integral)
+    {
+      Mpi::GlobalSum(1, &val, E->GetComm());
+    }
+  }
+
+  // Convert to return format
+  std::vector<std::vector<std::complex<double>>> result(theta_phi_pairs.size());
+  for (size_t i = 0; i < theta_phi_pairs.size(); i++)
+  {
+    result[i] = {final_integrals[i][0], final_integrals[i][1], final_integrals[i][2]};
+  }
+
+  return result;
 }
 
 }  // namespace palace

@@ -69,7 +69,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
+                 fem_op->GetNDSpace()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -827,6 +828,17 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFarField() const
+{
+  MFEM_ASSERT(freq.imag() == 0, "Cannot extract FarFields with imaginary frequency");
+
+  measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+  measurement_cache.farfield.E_field =
+      surf_post_op.GetFarFieldrE(measurement_cache.farfield.thetaphis, E.get(), B.get(),
+                                 2 * M_PI * measurement_cache.freq.real());
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 {
   // Depends on Lumped Port Energy since this is used in normalization of participation
@@ -906,6 +918,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
+  MeasureFarField();
 
   omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
@@ -961,6 +974,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
   MeasureAllImpl();
+  MeasureFarField();
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
