@@ -602,7 +602,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
-                                               // propagation constant possible
+                                             // propagation constant possible
   std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
   std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
   std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
