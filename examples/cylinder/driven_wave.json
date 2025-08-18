@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cylinder_tet.msh",
+    "Mesh": "mesh/cylinder_hex.msh",
     "L0": 1.0e-2,  // cm
   },
   "Domains":
@@ -40,18 +40,12 @@
         "Index": 1,
         "Attributes": [2],
         "Mode": 1,
-        "Excitation": 1,
+        "Excitation": true,
       },
-      {
-        "Index": 2,
-        "Attributes": [3],
-        "Mode": 1,
-        "Excitation": false
-      }
       ],
     "PEC":
     {
-      "Attributes": [4]
+        "Attributes": [3, 4]
     }
   },
   "Solver":
@@ -67,7 +61,7 @@
       },
     "Linear":
     {
-      "Type": "Default",
+        "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-9,
       "MaxIts": 100
