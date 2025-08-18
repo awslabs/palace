@@ -151,7 +151,7 @@ if "cylinder/driven_wave" in cases
     @info "Testing cylinder/driven_wave..."
     @time testcase(
         "cylinder",
-        "waveguide_driven_wave.json",
+        "driven_wave.json",
         "driven_wave";
         palace=palace,
         np=numprocs,
