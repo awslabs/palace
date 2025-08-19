@@ -282,7 +282,7 @@ ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::Vecto
   for (int j = 0; j < k; j++)
   {
     linalg::AXPBYPCZ(y(j).real(), X[j].Real(), -y(j).imag(), X[j].Imag(), 1.0, z.Real());
-    linalg::AXPBYPCZ(y(j).imag(), X[j].Real(),  y(j).real(), X[j].Imag(), 1.0, z.Imag());
+    linalg::AXPBYPCZ(y(j).imag(), X[j].Real(), y(j).real(), X[j].Imag(), 1.0, z.Imag());
   }
   return z;
 }

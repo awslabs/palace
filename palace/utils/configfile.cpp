@@ -1954,6 +1954,7 @@ void EigenSolverData::SetUp(json &solver)
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
   nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
   refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
+  linear_tol = eigenmode->value("LinearTol", linear_tol);
   target_upper = eigenmode->value("TargetUpper", target_upper);
   preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
@@ -1987,6 +1988,7 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("MassOrthogonal");
   eigenmode->erase("NonlinearType");
   eigenmode->erase("RefineNonlinear");
+  eigenmode->erase("LinearTol");
   eigenmode->erase("TargetUpper");
   eigenmode->erase("PreconditionerLag");
   eigenmode->erase("PreconditionerLagTol");
@@ -2012,6 +2014,7 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "MassOrthogonal: " << mass_orthog << '\n';
     std::cout << "NonlinearType: " << nonlinear_type << '\n';
     std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
+    std::cout << "LinearTol: " << linear_tol << '\n';
     std::cout << "TargetUpper: " << target_upper << '\n';
     std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
     std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
