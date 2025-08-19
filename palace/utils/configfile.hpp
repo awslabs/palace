@@ -708,6 +708,10 @@ public:
   // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
   bool refine_nonlinear = true;
 
+  // For nonlinear problems using the hybrid approach, relative tolerance of the linear
+  // eigenvalue solver used to generate the initial guess.
+  double linear_tol = 1e-3;
+
   // Upper end of the target range for nonlinear eigenvalue solver [GHz].
   double target_upper = -1;
 
