@@ -172,7 +172,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetOperators(*K, *M, scale);
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-  eigen->SetTol(iodata.solver.eigenmode.tol);
+  const double tol = (has_A2 && nonlinear_type != NonlinearEigenSolver::SLP)
+                         ? iodata.solver.eigenmode.linear_tol
+                         : iodata.solver.eigenmode.tol;
+  eigen->SetTol(tol);
   eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());

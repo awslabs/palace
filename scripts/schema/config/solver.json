@@ -33,6 +33,7 @@
         "MassOrthogonal": { "type": "boolean" },
         "NonlinearType": { "type": "string" },
         "RefineNonlinear": { "type": "boolean" },
+        "LinearTol": { "type": "number", "minimum": 0.0 },
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
