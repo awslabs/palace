@@ -155,6 +155,7 @@ number of eigenmodes of the problem. The available options are:
   - `"StartVectorConstant" [false]`
   - `"MassOrthogonal" [false]`
   - `"RefineNonlinear" [true]`
+  - `"LinearTol" [1e-3]`
   - `"PreconditionerLag" [10]`
   - `"PreconditionerLagTol" [1e-4]`
   - `"MaxRestart" [2]`
