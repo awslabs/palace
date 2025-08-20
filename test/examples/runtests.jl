@@ -36,6 +36,7 @@ else
     cases = [
         "spheres",
         "rings",
+        "transmon",
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -79,6 +80,21 @@ if "rings" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"]
+    )
+end
+
+if "transmon" in cases
+    @info "Testing single transmon..."
+    @time testcase(
+        "transmon",
+        "transmon.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true
     )
 end
 
