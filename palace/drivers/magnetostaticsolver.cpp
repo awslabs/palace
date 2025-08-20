@@ -49,6 +49,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Vector RHS(Curl.Width()), B(Curl.Height());
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
+  std::vector<double> Phi_inc(n_step);
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator estimator(
@@ -77,6 +78,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       
       curlcurl_op.GetExcitationVector(idx, RHS);
       I_inc[step] = data.GetExcitationCurrent();
+      Phi_inc[step] = 0.0; // Zero flux for current sources
     }
     else
     {
@@ -90,6 +92,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       auto flux_solution = curlcurl_op.SolveSurfaceCurlProblem(idx);
       curlcurl_op.GetFluxLoopExcitationVector(*flux_solution, RHS);
       I_inc[step] = 0.0; // Zero current for flux loops
+      Phi_inc[step] = flux_data.flux_amounts[0]; // Store prescribed flux
     }
     
     // Solve 3D magnetostatic problem
@@ -120,91 +123,168 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the inductance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), A, I_inc);
+  PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), A, I_inc, Phi_inc);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
 
 void MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    const SurfaceCurrentOperator &surf_j_op, const std::vector<Vector> &A,
-    const std::vector<double> &I_inc) const
+    const SurfaceCurrentOperator &surf_j_op, 
+    const std::vector<Vector> &A,
+    const std::vector<double> &I_inc,
+    const std::vector<double> &Phi_inc) const
 {
-  // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
-  // for the associated formulas based on the magnetic field energy based on a current
-  // excitation for each port. Alternatively, we could compute the resulting loop fluxes to
-  // get M directly as:
-  //                         Φ_i = ∫ B ⋅ n_j dS
-  // and M_ij = Φ_i/I_j. The energy formulation avoids having to locally integrate B =
-  // ∇ x A.
-  mfem::DenseMatrix M(A.size()), Mm(A.size());
+  // Determine which excitations are flux loops vs current sources
+  int n_current = static_cast<int>(surf_j_op.Size());
+  int n_flux = A.size() - n_current;
+  std::vector<bool> is_flux_loop(A.size(), false);
+  
+  // Mark flux loop excitations (they come after current excitations)
+  for (int i = n_current; i < static_cast<int>(A.size()); i++)
+  {
+    is_flux_loop[i] = true;
+  }
+
+  mfem::DenseMatrix M(A.size()), Mm(A.size()), R(A.size()), Rm(A.size());
+  
   for (int i = 0; i < M.Height(); i++)
   {
-    // Diagonal: Mᵢᵢ = 2 Uₘ(Aᵢ) / Iᵢ² = (Aᵢᵀ K Aᵢ) / Iᵢ²
     auto &A_gf = post_op.GetAGridFunction().Real();
     auto &H_gf = post_op.GetDomainPostOp().H;
     A_gf.SetFromTrueDofs(A[i]);
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
-    M(i, i) = Mm(i, i) =
-        linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[i]);
-
-    // Off-diagonals: Mᵢⱼ = Uₘ(Aᵢ + Aⱼ) / (Iᵢ Iⱼ) - 1/2 (Iᵢ/Iⱼ Mᵢᵢ + Iⱼ/Iᵢ Mⱼⱼ)
-    //                    = (Aⱼᵀ K Aᵢ) / (Iᵢ Iⱼ)
+    double energy_ii = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
+    
+    // Diagonal terms
+    if (is_flux_loop[i])
+    {
+      // Flux-based: R_ii = 2 U_m(A_i) / Φ_i²
+      R(i, i) = Rm(i, i) = energy_ii / (Phi_inc[i] * Phi_inc[i]);
+    }
+    else
+    {
+      // Current-based: M_ii = 2 U_m(A_i) / I_i²
+      M(i, i) = Mm(i, i) = energy_ii / (I_inc[i] * I_inc[i]);
+    }
+    
+    // Off-diagonal terms
     for (int j = i + 1; j < M.Width(); j++)
     {
       A_gf.SetFromTrueDofs(A[j]);
-      M(i, j) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[j]);
-      Mm(i, j) = -M(i, j);
-      Mm(i, i) -= Mm(i, j);
+      double cross_energy = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
+      
+      if (is_flux_loop[i] && is_flux_loop[j])
+      {
+        // Flux-flux: R_ij = (A_j^T K A_i) / (Φ_i Φ_j)
+        R(i, j) = cross_energy / (Phi_inc[i] * Phi_inc[j]);
+        Rm(i, j) = -R(i, j);
+        Rm(i, i) -= Rm(i, j);
+      }
+      else if (!is_flux_loop[i] && !is_flux_loop[j])
+      {
+        // Current-current: M_ij = (A_j^T K A_i) / (I_i I_j)
+        M(i, j) = cross_energy / (I_inc[i] * I_inc[j]);
+        Mm(i, j) = -M(i, j);
+        Mm(i, i) -= Mm(i, j);
+      }
+      // Mixed terms: skip for now
     }
-
-    // Copy lower triangle from already computed upper triangle.
+    
+    // Copy to lower triangle
     for (int j = 0; j < i; j++)
     {
-      M(i, j) = M(j, i);
-      Mm(i, j) = Mm(j, i);
-      Mm(i, i) -= Mm(i, j);
+      if (is_flux_loop[i] && is_flux_loop[j])
+      {
+        R(i, j) = R(j, i);
+        Rm(i, j) = Rm(j, i);
+        Rm(i, i) -= Rm(i, j);
+      }
+      else if (!is_flux_loop[i] && !is_flux_loop[j])
+      {
+        M(i, j) = M(j, i);
+        Mm(i, j) = Mm(j, i);
+        Mm(i, i) -= Mm(i, j);
+      }
     }
   }
-  mfem::DenseMatrix Minv(M);
-  Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
+  
+  // For flux loops: compute inductance from reluctance
+  if (n_flux > 0)
+  {
+    mfem::DenseMatrix R_flux(n_flux), M_flux(n_flux);
+    for (int i = 0; i < n_flux; i++)
+    {
+      for (int j = 0; j < n_flux; j++)
+      {
+        R_flux(i, j) = R(n_current + i, n_current + j);
+      }
+    }
+    M_flux = R_flux;
+    M_flux.Invert(); // M_flux = R_flux^(-1)
+    
+    // Copy back to main matrix
+    for (int i = 0; i < n_flux; i++)
+    {
+      for (int j = 0; j < n_flux; j++)
+      {
+        M(n_current + i, n_current + j) = M_flux(i, j);
+      }
+    }
+  }
 
-  // Only root writes to disk (every process has full matrices).
+  mfem::DenseMatrix Minv(M);
+  Minv.Invert();
+
+  // Only root writes to disk
   if (!root)
   {
     return;
   }
   using fmt::format;
 
-  // Write inductance matrix data.
-  auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
-                                        const std::string &unit,
-                                        const mfem::DenseMatrix &mat, double scale)
+  // Write matrix data using existing pattern
+  auto PrintMatrix = [&surf_j_op, this, n_current, n_flux](const std::string &file, const std::string &name,
+                                  const std::string &unit,
+                                  const mfem::DenseMatrix &mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
-    int j = 0;
-    for (const auto &[idx2, data2] : surf_j_op)
-    {
-      output.table.insert(format("i2{}", idx2), format("{}[i][{}] {}", name, idx2, unit));
-      // Use the fact that iterator over i and j is the same span.
-      output.table["i"] << idx2;
-
-      auto &col = output.table[format("i2{}", idx2)];
-      for (std::size_t i = 0; i < surf_j_op.Size(); i++)
+    
+    auto AddTerminal = [&](int idx, int col_pos) {
+      output.table.insert(format("i2{}", idx), format("{}[i][{}] {}", name, idx, unit));
+      output.table["i"] << idx;
+      auto &col = output.table[format("i2{}", idx)];
+      for (int i = 0; i < mat.Height(); i++)
       {
-        col << mat(i, j) * scale;
+        col << mat(i, col_pos) * scale;
       }
-      j++;
-    }
+    };
+    
+    // Add current sources
+    int j = 0;
+    for (const auto &[idx, data] : surf_j_op)
+      AddTerminal(idx, j++);
+    
+    // Add flux loops  
+    for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
+      AddTerminal(idx, j++);
+    
     output.WriteFullTableTrunc();
   };
+
   const double H = iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
+  
+  if (n_flux > 0)
+  {
+    PrintMatrix("terminal-R.csv", "R", "(1/H)", R, 1.0 / H);
+    PrintMatrix("terminal-Rm.csv", "R_m", "(1/H)", Rm, 1.0 / H);
+  }
 
-  // Also write out a file with source current excitations.
+  // Write out a file with source current excitations.
   {
     TableWithCSVFile terminal_I(post_dir / "terminal-I.csv");
     terminal_I.table.insert(Column("i", "i", 0, 0, 2, ""));
@@ -218,6 +298,22 @@ void MagnetostaticSolver::PostprocessTerminals(
       i++;
     }
     terminal_I.WriteFullTableTrunc();
+  }
+
+  // Write out a file with flux loop excitations.
+  if (n_flux > 0)
+  {
+    TableWithCSVFile terminal_Phi(post_dir / "terminal-Phi.csv");
+    terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
+    terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (unit flux)");
+    int i = n_current;
+    for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+    {
+      terminal_Phi.table["i"] << double(idx);
+      terminal_Phi.table["Phiinc"] << Phi_inc[i];  // Keep as dimensionless
+      i++;
+    }
+    terminal_Phi.WriteFullTableTrunc();
   }
 }
 
