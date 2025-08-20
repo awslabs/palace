@@ -254,8 +254,8 @@ jobs:
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
         run: |
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
-                                  intel-oneapi-compiler-fortran=2024.2.1-1079
+          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp \
+                                  intel-oneapi-compiler-fortran
 
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
@@ -273,7 +273,7 @@ jobs:
       - name: Install math libraries (Intel oneAPI MKL)
         if: matrix.math-libs == 'intelmkl'
         run: |
-          sudo apt-get install -y intel-oneapi-mkl=2024.2.2-15 intel-oneapi-mkl-devel=2024.2.2-15
+          sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
 
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
