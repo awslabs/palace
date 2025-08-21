@@ -46,9 +46,9 @@ Welcome to your first tutorial with *Palace*!
 
 In this tutorial, we will:
 
- 1. [Install *Palace* using Spack](#installing-palace)
- 2. [Set up a simulation using a provided mesh](#the-config-file)
- 3. [Run the simulation and visualize results with ParaView](#running-the-simulation-and-inspecting-the-output)
+ 1. [Install *Palace* using Spack](#Installing-Palace)
+ 2. [Set up a simulation using a provided mesh](#The-config-file)
+ 3. [Run the simulation and visualize results with ParaView](#Running-the-simulation-and-inspecting-the-output)
 
 By the end of this page, you'll understand the basic workflow of electromagnetic
 simulations with *Palace*. You will be able to follow the
@@ -63,11 +63,9 @@ Our system consists of:
   - A larger outer sphere at zero potential
   - Vacuum in between
 
-This is [one of the
-examples](examples/spheres.md#capacitance-matrix-for-two-spheres) included with
-*Palace*. For more details on the physics and comparisons against analytical
-results, see the [full example
-page](examples/spheres.md#capacitance-matrix-for-two-spheres).
+This is [one of the examples](examples/spheres.md) included with *Palace*. For
+more details on the physics and comparisons against analytical results, see the
+[full example page](examples/spheres.md).
 
 ## A bird's-eye view of *Palace*
 
@@ -81,7 +79,7 @@ A *Palace* simulation requires two main inputs:
   - **Mesh file**: The mesh file describes the target geometry. *Palace* does not
     construct meshes, so you must supply one. A large number of formats are
     supported, allowing you to use your preferred CAD or meshing software. See the
-    [supported mesh formats](guide/model.md#supported-mesh-formats) for more
+    [supported mesh formats](guide/model.md#Supported-mesh-formats) for more
     details.
 
   - **Config file**: A JSON file that defines what problem to solve and how.
@@ -102,7 +100,7 @@ leading to different electromagnetic [problem types](guide/problem.md):
 
  1. CSV files with post-processed quantities (capacitance matrices, field values
     at probe points, etc.)
- 2. PVD files for visualizing fields with [ParaView](https://www. paraview.org)
+ 2. PVD files for visualizing fields with [ParaView](https://www.paraview.org)
     or compatible software
 
 The full list of problem types and their outputs is available in the
@@ -258,19 +256,20 @@ options, see the [configuration reference](config/config.md).
 
 If you wish to skip the explanation and jump directly to running your
 simulations, go to [Running the simulation and inspecting the
-output](#running-the-simulation-and-inspecting-the-output).
+output](#Running-the-simulation-and-inspecting-the-output).
 
 #### Section 1: `Problem` definition
 
 The `Problem` section identifies the problem type and the output directory. In
 this case, we choose `Electrostatic`. This means that *Palace* solves Poisson's
 equation for electric potential sequentially activating all the `Terminals` on
-the mesh while setting the non-activated terminals to ground. All simulation types
-in *Palace* have some form of iteration (over frequencies, times, mode numbers,
-or terminals). We save the output in the `postpro` folder, which will be
-overwritten if it already exists. See the [problem types
-documentation](config/problem.md#problem-types) for details on all available
-problem types and their outputs.
+the mesh while setting the non-activated terminals to ground. All simulation
+types in *Palace* have some form of iteration (over frequencies, times, mode
+numbers, or terminals). The output is saved to the `"Output"` folder specified
+in the `"Problem"` section in the JSON file, `postpro` in this example. It the
+output already exists, it will be overwritten. See the
+[`config["Problem"]`](config/problem.md) for details
+on all available problem types and their outputs.
 
 ```@example json
 print_section(spheres_json, "Problem") # hide
@@ -282,7 +281,7 @@ The `Model` section specifies the desired geometry. In addition to defining the
 mesh, it specifies how to convert mesh units to physical units using the `L0`
 parameter. For example, `L0` of `1e-2` means that one mesh unit corresponds to
 one centimeter. The `Model` section can also include settings for adaptive mesh
-refinement. See [documentation](config/model.md) for more information.
+refinement. See [`config["Model"]`](config/model.md) for more information.
 
 ```@example json
 print_section(spheres_json, "Model") # hide
@@ -296,8 +295,8 @@ Each 3D region (identified by its `Attribute`) must have a `Material` definition
 specifying its physical properties. In our mesh, we have just one 3D region (the
 vacuum between the spheres and outer boundary) identified by attribute 1. While
 vacuum properties are applied by default, you can specify various material
-characteristics as detailed in the [domains
-documentation](config/domains.md#domains%5B%22Materials%22%5D).
+characteristics as detailed in
+[`config["Domains"]["Materials"]`](config/domains.md#domains%5B%22Materials%22%5D).
 
 The `Domains` section also includes a `Postprocessing` subsection for
 calculating specific quantities. In this example, we add:
@@ -328,13 +327,13 @@ print_section(spheres_json, "Domains") # hide
 
 The `Boundaries` section maps 2D surfaces in your mesh to their physical
 boundary conditions. *Palace* offers numerous boundary condition types, all
-documented in the [boundaries reference](config/boundaries.md).
+documented in [`config["Boundaries"]`](config/boundaries.md).
 
 Unlike 3D regions, which all require `Material` specifications, 2D surfaces have
 default behavior: any external surface without an explicit boundary condition is
 treated as a Perfect Magnetic Conductor (PMC), where the tangential component of
 the magnetic field is zero, and no conditions are imposed on internal surfaces
-(since terms from the left and right cancel out on such boundaries).
+(since terms from either sides cancel out on such boundaries).
 
 For our electrostatic problem, we define:
 
@@ -349,8 +348,8 @@ new row to the output CSV files.
 Like the `Domains` section, `Boundaries` also includes a `Postprocessing`
 subsection for calculating quantities such as surface fluxes across 2D regions.
 Here, we compute the fluxes of electric fields across the spherical conductors.
-See the [documentation](config/boundaries.md) for all available postprocessing
-options.
+See the [`config["Boundaries"]`](config/boundaries.md) for all available
+postprocessing options.
 
 ```@example json
 print_section(spheres_json, "Boundaries") # hide
@@ -366,7 +365,7 @@ linear solver parameters in `"Linear"` are not essential for this tutorial.
 
 Other problem types typically have more extensive `Solver` configurations,
 including excitation parameters and frequency sweep settings. For complete
-details on all solver options, see the [solver documentation](config/solver.md).
+details on all solver options, see [`config["Solver"]`](config/solver.md).
 
 ```@example json
 print_section(spheres_json, "Solver") # hide
@@ -484,7 +483,7 @@ In this final step, we'll create a visualization of our simulation results using
 [ParaView](https://www.paraview.org). We'll work with both the volume field data
 (`electrostatic.pvd`) and the boundary surface data
 (`electrostatic_boundaries.pvd`) to reproduce the figures in [the example
-page](examples/spheres.md#capacitance-matrix-for-two-spheres).
+page](examples/spheres.md).
 
  1. Launch ParaView and navigate to your `postpro/paraview` directory
 

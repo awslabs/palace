@@ -81,14 +81,15 @@ function generate_spheres_mesh(;
     gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Create a new model. The name spheres is not important. If a model was already added,
-    # remove it first (this useful when interactively the body of this function in the REPL)
+    # remove it first (this is useful when interactively the body of this function in the
+    # REPL)
     if "spheres" in gmsh.model.list()
         gmsh.model.setCurrent("spheres")
         gmsh.model.remove()
     end
     gmsh.model.add("spheres")
 
-    # n_sphere: Controls how many elements around sphere circumference,
+    # n_sphere: Controls how many elements around sphere's circumference,
     #           higher values = finer mesh on spheres
     # l_farfield: Maximum element size at the outer boundary,
     #             larger values = coarser mesh at boundary
@@ -96,6 +97,7 @@ function generate_spheres_mesh(;
     l_farfield = 20.0
 
     # Create three spheres: two inner conductors along the x axis and one outer boundary
+    # with centers along the x axis
     sphere_a = kernel.addSphere(-0.5 * center_d, 0.0, 0.0, radius_a)
     sphere_b = kernel.addSphere(0.5 * center_d, 0.0, 0.0, radius_b)
     sphere_farfield = kernel.addSphere(0.0, 0.0, 0.0, radius_farfield)
