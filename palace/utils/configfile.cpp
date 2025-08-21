@@ -1947,6 +1947,8 @@ void EigenSolverData::SetUp(json &solver)
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
 
+  MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
+
   // Cleanup
   eigenmode->erase("Target");
   eigenmode->erase("Tol");
