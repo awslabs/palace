@@ -96,17 +96,6 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
     dbc_bcs.Append(attr);
   }
   // Add flux loop boundary attributes as essential boundaries
-  /*
-  for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
-  {
-    for (auto attr : flux_data.metal_surface_attributes)
-    {
-      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
-      {
-        dbc_bcs.Append(attr);
-      }
-    }
-  }*/
   std::set<int> flux_attrs;
   for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
   {
@@ -114,7 +103,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
       {
-        flux_attrs.insert(attr);  // SOLUTION: Set automatically deduplicates
+        flux_attrs.insert(attr);  // Set automatically deduplicates
       }
     }
   }
