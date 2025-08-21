@@ -27,6 +27,12 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                            const Mesh &mesh,
                            MPI_Comm comm);
 
+void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf,
+                               const IoData &iodata,
+                               int current_flux_loop_idx,
+                               const Mesh &mesh,
+                               MPI_Comm comm);
+
 }  // namespace palace
 
 #endif  // PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP

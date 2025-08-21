@@ -380,4 +380,43 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
     }
 }
 
+void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf,
+                               const IoData &iodata,
+                               int current_flux_loop_idx,
+                               const Mesh &mesh,
+                               MPI_Comm comm)
+{
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    
+    if (rank == 0) {
+        Mpi::Print("FluxLoop {:d} excitation - Flux through all holes:\n", current_flux_loop_idx);
+    }
+    
+    // Compute flux through all holes in all flux loops
+    for (const auto &[loop_idx, flux_data] : iodata.boundaries.fluxloop) {
+        for (int h = 0; h < static_cast<int>(flux_data.hole_attributes.size()); h++) {
+            int hole_attr = flux_data.hole_attributes[h];
+            double target_flux = (loop_idx == current_flux_loop_idx) ? flux_data.flux_amounts[h] : 0.0;
+            
+            mfem::Array<int> hole_marker(mesh.Get().bdr_attributes.Max());
+            hole_marker = 0;
+            hole_marker[hole_attr-1] = 1;
+            
+            mfem::ParLinearForm flux_form(B_gf.ParFESpace());
+            flux_form.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator, hole_marker);
+            flux_form.Assemble();
+            
+            double computed_flux = flux_form * B_gf;
+            double global_flux;
+            MPI_Allreduce(&computed_flux, &global_flux, 1, MPI_DOUBLE, MPI_SUM, comm);
+            
+            if (rank == 0) {
+                Mpi::Print("  Loop {:d} Hole {:d}: Target = {:.6e}, Computed = {:.6e}, Error = {:.6e}\n", 
+                          loop_idx, hole_attr, target_flux, global_flux, std::abs(global_flux - target_flux));
+            }
+        }
+    }
+}
+
 }  // namespace palace
