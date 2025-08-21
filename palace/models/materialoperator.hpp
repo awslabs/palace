@@ -36,9 +36,6 @@ private:
   // London penetration depth, or Floquet wave vector.
   bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
 
-  void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void SetUpFloquetWaveVector(const IoData &iodata, const mfem::ParMesh &mesh);
-
   // Map from an attribute (specified on a mesh) to a material index (location in the
   // property vector).
   auto AttrToMat(int attr) const
@@ -57,6 +54,16 @@ private:
   }
 
 public:
+  template<typename MaterialContainer, typename PeriodicContainer, typename FloquetContainer>
+  MaterialOperator(const MaterialContainer &materials,
+                   const PeriodicContainer &periodic,
+                   const FloquetContainer &floquet,
+                   const Mesh &mesh) : mesh(mesh)
+  {
+    SetUpMaterialProperties(materials, mesh);
+    SetUpFloquetWaveVector(periodic, floquet, mesh);
+  }
+
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
@@ -160,6 +167,19 @@ public:
   void RestrictCoefficient(const mfem::Array<int> &attr_list);
 
   void NormalProjectedCoefficient(const mfem::Vector &normal);
+
+private:
+  template<typename MaterialContainer>
+  void SetUpMaterialProperties(const MaterialContainer &materials, const mfem::ParMesh &mesh);
+  
+  template<typename PeriodicContainer, typename FloquetContainer>
+  void SetUpFloquetWaveVector(const PeriodicContainer &periodic, 
+                              const FloquetContainer &floquet, 
+                              const mfem::ParMesh &mesh);
+  
+  template<typename MaterialContainer>
+  void ValidateWithProblemType(const MaterialContainer &materials,
+                               config::ProblemType problem_type);
 };
 
 }  // namespace palace

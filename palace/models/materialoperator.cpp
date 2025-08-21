@@ -102,18 +102,20 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
+MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) :
+  MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic, iodata.boundaries.floquet, mesh)
 {
-  SetUpMaterialProperties(iodata, mesh);
+  ValidateWithProblemType(iodata.domains.materials, iodata.problem.type);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
+
+void MaterialOperator::SetUpMaterialProperties(const MaterialContainer &materials,
                                                const mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
   // from the mesh so as to not cause problems.
-  MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
+  MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
   {
     int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
     mfem::Array<int> attr_marker(attr_max);
@@ -122,7 +124,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     {
       attr_marker[attr - 1] = 1;
     }
-    for (const auto &data : iodata.domains.materials)
+    for (const auto &data : materials)
     {
       for (auto attr : data.attributes)
       {
@@ -139,12 +141,12 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
   const auto &loc_attr = this->mesh.GetCeedAttributes();
-  mfem::Array<int> mat_marker(iodata.domains.materials.size());
+  mfem::Array<int> mat_marker(materials.size());
   mat_marker = 0;
   int nmats = 0;
-  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  for (std::size_t i = 0; i < materials.size(); i++)
   {
-    const auto &data = iodata.domains.materials[i];
+    const auto &data = materials[i];
     for (auto attr : data.attributes)
     {
       if (loc_attr.find(attr) != loc_attr.end())
@@ -174,17 +176,67 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   mat_kx.SetSize(sdim, sdim, nmats);
   has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
 
-  // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
-  SetUpFloquetWaveVector(iodata, mesh);
+  // Set up material property coefficient matrices.
+  SetUpMaterialCoefficients(materials);
+}
 
-  int count = 0;
-  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+void MaterialOperator::ValidateWithProblemType(const internal::DataVector<config::MaterialData> &materials, 
+                                               config::ProblemType problem_type)
+{
+  // Validate materials based on problem type
+  for (std::size_t i = 0; i < materials.size(); i++)
+  {
+    const auto &data = materials[i];
+    if (problem_type == config::ProblemType::ELECTROSTATIC)
+    {
+      MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
+      if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
+      {
+        Mpi::Warning(
+            "Electrostatic problem type does not account for material permeability,\n"
+            "electrical conductivity, or London depth!\n");
+      }
+    }
+    else if (problem_type == config::ProblemType::MAGNETOSTATIC)
+    {
+      MFEM_VERIFY(IsValid(data.mu_r), "Material has no valid permeability defined!");
+      if (!IsIdentity(data.epsilon_r) || IsValid(data.tandelta) || IsValid(data.sigma) ||
+          std::abs(data.lambda_L) > 0.0)
+      {
+        Mpi::Warning(
+            "Magnetostatic problem type does not account for material permittivity,\n"
+            "loss tangent, electrical conductivity, or London depth!\n");
+      }
+    }
+    else
+    {
+      MFEM_VERIFY(IsValid(data.mu_r) && IsValid(data.epsilon_r),
+                  "Material has no valid permeability or no valid permittivity defined!");
+      if (problem_type == config::ProblemType::TRANSIENT)
+      {
+        MFEM_VERIFY(!IsValid(data.tandelta),
+                    "Transient problem type does not support material loss tangent, use "
+                    "electrical conductivity instead!");
+      }
+    }
+  }
+
+  // Validate Floquet wave vector for problem type
+  MFEM_VERIFY(!has_wave_attr || problem_type == config::ProblemType::DRIVEN ||
+                  problem_type == config::ProblemType::EIGENMODE,
+              "Quasi-periodic Floquet boundary conditions are only available for "
+              " frequency domain driven or eigenmode simulations!");
+}
+
+void MaterialOperator::SetUpMaterialCoefficients(const internal::DataVector<config::MaterialData> &materials)
+{
+  for (std::size_t i = 0; i < materials.size(); i++)
   {
     if (!mat_marker[i])
     {
       continue;
     }
-    const auto &data = iodata.domains.materials[i];
+    const auto &data = materials[i];
     if (iodata.problem.type == ProblemType::ELECTROSTATIC)
     {
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
@@ -308,7 +360,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   has_wave_attr = has_attr[3];
 }
 
-void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
+void MaterialOperator::SetUpFloquetWaveVector(const internal::DataVector<config::PeriodicBoundaryData> &periodic,
+                                              const internal::DataVector<config::FloquetData> &floquet,
                                               const mfem::ParMesh &mesh)
 {
   const int sdim = mesh.SpaceDimension();
@@ -317,7 +370,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   // Sum Floquet wave vector over periodic boundary pairs.
   mfem::Vector wave_vector(sdim), local_wave_vector(sdim);
   wave_vector = 0.0;
-  for (const auto &data : iodata.boundaries.periodic)
+  for (const auto &data : periodic)
   {
     MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
                 "Floquet wave vector size must equal the spatial dimension.");
@@ -327,17 +380,15 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   }
 
   // Get Floquet wave vector specified outside of periodic boundary definitions.
-  const auto &data = iodata.boundaries.floquet;
+  if (!floquet.empty())
+  {
+    const auto &data = floquet[0];  // Assuming single Floquet specification
   MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
               "Floquet wave vector size must equal the spatial dimension.");
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), local_wave_vector.GetData());
   wave_vector += local_wave_vector;
   has_wave_attr = (wave_vector.Norml2() > tol);
 
-  MFEM_VERIFY(!has_wave_attr || iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
-              "Quasi-periodic Floquet boundary conditions are only available for "
-              " frequency domain driven or eigenmode simulations!");
   MFEM_VERIFY(!has_wave_attr || sdim == 3,
               "Quasi-periodic Floquet periodic boundary conditions are only available "
               " in 3D!");
@@ -683,5 +734,19 @@ template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array
                                                                double);
 template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
                                                                const double &, double);
+
+// Explicit template instantiations for MaterialOperator
+template void MaterialOperator::SetUpMaterialProperties(const internal::DataVector<config::MaterialData> &, const mfem::ParMesh &);
+template void MaterialOperator::SetUpMaterialProperties(const std::vector<config::MaterialData> &, const mfem::ParMesh &);
+
+template void MaterialOperator::SetUpFloquetWaveVector(const internal::DataVector<config::PeriodicBoundaryData> &, 
+                                                       const internal::DataVector<config::FloquetData> &, 
+                                                       const mfem::ParMesh &);
+template void MaterialOperator::SetUpFloquetWaveVector(const std::vector<config::PeriodicBoundaryData> &, 
+                                                       const std::vector<config::FloquetData> &, 
+                                                       const mfem::ParMesh &);
+
+template void MaterialOperator::ValidateWithProblemType(const internal::DataVector<config::MaterialData> &, config::ProblemType);
+template void MaterialOperator::ValidateWithProblemType(const std::vector<config::MaterialData> &, config::ProblemType);
 
 }  // namespace palace

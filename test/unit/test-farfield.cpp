@@ -155,6 +155,11 @@ void runFarFieldTest(double freq_Hz, const std::string mesh_path,
 {
   constexpr double p0 = 1e-9;  // Dipole moment [C⋅m]
 
+  config::MaterialData vacuum = {};
+  vacuum.attributes = {1};
+  MaterialOperator mat_op(vacuum, palace_mesh);
+
+
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
 
   IoData iodata = IoData(units);
