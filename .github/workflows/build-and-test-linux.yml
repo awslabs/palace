@@ -3,7 +3,8 @@ name: Build and Test (Linux)
 on:
   push:
     branches:
-      - main
+      # - main
+      - gbozzola/mumps_581
   pull_request:
     paths-ignore:
       - '**.md'
