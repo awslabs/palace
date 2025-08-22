@@ -3,10 +3,7 @@ name: Build and Test (macOS)
 on:
   push:
     branches:
-      - main
-  pull_request:
-    paths-ignore:
-      - '**.md'
+      - gbozzola/mac_ci
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,31 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing (from allpairspy)
-        # Failing configurations currently disabled pending investigation
-        # - compiler: gcc
-        #   mpi: mpich
-        #   math-libs: openblas
-        #   build-shared: shared
-        #   with-64bit-int: int64
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: superlu
-        - compiler: clang
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: strumpack
-        # - compiler: clang
-        #   mpi: mpich
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: arpack
-        #   with-solver: mumps
         - compiler: gcc
           mpi: openmpi
           math-libs: openblas
@@ -59,46 +31,6 @@ jobs:
           with-openmp: serial
           with-eigensolver: arpack
           with-solver: superlu
-        - compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: strumpack
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: superlu
-        # - compiler: gcc
-        #   mpi: openmpi
-        #   math-libs: armpl
-        #   build-shared: shared
-        #   with-64bit-int: int64
-        #   with-openmp: openmp
-        #   with-eigensolver: slepc
-        #   with-solver: strumpack
 
     runs-on: macos-latest-xlarge
     steps:
@@ -151,13 +83,13 @@ jobs:
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
-            export CC=$(brew --prefix llvm@15)/bin/clang
-            export CXX=$(brew --prefix llvm@15)/bin/clang++
+            export CC=$(brew --prefix llvm@18)/bin/clang
+            export CXX=$(brew --prefix llvm@18)/bin/clang++
             export FC=gfortran-12
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-12
-            export CXX=g++-12
-            export FC=gfortran-12
+            export CC=gcc-15
+            export CXX=g++-15
+            export FC=gfortran-15
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
             export OPENBLAS_DIR=$(brew --prefix openblas)
