@@ -15,23 +15,18 @@ class Mesh;
 class FiniteElementSpace;
 
 // Solve 2D surface curl problem for flux loop initial condition
-std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata,
-                                                const Mesh &mesh,
+std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh &mesh,
                                                 const FiniteElementSpace &nd_fespace,
                                                 int flux_loop_idx);
 
 // Verify flux through holes using computed magnetic field B
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
-                           const std::vector<int> &hole_attributes,
-                           const std::vector<double> &target_fluxes,
-                           const Mesh &mesh,
-                           MPI_Comm comm);
+                            const std::vector<int> &hole_attributes,
+                            const std::vector<double> &target_fluxes, const Mesh &mesh,
+                            MPI_Comm comm);
 
-void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf,
-                               const IoData &iodata,
-                               int current_flux_loop_idx,
-                               const Mesh &mesh,
-                               MPI_Comm comm);
+void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
+                               int current_flux_loop_idx, const Mesh &mesh, MPI_Comm comm);
 
 }  // namespace palace
 

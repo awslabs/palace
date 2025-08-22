@@ -622,13 +622,13 @@ struct FluxLoopData
 public:
   // List of boundary attributes for the metal surface.
   std::vector<int> metal_surface_attributes = {};
-  
+
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
-  
+
   // Flux amounts for each hole (same size as hole_attributes).
   std::vector<double> flux_amounts = {};
-  
+
   // Loop normal direction for flux orientation.
   std::array<double, 3> loop_normal = {0.0, 0.0, 1.0};
 };
