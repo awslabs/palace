@@ -81,6 +81,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       PtAPi->StealParallelAssemble();
     }
+    A->DropSmallEntries(std::numeric_limits<double>::epsilon());
     pc->SetOperator(*A);
     if (!save_assembled)
     {
