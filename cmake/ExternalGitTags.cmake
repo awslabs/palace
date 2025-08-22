@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "1cfd19699702f9a64ff5d45827d6025ff5c3873a" CACHE STRING
+  "5b153379cdd1b0d2a33daf88bffab16a22ff0004" CACHE STRING
   "Git tag for external MUMPS build"
 )
 
