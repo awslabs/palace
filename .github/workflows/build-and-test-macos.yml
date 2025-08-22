@@ -151,8 +151,8 @@ jobs:
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
-            export CC=$(brew --prefix llvm@15)/bin/clang
-            export CXX=$(brew --prefix llvm@15)/bin/clang++
+            export CC=$(brew --prefix llvm@18)/bin/clang
+            export CXX=$(brew --prefix llvm@18)/bin/clang++
             export FC=gfortran-12
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
             export CC=gcc-12
