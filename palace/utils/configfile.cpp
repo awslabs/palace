@@ -1393,7 +1393,7 @@ void FluxBoundaryData::SetUp(json &boundaries)
   }
   MFEM_VERIFY(fluxloop->is_array(),
               "\"FluxLoop\" should specify an array in the configuration file!");
-  
+
   for (auto it = fluxloop->begin(); it != fluxloop->end(); ++it)
   {
     auto index = AtIndex(it, "\"FluxLoop\" boundary");
@@ -1401,29 +1401,30 @@ void FluxBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"FluxLoop\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
-    
+
     MFEM_VERIFY(it->find("MetalSurfaceAttributes") != it->end(),
                 "Missing \"MetalSurfaceAttributes\" for \"FluxLoop\" boundary!");
-    data.metal_surface_attributes = it->at("MetalSurfaceAttributes").get<std::vector<int>>();
+    data.metal_surface_attributes =
+        it->at("MetalSurfaceAttributes").get<std::vector<int>>();
     std::sort(data.metal_surface_attributes.begin(), data.metal_surface_attributes.end());
-    
+
     MFEM_VERIFY(it->find("HoleAttributes") != it->end(),
                 "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
     data.hole_attributes = it->at("HoleAttributes").get<std::vector<int>>();
-    
+
     MFEM_VERIFY(it->find("FluxAmounts") != it->end(),
                 "Missing \"FluxAmounts\" for \"FluxLoop\" boundary!");
     data.flux_amounts = it->at("FluxAmounts").get<std::vector<double>>();
-    
+
     MFEM_VERIFY(data.hole_attributes.size() == data.flux_amounts.size(),
                 "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
-    
+
     auto normal = it->find("LoopNormal");
     if (normal != it->end())
     {
       data.loop_normal = normal->get<std::array<double, 3>>();
     }
-    
+
     // Cleanup
     it->erase("Index");
     it->erase("MetalSurfaceAttributes");

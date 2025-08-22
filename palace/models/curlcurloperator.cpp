@@ -21,7 +21,8 @@ namespace palace
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())), iodata(iodata),
+  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+    iodata(iodata),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsening, false)),
@@ -235,7 +236,8 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
-void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values, Vector &RHS)
+void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values,
+                                                   Vector &RHS)
 {
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
@@ -243,14 +245,16 @@ void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values
 
   // Early exit if boundary values are zero
   double boundary_norm = linalg::Norml2(GetComm(), boundary_values);
-  if (boundary_norm < 1e-12) {
+  if (boundary_norm < 1e-12)
+  {
     return;
   }
 
   // Cache original matrix if not already cached
-  if (!K_orig_) {
+  if (!K_orig_)
+  {
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+                                           mat_op.GetInvPermeability());
     BilinearForm k(GetNDSpace());
     k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
     auto k_mat = k.Assemble(GetNDSpaces(), false);
@@ -260,7 +264,7 @@ void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values
   // Compute RHS = -K × boundary_values for boundary-interior coupling
   K_orig_->Mult(boundary_values, RHS);
   RHS *= -1.0;
-  
+
   // Set boundary DOF entries to the prescribed values
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), boundary_values);
 }
