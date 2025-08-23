@@ -479,6 +479,34 @@ current boundaries and should not be combined with the `"CoordinateSystem"` fiel
 above. Each element of a multielement current source can be described by its own unique
 direction, and corresponding coordinate system.
 
+## `boundaries["FluxLoop"]`
+
+```json
+"FluxLoop":
+[
+    {
+        "Index": <int>,
+        "MetalSurfaceAttributes": [<int array>],
+        "HoleAttributes": [<int array>],
+        "FluxAmounts": [<float array>],
+        "LoopNormal": [<float array>]
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` : Index of this flux loop boundary, used in postprocessing output files and to index the computed inductance matrix.
+
+`"MetalSurfaceAttributes" [None]` : Integer array of mesh boundary attributes for the conducting surface containing the holes.
+
+`"HoleAttributes" [None]` : Integer array of mesh boundary attributes for the holes through which magnetic flux is prescribed.
+
+`"FluxAmounts" [None]` : Floating point array specifying the magnetic flux amounts through each hole, in the same order as "HoleAttributes". Positive values indicate flux in the direction of "LoopNormal".
+
+`"LoopNormal" [None]` : Floating point array of length 3 specifying the normal direction vector for the flux loop, used to determine flux orientation.
+
 ## `boundaries["Ground"]`
 
 ```json
