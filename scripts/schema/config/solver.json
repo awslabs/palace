@@ -23,7 +23,7 @@
         "Tol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
-        "N": { "type": "integer" },
+        "N": { "type": "integer", "exclusiveMinimum": 0 },
         "Save": { "type": "integer" },
         "Type": { "type": "string" },
         "PEPLinear": { "type": "boolean" },
