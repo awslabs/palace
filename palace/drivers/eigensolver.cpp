@@ -317,7 +317,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
-    double mean_phase = linalg::NormalizePhase(space_op.GetComm(), E);
+
+    linalg::NormalizePhase(space_op.GetComm(), E);
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());

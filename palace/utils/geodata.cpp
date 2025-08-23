@@ -1417,6 +1417,7 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh, const T &ele
   mfem::IsoparametricTransformation trans;
   mfem::Vector normal(sdim), last_normal(sdim), align(sdim);
   normal = 0.0;
+  last_normal = 0.0;
   mfem::Array<int> vert_bdr;
 
   // Ensure that the computed normal points "inside" or "outside".
@@ -1442,8 +1443,8 @@ mfem::Vector ComputeNormal(const std::unique_ptr<mfem::Mesh> &mesh, const T &ele
     {
       break;  // If not checking planar, use the first.
     }
-    MFEM_VERIFY((last_normal * normal - 1) < 1e-8,
-                "Periodic boundary mapping is only supported for planar boundaries.");
+    MFEM_VERIFY((last_normal * last_normal == 0.0) || ((last_normal * normal - 1) < 1e-8),
+                "Periodic boundary mapping is only supported for planar boundaries!");
     last_normal = normal;
   }
   return normal;
