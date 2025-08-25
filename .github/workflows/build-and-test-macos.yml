@@ -149,15 +149,20 @@ jobs:
           CMAKE_BUILD_TYPE: Release
           NUM_PROC_BUILD_MAX: '32'
         run: |
+          # We to install a separate version of CMake because the bundled one
+          # has a bug with FindMPI that prevents it from finding MPI when
+          # compiling with GNU compilers.
+          brew install cmake
+
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
-            export CC=$(brew --prefix llvm@15)/bin/clang
-            export CXX=$(brew --prefix llvm@15)/bin/clang++
+            export CC=$(brew --prefix llvm@18)/bin/clang
+            export CXX=$(brew --prefix llvm@18)/bin/clang++
             export FC=gfortran-12
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-12
-            export CXX=g++-12
-            export FC=gfortran-12
+            export CC=gcc-15
+            export CXX=g++-15
+            export FC=gfortran-15
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
             export OPENBLAS_DIR=$(brew --prefix openblas)
