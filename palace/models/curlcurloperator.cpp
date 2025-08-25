@@ -22,6 +22,7 @@ namespace palace
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+    iodata(iodata),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsening, false)),
@@ -94,6 +95,22 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
       continue;  // Can just ignore if wrong
     }
     dbc_bcs.Append(attr);
+  }
+  // Add flux loop boundary attributes as essential boundaries
+  std::set<int> flux_attrs;
+  for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
+  {
+    for (auto attr : flux_data.metal_surface_attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
+      {
+        flux_attrs.insert(attr);  // Set automatically deduplicates
+      }
+    }
+  }
+  for (auto attr : flux_attrs)
+  {
+    dbc_bcs.Append(attr);  // Each attribute added only once
   }
   return dbc_bcs;
 }
@@ -217,6 +234,44 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   rhs.UseDevice(true);
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
+}
+
+void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values,
+                                                   Vector &RHS)
+{
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  // Early exit if boundary values are zero
+  double boundary_norm = linalg::Norml2(GetComm(), boundary_values);
+  if (boundary_norm < 1e-12)
+  {
+    return;
+  }
+
+  // Cache original matrix if not already cached
+  if (!K_orig_)
+  {
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    BilinearForm k(GetNDSpace());
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+    auto k_mat = k.Assemble(GetNDSpaces(), false);
+    K_orig_ = std::make_unique<ParOperator>(std::move(k_mat.back()), GetNDSpace());
+  }
+
+  // Compute RHS = -K × boundary_values for boundary-interior coupling
+  K_orig_->Mult(boundary_values, RHS);
+  RHS *= -1.0;
+
+  // Set boundary DOF entries to the prescribed values
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), boundary_values);
+}
+
+std::unique_ptr<Vector> CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
+{
+  return palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
 }
 
 }  // namespace palace

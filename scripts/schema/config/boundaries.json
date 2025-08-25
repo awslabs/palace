@@ -197,6 +197,37 @@
         }
       }
     },
+    "FluxLoop":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "HoleAttributes", "FluxAmounts", "MetalSurfaceAttributes", "LoopNormal"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "MetalSurfaceAttributes": { "$ref": "#/$defs/Attributes" },
+          "HoleAttributes": { "$ref": "#/$defs/Attributes" },
+          "FluxAmounts":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "number" }
+          },
+          "LoopNormal":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        }
+      }
+    },
     "Ground":
     {
       "type": "object",
