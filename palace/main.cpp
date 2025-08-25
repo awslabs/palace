@@ -206,6 +206,7 @@ int main(int argc, char *argv[])
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
+  int world_rank = Mpi::Rank(world_comm);
   Mpi::Print(world_comm, "\n");
 
   // Initialize the timer.
