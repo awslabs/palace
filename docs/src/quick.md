@@ -266,10 +266,9 @@ equation for electric potential sequentially activating all the `Terminals` on
 the mesh while setting the non-activated terminals to ground. All simulation
 types in *Palace* have some form of iteration (over frequencies, times, mode
 numbers, or terminals). The output is saved to the `"Output"` folder specified
-in the `"Problem"` section in the JSON file, `postpro` in this example. It the
-output already exists, it will be overwritten. See the
-[`config["Problem"]`](config/problem.md) for details
-on all available problem types and their outputs.
+in the `"Problem"` section in the JSON file, `postpro` in this example. If the
+output already exists, it will be overwritten. See [`config["Problem"]`](config/problem.md)
+for details on all available problem types and their outputs.
 
 ```@example json
 print_section(spheres_json, "Problem") # hide
@@ -348,7 +347,7 @@ new row to the output CSV files.
 Like the `Domains` section, `Boundaries` also includes a `Postprocessing`
 subsection for calculating quantities such as surface fluxes across 2D regions.
 Here, we compute the fluxes of electric fields across the spherical conductors.
-See the [`config["Boundaries"]`](config/boundaries.md) for all available
+See [`config["Boundaries"]`](config/boundaries.md) for all available
 postprocessing options.
 
 ```@example json
