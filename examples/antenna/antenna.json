@@ -1,0 +1,75 @@
+{
+    "Problem":
+    {
+        "Type": "Driven",
+        "Verbose": 2,
+        "Output": "postpro"
+    }
+    ,
+    "Model":
+    {
+        "Mesh": "mesh/antenna.msh",
+        "L0": 1.0  // 1 meter
+    },
+    "Domains":
+    {
+        "Materials":
+        [
+            {
+                "Attributes": [5],
+            }
+        ]
+    },
+    "Boundaries":
+    {
+        "Absorbing":
+        {
+            "Attributes": [4]
+        },
+        "PEC":
+        {
+          "Attributes": [1, 2]
+        },
+        "Postprocessing": {
+            "FarField": {
+                "Attributes": [4],
+                "NSample": 64800
+            }
+        },
+        "LumpedPort":
+        [
+            {
+                "Index": 1,
+                "R": 50.0,  // Ω
+                "Excitation": true,
+                "Attributes": [3],
+                "Direction": "+Z"
+            }
+        ]
+    },
+    "Solver":
+    {
+        "Order": 2,
+        "Device": "CPU",
+        "Driven":
+        {
+            "Samples":
+            [
+                {
+                    "Type": "Point",
+                    "Freq": [0.0749], // GHz
+                    "SaveStep": 1
+                }
+            ]
+        },
+        "Linear":
+        {
+            "Type": "Default",
+            "KSPType": "GMRES",
+            "Tol": 1.0e-10,
+            "MaxIts": 1000,
+            // If enough memory is available, this option speeds up convergence significantly:
+            // "ComplexCoarseSolve": true
+        }
+    }
+}

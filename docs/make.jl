@@ -27,6 +27,7 @@ makedocs(
             "guide/problem.md",
             "guide/model.md",
             "guide/boundaries.md",
+            "guide/farfield.md",
             "guide/postprocessing.md",
             "guide/parallelism.md"
         ],
@@ -42,6 +43,7 @@ makedocs(
             "examples/examples.md",
             "examples/spheres.md",
             "examples/rings.md",
+            "examples/antenna.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md"
