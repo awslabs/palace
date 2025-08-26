@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <optional>
+#include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -81,7 +82,7 @@ struct Measurement
     std::vector<std::pair<double, double>> thetaphis;
 
     // Components of the electric field. Assumed 3 dimensional.
-    mfem::Array<std::array<std::complex<double>, 3>> E_field;
+    std::vector<std::vector<std::complex<double>>> E_field;
 
     size_t size() const { return thetaphis.size(); }
   };

@@ -362,7 +362,7 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 // NOTE: SurfacePostOperator::GetFarFieldrE allocates its output. The output is
 // returned on the host.
-mfem::Array<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldE(
+std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
     const GridFunction *B, double omega) const
 {
@@ -377,16 +377,14 @@ mfem::Array<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Initialize final results on GPU.
-  mfem::Array<std::array<std::complex<double>, 3>> results;
-  results.UseDevice(true);
-  results.SetSize(theta_phi_pairs.size());
+  // Initialize final results.
+  mfem::Array<ComplexVector3> internal_results;
+  internal_results.SetSize(theta_phi_pairs.size());
 
-  // Initialize to zero on device.
-  auto d_results = results.ReadWrite();
-  MFEM_FORALL(i, results.Size(), {
-    d_results[i] = {};
-  });
+  // Initialize to zero.
+  for (int i = 0; i < internal_results.Size(); i++) {
+    internal_results[i] = ComplexVector3{};
+  }
 
   // Integrate by looping over all the boundary elements.
   //
@@ -414,24 +412,27 @@ mfem::Array<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
       auto f_vals = coeff.EvalComplexBatch(*T, ip);
       double w = ip.weight * T->Weight();
 
-      // Direct accumulation of final results on the device.
-      MFEM_FORALL(k, theta_phi_pairs.size(), {
-        for (int d = 0; d < 3; d++)
-        {
-          d_results[k][d] += w * f_vals[k][d];
+      // Direct accumulation of final results.
+      for (size_t k = 0; k < theta_phi_pairs.size(); k++) {
+        for (int d = 0; d < 3; d++) {
+          internal_results[k][d] += w * f_vals[k][d];
         }
-      });
+      }
 
     }
   }
 
-  // MPI reduction on final results. We move to host so that (1) we don't have
-  // to worry about MPI-aware CUDA, (2) we are going to write results to disk
-  // anyway.
-  results.HostReadWrite();
-  std::complex<double> *data_ptr = &results[0][0];
-  size_t total_elements = results.Size() * 3;
+  // MPI reduction on final results.
+  std::complex<double> *data_ptr = &internal_results[0][0];
+  size_t total_elements = internal_results.Size() * 3;
   Mpi::GlobalSum(total_elements, data_ptr, E->GetComm());
+
+  // Convert to expected return type
+  std::vector<std::vector<std::complex<double>>> results;
+  results.reserve(internal_results.Size());
+  for (int i = 0; i < internal_results.Size(); i++) {
+    results.push_back({internal_results[i][0], internal_results[i][1], internal_results[i][2]});
+  }
 
   return results;
 }

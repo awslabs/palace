@@ -177,6 +177,40 @@ public:
 // complex integral into its real and imaginary components would lead to
 // substantial overhead. For a similar reason, we work with std::arrays instead
 // of ComplexVectors.
+// Trivial type to replace std::array<std::complex<double>, 3> for MFEM compatibility
+struct ComplexVector3 {
+  double data[6];  // [real0, imag0, real1, imag1, real2, imag2]
+  
+  // Access as complex numbers
+  std::complex<double>& operator[](size_t i) {
+    return reinterpret_cast<std::complex<double>&>(data[i*2]);
+  }
+  
+  const std::complex<double>& operator[](size_t i) const {
+    return reinterpret_cast<const std::complex<double>&>(data[i*2]);
+  }
+  
+  // Iterator support for range-based for loops
+  std::complex<double>* begin() { return reinterpret_cast<std::complex<double>*>(data); }
+  std::complex<double>* end() { return reinterpret_cast<std::complex<double>*>(data) + 3; }
+  const std::complex<double>* begin() const { return reinterpret_cast<const std::complex<double>*>(data); }
+  const std::complex<double>* end() const { return reinterpret_cast<const std::complex<double>*>(data) + 3; }
+  
+  // Convert to/from std::array
+  operator std::array<std::complex<double>, 3>() const {
+    return {(*this)[0], (*this)[1], (*this)[2]};
+  }
+  
+  ComplexVector3& operator=(const std::array<std::complex<double>, 3>& arr) {
+    for (int i = 0; i < 3; i++) {
+      (*this)[i] = arr[i];
+    }
+    return *this;
+  }
+  
+  ComplexVector3() = default;
+};
+
 class BdrFarFieldBatchCoefficient : public BdrGridFunctionCoefficient
 {
 private:
@@ -187,10 +221,13 @@ private:
 
 public:
   template <typename T, typename U>
-  static std::array<std::complex<double>, 3> cross_product(const T &a, const U &b)
+  static ComplexVector3 cross_product(const T &a, const U &b)
   {
-    return {
-        {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
+    ComplexVector3 result;
+    result[0] = a[1] * b[2] - a[2] * b[1];
+    result[1] = a[2] * b[0] - a[0] * b[2];
+    result[2] = a[0] * b[1] - a[1] * b[0];
+    return result;
   }
 
   const std::array<double, 3> &GetRNaught(size_t index) const { return r_naughts[index]; }
@@ -211,7 +248,7 @@ public:
     }
   }
 
-  mfem::Array<std::array<std::complex<double>, 3>>
+  mfem::Array<ComplexVector3>
   EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
   {
     MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
@@ -231,10 +268,10 @@ public:
     B.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_real);
     B.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_imag);
 
-    std::array<std::complex<double>, 3> E_complex{
-        {std::complex<double>(E_real[0], E_imag[0]),
-         std::complex<double>(E_real[1], E_imag[1]),
-         std::complex<double>(E_real[2], E_imag[2])}};
+    ComplexVector3 E_complex;
+    E_complex[0] = std::complex<double>(E_real[0], E_imag[0]);
+    E_complex[1] = std::complex<double>(E_real[1], E_imag[1]);
+    E_complex[2] = std::complex<double>(E_real[2], E_imag[2]);
 
     // We assume that the material is isotropic, so the wave speed is one and
     // well defined.
@@ -247,10 +284,10 @@ public:
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_imag, ZH_imag);
 
-    std::array<std::complex<double>, 3> ZH_complex{
-        {std::complex<double>(ZH_real[0], ZH_imag[0]),
-         std::complex<double>(ZH_real[1], ZH_imag[1]),
-         std::complex<double>(ZH_real[2], ZH_imag[2])}};
+    ComplexVector3 ZH_complex;
+    ZH_complex[0] = std::complex<double>(ZH_real[0], ZH_imag[0]);
+    ZH_complex[1] = std::complex<double>(ZH_real[1], ZH_imag[1]);
+    ZH_complex[2] = std::complex<double>(ZH_real[2], ZH_imag[2]);
 
     mfem::Vector normal(3);
     GetNormal(T, normal, ori);
@@ -258,19 +295,20 @@ public:
     auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
     auto n_cross_ZH = cross_product(normal, ZH_complex);  // n̂ × ZH
 
-    std::vector<std::array<std::complex<double>, 3>> results;
-    results.reserve(r_naughts.size());
+    mfem::Array<ComplexVector3> results;
+    results.SetSize(r_naughts.size());
 
     // Process all (theta, phi)s.
-    for (const auto &r_naught : r_naughts)
+    for (size_t idx = 0; idx < r_naughts.size(); idx++)
     {
+      const auto &r_naught = r_naughts[idx];
       // r₀·r'.
       double phase =
           k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
 
       auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
 
-      std::array<std::complex<double>, 3> integrand;
+      ComplexVector3 integrand;
       for (int i = 0; i < 3; i++)
       {
         integrand[i] = n_cross_E[i] - r_cross_n_cross_ZH[i];
@@ -284,7 +322,7 @@ public:
       }
 
       auto final_result = cross_product(r_naught, integrand);
-      results.push_back(final_result);
+      results[idx] = final_result;
     }
 
     return results;
