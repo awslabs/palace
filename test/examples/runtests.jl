@@ -143,6 +143,9 @@ if "cylinder/floquet" in cases
     )
 end
 
+reltol = 1.0e-3
+abstol = 1.0e-16
+
 if "cylinder/driven_wave" in cases
     @info "Testing cylinder/driven_wave..."
     @time testcase(
