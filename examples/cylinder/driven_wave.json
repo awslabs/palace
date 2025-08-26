@@ -8,7 +8,7 @@
   "Model":
   {
     "Mesh": "mesh/cylinder_hex.msh",
-    "L0": 1.0e-2,  // cm
+    "L0": 1.0e-2  // cm
   },
   "Domains":
   {
@@ -34,34 +34,34 @@
   },
   "Boundaries":
   {
-      "WavePort":
-      [
+    "WavePort":
+    [
       {
         "Index": 1,
         "Attributes": [2],
         "Mode": 1,
-        "Excitation": true,
-      },
-      ],
+        "Excitation": true
+      }
+    ],
     "PEC":
     {
-        "Attributes": [3, 4]
+      "Attributes": [3, 4]
     }
   },
   "Solver":
   {
     "Order": 4,
     "Device": "CPU",
-      "Driven":
-      {
-          "MinFreq": 2.5,
-          "MaxFreq": 5.0,
-          "FreqStep": 0.5,
-          "SaveStep": 1
-      },
+    "Driven":
+    {
+      "MinFreq": 2.5,
+      "MaxFreq": 5.0,
+      "FreqStep": 0.5,
+      "SaveStep": 1
+    },
     "Linear":
     {
-        "Type": "Default",
+      "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-9,
       "MaxIts": 100
