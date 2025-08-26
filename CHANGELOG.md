@@ -13,8 +13,9 @@ The format of this changelog is based on
 
 ## In progress
 
-  - Change wave port eigenproblem shift and sorting so the modes are ranked in descending
-    order from the TEM limit.
+  - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
+    The first mode now has the largest propagation constant, closest to the TEM limit, and
+    subsequent modes are ordered by decreasing propagation constant.
 
 ## [0.14.0] - 2025-08-20
 
