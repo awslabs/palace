@@ -377,14 +377,19 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Initialize final results.
+  // Initialize final results on device.
   mfem::Array<ComplexVector3> internal_results;
   internal_results.SetSize(theta_phi_pairs.size());
+  internal_results.GetMemory().UseDevice(true);
 
-  // Initialize to zero.
-  for (int i = 0; i < internal_results.Size(); i++) {
-    internal_results[i] = ComplexVector3{};
-  }
+  // Initialize to zero on device.
+  auto d_results = internal_results.Write();
+  mfem::MFEM_FORALL(i, internal_results.Size(), {
+    for (int j = 0; j < 6; j++)
+    {
+      d_results[i].data[j] = 0.0;
+    }
+  });
 
   // Integrate by looping over all the boundary elements.
   //
@@ -412,17 +417,19 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
       auto f_vals = coeff.EvalComplexBatch(*T, ip);
       double w = ip.weight * T->Weight();
 
-      // Direct accumulation of final results.
-      for (size_t k = 0; k < theta_phi_pairs.size(); k++) {
-        for (int d = 0; d < 3; d++) {
-          internal_results[k][d] += w * f_vals[k][d];
+      // GPU accumulation of final results.
+      auto d_results_rw = internal_results.ReadWrite();
+      mfem::MFEM_FORALL(k, theta_phi_pairs.size(), {
+        for (int d = 0; d < 3; d++)
+        {
+          d_results_rw[k][d] += w * f_vals[k][d];
         }
-      }
-
+      });
     }
   }
 
-  // MPI reduction on final results.
+  // MPI reduction on final results. Move to host for MPI.
+  internal_results.HostReadWrite();
   std::complex<double> *data_ptr = &internal_results[0][0];
   size_t total_elements = internal_results.Size() * 3;
   Mpi::GlobalSum(total_elements, data_ptr, E->GetComm());
@@ -430,8 +437,10 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
   // Convert to expected return type
   std::vector<std::vector<std::complex<double>>> results;
   results.reserve(internal_results.Size());
-  for (int i = 0; i < internal_results.Size(); i++) {
-    results.push_back({internal_results[i][0], internal_results[i][1], internal_results[i][2]});
+  for (int i = 0; i < internal_results.Size(); i++)
+  {
+    results.push_back(
+        {internal_results[i][0], internal_results[i][1], internal_results[i][2]});
   }
 
   return results;

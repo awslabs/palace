@@ -178,36 +178,48 @@ public:
 // substantial overhead. For a similar reason, we work with std::arrays instead
 // of ComplexVectors.
 // Trivial type to replace std::array<std::complex<double>, 3> for MFEM compatibility
-struct ComplexVector3 {
+struct ComplexVector3
+{
   double data[6];  // [real0, imag0, real1, imag1, real2, imag2]
-  
+
   // Access as complex numbers
-  std::complex<double>& operator[](size_t i) {
-    return reinterpret_cast<std::complex<double>&>(data[i*2]);
+  std::complex<double> &operator[](size_t i)
+  {
+    return reinterpret_cast<std::complex<double> &>(data[i * 2]);
   }
-  
-  const std::complex<double>& operator[](size_t i) const {
-    return reinterpret_cast<const std::complex<double>&>(data[i*2]);
+
+  const std::complex<double> &operator[](size_t i) const
+  {
+    return reinterpret_cast<const std::complex<double> &>(data[i * 2]);
   }
-  
+
   // Iterator support for range-based for loops
-  std::complex<double>* begin() { return reinterpret_cast<std::complex<double>*>(data); }
-  std::complex<double>* end() { return reinterpret_cast<std::complex<double>*>(data) + 3; }
-  const std::complex<double>* begin() const { return reinterpret_cast<const std::complex<double>*>(data); }
-  const std::complex<double>* end() const { return reinterpret_cast<const std::complex<double>*>(data) + 3; }
-  
+  std::complex<double> *begin() { return reinterpret_cast<std::complex<double> *>(data); }
+  std::complex<double> *end() { return reinterpret_cast<std::complex<double> *>(data) + 3; }
+  const std::complex<double> *begin() const
+  {
+    return reinterpret_cast<const std::complex<double> *>(data);
+  }
+  const std::complex<double> *end() const
+  {
+    return reinterpret_cast<const std::complex<double> *>(data) + 3;
+  }
+
   // Convert to/from std::array
-  operator std::array<std::complex<double>, 3>() const {
+  operator std::array<std::complex<double>, 3>() const
+  {
     return {(*this)[0], (*this)[1], (*this)[2]};
   }
-  
-  ComplexVector3& operator=(const std::array<std::complex<double>, 3>& arr) {
-    for (int i = 0; i < 3; i++) {
+
+  ComplexVector3 &operator=(const std::array<std::complex<double>, 3> &arr)
+  {
+    for (int i = 0; i < 3; i++)
+    {
       (*this)[i] = arr[i];
     }
     return *this;
   }
-  
+
   ComplexVector3() = default;
 };
 
@@ -248,8 +260,8 @@ public:
     }
   }
 
-  mfem::Array<ComplexVector3>
-  EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+  mfem::Array<ComplexVector3> EvalComplexBatch(mfem::ElementTransformation &T,
+                                               const mfem::IntegrationPoint &ip)
   {
     MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
                 "Unexpected element type in BdrSurfaceFluxCoefficient!");
@@ -295,35 +307,61 @@ public:
     auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
     auto n_cross_ZH = cross_product(normal, ZH_complex);  // n̂ × ZH
 
+    // Create result array and move to device
     mfem::Array<ComplexVector3> results;
     results.SetSize(r_naughts.size());
+    results.GetMemory().UseDevice(true);
 
-    // Process all (theta, phi)s.
-    for (size_t idx = 0; idx < r_naughts.size(); idx++)
+    // Copy r_naughts to device
+    mfem::Array<std::array<double, 3>> d_r_naughts;
+    d_r_naughts.SetSize(r_naughts.size());
+    d_r_naughts.GetMemory().UseDevice(true);
+    auto h_r_naughts = d_r_naughts.HostWrite();
+    for (size_t i = 0; i < r_naughts.size(); i++)
     {
-      const auto &r_naught = r_naughts[idx];
-      // r₀·r'.
-      double phase =
-          k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
+      h_r_naughts[i] = r_naughts[i];
+    }
 
-      auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
+    // Copy r_phys to device
+    mfem::Array<double> d_r_phys;
+    d_r_phys.SetSize(3);
+    d_r_phys.GetMemory().UseDevice(true);
+    auto h_r_phys = d_r_phys.HostWrite();
+    for (int i = 0; i < 3; i++)
+      h_r_phys[i] = r_phys[i];
 
+    // GPU kernel for batch processing
+    auto d_results = results.Write();
+    auto d_r_naughts_ptr = d_r_naughts.Read();
+    auto d_r_phys_ptr = d_r_phys.Read();
+
+    mfem::MFEM_FORALL(idx, r_naughts.size(), {
+      const auto &r_naught = d_r_naughts_ptr[idx];
+
+      // Compute phase
+      double phase = k * (r_naught[0] * d_r_phys_ptr[0] + r_naught[1] * d_r_phys_ptr[1] +
+                          r_naught[2] * d_r_phys_ptr[2]);
+
+      // Cross products
+      auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);
+
+      // Compute integrand
       ComplexVector3 integrand;
       for (int i = 0; i < 3; i++)
       {
         integrand[i] = n_cross_E[i] - r_cross_n_cross_ZH[i];
       }
 
-      std::complex<double> phase_factor{std::cos(phase), std::sin(phase)};
-
+      // Apply phase factor
+      std::complex<double> phase_factor{cos(phase), sin(phase)};
       for (auto &val : integrand)
       {
         val *= prefactor * phase_factor;
       }
 
-      auto final_result = cross_product(r_naught, integrand);
-      results[idx] = final_result;
-    }
+      // Final cross product
+      d_results[idx] = cross_product(r_naught, integrand);
+    });
 
     return results;
   }
