@@ -1,0 +1,70 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0004
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 2.5,
+      "MaxFreq": 5.0,
+      "FreqStep": 0.5,
+      "SaveStep": 1
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}
