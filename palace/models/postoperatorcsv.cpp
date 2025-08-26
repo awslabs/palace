@@ -630,7 +630,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
                             format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
   }
 
-  for (size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
+  for (size_t i = 0; i < measurement_cache.farfield.size(); i++)
   {
     const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
     const auto &E_field = measurement_cache.farfield.E_field[i];

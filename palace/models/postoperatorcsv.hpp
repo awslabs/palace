@@ -80,8 +80,10 @@ struct Measurement
     // Phi: azimuthal angle (0 to 2pi radians).
     std::vector<std::pair<double, double>> thetaphis;
 
-    // Components of the electric field.
-    std::vector<std::vector<std::complex<double>>> E_field;
+    // Components of the electric field. Assumed 3 dimensional.
+    mfem::Array<std::array<std::complex<double>, 3>> E_field;
+
+    size_t size() const { return thetaphis.size(); }
   };
 
   // Data for both lumped and wave port.

@@ -360,7 +360,9 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
   return linalg::LocalSum(s);
 }
 
-std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldrE(
+// NOTE: SurfacePostOperator::GetFarFieldrE allocates its output. The output is
+// returned on the host.
+mfem::Array<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
     const GridFunction *B, double omega) const
 {
@@ -375,14 +377,25 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Initialize integrals.
-  std::vector<std::array<std::complex<double>, 3>> integrals(theta_phi_pairs.size());
-  for (auto &integral : integrals)
-  {
-    integral.fill({0.0, 0.0});
-  }
+  // Initialize final results on GPU.
+  mfem::Array<std::array<std::complex<double>, 3>> results;
+  results.UseDevice(true);
+  results.SetSize(theta_phi_pairs.size());
 
-  // Integrate.
+  // Initialize to zero on device.
+  auto d_results = results.ReadWrite();
+  MFEM_FORALL(i, results.Size(), {
+    d_results[i] = {};
+  });
+
+  // Integrate by looping over all the boundary elements.
+  //
+  // NOTE: There's an opportunity to improve GPU performance here by increasing
+  // parallelism: Currently the exposed parallel work has size of
+  // theta_phi_pairs, which is typically much smaller than mesh.GetNBE(). Moving
+  // the loop over mesh.GetNBE() to device would lead to higher utilization of
+  // GPU resources. The reason this is not done here is that the MFEM APIs used
+  // here are only defined on the host.
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
@@ -401,31 +414,26 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
       auto f_vals = coeff.EvalComplexBatch(*T, ip);
       double w = ip.weight * T->Weight();
 
-      for (size_t k = 0; k < theta_phi_pairs.size(); k++)
-      {
+      // Direct accumulation of final results on the device.
+      MFEM_FORALL(k, theta_phi_pairs.size(), {
         for (int d = 0; d < 3; d++)
         {
-          integrals[k][d] += w * f_vals[k][d];
+          d_results[k][d] += w * f_vals[k][d];
         }
-      }
+      });
+
     }
   }
 
-  // Apply MPI reduction across all the results.
-  std::complex<double> *data_ptr =
-      reinterpret_cast<std::complex<double> *>(integrals.data());
-  size_t total_elements = integrals.size() * 3;  // Each integral has 3 components
+  // MPI reduction on final results. We move to host so that (1) we don't have
+  // to worry about MPI-aware CUDA, (2) we are going to write results to disk
+  // anyway.
+  results.HostReadWrite();
+  std::complex<double> *data_ptr = &results[0][0];
+  size_t total_elements = results.Size() * 3;
   Mpi::GlobalSum(total_elements, data_ptr, E->GetComm());
 
-  // Then apply cross product to reduced integrals.
-  std::vector<std::vector<std::complex<double>>> result(theta_phi_pairs.size());
-  for (size_t k = 0; k < theta_phi_pairs.size(); k++)
-  {
-    auto final_integral = coeff.cross_product(coeff.GetRNaught(k), integrals[k]);
-    result[k] = {final_integral[0], final_integral[1], final_integral[2]};
-  }
-
-  return result;
+  return results;
 }
 
 }  // namespace palace

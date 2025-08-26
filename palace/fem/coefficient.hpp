@@ -211,7 +211,7 @@ public:
     }
   }
 
-  std::vector<std::array<std::complex<double>, 3>>
+  mfem::Array<std::array<std::complex<double>, 3>>
   EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
   {
     MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
@@ -283,7 +283,8 @@ public:
         val *= prefactor * phase_factor;
       }
 
-      results.push_back(integrand);
+      auto final_result = cross_product(r_naught, integrand);
+      results.push_back(final_result);
     }
 
     return results;
