@@ -143,10 +143,6 @@ if "cylinder/floquet" in cases
     )
 end
 
-# Coarser test tolerances for driven simulations with ports
-reltol = 2.0e-2
-abstol = 2.0e-12
-
 if "cylinder/driven_wave" in cases
     @info "Testing cylinder/driven_wave..."
     @time testcase(
@@ -160,6 +156,10 @@ if "cylinder/driven_wave" in cases
         excluded_columns=["Maximum", "Minimum"]
     )
 end
+
+# Coarser test tolerances for driven simulations with ports
+reltol = 2.0e-2
+abstol = 2.0e-12
 
 if "coaxial/open" in cases
     @info "Testing coaxial (open)..."
