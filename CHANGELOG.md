@@ -11,6 +11,11 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+  - Change wave port eigenproblem shift and sorting so the modes are ranked in descending
+    order from the TEM limit.
+
 ## [0.14.0] - 2025-08-20
 
   - Added `--version` command line flag for displaying Palace version information.
@@ -118,8 +123,6 @@ The format of this changelog is based on
   - Added `scnlib` as a dependency to Palace.
   - Added parsing ability of existing csv files into the `Table` class. Fix `"Restart"`
     behaviour with the multi-excitation feature of driven solver.
-  - Change wave port eigenproblem shift and sorting so the modes are ranked in descending
-    order from the TEM limit.
 
 ## [0.13.0] - 2024-05-20
 
