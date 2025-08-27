@@ -38,6 +38,15 @@ and `ANALYZE_SOURCES_CPPCHECK` to `ON` will turn on static analysis using
 [`cppcheck`](https://cppcheck.sourceforge.io/), respectively, during the build step. This
 requires the executables to be installed and findable by CMake on your system.
 
+## Extending GPU code in *Palace*
+
+*Palace* supports [GPU parallelization](guide/parallelism.md), but not all the
+files in *Palace* are compiled with a GPU-compatible compiler (e.g., `nvcc`).
+The reason for this is that such compilers might not support all the features
+*Palace* needs (e.g., support for `constexpr std::sqrt`), and also because they
+tend to be slower. The list of files that contains code that has to run on the
+device is defined by the `TARGET_SOURCES_DEVICE` CMake variable.
+
 ## JSON Schema for configuration files
 
 A JSON format [configuration file](config/config.md), for example named `config.json`, can
