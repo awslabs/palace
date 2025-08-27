@@ -29,6 +29,38 @@ public:
   Vector3(int n = 3) : Vector(buff, n) {}
 };
 
+
+// 3D cross product.
+template <typename T, typename U, typename V>
+void Cross3(const T &A, const U &B, V &C, bool add = false)
+{
+  if constexpr (std::is_base_of_v<T, mfem::Vector> && std::is_base_of_v<U, mfem::Vector>)
+  {
+    MFEM_ASSERT(A.Size() == B.Size() && A.Size() == C.Size() && A.Size() == 3,
+                "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
+  }
+  if (add)
+  {
+    C[0] += A[1] * B[2] - A[2] * B[1];
+    C[1] += A[2] * B[0] - A[0] * B[2];
+    C[2] += A[0] * B[1] - A[1] * B[0];
+  }
+  else
+  {
+    C[0] = A[1] * B[2] - A[2] * B[1];
+    C[1] = A[2] * B[0] - A[0] * B[2];
+    C[2] = A[0] * B[1] - A[1] * B[0];
+  }
+}
+template <typename T, typename U, typename V = U>
+V Cross3(const T &A, const U &B)
+{
+  V C;
+  Cross3(A,B,C);
+  return C;
+}
+
+
 //
 // Derived coefficients which compute single values on internal boundaries where a possibly
 // discontinuous function is given as an input grid function. These are all cheap to
@@ -80,26 +112,6 @@ public:
                                                                       << ")!");
     mfem::CalcOrtho(T.Jacobian(), normal);
     normal /= invert ? -normal.Norml2() : normal.Norml2();
-  }
-
-  // 3D cross product.
-  static void Cross3(const mfem::Vector &A, const mfem::Vector &B, mfem::Vector &C,
-                     bool add = false)
-  {
-    MFEM_ASSERT(A.Size() == B.Size() && A.Size() == C.Size() && A.Size() == 3,
-                "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
-    if (add)
-    {
-      C(0) += A(1) * B(2) - A(2) * B(1);
-      C(1) += A(2) * B(0) - A(0) * B(2);
-      C(2) += A(0) * B(1) - A(1) * B(0);
-    }
-    else
-    {
-      C(0) = A(1) * B(2) - A(2) * B(1);
-      C(1) = A(2) * B(0) - A(0) * B(2);
-      C(2) = A(0) * B(1) - A(1) * B(0);
-    }
   }
 };
 
@@ -192,12 +204,12 @@ private:
   std::vector<std::array<double, 3>> r_naughts;  // The various target directions.
 
 public:
-  template <typename T, typename U>
-  static std::array<std::complex<double>, 3> cross_product(const T &a, const U &b)
-  {
-    return {
-        {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
-  }
+  // template <typename T, typename U>
+  // static std::array<std::complex<double>, 3> cross_product(const T &a, const U &b)
+  // {
+  //   return {
+  //       {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
+  // }
 
   const std::array<double, 3> &GetRNaught(size_t index) const { return r_naughts[index]; }
 
@@ -262,8 +274,8 @@ public:
     Vector3 normal;
     GetNormal(T, normal, ori);
 
-    auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
-    auto n_cross_ZH = cross_product(normal, ZH_complex);  // n̂ × ZH
+    auto n_cross_E = Cross3(normal, E_complex);    // n̂ × E
+    auto n_cross_ZH = Cross3(normal, ZH_complex);  // n̂ × ZH
 
     // results.resize(r_naughts.size());
     // Process all (theta, phi)s.
@@ -274,7 +286,7 @@ public:
       double phase =
           k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
 
-      auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
+      auto r_cross_n_cross_ZH = Cross3(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
 
       std::complex<double> phase_factor{std::cos(phase), std::sin(phase)};
       for (int j = 0; j < 3; j++)

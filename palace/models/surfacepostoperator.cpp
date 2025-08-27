@@ -413,7 +413,7 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
   std::vector<std::vector<std::complex<double>>> result(theta_phi_pairs.size());
   for (size_t k = 0; k < theta_phi_pairs.size(); k++)
   {
-    auto final_integral = coeff.cross_product(coeff.GetRNaught(k), integrals[k]);
+    auto final_integral = Cross3(coeff.GetRNaught(k), integrals[k]);
     result[k] = {final_integral[0], final_integral[1], final_integral[2]};
   }
 
