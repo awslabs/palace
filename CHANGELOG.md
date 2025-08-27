@@ -22,6 +22,9 @@ The format of this changelog is based on
     into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
     and a single global Floquet wave vector can be specified in
     `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
+    conditions. Two nonlinear eigensolvers are now available and can be specified by setting the
+    `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"` (default) or `"SLP"`.
 
 ## [0.14.0] - 2025-08-20
 
@@ -130,8 +133,6 @@ The format of this changelog is based on
   - Added `scnlib` as a dependency to Palace.
   - Added parsing ability of existing csv files into the `Table` class. Fix `"Restart"`
     behaviour with the multi-excitation feature of driven solver.
-  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
-    conditions.
 
 ## [0.13.0] - 2024-05-20
 
