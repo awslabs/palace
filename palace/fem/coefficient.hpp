@@ -211,6 +211,14 @@ public:
     }
   }
 
+  class Vector3 : public mfem::Vector
+  {
+  private:
+    double buff[3];
+  public:
+    Vector3(int n=3) : Vector(buff, n) {}
+  };
+
   void
   EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
     std::vector<std::array<std::complex<double>, 3>> &results, double w = 1.0)
@@ -221,12 +229,12 @@ public:
     MFEM_VERIFY(!FET.Elem2,
                 "FarField computations are only supported on external boundaries.")
 
-    mfem::Vector r_phys(3);  // r
+    Vector3 r_phys;  // r
     T.Transform(ip, r_phys);
 
     // Evaluate E and B fields on this element. This step is expensive, so we
     // batch all the theta, phis.
-    mfem::Vector E_real(3), E_imag(3), B_real(3), B_imag(3);
+    Vector3 E_real, E_imag, B_real, B_imag;
     E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_real);
     E.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_imag);
     B.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_real);
@@ -244,7 +252,7 @@ public:
     std::complex<double> prefactor(0, k / (4 * M_PI));
 
     // Z * H = c0 * B.
-    mfem::Vector ZH_real(3), ZH_imag(3);
+    Vector3 ZH_real, ZH_imag;
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_imag, ZH_imag);
 
@@ -253,7 +261,7 @@ public:
          std::complex<double>(ZH_real[1], ZH_imag[1]),
          std::complex<double>(ZH_real[2], ZH_imag[2])}};
 
-    mfem::Vector normal(3);
+    Vector3 normal;
     GetNormal(T, normal, ori);
 
     auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
