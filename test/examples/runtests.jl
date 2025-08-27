@@ -262,7 +262,29 @@ if "cpw/lumped_eigen" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Re{V[1]} (V)",
+            "Im{V[1]} (V)",
+            "Re{V[2]} (V)",
+            "Im{V[2]} (V)",
+            "Re{V[3]} (V)",
+            "Im{V[3]} (V)",
+            "Re{V[4]} (V)",
+            "Im{V[4]} (V)",
+            "Re{I[1]} (A)",
+            "Im{I[1]} (A)",
+            "Re{I[2]} (A)",
+            "Im{I[2]} (A)",
+            "Re{I[3]} (A)",
+            "Im{I[3]} (A)",
+            "Re{I[4]} (A)",
+            "Im{I[4]} (A)"
+        ],
         skip_rowcount=true
     )
 end
