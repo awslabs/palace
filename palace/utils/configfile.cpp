@@ -1402,10 +1402,9 @@ void FluxBoundaryData::SetUp(json &boundaries)
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
 
-    MFEM_VERIFY(it->find("MetalSurfaceAttributes") != it->end(),
-                "Missing \"MetalSurfaceAttributes\" for \"FluxLoop\" boundary!");
-    data.metal_surface_attributes =
-        it->at("MetalSurfaceAttributes").get<std::vector<int>>();
+    MFEM_VERIFY(it->find("FluxLoopPEC") != it->end(),
+                "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
+    data.metal_surface_attributes = it->at("FluxLoopPEC").get<std::vector<int>>();
     std::sort(data.metal_surface_attributes.begin(), data.metal_surface_attributes.end());
 
     MFEM_VERIFY(it->find("HoleAttributes") != it->end(),
@@ -1419,18 +1418,34 @@ void FluxBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(data.hole_attributes.size() == data.flux_amounts.size(),
                 "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
 
-    auto normal = it->find("LoopNormal");
-    if (normal != it->end())
+    // Parse direction using ParseElementData for flexible string/array support
+    auto direction_it = it->find("Direction");
+    if (direction_it != it->end())
     {
-      data.loop_normal = normal->get<std::array<double, 3>>();
+      // Create temporary ElementData to use ParseElementData
+      internal::ElementData temp_elem;
+      temp_elem.attributes = {1};  // Dummy attribute for ParseElementData
+
+      // Create temporary JSON with Direction field
+      json temp_json;
+      temp_json["Attributes"] = temp_elem.attributes;
+      temp_json["Direction"] = *direction_it;
+      if (it->find("CoordinateSystem") != it->end())
+      {
+        temp_json["CoordinateSystem"] = it->at("CoordinateSystem");
+      }
+
+      ParseElementData(temp_json, "Direction", false, temp_elem);
+      data.loop_normal = temp_elem.direction;
     }
 
     // Cleanup
     it->erase("Index");
-    it->erase("MetalSurfaceAttributes");
+    it->erase("FluxLoopPEC");
     it->erase("HoleAttributes");
     it->erase("FluxAmounts");
-    it->erase("LoopNormal");
+    it->erase("Direction");
+    it->erase("CoordinateSystem");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"FluxLoop\"!\n"
                     << it->dump(2));

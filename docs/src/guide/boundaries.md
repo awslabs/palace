@@ -174,8 +174,8 @@ flux loop boundary condition works by:
     prescribed
  2. **Constraining flux**: The total magnetic flux through each hole is set to the specified
     value
- 3. **Solving surface problem**: A 2D surface curl problem determines the required boundary
-    conditions for the 3D problem
+ 3. **Solving surface problem**: A 3D surface curl problem that determines the required boundary
+    conditions on specific 2D boundaries connected to the hole regions
  4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix
     extraction
 

@@ -47,10 +47,10 @@
     [
       {
         "Index": 1,
-        "MetalSurfaceAttributes": [8],
+        "FluxLoopPEC": [8],
         "HoleAttributes": [9, 10],
         "FluxAmounts": [1.0, -1.0],
-        "LoopNormal": [0.0, 0.0, 1.0]
+        "Direction": "+Z"
       }
     ]
   },

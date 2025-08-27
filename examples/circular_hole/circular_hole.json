@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/2Dcircular_hole.msh",
+    "Mesh": "mesh/circular_hole.msh",
     "L0": 1.0e-6  // μm
   },
   "Domains":
@@ -47,16 +47,16 @@
     [
       {
         "Index": 1,
-        "MetalSurfaceAttributes": [8],
+        "FluxLoopPEC": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],
-        "LoopNormal": [0.0, 0.0, 1.0]
+        "Direction": "+Z"
       }
     ]
   },
   "Solver":
   {
-    "Order": 1,
+    "Order": 2,
     "Device": "CPU",
     "Magnetostatic":
     {

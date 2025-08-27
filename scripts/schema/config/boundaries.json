@@ -205,11 +205,11 @@
       {
         "type": "object",
         "additionalProperties": false,
-        "required": ["Index", "HoleAttributes", "FluxAmounts", "MetalSurfaceAttributes", "LoopNormal"],
+        "required": ["Index", "HoleAttributes", "FluxAmounts", "FluxLoopPEC", "Direction"],
         "properties":
         {
           "Index": { "type": "integer" },
-          "MetalSurfaceAttributes": { "$ref": "#/$defs/Attributes" },
+          "FluxLoopPEC": { "$ref": "#/$defs/Attributes" },
           "HoleAttributes": { "$ref": "#/$defs/Attributes" },
           "FluxAmounts":
           {
@@ -217,7 +217,7 @@
             "additionalItems": false,
             "items": { "type": "number" }
           },
-          "LoopNormal":
+          "Direction":
           {
             "type": "array",
             "additionalItems": false,

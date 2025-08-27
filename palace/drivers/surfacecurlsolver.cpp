@@ -92,6 +92,22 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
   for (int submesh_edge : submesh_boundary_edge_ids)
     submesh_to_parent_bdr_edge_map[submesh_edge] = parent_edge_ids[submesh_edge];
 
+  /*
+  for (int submesh_edge : submesh_boundary_edge_ids)
+  {
+    // Check if submesh_edge is within bounds of parent_edge_ids
+    if (submesh_edge < parent_edge_ids.Size() && parent_edge_ids[submesh_edge] >= 0)
+    {
+      submesh_to_parent_bdr_edge_map[submesh_edge] = parent_edge_ids[submesh_edge];
+    }
+    else
+    {
+      // Skip edges that don't have valid parent mapping
+      // This can happen with mesh partitioning or submesh creation
+      continue;
+    }
+  }
+    */
   // Match hole boundaries
   std::vector<mfem::Array<int>> hole_boundary_edges;
   mesh::MatchBoundaryEdges(pmesh, boundary_submesh, submesh_boundary_edge_ids,
@@ -138,8 +154,9 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
   std::vector<double> hole_perimeters(num_holes);
   std::vector<double> hole_field_values(num_holes);
   std::vector<std::unordered_map<int, double>> hole_edge_lengths(num_holes);
+  std::vector<std::unordered_map<int, int>> hole_edge_orientations(num_holes);
 
-  mfem::H1_FECollection h1_fec(1, boundary_submesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, boundary_submesh.Dimension());
   mfem::ParFiniteElementSpace h1_fespace(&boundary_submesh, &h1_fec);
   mfem::ConstantCoefficient one(1.0);
 
@@ -160,10 +177,9 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
 
     hole_field_values[h] = flux_values[h] / hole_perimeters[h];
 
-    std::unordered_map<int, int> hole_edge_orientations;
     mesh::ComputeSubmeshBoundaryEdgeOrientations(boundary_submesh, hole_boundary_edges[h],
-                                                 loop_normal, hole_edge_orientations,
-                                                 hole_edge_lengths[h]);
+                                                 loop_normal, hole_edge_orientations[h],
+                                                 hole_edge_lengths[h], order);
     for (auto &pair : hole_edge_lengths[h])
       pair.second = -pair.second;
   }
@@ -195,23 +211,46 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
   mfem::ParGridFunction A(&nd_fespace_submesh);
   A = 0.0;
 
+  // Directly apply loop BC by computing the integration of 1D Nedelec elements on bounndary
+  // edges
+  const mfem::IntegrationRule *ir = &mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * order);
+  mfem::ND_SegmentElement nd_seg(order);
   for (int h = 0; h < num_holes; h++)
   {
     combined_inner_bdr_marker[hole_boundary_attrs[h] - 1] = 1;
+    double field_strength = hole_field_values[h];
+
     for (const auto &pair : hole_edge_to_dofs_maps[h])
     {
       int edge = pair.first;
       const mfem::Array<int> &edge_dofs = pair.second;
-      double oriented_length = hole_edge_lengths[h][edge];
-      for (int j = 0; j < edge_dofs.Size(); j++)
-        A(edge_dofs[j]) = hole_field_values[h] * oriented_length;
-    }
+      int orientation = hole_edge_orientations[h][edge];
+      double coeff = -order * field_strength * orientation;
 
+      mfem::IsoparametricTransformation edge_trans;
+      boundary_submesh.GetEdgeTransformation(edge, &edge_trans);
+
+      mfem::DenseMatrix vshape(edge_dofs.Size(), 1);
+
+      for (int j = 0; j < edge_dofs.Size(); j++)
+      {
+        double dof_value = 0.0;
+
+        for (int q = 0; q < ir->GetNPoints(); q++)
+        {
+          const mfem::IntegrationPoint &ip = ir->IntPoint(q);
+          edge_trans.SetIntPoint(&ip);
+          nd_seg.CalcVShape(ip, vshape);
+
+          dof_value += ip.weight * edge_trans.Weight() * coeff * vshape(j, 0);
+        }
+
+        A(edge_dofs[j]) = dof_value;
+      }
+    }
     // Mark DOFs for synchronization
     for (int i = 0; i < hole_boundary_edge_dofs[h].Size(); i++)
-    {
       ldof_marker_submesh[hole_boundary_edge_dofs[h][i]] = 1;
-    }
   }
 
   // Notify start of 2D surface curl problem solving

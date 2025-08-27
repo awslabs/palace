@@ -3171,7 +3171,7 @@ void MatchBoundaryEdges(
 void ComputeSubmeshBoundaryEdgeOrientations(
     const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
     const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,
-    std::unordered_map<int, double> &edge_oriented_lengths)
+    std::unordered_map<int, double> &edge_oriented_lengths, int order)
 {
   edge_orientations.clear();
   edge_oriented_lengths.clear();
@@ -3227,17 +3227,26 @@ void ComputeSubmeshBoundaryEdgeOrientations(
     // Edge vector and length
     double edge_vec[3];
     double edge_length = 0.0;
-    for (int d = 0; d < 3; d++)
+
+    // Use high-order integration for curved edges
+    mfem::IsoparametricTransformation edge_trans;
+    submesh.GetEdgeTransformation(submesh_edge, &edge_trans);
+
+    // Integrate arc length using quadrature
+    const mfem::IntegrationRule *ir =
+        &mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * order);
+    for (int q = 0; q < ir->GetNPoints(); q++)
     {
-      edge_vec[d] = v1[d] - v0[d];
-      edge_length += edge_vec[d] * edge_vec[d];
+      const mfem::IntegrationPoint &ip = ir->IntPoint(q);
+      edge_trans.SetIntPoint(&ip);
+      edge_length += ip.weight * edge_trans.Weight();
     }
-    edge_length = sqrt(edge_length);
 
     // Vector from third vertex to edge midpoint
     double to_edge_vec[3];
     for (int d = 0; d < 3; d++)
     {
+      edge_vec[d] = v1[d] - v0[d];
       double edge_midpoint = (v0[d] + v1[d]) * 0.5;
       to_edge_vec[d] = edge_midpoint - v2[d];
     }

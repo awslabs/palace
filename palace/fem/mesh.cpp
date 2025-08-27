@@ -74,6 +74,11 @@ auto BuildCeedAttributes(const mfem::ParMesh &mesh)
       loc_attr[attr] = ++count;
     }
   }
+  // Handle empty mesh case - ensure loc_attr is never empty
+  if (loc_attr.empty())
+  {
+    loc_attr[1] = 1;  // Add dummy attribute for empty mesh
+  }
   return loc_attr;
 }
 
@@ -97,6 +102,7 @@ auto BuildCeedBdrAttributes(const mfem::ParMesh &mesh)
       bdr_attr_map[nbr_attr] = ++count;
     }
   }
+  // Handle empty mesh case - boundary attributes can remain empty
   return loc_bdr_attr;
 }
 
