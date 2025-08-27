@@ -40,17 +40,6 @@
           "Attributes": [2]
         }
       ],
-      "Probe":
-      [
-        {
-          "Index": 1,
-          "Center": [2000, 833, 30]
-        },
-        {
-          "Index": 2,
-          "Center": [2000, 833, -30]
-        }
-      ]
     }
   },
   "Boundaries":
