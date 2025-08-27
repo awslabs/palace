@@ -73,6 +73,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
+        depends_on("fortran", type="build")
         depends_on("mumps+metis+parmetis")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
@@ -89,6 +90,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("superlu-dist~openmp", when="~openmp")
 
     with when("+strumpack"):
+        depends_on("fortran", type="build")
         depends_on("strumpack+butterflypack+zfp+parmetis~cuda~rocm")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
@@ -112,6 +114,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("petsc~rocm", when="~rocm")
 
     with when("+arpack"):
+        depends_on("fortran", type="build")
         depends_on("arpack-ng+mpi+icb")
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
