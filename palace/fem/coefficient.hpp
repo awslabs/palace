@@ -211,8 +211,9 @@ public:
     }
   }
 
-  std::vector<std::array<std::complex<double>, 3>>
-  EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+  void
+  EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
+    std::vector<std::array<std::complex<double>, 3>> &results, double w = 1.0)
   {
     MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
                 "Unexpected element type in BdrSurfaceFluxCoefficient!");
@@ -258,35 +259,23 @@ public:
     auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
     auto n_cross_ZH = cross_product(normal, ZH_complex);  // n̂ × ZH
 
-    std::vector<std::array<std::complex<double>, 3>> results;
-    results.reserve(r_naughts.size());
-
+    // results.resize(r_naughts.size());
     // Process all (theta, phi)s.
-    for (const auto &r_naught : r_naughts)
+    for (std::size_t i = 0; i < r_naughts.size(); i++)
     {
+      const auto &r_naught = r_naughts[i];
       // r₀·r'.
       double phase =
           k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
 
       auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
 
-      std::array<std::complex<double>, 3> integrand;
-      for (int i = 0; i < 3; i++)
-      {
-        integrand[i] = n_cross_E[i] - r_cross_n_cross_ZH[i];
-      }
-
       std::complex<double> phase_factor{std::cos(phase), std::sin(phase)};
-
-      for (auto &val : integrand)
+      for (int j = 0; j < 3; j++)
       {
-        val *= prefactor * phase_factor;
+        results[i][j] += w * prefactor * phase_factor * (n_cross_E[j] - r_cross_n_cross_ZH[j]);
       }
-
-      results.push_back(integrand);
     }
-
-    return results;
   }
 };
 

@@ -398,16 +398,8 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
       const auto &ip = ir->IntPoint(j);
       T->SetIntPoint(&ip);
 
-      auto f_vals = coeff.EvalComplexBatch(*T, ip);
       double w = ip.weight * T->Weight();
-
-      for (size_t k = 0; k < theta_phi_pairs.size(); k++)
-      {
-        for (int d = 0; d < 3; d++)
-        {
-          integrals[k][d] += w * f_vals[k][d];
-        }
-      }
+      coeff.EvalComplexBatch(*T, ip, integrals, w);
     }
   }
 
