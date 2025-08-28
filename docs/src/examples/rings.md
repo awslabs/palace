@@ -3,6 +3,12 @@
 <!--- SPDX-License-Identifier: Apache-2.0 --->
 ```
 
+```@setup include_example
+function include_example_file(example_path, filename)
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
+end
+```
+
 # Inductance Matrix for a Pair of Concentric Rings
 
 !!! note
@@ -56,10 +62,8 @@ solver.
 The computed inductance matrix is saved to disk as `postpro/terminal-M.csv`, and below we
 show its contents:
 
-```
-               i,             M[i][1] (H),             M[i][2] (H)
- 1.000000000e+00,        +4.271874130e-11,        +1.959879250e-12
- 2.000000000e+00,        +1.959879250e-12,        +7.131301882e-10
+```@example include_example
+include_example_file("rings", "terminal-M.csv") # hide
 ```
 
 According to the analytic expressions above, for this geometry we should have
@@ -77,22 +81,46 @@ M_{bb} &= 707.2050\text{ pH}
 \end{aligned}
 ```
 
-for the self inductances. Thus, the *Palace* solution has approximately ``0.71\%`` error in
-the mutual inductance and ``2.2\%`` and ``0.84\%`` errors in the self inductances versus the
-analytic solutions.
+for the self inductances. Thus, the *Palace* solution has percent-level errors
+in the self inductances versus the analytic solutions.
 
 The typical approach used by *Palace* for lumped parameter extraction uses the computed
 field energies, but one can also compute the inductance by explicitly integrating the
 magnetic flux through a surface and dividing by the excitation current. This is configured
 under
 [`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D)
-in the configuration file. The resulting postprocessed values are written to
-`postpro/surface-M.csv`:
+in the configuration file. The postprocessed magnetic flux values are written to `postpro/surface-F.csv`:
 
+```@example include_example
+include_example_file("rings", "surface-F.csv") # hide
 ```
-               i,                M[1] (H),                M[2] (H)
- 1.000000000e+00,        +4.260888932e-11,        +1.890068508e-12
- 2.000000000e+00,        +1.955578103e-12,        +7.130510940e-10
+
+Diving this with the values from `postpro/terminal-I.csv`,
+
+```@example include_example
+include_example_file("rings", "terminal-I.csv") # hide
+```
+
+we arrive at
+
+```@example
+using DelimitedFiles: readdlm #hide
+using Printf #hide
+path = joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", "rings") #hide
+surface_F = readdlm(joinpath(path, "surface-F.csv"), ',', Float64, skipstart=1) #hide
+terminal_I = readdlm(joinpath(path, "terminal-I.csv"), ',', Float64, skipstart=1) #hide
+result = copy(surface_F) #hide
+result[:, 2] ./= terminal_I[:, 2] #hide
+result[:, 3] ./= terminal_I[:, 2] #hide
+println("        i,                M[i][1] (H),                M[i][2] (H)") #hide
+for i = 1:size(result, 1) #hide
+    @printf(
+        " %.2e,        %+.12e,        %+.12e\n",
+        result[i, 1],
+        result[i, 2],
+        result[i, 3]
+    ) #hide
+end #hide
 ```
 
 The values computed using the flux integral method are in close agreement to those above, as
