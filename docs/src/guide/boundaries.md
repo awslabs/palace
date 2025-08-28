@@ -190,4 +190,4 @@ flux loop boundary condition works by:
 
 The mesh must be topologically compatible with the flux loop geometry, with holes properly
 defined as boundary surfaces within the conducting region. Currently, only planar holes are
-supported.
+supported, and nonconformal adaption is not supported.

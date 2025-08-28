@@ -1404,8 +1404,8 @@ void FluxBoundaryData::SetUp(json &boundaries)
 
     MFEM_VERIFY(it->find("FluxLoopPEC") != it->end(),
                 "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
-    data.metal_surface_attributes = it->at("FluxLoopPEC").get<std::vector<int>>();
-    std::sort(data.metal_surface_attributes.begin(), data.metal_surface_attributes.end());
+    data.fluxloop_pec = it->at("FluxLoopPEC").get<std::vector<int>>();
+    std::sort(data.fluxloop_pec.begin(), data.fluxloop_pec.end());
 
     MFEM_VERIFY(it->find("HoleAttributes") != it->end(),
                 "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
@@ -1436,7 +1436,7 @@ void FluxBoundaryData::SetUp(json &boundaries)
       }
 
       ParseElementData(temp_json, "Direction", false, temp_elem);
-      data.loop_normal = temp_elem.direction;
+      data.direction = temp_elem.direction;
     }
 
     // Cleanup

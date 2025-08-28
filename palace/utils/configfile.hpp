@@ -621,7 +621,7 @@ struct FluxLoopData
 {
 public:
   // List of boundary attributes for the metal surface.
-  std::vector<int> metal_surface_attributes = {};
+  std::vector<int> fluxloop_pec = {};
 
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
@@ -629,8 +629,11 @@ public:
   // Flux amounts for each hole (same size as hole_attributes).
   std::vector<double> flux_amounts = {};
 
-  // Loop normal direction for flux orientation.
-  std::array<double, 3> loop_normal = {0.0, 0.0, 1.0};
+  // Direction vector for flux orientation.
+  std::array<double, 3> direction = {0.0, 0.0, 1.0};
+
+  // Get the excitation flux value (typically the first flux amount).
+  double GetExcitationFlux() const { return flux_amounts.empty() ? 0.0 : flux_amounts[0]; }
 };
 
 struct FluxBoundaryData : public internal::DataMap<FluxLoopData>

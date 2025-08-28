@@ -4,7 +4,7 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "drivers/surfacecurlsolver.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -58,7 +58,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
-  // Unified loop over all excitation sources (current + flux loops)
+  // Unified loop over all excitation sources (current and flux loops).
   Mpi::Print("\nComputing magnetostatic fields for {:d} source {}\n", n_step,
              (n_step > 1) ? "boundaries" : "boundary");
   auto t0 = Timer::Now();
@@ -76,7 +76,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("\nIt {:d}/{:d}: Current Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
-      curlcurl_op.GetExcitationVector(idx, RHS);
+      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
       I_inc[step] = data.GetExcitationCurrent();
       Phi_inc[step] = 0.0;  // Zero flux for current sources
     }
@@ -84,37 +84,33 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       // Flux loop excitation
       int flux_idx = step - n_current_steps;
-      const auto &[idx, flux_data] =
+      const auto &[idx, data] =
           *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
-      // Solve 2D surface curl problem for this specific flux loop
-      auto flux_solution = curlcurl_op.SolveSurfaceCurlProblem(idx);
-      curlcurl_op.GetFluxLoopExcitationVector(*flux_solution, RHS);
+      curlcurl_op.GetFluxExcitationVector(idx, RHS);
       I_inc[step] = 0.0;                          // Zero current for flux loops
-      Phi_inc[step] = flux_data.flux_amounts[0];  // Store prescribed flux
+      Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
     }
 
-    // Solve 3D magnetostatic problem
+    // Solve 3D magnetostatic problem.
     ksp.Mult(RHS, A[step]);
-
-    // Common post-processing
     Curl.Mult(A[step], B);
 
-    // Flux verification for flux loops
+    // Flux verification for flux loops.
     if (step >= n_current_steps)
     {
       int flux_idx = step - n_current_steps;
-      const auto &[idx, flux_data] =
+      const auto &[idx, data] =
           *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
-      VerifyFluxThroughHoles(B_gf, flux_data.hole_attributes, flux_data.flux_amounts,
+      VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
                              curlcurl_op.GetMesh(), curlcurl_op.GetComm());
     }
 
-    // Energy calculation and error estimation
+    // Energy calculation and error estimation.
     int terminal_idx =
         (step < n_current_steps)
             ? std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step)->first
@@ -308,7 +304,7 @@ void MagnetostaticSolver::PostprocessTerminals(
       AddTerminal(idx, j++);
 
     // Add flux loops
-    for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
+    for (const auto &[idx, data] : iodata.boundaries.fluxloop)
       AddTerminal(idx, j++);
 
     output.WriteFullTableTrunc();

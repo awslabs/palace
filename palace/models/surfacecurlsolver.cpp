@@ -27,14 +27,14 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
   const auto &flux_data = iodata.boundaries.fluxloop.at(flux_loop_idx);
 
   std::vector<double> flux_values = flux_data.flux_amounts;
-  std::vector<int> surface_attrs = flux_data.metal_surface_attributes;
+  std::vector<int> surface_attrs = flux_data.fluxloop_pec;
   surface_attrs.insert(surface_attrs.end(), flux_data.hole_attributes.begin(),
                        flux_data.hole_attributes.end());
 
   Vector loop_normal(3);
   for (int i = 0; i < 3; i++)
   {
-    loop_normal[i] = flux_data.loop_normal[i];
+    loop_normal[i] = flux_data.direction[i];
   }
 
   // Use parameters

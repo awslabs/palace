@@ -98,9 +98,9 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
   // Add flux loop boundary attributes as essential boundaries
   std::set<int> flux_attrs;
-  for (const auto &[idx, flux_data] : iodata.boundaries.fluxloop)
+  for (const auto &[idx, data] : iodata.boundaries.fluxloop)
   {
-    for (auto attr : flux_data.metal_surface_attributes)
+    for (auto attr : data.fluxloop_pec)
     {
       if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
       {
@@ -210,7 +210,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
+void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 {
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to
@@ -236,15 +236,17 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
-void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values,
-                                                   Vector &RHS)
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
 {
+  // Solve 2D surface curl problem for this specific flux loop
+  Vector flux_solution = SolveSurfaceCurlProblem(idx);
+  
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
 
   // Early exit if boundary values are zero
-  double boundary_norm = linalg::Norml2(GetComm(), boundary_values);
+  double boundary_norm = linalg::Norml2(GetComm(), flux_solution);
   if (boundary_norm < 1e-12)
   {
     return;
@@ -262,16 +264,29 @@ void CurlCurlOperator::GetFluxLoopExcitationVector(const Vector &boundary_values
   }
 
   // Compute RHS = -K × boundary_values for boundary-interior coupling
-  K_orig_->Mult(boundary_values, RHS);
+  K_orig_->Mult(flux_solution, RHS);
   RHS *= -1.0;
 
   // Set boundary DOF entries to the prescribed values
-  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), boundary_values);
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), flux_solution);
 }
 
-std::unique_ptr<Vector> CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
 {
-  return palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
+  // Validate flux loop index
+  bool found = false;
+  for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+  {
+    if (idx == flux_loop_idx)
+    {
+      found = true;
+      break;
+    }
+  }
+  MFEM_VERIFY(found, "Invalid flux loop index " << flux_loop_idx << "!");
+  
+  auto result = palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
+  return *result;
 }
 
 }  // namespace palace

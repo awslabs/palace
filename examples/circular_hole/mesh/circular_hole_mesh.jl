@@ -219,6 +219,9 @@ function create_circular_hole_mesh(filename="circular_hole.msh")
     gmsh.model.addPhysicalGroup(2, [hole_surface], 9, "hole_surface")
 
     # Generate mesh
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.model.mesh.removeDuplicateNodes()
     gmsh.model.mesh.generate(3)
     gmsh.write(filename)
     gmsh.finalize()

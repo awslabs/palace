@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "drivers/surfacecurlsolver.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -97,13 +97,13 @@ public:
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
-  void GetExcitationVector(int idx, Vector &RHS);
+  void GetCurrentExcitationVector(int idx, Vector &RHS);
 
-  // Assemble flux loop excitation vector using boundary values from 2D surface curl problem
-  void GetFluxLoopExcitationVector(const Vector &boundary_values, Vector &RHS);
+  // Assemble flux loop excitation vector for specified flux loop index
+  void GetFluxExcitationVector(int idx, Vector &RHS);
 
   // Solve 2D surface curl problem for flux loop boundary conditions
-  std::unique_ptr<Vector> SolveSurfaceCurlProblem(int flux_loop_idx) const;
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
