@@ -631,9 +631,6 @@ public:
 
   // Direction vector for flux orientation.
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
-
-  // Get the excitation flux value (typically the first flux amount).
-  double GetExcitationFlux() const { return flux_amounts.empty() ? 0.0 : flux_amounts[0]; }
 };
 
 struct FluxBoundaryData : public internal::DataMap<FluxLoopData>

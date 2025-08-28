@@ -22,7 +22,6 @@ namespace palace
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
-    iodata(iodata),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsening, false)),
@@ -36,7 +35,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs)),
     rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
-    surf_j_op(iodata, *mesh.back())
+    surf_j_op(iodata, *mesh.back()), surf_flux_op(iodata)
 {
   // Finalize setup.
   CheckBoundaryProperties();
@@ -104,7 +103,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
       {
-        flux_attrs.insert(attr);  // Set automatically deduplicates
+        flux_attrs.insert(attr);
       }
     }
   }
@@ -273,21 +272,11 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
 
 Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
 {
-  // Validate flux loop index
-  bool found = false;
-  for (const auto &[idx, data] : iodata.boundaries.fluxloop)
-  {
-    if (idx == flux_loop_idx)
-    {
-      found = true;
-      break;
-    }
-  }
-  MFEM_VERIFY(found, "Invalid flux loop index " << flux_loop_idx << "!");
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
-  auto result =
-      palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
-  return *result;
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
 }
 
 }  // namespace palace

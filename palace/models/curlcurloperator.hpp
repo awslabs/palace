@@ -14,6 +14,7 @@
 #include "models/materialoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfacefluxoperator.hpp"
 
 namespace palace
 {
@@ -49,8 +50,8 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
-  // Reference to IoData for accessing configuration
-  const IoData &iodata;
+  // Operator for flux loop excitation.
+  SurfaceFluxOperator surf_flux_op;
 
   // Cached original matrix for flux loop boundary-interior coupling
   mutable std::unique_ptr<ParOperator> K_orig_;
@@ -66,6 +67,7 @@ public:
 
   // Access to underlying BC operator objects for postprocessing.
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }

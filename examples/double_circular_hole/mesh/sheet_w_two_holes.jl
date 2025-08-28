@@ -16,7 +16,6 @@ mesh_size_medium = 0.4   # Rectangle region
 mesh_size_fine = 0.2     # Hole region
 
 # Mesh algorithm and control
-gmsh.option.setNumber("Mesh.Algorithm3D", 1)  # Delaunay algorithm for 3D mesh
 gmsh.option.setNumber("Mesh.CharacteristicLengthFactor", 1.0)
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
 gmsh.option.setNumber("Mesh.CharacteristicLengthMin", 0.05)

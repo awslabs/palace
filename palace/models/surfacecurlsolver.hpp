@@ -14,8 +14,12 @@ class IoData;
 class Mesh;
 class FiniteElementSpace;
 
+// Forward declaration
+class SurfaceFluxData;
+
 // Solve 2D surface curl problem for flux loop initial condition
-std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh &mesh,
+std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &data,
+                                                const IoData &iodata, const Mesh &mesh,
                                                 const FiniteElementSpace &nd_fespace,
                                                 int flux_loop_idx);
 
@@ -24,9 +28,6 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                             const std::vector<int> &hole_attributes,
                             const std::vector<double> &target_fluxes, const Mesh &mesh,
                             MPI_Comm comm);
-
-void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
-                               int current_flux_loop_idx, const Mesh &mesh, MPI_Comm comm);
 
 }  // namespace palace
 

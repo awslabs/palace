@@ -243,7 +243,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);
 
-// Helper function for matching boundary edges between parent mesh and submesh in parallel
+// Helper function for matching boundary edges between parent mesh and submesh in parallel.
 void MatchBoundaryEdges(
     const mfem::ParMesh &mesh, const mfem::ParSubMesh &boundary_submesh,
     const mfem::Array<int> &submesh_boundary_edge_ids,
@@ -251,7 +251,7 @@ void MatchBoundaryEdges(
     const std::vector<std::unordered_map<int, int>> &hole_dof_to_edge_maps,
     std::vector<mfem::Array<int>> &hole_boundary_edges);
 
-// Helper function for computing edge orientations on submesh boundaries
+// Helper function for computing edge orientations on submesh boundaries.
 void ComputeSubmeshBoundaryEdgeOrientations(
     const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
     const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "surfacecurlsolver.hpp"
+#include "surfacefluxoperator.hpp"
 
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
@@ -19,12 +20,12 @@
 namespace palace
 {
 
-std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh &mesh,
+std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data,
+                                                const IoData &iodata, const Mesh &mesh,
                                                 const FiniteElementSpace &nd_fespace,
                                                 int flux_loop_idx)
 {
-  // Extract flux loop configuration from iodata for specific index
-  const auto &flux_data = iodata.boundaries.fluxloop.at(flux_loop_idx);
+  // Use flux loop configuration from SurfaceFluxData
 
   std::vector<double> flux_values = flux_data.flux_amounts;
   std::vector<int> surface_attrs = flux_data.fluxloop_pec;
@@ -92,22 +93,6 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const IoData &iodata, const Mesh
   for (int submesh_edge : submesh_boundary_edge_ids)
     submesh_to_parent_bdr_edge_map[submesh_edge] = parent_edge_ids[submesh_edge];
 
-  /*
-  for (int submesh_edge : submesh_boundary_edge_ids)
-  {
-    // Check if submesh_edge is within bounds of parent_edge_ids
-    if (submesh_edge < parent_edge_ids.Size() && parent_edge_ids[submesh_edge] >= 0)
-    {
-      submesh_to_parent_bdr_edge_map[submesh_edge] = parent_edge_ids[submesh_edge];
-    }
-    else
-    {
-      // Skip edges that don't have valid parent mapping
-      // This can happen with mesh partitioning or submesh creation
-      continue;
-    }
-  }
-    */
   // Match hole boundaries
   std::vector<mfem::Array<int>> hole_boundary_edges;
   mesh::MatchBoundaryEdges(pmesh, boundary_submesh, submesh_boundary_edge_ids,

@@ -39,11 +39,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
   PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
   int n_current_steps = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
-  int n_flux_steps = static_cast<int>(iodata.boundaries.fluxloop.size());
+  int n_flux_steps = static_cast<int>(curlcurl_op.GetSurfaceFluxOp().Size());
   int n_step = n_current_steps + n_flux_steps;
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
+  MFEM_VERIFY(
+      n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
+          !iodata.model.refinement.nonconformal,
+      "Flux loop excitation is only supported with conformal adaptation or no adaptation!");
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
@@ -84,7 +88,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       // Flux loop excitation
       int flux_idx = step - n_current_steps;
-      const auto &[idx, data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
+      const auto &[idx, data] =
+          *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
@@ -101,7 +106,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (step >= n_current_steps)
     {
       int flux_idx = step - n_current_steps;
-      const auto &[idx, data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
+      const auto &[idx, data] =
+          *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
@@ -112,7 +118,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     int terminal_idx =
         (step < n_current_steps)
             ? std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step)->first
-            : std::next(iodata.boundaries.fluxloop.begin(), step - n_current_steps)->first;
+            : std::next(curlcurl_op.GetSurfaceFluxOp().begin(), step - n_current_steps)
+                  ->first;
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, A[step], B, terminal_idx);
     estimator.AddErrorIndicator(B, total_domain_energy, indicator);
   }
@@ -120,18 +127,33 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the inductance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), A, I_inc, Phi_inc);
+  PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
+                       curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
 
 void MagnetostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    const SurfaceCurrentOperator &surf_j_op, const std::vector<Vector> &A,
-    const std::vector<double> &I_inc, const std::vector<double> &Phi_inc) const
+    const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
+    const std::vector<Vector> &A, const std::vector<double> &I_inc,
+    const std::vector<double> &Phi_inc) const
 {
+  // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
+  // for the associated formulas based on the magnetic field energy based on a current
+  // excitation for each port:
+  //                          M_ij = (A_j^T*K*A_i)/(I_i*I_j)
+  // Alternatively, we could compute the resulting loop fluxes to get M directly as:
+  //                         Φ_i = ∫ B ⋅ n_j dS
+  // and M_ij = Φ_i/I_j. The energy formulation avoids having to locally integrate B =
+  // ∇ x A.
+  // If flux excitation is employed, inductance matrix is computed by first computing
+  // the reluctance:
+  //                          R_ij = (A_j^T*K*A_i)/(Φ_i*Φ_j)
+  // and then M = R^-1. In a mixed current-flux setup, we solve for all entries of
+  // M and R simultaneously by using the constraint MR= I.
   int n_current = static_cast<int>(surf_j_op.Size());
-  int n_flux = A.size() - n_current;
+  int n_flux = static_cast<int>(surf_flux_op.Size());
   int n = A.size();
   std::vector<bool> is_flux_loop(n, false);
 
@@ -224,6 +246,8 @@ void MagnetostaticSolver::PostprocessTerminals(
     {
       for (int j = i + 1; j < n; j++)
       {
+        MFEM_VERIFY(is_flux_loop[i] == is_flux_loop[j],
+                    "Mixed current-flux terms should be handled by the general case!");
         if (is_flux_loop[i] && is_flux_loop[j])
         {
           R(i, j) = R(j, i) = cross_energy(i, j) / (Phi_inc[i] * Phi_inc[j]);
@@ -277,7 +301,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   using fmt::format;
 
   // Write matrix data using existing pattern
-  auto PrintMatrix = [&surf_j_op, this, n_current,
+  auto PrintMatrix = [&surf_j_op, &surf_flux_op, this, n_current,
                       n_flux](const std::string &file, const std::string &name,
                               const std::string &unit, const mfem::DenseMatrix &mat,
                               double scale)
@@ -302,7 +326,7 @@ void MagnetostaticSolver::PostprocessTerminals(
       AddTerminal(idx, j++);
 
     // Add flux loops
-    for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+    for (const auto &[idx, data] : surf_flux_op)
       AddTerminal(idx, j++);
 
     output.WriteFullTableTrunc();
@@ -336,7 +360,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (unit flux)");
     int i = n_current;
-    for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+    for (const auto &[idx, data] : surf_flux_op)
     {
       terminal_Phi.table["i"] << double(idx);
       terminal_Phi.table["Phiinc"] << Phi_inc[i];  // Keep as dimensionless
