@@ -283,7 +283,15 @@ if "cpw/lumped_eigen" in cases
             "Re{I[3]} (A)",
             "Im{I[3]} (A)",
             "Re{I[4]} (A)",
-            "Im{I[4]} (A)"
+            "Im{I[4]} (A)",
+            "Q_ext[1]",
+            "κ_ext[1] (GHz)",
+            "Q_ext[2]",
+            "κ_ext[2] (GHz)",
+            "Q_ext[3]",
+            "κ_ext[3] (GHz)",
+            "Q_ext[4]",
+            "κ_ext[4] (GHz)"
         ],
         skip_rowcount=true
     )
