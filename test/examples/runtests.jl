@@ -49,8 +49,7 @@ else
         "cpw/wave_adaptive",
         "cpw/lumped_eigen",
         "cpw/wave_eigen",
-        "adapter/hybrid",
-        "adapter/slp"
+        "adapter/hybrid"
     ]
 end
 
