@@ -570,18 +570,18 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
-  print_table(m_Linv.real(), "prom-Linv-re.csv");
+  print_table(m_Linv.real(), "rom-Linv-re.csv");
   if (K->Imag())
   {
-    print_table(m_Linv.imag(), "prom-Linv-im.csv");
+    print_table(m_Linv.imag(), "rom-Linv-im.csv");
   }
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   auto m_C = (unit_farad * v_d) * Mr * v_d;
-  print_table(m_C.real(), "prom-C-re.csv");
+  print_table(m_C.real(), "rom-C-re.csv");
   if (C->Imag())
   {
-    print_table(m_C.imag(), "prom-C-im.csv");
+    print_table(m_C.imag(), "rom-C-im.csv");
   }
 
   // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
@@ -590,15 +590,15 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   {
     auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
     auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr * v_d;
-    print_table(m_Rinv.real(), "prom-Rinv-re.csv");
+    print_table(m_Rinv.real(), "rom-Rinv-re.csv");
     if (M->Imag())
     {
-      print_table(m_Rinv.imag(), "prom-Rinv-im.csv");
+      print_table(m_Rinv.imag(), "rom-Rinv-im.csv");
     }
   }
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
-  print_table(orth_R, "prom-orthogonalization-matrix-R.csv");
+  print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
