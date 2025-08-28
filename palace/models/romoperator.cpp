@@ -201,7 +201,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {1.0, 1i * omega};
+    std::vector<std::complex<double>> s = {1.0 + 0i, 1i * omega};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
@@ -286,13 +286,14 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
       {
         if (Q < Q_star[i])
         {
-          for (int j = i + 1; j < N; j++)
+          for (int j = N - 1; j > i; j--)
           {
             z_star[j] = z_star[j - 1];
             Q_star[j] = Q_star[j - 1];
           }
           z_star[i] = start;
           Q_star[i] = Q;
+          break;
         }
       }
       start += delta;
