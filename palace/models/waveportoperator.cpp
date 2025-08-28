@@ -598,13 +598,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //            given frequency, Math. Comput. (2003).
   // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
   //           transmission line, arXiv:2302.11994 (2023).
-  const double c_max = mat_op.GetLightSpeedMax().Max();
-  MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
+  const double c_min = mat_op.GetLightSpeedMax().Min();
+  MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
-  mu_eps_min = 1.0 / (c_max * c_max) * 0.5;  // Add a safety factor for minimum propagation
-                                             // constant possible
-  // mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
-  //                    // associated with shift
+  mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
+                                             // propagation constant possible
   std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
   std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
   std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
@@ -769,9 +767,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
     eigen->SetLinearSolver(*ksp);
 
     // We want to ignore evanescent modes (kₙ with large imaginary component). The
-    // eigenvalue 1 / (-kₙ² - σ) of the shifted problem will be a large-magnitude negative
-    // real number for an eigenvalue kₙ² with real part close to but not below the cutoff σ.
-    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);
+    // eigenvalue 1 / (-kₙ² - σ) of the shifted problem will be a large-magnitude positive
+    // real number for an eigenvalue kₙ² with real part close to but not above the cutoff σ.
+    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -845,7 +843,7 @@ void WavePortData::Initialize(double omega)
   // port mode. The B matrix is operating frequency-independent and has already been
   // constructed.
   std::unique_ptr<ComplexOperator> opA;
-  const double sigma = -omega * omega * mu_eps_min;
+  const double sigma = -omega * omega * mu_eps_max;
   {
     auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
     auto [Ar, Ai] =
@@ -884,6 +882,7 @@ void WavePortData::Initialize(double omega)
     if (port_comm != MPI_COMM_NULL)
     {
       eigen->GetEigenvector(mode_idx - 1, e0);
+      linalg::NormalizePhase(port_comm, e0);
     }
     else
     {

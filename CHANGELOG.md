@@ -11,6 +11,12 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+  - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
+    The first mode now has the largest propagation constant, closest to the TEM limit, and
+    subsequent modes are ordered by decreasing propagation constant.
+
 ## [0.14.0] - 2025-08-20
 
   - Added `--version` command line flag for displaying Palace version information.

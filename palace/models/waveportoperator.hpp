@@ -63,7 +63,7 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  double mu_eps_min;
+  double mu_eps_max;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;

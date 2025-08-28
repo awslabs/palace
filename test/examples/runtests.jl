@@ -40,6 +40,7 @@ else
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
         "cylinder/floquet",
+        "cylinder/driven_wave",
         "coaxial/open",
         "coaxial/matched",
         "cpw/lumped_uniform",
@@ -139,6 +140,23 @@ if "cylinder/floquet" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true
+    )
+end
+
+reltol = 1.0e-3
+abstol = 1.0e-16
+
+if "cylinder/driven_wave" in cases
+    @info "Testing cylinder/driven_wave..."
+    @time testcase(
+        "cylinder",
+        "driven_wave.json",
+        "driven_wave";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"]
     )
 end
 
