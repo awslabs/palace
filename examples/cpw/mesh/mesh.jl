@@ -1,6 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Generate example meshes with:
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_wave_mesh(filename="cpw_wave_0.msh")'
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_wave_mesh(filename="cpw_coax_0.msh", coax_ports=true)'
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_lumped_mesh(filename="cpw_lumped_0.msh")'
+
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_wave_mesh(filename="cpw_wave.msh", metal_height_μm=1)'
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_wave_mesh(filename="cpw_coax.msh", coax_ports=true, metal_height_μm=1)'
+# julia -e 'include("mesh/mesh.jl"); generate_cpw_lumped_mesh(filename="cpw_lumped.msh", metal_height_μm=1)'
+
 using Gmsh: gmsh
 
 """
@@ -388,7 +397,7 @@ function generate_cpw_wave_mesh(;
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information
@@ -742,7 +751,7 @@ function generate_cpw_lumped_mesh(;
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information
