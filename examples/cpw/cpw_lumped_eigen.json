@@ -118,50 +118,6 @@
         ]
       }
     ],
-    "Postprocessing":
-    {
-      "SurfaceFlux":
-      [
-        {
-          "Index": 1,
-          "Attributes": [13],
-          "Type": "Electric",
-          "TwoSided": true
-        },
-        {
-          "Index": 2,
-          "Attributes": [4],
-          "Type": "Power"
-        }
-      ],
-      "Dielectric":
-      [
-        {
-          "Index": 1,
-          "Attributes": [14],
-          "Type": "SA",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        },
-        {
-          "Index": 2,
-          "Attributes": [13],
-          "Type": "MS",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        },
-        {
-          "Index": 3,
-          "Attributes": [13],
-          "Type": "MA",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        }
-      ]
-    }
   },
   "Solver":
   {
@@ -169,10 +125,10 @@
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 4,
+      "N": 1,
       "Tol": 1e-6,
-      "Target": 14.0,
-      "Save": 4
+      "Target": 16.0,
+      "Save": 1
     },
     "Linear":
     {
