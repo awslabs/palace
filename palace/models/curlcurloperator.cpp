@@ -240,7 +240,7 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
 {
   // Solve 2D surface curl problem for this specific flux loop
   Vector flux_solution = SolveSurfaceCurlProblem(idx);
-  
+
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
@@ -284,8 +284,9 @@ Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
     }
   }
   MFEM_VERIFY(found, "Invalid flux loop index " << flux_loop_idx << "!");
-  
-  auto result = palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
+
+  auto result =
+      palace::SolveSurfaceCurlProblem(iodata, GetMesh(), GetNDSpace(), flux_loop_idx);
   return *result;
 }
 

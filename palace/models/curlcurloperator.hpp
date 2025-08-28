@@ -7,12 +7,12 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "models/surfacecurlsolver.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 
 namespace palace

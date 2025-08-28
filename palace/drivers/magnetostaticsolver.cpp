@@ -4,7 +4,6 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "models/surfacecurlsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -12,6 +11,7 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -84,13 +84,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       // Flux loop excitation
       int flux_idx = step - n_current_steps;
-      const auto &[idx, data] =
-          *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
+      const auto &[idx, data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
       curlcurl_op.GetFluxExcitationVector(idx, RHS);
-      I_inc[step] = 0.0;                          // Zero current for flux loops
+      I_inc[step] = 0.0;                         // Zero current for flux loops
       Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
     }
 
@@ -102,8 +101,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (step >= n_current_steps)
     {
       int flux_idx = step - n_current_steps;
-      const auto &[idx, data] =
-          *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
+      const auto &[idx, data] = *std::next(iodata.boundaries.fluxloop.begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
