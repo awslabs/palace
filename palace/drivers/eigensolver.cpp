@@ -345,8 +345,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetLinearSolver(*ksp);
     qn->SetShiftInvert(1i * target);
     // Use linearized eigensolve solution as initial guess.
-    std::vector<std::complex<double>> init_eigs;
-    std::vector<ComplexVector> init_V;
+    std::vector<std::complex<double>> eigenvalues;
+    std::vector<ComplexVector> eigenvectors;
+    std::vector<double> errors;
     for (int i = 0; i < num_conv; i++)
     {
       ComplexVector v0;
@@ -354,10 +355,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       v0.UseDevice(true);
       eigen->GetEigenvector(i, v0);
       linalg::NormalizePhase(space_op.GetComm(), v0);
-      init_eigs.push_back(eigen->GetEigenvalue(i));
-      init_V.push_back(v0);
+      eigenvalues.push_back(eigen->GetEigenvalue(i));
+      eigenvectors.push_back(v0);
+      errors.push_back(eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE));
     }
-    qn->SetInitialGuess(init_eigs, init_V);
+    qn->SetInitialGuess(eigenvalues, eigenvectors, errors);
     eigen = std::move(qn);
     num_conv = eigen->Solve();
   }
