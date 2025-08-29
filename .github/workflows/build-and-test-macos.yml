@@ -144,21 +144,24 @@ jobs:
           echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_flang-new_clang_19/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
           hdiutil detach "/Volumes/armpl_24.10_flang-new_clang_19_installer" -quiet
 
+        # We have to upgrade CMake because the bundled one has a bug with
+        # FindMPI that prevents it from finding MPI when compiling with GNU
+        # compilers.
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.31.8'
+
       - name: Build Palace
         env:
           CMAKE_BUILD_TYPE: Release
           NUM_PROC_BUILD_MAX: '32'
         run: |
-          # We to install a separate version of CMake because the bundled one
-          # has a bug with FindMPI that prevents it from finding MPI when
-          # compiling with GNU compilers.
-          brew install cmake
-
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@18)/bin/clang
             export CXX=$(brew --prefix llvm@18)/bin/clang++
-            export FC=gfortran-12
+            export FC=gfortran-15
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
             export CC=gcc-15
             export CXX=g++-15
