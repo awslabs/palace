@@ -1149,25 +1149,6 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   }
 }
 
-void FloquetData::SetUp(json &boundaries)
-{
-  auto floquet = boundaries.find("FloquetWaveVector");
-  if (floquet == boundaries.end())
-  {
-    return;
-  }
-
-  MFEM_VERIFY(floquet->is_array(),
-              "\"FloquetWaveVector\" should specify an array in the configuration file!");
-  wave_vector = floquet->get<std::array<double, 3>>();
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
-  }
-}
-
 void PeriodicBoundaryData::SetUp(json &boundaries)
 {
   auto periodic = boundaries.find("Periodic");
@@ -1175,9 +1156,24 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
   {
     return;
   }
-  MFEM_VERIFY(periodic->is_array(),
-              "\"Periodic\" should specify an array in the configuration file!");
-  for (auto it = periodic->begin(); it != periodic->end(); ++it)
+  auto floquet = periodic->find("FloquetWaveVector");
+  if (floquet != periodic->end())
+  {
+    MFEM_VERIFY(floquet->is_array(),
+                "\"FloquetWaveVector\" should specify an array in the configuration file!");
+    wave_vector = floquet->get<std::array<double, 3>>();
+  }
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
+  }
+
+  auto pairs = periodic->find("BoundaryPairs");
+  MFEM_VERIFY(pairs->is_array(),
+              "\"BoundaryPairs\" should specify an array in the configuration file!");
+  for (auto it = pairs->begin(); it != pairs->end(); ++it)
   {
     MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
                 "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
@@ -1185,7 +1181,7 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
-    PeriodicData &data = vecdata.emplace_back();
+    PeriodicData data;
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
@@ -1210,21 +1206,13 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
-    auto floquet = it->find("FloquetWaveVector");
-    if (floquet != it->end())
-    {
-      MFEM_VERIFY(
-          floquet->is_array(),
-          "\"FloquetWaveVector\" should specify an array in the configuration file!");
-      data.wave_vector = floquet->get<std::array<double, 3>>();
-    }
+    boundary_pairs.push_back(data);
 
     // Cleanup
     it->erase("DonorAttributes");
     it->erase("ReceiverAttributes");
     it->erase("Translation");
     it->erase("AffineTransformation");
-    it->erase("FloquetWaveVector");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
@@ -1235,7 +1223,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
       std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
       std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
       std::cout << "AffineTransformation: " << data.affine_transform << '\n';
-      std::cout << "FloquetWaveVector: " << data.wave_vector << '\n';
     }
   }
 }
@@ -1532,7 +1519,6 @@ void BoundaryData::SetUp(json &config)
   impedance.SetUp(*boundaries);
   lumpedport.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
-  floquet.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
