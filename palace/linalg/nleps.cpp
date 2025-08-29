@@ -126,7 +126,7 @@ void NonLinearEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
 
 void NonLinearEigenvalueSolver::SetInitialGuess(
     const std::vector<std::complex<double>> &init_eig,
-    const std::vector<ComplexVector> &init_V)
+    const std::vector<ComplexVector> &init_V, const std::vector<double> &init_errors)
 {
   MFEM_VERIFY(n > 0, "Must call SetOperators before using SetInitialguess for nonlinear "
                      "eigenvalue solver!");
@@ -136,10 +136,40 @@ void NonLinearEigenvalueSolver::SetInitialGuess(
 
   init_eigenvalues.resize(init_eig.size());
   init_eigenvectors.resize(init_eig.size());
+
+  // If the number of initial guesses is greater than the number of requested modes
+  // de-prioritize the initial guesses that have larger errors.
+  std::vector<size_t> indices(init_eig.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  if (init_eig.size() > nev)
+  {
+    double min_error = init_errors[0];
+    for (const auto error : init_errors)
+    {
+      min_error = std::min(min_error, error);
+    }
+    const double threshold = 100.0 * min_error;
+    std::sort(indices.begin(), indices.end(),
+              [&](const auto i, const auto j)
+              {
+                if (init_errors[i] < threshold && init_errors[j] > threshold)
+                {
+                  return true;
+                }
+                else if (init_errors[i] > threshold && init_errors[j] < threshold)
+                {
+                  return false;
+                }
+                else
+                {
+                  return init_eig[i].imag() < init_eig[j].imag();
+                }
+              });
+  }
   for (int i = 0; i < init_eig.size(); i++)
   {
-    init_eigenvalues[i] = init_eig[i];
-    init_eigenvectors[i] = init_V[i];
+    init_eigenvalues[i] = init_eig[indices[i]];
+    init_eigenvectors[i] = init_V[indices[i]];
   }
 }
 
