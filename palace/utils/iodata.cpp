@@ -526,16 +526,9 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   }
 
   // Floquet periodic boundaries.
-  for (auto &k : boundaries.floquet.wave_vector)
+  for (auto &k : boundaries.periodic.wave_vector)
   {
     k *= units.GetMeshLengthRelativeScale();
-  }
-  for (auto &data : boundaries.periodic)
-  {
-    for (auto &k : data.wave_vector)
-    {
-      k *= units.GetMeshLengthRelativeScale();
-    }
   }
 
   // Wave port offset distance.

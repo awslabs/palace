@@ -1796,11 +1796,11 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   {
     mesh->EnsureNodes();
   }
-  if (!boundaries.periodic.empty())
+  if (!boundaries.periodic.boundary_pairs.empty())
   {
     auto periodic_mesh = std::move(mesh);
 
-    for (const auto &data : boundaries.periodic)
+    for (const auto &data : boundaries.periodic.boundary_pairs)
     {
       auto periodic_mapping = DeterminePeriodicVertexMapping(periodic_mesh, data);
       if (!periodic_mapping.empty())
@@ -2050,9 +2050,9 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
     int f, o, e1 = -1, e2 = -1;
     mesh.GetBdrElementFace(be, &f, &o);
     int attr = mesh.GetBdrAttribute(be);
-    if (!boundaries.periodic.empty())
+    if (!boundaries.periodic.boundary_pairs.empty())
     {
-      for (const auto &data : boundaries.periodic)
+      for (const auto &data : boundaries.periodic.boundary_pairs)
       {
         const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
         auto donor = std::find(da.begin(), da.end(), attr) != da.end();
