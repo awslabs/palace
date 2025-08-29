@@ -172,10 +172,13 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
   gamma = delta = 1.0;
   sinvert = false;
   sigma = 0.0;
+  has_A2 = false;
 
   opInv = nullptr;
   opProj = nullptr;
   opB = nullptr;
+  space_op = nullptr;
+  opInterp = nullptr;
 
   // Configure debugging output.
   a_int logfill = 6, ndigit = -6, mgetv0 = 0;
@@ -692,7 +695,7 @@ void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOpe
     normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / (normK + gamma * normC);
