@@ -16,6 +16,9 @@ The format of this changelog is based on
   - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
     subsequent modes are ordered by decreasing propagation constant.
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
+    conditions. Two nonlinear eigensolvers are now available and can be specified by setting the
+    `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"` (default) or `"SLP"`.
 
 ## [0.14.0] - 2025-08-20
 

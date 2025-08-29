@@ -27,6 +27,7 @@ typedef struct _p_PEP *PEP;
 typedef struct _p_BV *BV;
 typedef struct _p_ST *ST;
 typedef struct _p_RG *RG;
+typedef struct _p_NEP *NEP;
 
 namespace palace
 {
@@ -60,7 +61,8 @@ public:
     GEN_INDEFINITE,
     GEN_NON_HERMITIAN,
     HYPERBOLIC,
-    GYROSCOPIC
+    GYROSCOPIC,
+    GENERAL,
   };
 
   enum class Type
@@ -71,7 +73,9 @@ public:
     TOAR,
     STOAR,
     QARNOLDI,
-    JD
+    JD,
+    SLP,
+    NLEIGS
   };
 
   // Workspace vector for operator applications.
@@ -88,13 +92,19 @@ protected:
   PetscScalar sigma;
   bool sinvert, region;
 
+  // Boolean to handle frequency-dependent A2 operator.
+  bool has_A2;
+
   // Storage for computed residual norms and eigenvector normalizations.
   std::unique_ptr<PetscReal[]> res, xscale;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  const ComplexKspSolver *opInv;
+  ComplexKspSolver *opInv;
+
+  // Reference to interpolation operator for nonlinear term (not owned).
+  const Interpolation *opInterp;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -128,17 +138,21 @@ public:
   SlepcEigenvalueSolver(int print);
   ~SlepcEigenvalueSolver() override;
 
-  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
-  // eigenvalue problem.
+  // Set operators for the generalized eigenvalue problem, the quadratic polynomial
+  // eigenvalue problem, or the nonlinear eigenvalue problem.
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
+  void SetNLInterpolation(const Interpolation &interp) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  void SetLinearSolver(const ComplexKspSolver &ksp) override;
+  void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
@@ -150,6 +164,13 @@ public:
   // Get scaling factors used by the solver.
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
+
+  // Set the update frequency and tolerance of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq,
+                            double preconditioner_update_tol) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
@@ -185,6 +206,9 @@ public:
 
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
+
+  // Reference to space operator to compute the frequency-dependent A2 operator.
+  SpaceOperator *space_op;
 };
 
 // Base class for SLEPc's EPS problem type.
@@ -285,7 +309,9 @@ class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
@@ -312,8 +338,9 @@ public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
 
   void SetBMat(const Operator &B) override;
 
@@ -384,7 +411,9 @@ class SlepcPEPSolver : public SlepcPEPSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
@@ -408,8 +437,120 @@ public:
   SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
+  void SetBMat(const Operator &B) override;
+};
+
+// Base class for SLEPc's NEP problem type
+class SlepcNEPSolverBase : public SlepcEigenvalueSolver
+{
+protected:
+  // SLEPc eigensolver object.
+  NEP nep;
+
+  // Shell matrices for the nonlinear eigenvalue problem.
+  Mat A, J;
+
+  // Order of sorted eigenvalues.
+  std::unique_ptr<int[]> perm;
+
+  void Customize() override;
+
+public:
+  // Calls SLEPc's NEPCreate. Expects SLEPc to be initialized/finalized externally.
+  SlepcNEPSolverBase(MPI_Comm comm, int print, const std::string &prefix = std::string());
+
+  // Call's SLEPc's NEPDestroy.
+  ~SlepcNEPSolverBase() override;
+
+  // Conversion function to SLEPc's PEP type.
+  operator NEP() const { return nep; }
+
+  void SetNumModes(int num_eig, int num_vec = 0) override;
+
+  void SetTol(PetscReal tol) override;
+
+  void SetMaxIter(int max_it) override;
+
+  void SetWhichEigenpairs(WhichType type) override;
+
+  void SetShiftInvert(std::complex<double> s, bool precond = false) override;
+
+  void SetProblemType(ProblemType type) override;
+
+  void SetType(Type type) override;
+
+  void SetInitialSpace(const ComplexVector &v) override;
+
+  int Solve() override;
+
+  std::complex<double> GetEigenvalue(int i) const override;
+
+  void GetEigenvector(int i, ComplexVector &x) const override;
+
+  BV GetBV() const override;
+
+  ST GetST() const override;
+
+  RG GetRG() const override;
+
+  MPI_Comm GetComm() const override
+  {
+    return nep ? PetscObjectComm(reinterpret_cast<PetscObject>(nep)) : MPI_COMM_NULL;
+  }
+
+  operator PetscObject() const override { return reinterpret_cast<PetscObject>(nep); };
+};
+
+// Nonlinear eigenvalue problem solver: T(λ) x = (K + λ C + λ² M + A2(λ)) x = 0.
+class SlepcNEPSolver : public SlepcNEPSolverBase
+{
+public:
+  using SlepcEigenvalueSolver::delta;
+  using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::has_A2;
+  using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInterp;
+  using SlepcEigenvalueSolver::opInv;
+  using SlepcEigenvalueSolver::opProj;
+  using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sinvert;
+
+  // References to matrices defining the quadratic eigenvalue problem
+  // (not owned).
+  const ComplexOperator *opK, *opC, *opM;
+
+  // Operators for the nonlinear eigenvalue problem.
+  std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
+
+  // Eigenvalue estimate at current iteration.
+  PetscScalar lambda;
+
+  // Boolean flag to identify new λ estimate requiring a preconditioner update.
+  bool new_lambda = true;
+
+  // Boolean flag to avoid modifying an unused preconditioner.
+  bool first_pc = true;
+
+private:
+  // Operator norms for scaling.
+  mutable PetscReal normK, normC, normM;
+
+protected:
+  PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                            ComplexVector &r) const override;
+
+  PetscReal GetBackwardScaling(PetscScalar l) const override;
+
+public:
+  SlepcNEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
+
+  using SlepcEigenvalueSolver::SetOperators;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetBMat(const Operator &B) override;
 };
 

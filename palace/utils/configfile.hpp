@@ -709,6 +709,30 @@ public:
   // problems.
   bool pep_linear = true;
 
+  // Nonlinear eigenvalue solver type.
+  NonlinearEigenSolver nonlinear_type = NonlinearEigenSolver::DEFAULT;
+
+  // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
+  bool refine_nonlinear = true;
+
+  // For nonlinear problems using the hybrid approach, relative tolerance of the linear
+  // eigenvalue solver used to generate the initial guess.
+  double linear_tol = 1e-3;
+
+  // Upper end of the target range for nonlinear eigenvalue solver [GHz].
+  double target_upper = -1;
+
+  // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
+  int preconditioner_lag = 10;
+
+  // Relative tolerance below which the preconditioner is not updated, regardless of the
+  // lag.
+  double preconditioner_lag_tol = 1e-4;
+
+  // Maximum number of failed attempts with a given initial guess in the quasi-Newton
+  // nonlinear eigenvalue solver.
+  int max_restart = 2;
+
   void SetUp(json &solver);
 };
 

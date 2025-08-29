@@ -1,10 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LINALG_ARPACK_HPP
-#define PALACE_LINALG_ARPACK_HPP
-
-#if defined(PALACE_WITH_ARPACK)
+#ifndef PALACE_LINALG_NLEPS_HPP
+#define PALACE_LINALG_NLEPS_HPP
 
 #include <complex>
 #include <memory>
@@ -13,39 +11,32 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/spaceoperator.hpp"
 
 namespace palace
 {
 
-namespace arpack
-{
-
 //
-// A wrapper for the ARPACK/PARPACK library for generalized linear eigenvalue problems or
-// quadratic polynomial eigenvalue problems. Shift-and-invert spectral transformations are
-// used to compute interior eigenvalues. Currently only implemented for complex scalar
-// interface.
+// Abstract base class for nonlinear eigensolvers.
+// Currently only implemented for complex scalar interface.
 //
-class ArpackEigenvalueSolver : public EigenvalueSolver
+class NonLinearEigenvalueSolver : public EigenvalueSolver
 {
 protected:
-  // MPI communicator for PARPACK.
+  // MPI communicator.
   MPI_Comm comm;
 
   // Control print level for debugging.
   int print;
 
-  // Status variable for ARPACK.
-  int info;
-
-  // Number eigenvalues to be computed, subspace dimension, and problem size.
-  int nev, ncv, n;
+  // Number of eigenvalues to compute and problem size.
+  int nev, n;
 
   // Relative eigenvalue error convergence tolerance for the solver.
   double rtol;
 
-  // Maximum number of Arnoldi update iterations.
-  int arpack_it;
+  // Maximum number of iterations.
+  int nleps_it;
 
   // Specifies which part of the spectrum to search for.
   EigenvalueSolver::WhichType which_type;
@@ -57,55 +48,34 @@ protected:
   std::complex<double> sigma;
   bool sinvert;
 
-  // Boolean to handle frequency-dependent A2 operator.
-  bool has_A2;
-
-  // Storage for computed eigenvalues.
-  std::unique_ptr<std::complex<double>[]> eig;
+  // Storage for computed eigenvalues and eigenvectors.
+  std::vector<std::complex<double>> eigenvalues;
+  std::vector<ComplexVector> eigenvectors;
   std::unique_ptr<int[]> perm;
 
-  // Storage for Arnoldi basis vectors.
-  std::unique_ptr<std::complex<double>[]> V;
+  // Storage for eigenpairs initial guesses.
+  std::vector<std::complex<double>> init_eigenvalues;
+  std::vector<ComplexVector> init_eigenvectors;
 
   // Storage for computed residual norms and eigenvector scalings.
   std::unique_ptr<double[]> res, xscale;
 
-  // On input used to define optional initial guess, on output stores final residual
-  // vector.
-  std::unique_ptr<std::complex<double>[]> r;
-
-  // Reference to linear solver used for operator action for M⁻¹ (with no spectral
-  // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
-  // (polynomial with shift-and-invert) (not owned).
+  // Reference to linear solver used for operator action of P(σ)⁻¹ (not owned).
   ComplexKspSolver *opInv;
-
-  // Reference to space operator to compute the frequency-dependent A2 operator.
-  SpaceOperator *space_op;
-
-  // Reference to interpolation operator for nonlinear term (not owned).
-  const Interpolation *opInterp;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
   const DivFreeSolver<ComplexVector> *opProj;
+
+  // Reference to SpaceOperator to compute A2 matrix.
+  SpaceOperator *space_op;
 
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
   const Operator *opB;
 
   // Workspace vector for operator applications.
-  mutable ComplexVector x1, y1, z1;
-
-  // Perform the ARPACK RCI loop.
-  int SolveInternal(int n, std::complex<double> *r, std::complex<double> *V,
-                    std::complex<double> *eig, int *perm);
-
-  // Helper routine for parameter checking.
-  void CheckParameters() const;
-
-  // Helper routines for ARPACK RCI.
-  virtual void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const = 0;
-  virtual void ApplyOpB(const std::complex<double> *px, std::complex<double> *py) const = 0;
+  mutable ComplexVector x1, y1;
 
   // Helper routine for computing the eigenvector normalization.
   double GetEigenvectorNorm(const ComplexVector &x, ComplexVector &Bx) const;
@@ -117,14 +87,17 @@ protected:
   // Helper routine for computing the backward error.
   virtual double GetBackwardScaling(std::complex<double> l) const = 0;
 
+  // Get the associated MPI communicator.
+  virtual MPI_Comm GetComm() const = 0;
+
   // Return problem type name.
   virtual const char *GetName() const = 0;
 
 public:
-  ArpackEigenvalueSolver(MPI_Comm comm, int print);
+  NonLinearEigenvalueSolver(MPI_Comm comm, int print);
 
-  // Set operators for the generalized eigenvalue problem, the quadratic polynomial
-  // eigenvalue problem, or for the nonlinear eigenvalue problem.
+  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
+  // eigenvalue problem.
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -133,10 +106,8 @@ public:
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
   void SetNLInterpolation(const Interpolation &interp) override;
-  // For the linear generalized case, the linear solver should be configured to compute the
-  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
-  // case, the linear solver should be configured to compute the action of M⁻¹ (with no
-  // spectral transformation) or P(σ)⁻¹.
+  // The linear solver will be configured to compute the action of T(σ)⁻¹
+  // where σ is the current eigenvalue estimate.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -159,7 +130,7 @@ public:
   // Set maximum number of Arnoldi update iterations.
   void SetMaxIter(int max_it) override;
 
-  // Set the update frequency and tolerance of the preconditioner.
+  // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
                             double preconditioner_update_tol) override;
 
@@ -175,6 +146,11 @@ public:
 
   // Set an initial vector for the solution subspace.
   void SetInitialSpace(const ComplexVector &v) override;
+
+  // Set initial guess for the eigenpairs.
+  void SetInitialGuess(const std::vector<std::complex<double>> &init_eig,
+                       const std::vector<ComplexVector> &init_V,
+                       const std::vector<double> &init_errors);
 
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   int Solve() override = 0;
@@ -195,77 +171,108 @@ public:
   void RescaleEigenvectors(int num_eig) override;
 };
 
-// Generalized eigenvalue problem solver: K x = λ M x .
-class ArpackEPSSolver : public ArpackEigenvalueSolver
+// Quasi-Newton nonlinear eigenvalue solver for (K + λ C + λ² M + A2(λ)) x = 0.
+class QuasiNewtonSolver : public NonLinearEigenvalueSolver
 {
 private:
-  // References to matrices defining the generalized eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opM;
-
-  // Operator norms for scaling.
-  mutable double normK, normM;
-
-protected:
-  void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const override;
-  void ApplyOpB(const std::complex<double> *px, std::complex<double> *py) const override;
-
-  double GetResidualNorm(std::complex<double> l, const ComplexVector &x,
-                         ComplexVector &r) const override;
-
-  double GetBackwardScaling(std::complex<double> l) const override;
-
-  const char *GetName() const override { return "EPS"; }
-
-public:
-  ArpackEPSSolver(MPI_Comm comm, int print);
-
-  using ArpackEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
-
-  int Solve() override;
-};
-
-// Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
-class ArpackPEPSolver : public ArpackEigenvalueSolver
-{
-private:
-  // References to matrices defining the quadratic polynomial eigenvalue problem
+  // References to matrices defining the nonlinear eigenvalue problem
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
+
+  // Operators used in the iterative linear solver.
+  std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
-  // Workspace vectors for operator applications.
-  mutable ComplexVector x2, y2;
+  // Update frequency of the preconditioner during Newton iterations.
+  int preconditioner_lag;
+
+  // Update tolerance of the preconditioner (no update below tol).
+  double preconditioner_tol;
+
+  // Maximum number of Newton attempts with the same initial guess.
+  int max_restart;
 
 protected:
-  void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const override;
-  void ApplyOpB(const std::complex<double> *px, std::complex<double> *py) const override;
-
   double GetResidualNorm(std::complex<double> l, const ComplexVector &x,
                          ComplexVector &r) const override;
 
   double GetBackwardScaling(std::complex<double> l) const override;
 
-  const char *GetName() const override { return "PEP"; }
+  const char *GetName() const override { return "QuasiNewton"; }
 
 public:
-  ArpackPEPSolver(MPI_Comm comm, int print);
+  QuasiNewtonSolver(MPI_Comm comm, int print);
 
-  using ArpackEigenvalueSolver::SetOperators;
+  using NonLinearEigenvalueSolver::SetOperators;
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
 
+  // Set the update frequency of the preconditioner.
+  void SetPreconditionerLag(int preconditioner_update_freq,
+                            double preconditioner_update_tol) override;
+
+  // Set the maximum number of restarts with the same initial guess.
+  void SetMaxRestart(int max_num_restart) override;
+
+  // Solve the nonlinear eigenvalue problem.
   int Solve() override;
+
+  MPI_Comm GetComm() const override { return comm; }
 };
 
-}  // namespace arpack
+//
+// Interpolation operators to approximate the nonlinear A2 operator.
+//
+class Interpolation
+{
+public:
+  Interpolation() = default;
+  virtual ~Interpolation() = default;
+  virtual void Interpolate(const int order, const std::complex<double> sigma_min,
+                           const std::complex<double> sigma_max) = 0;
+  virtual void Mult(const int order, const ComplexVector &x, ComplexVector &y) const = 0;
+  virtual void AddMult(const int order, const ComplexVector &x, ComplexVector &y,
+                       std::complex<double> a = 1.0) const = 0;
+};
+
+// Newton polynomial interpolation to approximate the nonlinear A2 operator.
+class NewtonInterpolationOperator : public Interpolation
+{
+private:
+  // Reference to SpaceOperator to compute A2 matrix.
+  SpaceOperator *space_op;
+
+  // Number of points used in the interpolation.
+  int num_points;
+
+  // Interpolation points.
+  std::vector<std::complex<double>> points;
+
+  // Monomial basis coefficients.
+  std::vector<std::vector<std::complex<double>>> coeffs;
+
+  // Divided difference operators.
+  std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
+
+  // Workspace objects for solver application.
+  mutable ComplexVector rhs;
+
+public:
+  NewtonInterpolationOperator(SpaceOperator &space_op);
+
+  // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
+  void Interpolate(const int order, const std::complex<double> sigma_min,
+                   const std::complex<double> sigma_max);
+
+  // Perform multiplication with interpolation operator of specified order.
+  void Mult(const int order, const ComplexVector &x, ComplexVector &y) const;
+  void AddMult(const int order, const ComplexVector &x, ComplexVector &y,
+               std::complex<double> a = 1.0) const;
+};
 
 }  // namespace palace
 
-#endif
-
-#endif  // PALACE_LINALG_ARPACK_HPP
+#endif  // PALACE_LINALG_NLEPS_HPP
