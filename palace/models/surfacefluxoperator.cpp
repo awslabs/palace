@@ -12,7 +12,9 @@ namespace palace
 
 SurfaceFluxData::SurfaceFluxData(const config::FluxLoopData &data)
   : hole_attributes(data.hole_attributes), flux_amounts(data.flux_amounts),
-    fluxloop_pec(data.fluxloop_pec), direction(data.direction.begin(), data.direction.end())
+    fluxloop_pec(data.fluxloop_pec),
+    direction(data.direction.begin(), data.direction.end()),
+    regularization(data.regularization)
 {
 }
 

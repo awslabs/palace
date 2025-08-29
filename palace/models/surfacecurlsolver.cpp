@@ -284,7 +284,7 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data
   for (int attr = 1; attr <= boundary_submesh.attributes.Max(); attr++)
   {
     unit_coeff.AddMaterialProperty(attr, 1.0);
-    reg_coeff.AddMaterialProperty(attr, 1e-4);
+    reg_coeff.AddMaterialProperty(attr, flux_data.regularization);
   }
 
   // Use Palace's BilinearForm and assemble system matrix

@@ -29,6 +29,10 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                             const std::vector<double> &target_fluxes, const Mesh &mesh,
                             MPI_Comm comm);
 
+// Verify flux through all holes in a multi flux setting
+void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
+                               int current_flux_loop_idx, const Mesh &mesh, MPI_Comm comm);
+
 }  // namespace palace
 
 #endif  // PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP

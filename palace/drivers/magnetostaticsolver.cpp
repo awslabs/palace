@@ -63,8 +63,18 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ErrorIndicator indicator;
 
   // Unified loop over all excitation sources (current and flux loops).
-  Mpi::Print("\nComputing magnetostatic fields for {:d} source {}\n", n_step,
-             (n_step > 1) ? "boundaries" : "boundary");
+  if (n_current_steps > 0 && n_flux_steps > 0)
+  {
+    Mpi::Print(
+        "\nComputing magnetostatic fields for {:d} current source{} and {:d} flux loop{}\n",
+        n_current_steps, (n_current_steps > 1) ? "s" : "", n_flux_steps,
+        (n_flux_steps > 1) ? "s" : "");
+  }
+  else
+  {
+    Mpi::Print("\nComputing magnetostatic fields for {:d} source {}\n", n_step,
+               (n_step > 1) ? "boundaries" : "boundary");
+  }
   auto t0 = Timer::Now();
 
   for (int step = 0; step < n_step; step++)
@@ -188,7 +198,11 @@ void MagnetostaticSolver::PostprocessTerminals(
     }
   }
 
-  // System of equations for mixed terms
+  // For mixed current-flux excitations, solve a constraint system to find off-diagonal
+  // terms. Since M_ij = energy/(I_i*I_j) and R_ij = energy/(Φ_i*Φ_j) use different
+  // normalizations, cross-terms between current and flux excitations cannot be computed
+  // directly. Instead, we use the constraint M×R = I to solve for all off-diagonal
+  // elements simultaneously.
   if (n_current > 0 && n_flux > 0)
   {
     int n_off = n * (n - 1) / 2;  // Number of off-diagonal elements

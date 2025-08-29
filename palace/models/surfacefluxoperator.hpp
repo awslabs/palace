@@ -29,6 +29,7 @@ public:
   std::vector<double> flux_amounts;
   std::vector<int> fluxloop_pec;
   std::vector<double> direction;
+  double regularization;
 
 public:
   SurfaceFluxData(const config::FluxLoopData &data);

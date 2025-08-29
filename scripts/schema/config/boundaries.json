@@ -224,7 +224,8 @@
             "items": { "type": "number" },
             "minItems": 3,
             "maxItems": 3
-          }
+          },
+          "Regularization": { "type": "number", "exclusiveMinimum": 0.0 }
         }
       }
     },

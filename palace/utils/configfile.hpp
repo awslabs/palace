@@ -631,6 +631,9 @@ public:
 
   // Direction vector for flux orientation.
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
+
+  // Regularization parameter for curl-curl system stability.
+  double regularization = 1e-6;
 };
 
 struct FluxBoundaryData : public internal::DataMap<FluxLoopData>
