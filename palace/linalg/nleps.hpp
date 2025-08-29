@@ -149,7 +149,8 @@ public:
 
   // Set initial guess for the eigenpairs.
   void SetInitialGuess(const std::vector<std::complex<double>> &init_eig,
-                       const std::vector<ComplexVector> &init_V);
+                       const std::vector<ComplexVector> &init_V,
+                       const std::vector<double> &init_errors);
 
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   int Solve() override = 0;
