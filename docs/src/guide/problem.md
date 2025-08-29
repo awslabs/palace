@@ -138,17 +138,29 @@ capacitance matrix is also computed and written to `terminal-Cm.csv` in the same
 
 ## Magnetostatic problems
 
-For magnetostatic simulations,
-([`config["Problem"]["Type"]: "Magnetostatic"`](../config/problem.md#config%5B%22Problem%22%5D),
-the user should specify a number of source current boundaries. For each current source, a
-magnetostatic field is computed by applying a unit current to the source index of interest,
-leaving all other sources open with no excitation. Surfaces which are expected to carry
-current should be labeled as perfectly conducting, which prescibes a zero magnetic flux, or
+For magnetostatic simulations
+([`config["Problem"]["Type"]: "Magnetostatic"`](../config/problem.md#config%5B%22Problem%22%5D)),
+the user can specify excitations using either surface current boundaries or flux loop boundaries.
+
+**Surface current boundaries**: Specify a number of source current boundaries to apply unit
+currents to specified surfaces. For each current source, a magnetostatic field is computed by
+applying a unit current to the source of interest, leaving all other sources open. Surfaces
+which are expected to carry current should be labeled as perfectly conducting (PEC), which
+prescribes a zero magnetic flux, or
 [magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
-boundary condition. The resulting fields are used to compute the inductance matrix and its
-inverse, which are written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`,
-respectively, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). A "mutual"
-inductance matrix which has the same form as the mutual capacitance matrix (its entries are
-based on current differences between ports rather than absolute currents) is computed and
-written to `terminal-Mm.csv` in the same directory.
+boundary condition.
+
+**Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`]
+(../config/boundaries.md#boundaries%5B%22FluxLoop%22%5D)): Prescribe magnetic flux through specified
+holes in conducting surfaces. For each flux loop, a magnetostatic field is computed by applying flux
+through the loop of interest, leaving all other flux loops with zero flux.
+
+Both excitation types can be used together in the same simulation for mixed current-flux systems.
+
+### Output files
+
+The resulting fields are used to compute the inductance matrix and its inverse, which are
+written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`, respectively, in
+the directory specified by
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). A mutual
+inductance matrix is computed and written to `terminal-Mm.csv` in the same directory.

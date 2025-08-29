@@ -161,3 +161,33 @@ This is the excitation used for magnetostatic simulation types as well. This opt
 prescribes a unit source surface current excitation on the given boundary in order to
 excite the model. It does does not prescribe any boundary condition to the model and only
 affects the source term on the right hand side.
+
+## Flux boundary
+
+Flux loop boundary conditions are available for magnetostatic simulations and are specified
+using the [`"FluxLoop"`](../config/boundaries.md#boundaries%5B%22FluxLoop%22%5D) boundary
+keyword. This boundary condition prescribes magnetic flux through specified holes in
+conducting surfaces, enabling inductance matrix extraction for flux-based excitations. The
+flux loop boundary condition works by:
+
+ 1. **Identifying holes**: Mesh boundary attributes specify holes through which flux is
+    prescribed
+ 2. **Constraining flux**: The total magnetic flux through each hole is set to the specified
+    value
+ 3. **Solving surface problem**: A 3D surface curl problem that determines the required boundary
+    conditions on specific 2D boundaries connected to the hole regions
+ 4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix
+    extraction
+
+!!! note "Flux loop requirements"
+    
+    Flux loop boundaries require:
+    
+      - Metal surface attributes defining the conducting surface containing the holes
+      - Hole attributes specifying the boundaries through which flux is prescribed
+      - Flux amounts defining the magnetic flux through each hole
+      - Loop normal vector defining the flux orientation
+
+The mesh must be topologically compatible with the flux loop geometry, with holes properly
+defined as boundary surfaces within the conducting region. Currently, only planar holes are
+supported, and nonconformal adaption is not supported.

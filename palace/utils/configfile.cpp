@@ -1384,6 +1384,74 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
 }
 
+void FluxBoundaryData::SetUp(json &boundaries)
+{
+  auto fluxloop = boundaries.find("FluxLoop");
+  if (fluxloop == boundaries.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(fluxloop->is_array(),
+              "\"FluxLoop\" should specify an array in the configuration file!");
+
+  for (auto it = fluxloop->begin(); it != fluxloop->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"FluxLoop\" boundary");
+    auto ret = mapdata.insert(std::make_pair(index, FluxLoopData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"FluxLoop\" "
+                            "boundaries in the configuration file!");
+    auto &data = ret.first->second;
+
+    MFEM_VERIFY(it->find("FluxLoopPEC") != it->end(),
+                "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
+    data.fluxloop_pec = it->at("FluxLoopPEC").get<std::vector<int>>();
+    std::sort(data.fluxloop_pec.begin(), data.fluxloop_pec.end());
+
+    MFEM_VERIFY(it->find("HoleAttributes") != it->end(),
+                "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
+    data.hole_attributes = it->at("HoleAttributes").get<std::vector<int>>();
+
+    MFEM_VERIFY(it->find("FluxAmounts") != it->end(),
+                "Missing \"FluxAmounts\" for \"FluxLoop\" boundary!");
+    data.flux_amounts = it->at("FluxAmounts").get<std::vector<double>>();
+
+    MFEM_VERIFY(data.hole_attributes.size() == data.flux_amounts.size(),
+                "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
+
+    // Parse direction using ParseElementData for flexible string/array support
+    auto direction_it = it->find("Direction");
+    if (direction_it != it->end())
+    {
+      // Create temporary ElementData to use ParseElementData
+      internal::ElementData temp_elem;
+      temp_elem.attributes = {1};  // Dummy attribute for ParseElementData
+
+      // Create temporary JSON with Direction field
+      json temp_json;
+      temp_json["Attributes"] = temp_elem.attributes;
+      temp_json["Direction"] = *direction_it;
+      if (it->find("CoordinateSystem") != it->end())
+      {
+        temp_json["CoordinateSystem"] = it->at("CoordinateSystem");
+      }
+
+      ParseElementData(temp_json, "Direction", false, temp_elem);
+      data.direction = temp_elem.direction;
+    }
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("FluxLoopPEC");
+    it->erase("HoleAttributes");
+    it->erase("FluxAmounts");
+    it->erase("Direction");
+    it->erase("CoordinateSystem");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"FluxLoop\"!\n"
+                    << it->dump(2));
+  }
+}
+
 void SurfaceFluxPostData::SetUp(json &postpro)
 {
   auto flux = postpro.find("SurfaceFlux");
@@ -1536,6 +1604,7 @@ void BoundaryData::SetUp(json &config)
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
+  fluxloop.SetUp(*boundaries);
 
   // Ensure unique indexing of lumpedport, waveport, current.
   {
@@ -1647,6 +1716,7 @@ void BoundaryData::SetUp(json &config)
   boundaries->erase("FloquetWaveVector");
   boundaries->erase("WavePort");
   boundaries->erase("SurfaceCurrent");
+  boundaries->erase("FluxLoop");
   boundaries->erase("Ground");
   boundaries->erase("ZeroCharge");
   boundaries->erase("Terminal");

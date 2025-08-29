@@ -7,6 +7,8 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
 
@@ -240,6 +242,20 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);
+
+// Helper function for matching boundary edges between parent mesh and submesh in parallel.
+void MatchBoundaryEdges(
+    const mfem::ParMesh &mesh, const mfem::ParSubMesh &boundary_submesh,
+    const mfem::Array<int> &submesh_boundary_edge_ids,
+    const std::unordered_map<int, int> &submesh_to_parent_bdr_edge_map,
+    const std::vector<std::unordered_map<int, int>> &hole_dof_to_edge_maps,
+    std::vector<mfem::Array<int>> &hole_boundary_edges);
+
+// Helper function for computing edge orientations on submesh boundaries.
+void ComputeSubmeshBoundaryEdgeOrientations(
+    const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
+    const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,
+    std::unordered_map<int, double> &edge_oriented_lengths, int order);
 
 }  // namespace mesh
 
