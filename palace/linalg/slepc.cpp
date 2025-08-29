@@ -921,7 +921,7 @@ void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / (normK + gamma * normC);
@@ -1869,13 +1869,13 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   {
     ctx->y2 = 0.0;
   }
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
   }
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(0, ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
   }
@@ -1897,7 +1897,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(2, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
   }
@@ -1963,7 +1963,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    if (ctx->has_A2)
+    if (ctx->opInterp)
     {
       ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
     }
@@ -1998,7 +1998,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   }
@@ -2023,7 +2023,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   {
     ctx->y1 = 0.0;
   }
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   }
@@ -2041,7 +2041,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
-  if (ctx->has_A2)
+  if (ctx->opInterp)
   {
     ctx->opInterp->AddMult(2, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
   }
