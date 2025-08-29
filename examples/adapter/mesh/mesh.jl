@@ -1,6 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Generate example meshes with:
+# julia -e 'include("mesh/mesh.jl"); generate_adapter_mesh(filename="adapter.msh")'
+
 using Gmsh: gmsh
 
 """
@@ -234,7 +237,7 @@ function generate_adapter_mesh(;
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information
