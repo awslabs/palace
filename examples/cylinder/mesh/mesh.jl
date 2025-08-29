@@ -7,11 +7,11 @@ using Gmsh: gmsh
     generate_cylindrical_mesh(;
         filename::AbstractString,
         refinement::Integer  = 1,
-        order::Integer       = 1,
+        order::Integer       = 2,
         mesh_type::Integer   = 0,
         radius::Real         = 2.74,
         aspect_ratio::Real   = 1.0,
-        symmetry_plane::Real = true,
+        symmetry_plane::Real = false,
         verbose::Integer     = 5,
         gui::Bool            = false
     )
@@ -33,11 +33,11 @@ Generate a mesh for the cylinder example using Gmsh
 function generate_cylindrical_mesh(;
     filename::AbstractString,
     refinement::Integer  = 1,
-    order::Integer       = 1,
+    order::Integer       = 2,
     mesh_type::Integer   = 0,
     radius::Real         = 2.74,
     aspect_ratio::Real   = 1.0,
-    symmetry_plane::Real = true,
+    symmetry_plane::Real = false,
     verbose::Integer     = 5,
     gui::Bool            = false
 )
@@ -168,7 +168,7 @@ function generate_cylindrical_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
 
     gmsh.option.setNumber("Mesh.Algorithm", 6)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     if (mesh_type == 2)
         base_boundaries = last.(
@@ -195,7 +195,7 @@ function generate_cylindrical_mesh(;
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information
