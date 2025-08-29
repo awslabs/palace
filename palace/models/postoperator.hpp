@@ -160,8 +160,8 @@ protected:
 
   // Helper classes that actually do some measurements that will be saved to csv files.
 
-  DomainPostOperator dom_post_op;           // Energy in bulk
-  SurfacePostOperator surf_post_op;         // Dielectric Interface Energy and Flux
+  DomainPostOperator dom_post_op;    // Energy in bulk
+  SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
@@ -176,6 +176,7 @@ protected:
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts
   void MeasureSurfaceFlux() const;
+  void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
   void MeasureProbes() const;
 
@@ -191,6 +192,7 @@ protected:
     MeasureSurfaceFlux();
     MeasureInterfaceEFieldEnergy();
     MeasureProbes();
+    MeasureFarField();
   }
 
   // Setting grid functions.
