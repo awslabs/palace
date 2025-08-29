@@ -1518,7 +1518,10 @@ void ComputeRotation(const mfem::Vector &normal1, const mfem::Vector &normal2,
   R(0, 0) = R(1, 1) = R(2, 2) = 1.0;
   R += vx;
   Mult(vx, vx, vx2);
-  vx2.Set(1.0 / (1.0 + c), vx2);
+  if (std::abs(1.0 + c) > 1e-8)
+  {
+    vx2.Set(1.0 / (1.0 + c), vx2);
+  }
   R += vx2;
 
   for (int i = 0; i < 3; i++)
@@ -1722,6 +1725,15 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     auto donor_normal = ComputeNormal(mesh, bdr_e_donor, true);
     auto receiver_normal = ComputeNormal(mesh, bdr_e_receiver, false);
 
+    // Return empty mapping if centroids and normal vectors are the same (up to a sign).
+    mfem::Vector diff = donor_centroid;
+    diff -= receiver_centroid;
+    double dot = donor_normal * receiver_normal;
+    if (diff.Norml2() < mesh_tol && std::abs(std::abs(dot) - 1.0) < mesh_tol)
+    {
+      return {};
+    }
+
     // Compute a frame (origin, normal, and two in plane points) for each boundary.
     auto donor_frame =
         Find3DFrame(mesh, bdr_v_donor, donor_centroid, donor_normal, mesh_dim);
@@ -1784,16 +1796,19 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   {
     mesh->EnsureNodes();
   }
-  if (!boundaries.periodic.empty())
+  if (!boundaries.periodic.boundary_pairs.empty())
   {
     auto periodic_mesh = std::move(mesh);
 
-    for (const auto &data : boundaries.periodic)
+    for (const auto &data : boundaries.periodic.boundary_pairs)
     {
       auto periodic_mapping = DeterminePeriodicVertexMapping(periodic_mesh, data);
-      auto p_mesh = std::make_unique<mfem::Mesh>(
-          mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
-      periodic_mesh = std::move(p_mesh);
+      if (!periodic_mapping.empty())
+      {
+        auto p_mesh = std::make_unique<mfem::Mesh>(
+            mfem::Mesh::MakePeriodic(*periodic_mesh, periodic_mapping));
+        periodic_mesh = std::move(p_mesh);
+      }
     }
     mesh = std::move(periodic_mesh);
   }
@@ -2035,9 +2050,9 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
     int f, o, e1 = -1, e2 = -1;
     mesh.GetBdrElementFace(be, &f, &o);
     int attr = mesh.GetBdrAttribute(be);
-    if (!boundaries.periodic.empty())
+    if (!boundaries.periodic.boundary_pairs.empty())
     {
-      for (const auto &data : boundaries.periodic)
+      for (const auto &data : boundaries.periodic.boundary_pairs)
       {
         const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
         auto donor = std::find(da.begin(), da.end(), attr) != da.end();
