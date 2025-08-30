@@ -9,6 +9,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
@@ -186,17 +187,16 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
+MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
 {
+  z.reserve(max_size);
   Q.resize(max_size, ComplexVector());
 }
 
 void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     const SpaceOperator &space_op,
+                                                     MPI_Comm comm,
                                                      Orthogonalization orthog_type)
 {
-  MPI_Comm comm = space_op.GetComm();
-
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
   // stored by its QR decomposition.
@@ -205,7 +205,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {1.0, 1i * omega};
+    std::vector<std::complex<double>> s = {1.0 + 0i, 1i * omega};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
@@ -222,7 +222,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -279,40 +279,45 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
   // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  if (std::abs(z_star[0]) == 0.0)
+  // TODO: currently we always us this. Consider other optimization above again.
+
+  // We could use priority queue here to keep the N lowest values. However, we don't use
+  // std::priority_queue class since we want to have access to the vector and also binary
+  // tree structure of heap class as rebalancing is excessive overhead for tiny size N.
+  using q_t = std::pair<std::complex<double>, double>;
+  std::vector<q_t> queue{};
+  queue.reserve(N);
+
+  const std::size_t nr_sample = 1.0e6;  // must be >= N
+  const auto delta = (end - start) / nr_sample;
+  for (double z_sample = start; z_sample <= end; z_sample += delta)
   {
-    const auto delta = (end - start) / 1.0e6;
-    std::vector<double> Q_star(N, mfem::infinity());
-    while (start <= end)
+    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
+
+    bool partial_full = (queue.size() < N);
+    if (partial_full || Q_sample < queue.back().second)
     {
-      const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
-      for (int i = 0; i < N; i++)
+      auto it_loc = std::upper_bound(queue.begin(), queue.end(), Q_sample,
+                                     [](double q, const q_t &p2) { return q < p2.second; });
+      queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
+      if (!partial_full)
       {
-        if (Q < Q_star[i])
-        {
-          for (int j = i + 1; j < N; j++)
-          {
-            z_star[j] = z_star[j - 1];
-            Q_star[j] = Q_star[j - 1];
-          }
-          z_star[i] = start;
-          Q_star[i] = Q;
-        }
+        queue.pop_back();
       }
-      start += delta;
     }
-    MFEM_VERIFY(
-        N == 0 || std::abs(z_star[0]) > 0.0,
-        fmt::format("Could not locate a maximum error in the range [{}, {}]!", start, end));
   }
+  MFEM_VERIFY(queue.size() == N,
+              fmt::format("Internal failure: queue should be size should be N={} (got {})",
+                          N, queue.size()));
+
   std::vector<double> vals(z_star.size());
-  std::transform(z_star.begin(), z_star.end(), vals.begin(),
-                 [](std::complex<double> z) { return std::real(z); });
+  std::transform(queue.begin(), queue.end(), vals.begin(),
+                 [](const q_t &p) { return p.first.real(); });
   return vals;
 }
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         int max_size_per_excitation)
+                         std::size_t max_size_per_excitation)
   : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -353,6 +358,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
+  // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
+  // expiation index, so this is triggered the first time it is called in drivensolver.
+  if (excitation_idx_cache == excitation_idx)
+  {
+    return;
+  }
+
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
@@ -366,7 +378,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     // Project RHS1 to RHS1r with current PROM.
     if (dim_V > 0)
     {
-      auto comm = space_op.GetComm();
+      MPI_Comm comm = space_op.GetComm();
       RHS1r.conservativeResize(dim_V);
       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
     }
@@ -375,10 +387,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
+
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -409,36 +419,42 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u)
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
 
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
+
   const double normr = linalg::Norml2(comm, u.Real());
   const double normi = linalg::Norml2(comm, u.Imag());
   const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
   const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
+
+  const std::size_t dim_V_new = dim_V + std::size_t(has_real) + std::size_t(has_imag);
+  MFEM_VERIFY(dim_V_new <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
-                        static_cast<std::size_t>(has_imag));
+  const std::size_t dim_V_old = dim_V;
+  v_node_label.reserve(dim_V_new);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
+
   if (has_real)
   {
     V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(fmt::format("{}_re", node_label));
     dim_V++;
   }
   if (has_imag)
   {
     V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(fmt::format("{}_im", node_label));
     dim_V++;
   }
 
@@ -446,35 +462,33 @@ void RomOperator::UpdatePROM(const ComplexVector &u)
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
   if (C)
   {
     Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
   }
   Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  Ar.resize(dim_V, dim_V);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
+  // Placeholder matrices.
+  Ar.resize(dim_V, dim_V);
   RHSr.resize(dim_V);
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
@@ -533,6 +547,66 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   // XX TODO: Not yet implemented
   MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
   return {};
+}
+
+void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
+{
+  auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
+                                                             std::string_view filename)
+  {
+    MFEM_VERIFY(labels.size() == mat.cols(), "Insonsistent PROM size!");
+    auto out = TableWithCSVFile(post_dir / filename);
+    out.table.col_options.float_precision = 17;
+    for (long i = 0; i < mat.cols(); i++)
+    {
+      out.table.insert(labels[i], labels[i]);
+      auto &col = out.table[labels[i]];
+      for (long j = 0; j < mat.rows(); j++)
+      {
+        col << mat(j, i);
+      }
+    }
+    out.WriteFullTableTrunc();
+  };
+
+  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
+  // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
+  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+
+  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
+  // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
+
+  auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
+  print_table(m_Linv.real(), "rom-Linv-re.csv");
+  if (K->Imag())
+  {
+    print_table(m_Linv.imag(), "rom-Linv-im.csv");
+  }
+
+  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  auto m_C = (unit_farad * v_d) * Mr * v_d;
+  print_table(m_C.real(), "rom-C-re.csv");
+  if (C->Imag())
+  {
+    print_table(m_C.imag(), "rom-C-im.csv");
+  }
+
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
+  {
+    auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr * v_d;
+    print_table(m_Rinv.real(), "rom-Rinv-re.csv");
+    if (M->Imag())
+    {
+      print_table(m_Rinv.imag(), "rom-Rinv-im.csv");
+    }
+  }
+
+  // Print orth-R. Don't divide by diagonal to keep state normalization info.
+  print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
