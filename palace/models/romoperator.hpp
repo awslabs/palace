@@ -40,7 +40,7 @@ public:
   MinimalRationalInterpolation(std::size_t max_size);
   void AddSolutionSample(double omega, const ComplexVector &u, MPI_Comm comm,
                          Orthogonalization orthog_type);
-  std::vector<double> FindMaxError(int N) const;
+  std::vector<double> FindMaxError(std::size_t N) const;
 
   const auto &GetSamplePoints() const { return z; }
 };
@@ -132,7 +132,7 @@ public:
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int excitation_idx, int N = 1) const
+  std::vector<double> FindMaxError(int excitation_idx, std::size_t N = 1) const
   {
     return mri.at(excitation_idx).FindMaxError(N);
   }
