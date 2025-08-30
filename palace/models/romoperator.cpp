@@ -218,7 +218,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -275,36 +275,40 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
   // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  if (std::abs(z_star[0]) == 0.0)
+  // TODO: currently we always us this. Consider other optimization above again.
+
+  // We could use priority queue here to keep the N lowest values. However, we don't use
+  // std::priority_queue class since we want to have access to the vector and also binary
+  // tree structure of heap class as rebalancing is excessive overhead for tiny size N.
+  using q_t = std::pair<std::complex<double>, double>;
+  std::vector<q_t> queue{};
+  queue.reserve(N);
+
+  const std::size_t nr_sample = 1.0e6;  // must be >= N
+  const auto delta = (end - start) / nr_sample;
+  for (double z_sample = start; z_sample <= end; z_sample += delta)
   {
-    const auto delta = (end - start) / 1.0e6;
-    std::vector<double> Q_star(N, mfem::infinity());
-    while (start <= end)
+    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
+
+    bool partial_full = (queue.size() < N);
+    if (partial_full || Q_sample < queue.back().second)
     {
-      const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
-      for (int i = 0; i < N; i++)
+      auto it_loc = std::upper_bound(queue.begin(), queue.end(), Q_sample,
+                                     [](double q, const q_t &p2) { return q < p2.second; });
+      queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
+      if (!partial_full)
       {
-        if (Q < Q_star[i])
-        {
-          for (int j = N - 1; j > i; j--)
-          {
-            z_star[j] = z_star[j - 1];
-            Q_star[j] = Q_star[j - 1];
-          }
-          z_star[i] = start;
-          Q_star[i] = Q;
-          break;
-        }
+        queue.pop_back();
       }
-      start += delta;
     }
-    MFEM_VERIFY(
-        N == 0 || std::abs(z_star[0]) > 0.0,
-        fmt::format("Could not locate a maximum error in the range [{}, {}]!", start, end));
   }
+  MFEM_VERIFY(queue.size() == N,
+              fmt::format("Internal failure: queue should be size should be N={} (got {})",
+                          N, queue.size()));
+
   std::vector<double> vals(z_star.size());
-  std::transform(z_star.begin(), z_star.end(), vals.begin(),
-                 [](std::complex<double> z) { return std::real(z); });
+  std::transform(queue.begin(), queue.end(), vals.begin(),
+                 [](const q_t &p) { return p.first.real(); });
   return vals;
 }
 

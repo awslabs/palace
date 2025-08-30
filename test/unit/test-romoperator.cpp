@@ -46,7 +46,8 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator]")
   // By symmetry highest error should be at at zero.
   CHECK_THAT(max_err_1[0], Catch::Matchers::WithinAbsMatcher(0.0, 1e-6));
 
-  // Test that elements of max_error are unique
+  // Test that elements of max_error are unique.
+  // TODO: get better test for multiple N.
   std::sort(max_err_1.begin(), max_err_1.end());
   CHECK(std::adjacent_find(max_err_1.begin(), max_err_1.end()) == max_err_1.end());
 
