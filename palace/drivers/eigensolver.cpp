@@ -345,6 +345,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       post_op.MeasureFinalize(indicator);
     }
   }
+  MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
+                                                         << num_conv << " modes when "
+                                                         << iodata.solver.eigenmode.n
+                                                         << " were requested!");
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
