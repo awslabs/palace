@@ -1,18 +1,34 @@
+diff --git a/.gitmodules b/.gitmodules
+deleted file mode 100644
+index 021f15b..0000000
+--- a/.gitmodules
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[submodule "parmetis"]
+-	path = parmetis
+-	url = https://github.com/scivision/parmetis
+-[submodule "scotch"]
+-	path = scotch
+-	url = https://github.com/scivision/scotch
+-[submodule "scalapack"]
+-	path = scalapack
+-	url = https://github.com/scivision/scalapack
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4e0bb93..19db918 100644
+index 1baac65..66d22ff 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -12,7 +12,7 @@ endif()
+@@ -24,9 +24,6 @@ endif()
  
- project(MUMPS
- LANGUAGES C Fortran
--VERSION 5.7.3.2
-+VERSION 5.7.3.1
- DESCRIPTION "Sparse direct parallel solver"
- HOMEPAGE_URL "http://mumps-solver.org/"
- )
-@@ -48,13 +48,10 @@ find_package(Threads)
+ enable_testing()
  
+-include(GNUInstallDirs)
+-include(cmake/GitSubmodule.cmake)
+-
+ # --- sanity checks
+ if(MSVC AND BUILD_SHARED_LIBS)
+   message(WARNING "MUMPS: Windows IntelLLVM compilers with **shared** libraries is not supported and will probably fail.
+@@ -93,38 +90,16 @@ find_package(Threads)
+ # -- Scalapack / MPI
  if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
 -  if(NOT DEFINED ENV{MKLROOT} AND NOT LAPACK_VENDOR MATCHES "^MKL" OR NOT MUMPS_scalapack)
@@ -20,40 +36,78 @@ index 4e0bb93..19db918 100644
 -    include(cmake/lapack.cmake)
 -  endif()
 +  include(cmake/lapack.cmake)
-   set(NUMERIC_LIBS LAPACK::LAPACK)
++  set(NUMERIC_LIBS LAPACK::LAPACK)
  
--  if(MUMPS_scalapack)
-+  if(scalapack)
+   if(MUMPS_scalapack)
      include(cmake/scalapack.cmake) # this will also create the LAPACK::LAPACK target
-     list(PREPEND NUMERIC_LIBS SCALAPACK::SCALAPACK)
    endif()
-@@ -63,7 +60,7 @@ if(MUMPS_parallel)
-   set(NUMERIC_INC ${MPI_Fortran_INCLUDE_DIRS})
-   list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
  
--  if(MUMPS_openmp)
-+  if(openmp)
-     find_package(OpenMP COMPONENTS C Fortran REQUIRED)
-     list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
+-  # this is needed for Intel MPI ILP64 support
+-  # It's a long-known FindMPI CMake issue
+-  # https://discourse.cmake.org/t/problem-enabling-64-bit-fortran-compilation-on-windows-using-intel-oneapi-with-cmake-on-windows/4541
+-  # https://github.com/scivision/mumps/issues/114
+-  if(MUMPS_intsize64 AND DEFINED ENV{I_MPI_ROOT})
+-    find_path(IMPI_INC64
+-      NAMES mpi.mod
+-      HINTS $ENV{I_MPI_ROOT}
+-      NO_DEFAULT_PATH
+-      PATH_SUFFIXES include/mpi/ilp64
+-      REQUIRED
+-    )
+-    message(STATUS "Found IMPI ILP64 include: ${IMPI_INC64}")
+-    list(PREPEND MPI_Fortran_INCLUDE_DIRS ${IMPI_INC64})
+-
+-    find_library(IMPI_LIB64
+-      NAMES mpi_ilp64 libmpi_ilp64
+-      HINTS $ENV{I_MPI_ROOT}
+-      NO_DEFAULT_PATH
+-      PATH_SUFFIXES lib
+-      REQUIRED
+-    )
+-    message(STATUS "Found IMPI ILP64 library: ${IMPI_LIB64}")
++  if(MUMPS_openmp)
++    find_package(OpenMP COMPONENTS C Fortran REQUIRED)
++    list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
    endif()
-@@ -99,14 +96,6 @@ endif()
  
- list(APPEND ORDERING_LIBS pord)
+ else()
+@@ -165,28 +140,13 @@ if(MUMPS_scotch)
+ 
+ endif()
+ 
+-
+-if(MUMPS_metis OR MUMPS_parmetis)
+-  set(IDXTYPEWIDTH $<IF:$<BOOL:${MUMPS_intsize64}>,64,32>)
+-  git_submodule(${PROJECT_SOURCE_DIR}/parmetis)
+-
+-  if(MUMPS_parmetis)
+-    add_subdirectory(parmetis)
+-    list(APPEND ORDERING_DEFS parmetis)
+-  else()
+-    git_submodule(${PROJECT_SOURCE_DIR}/parmetis/METIS)
+-    add_subdirectory(parmetis/METIS)
+-  endif()
+-
+-  list(APPEND ORDERING_DEFS REALTYPEWIDTH=32 IDXTYPEWIDTH=${IDXTYPEWIDTH} metis)
++if(MUMPS_metis)
++  find_package(METIS REQUIRED)
+ endif()
  
 -install(FILES
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindLAPACK.cmake
 -${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindSCALAPACK.cmake
--${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindMETIS.cmake
--${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindScotch.cmake
+-${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindSCOTCH.cmake
 -DESTINATION cmake
 -)
--
++if (MUMPS_parmetis)
++  find_package(PARMETIS REQUIRED)
++endif()
+ 
  message(STATUS "MUMPS ORDERING_DEFS: ${ORDERING_DEFS}")
- message(STATUS "MUMPS ORDERING_LIBS: ${ORDERING_LIBS}")
  message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 56dde6f..0000000
+index 7b28a40..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
 @@ -1,570 +0,0 @@
@@ -102,9 +156,9 @@ index 56dde6f..0000000
 -
 -
 -``AOCL``
--  AMD ScaLAPACK fork of Netlib ScaLAPACK.
+-  AMD LAPACK fork of Netlib LAPACK.
 -  Requires LAPACK AOCL
--  https://www.amd.com/en/developer/aocl/scalapack.html
+-  https://www.amd.com/en/developer/aocl/dense.html
 -``AOCL64``
 -  AOCL 64-bit integers  (default is 32-bit integers)
 -
@@ -328,7 +382,7 @@ index 56dde6f..0000000
 -endif()
 -
 -set(_s "LP64")
--if(AOCL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
+-if(AOCL64 IN_LIST LAPACK_FIND_COMPONENTS)
 -  string(PREPEND _s "I")
 -endif()
 -
@@ -432,8 +486,6 @@ index 56dde6f..0000000
 -macro(lapack_mkl)
 -# https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2025-0/cmake-config-for-onemkl.html
 -
--set(MKL_ARCH "intel64")
--
 -set(MKL_INTERFACE "lp64")
 -if(MKL64 IN_LIST LAPACK_FIND_COMPONENTS)
 -  string(PREPEND MKL_INTERFACE "i")
@@ -446,12 +498,14 @@ index 56dde6f..0000000
 -
 -# MKL_THREADING default: "intel_thread" which is Intel OpenMP
 -# some systems have messed up OpenMP, so sequential unless requested
--if(TBB IN_LIST SCALAPACK_FIND_COMPONENTS)
--  set(MKL_THREADING "tbb_thread")
--elseif(OpenMP IN_LIST SCALAPACK_FIND_COMPONENTS)
--  set(MKL_THREADING "intel_thread")
--else()
--  set(MKL_THREADING "sequential")
+-if(NOT DEFINED MKL_THREADING)
+-  if(TBB IN_LIST LAPACK_FIND_COMPONENTS)
+-    set(MKL_THREADING "tbb_thread")
+-  elseif(OpenMP IN_LIST LAPACK_FIND_COMPONENTS)
+-    set(MKL_THREADING "intel_thread")
+-  else()
+-    set(MKL_THREADING "sequential")
+-  endif()
 -endif()
 -
 -# default: dynamic
@@ -459,7 +513,7 @@ index 56dde6f..0000000
 -  set(MKL_LINK "static")
 -endif()
 -
--find_package(MKL CONFIG HINTS $ENV{MKLROOT})
+-find_package(MKL CONFIG)
 -
 -if(NOT MKL_FOUND)
 -  return()
@@ -627,8 +681,175 @@ index 56dde6f..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
+diff --git a/cmake/FindMETIS.cmake b/cmake/FindMETIS.cmake
+new file mode 100644
+index 0000000..566119c
+--- /dev/null
++++ b/cmake/FindMETIS.cmake
+@@ -0,0 +1,73 @@
++# FindMETIS.cmake
++# Finds the METIS library and sets the following variables:
++#  METIS_FOUND - True if METIS was found
++#  METIS_INCLUDE_DIRS - METIS include directories
++#  METIS_LIBRARIES - METIS libraries
++#  METIS_VERSION - METIS version if found
++
++# Try to find METIS using pkg-config first
++find_package(PkgConfig QUIET)
++if(PKG_CONFIG_FOUND)
++  pkg_check_modules(PC_METIS QUIET metis)
++endif()
++
++# Find the METIS header
++find_path(METIS_INCLUDE_DIR
++  NAMES metis.h
++  PATHS
++    ${PC_METIS_INCLUDE_DIRS}
++    /usr/include
++    /usr/local/include
++    $ENV{METIS_DIR}/include
++  PATH_SUFFIXES metis
++)
++
++# Find the METIS library
++find_library(METIS_LIBRARY
++  NAMES metis
++  PATHS
++    ${PC_METIS_LIBRARY_DIRS}
++    /usr/lib
++    /usr/local/lib
++    $ENV{METIS_DIR}/lib
++)
++
++# Try to find version information
++if(METIS_INCLUDE_DIR)
++  file(STRINGS "${METIS_INCLUDE_DIR}/metis.h" METIS_VERSION_MAJOR_LINE REGEX "^#define[\t ]+METIS_VER_MAJOR[\t ]+[0-9]+")
++  file(STRINGS "${METIS_INCLUDE_DIR}/metis.h" METIS_VERSION_MINOR_LINE REGEX "^#define[\t ]+METIS_VER_MINOR[\t ]+[0-9]+")
++
++  string(REGEX REPLACE "^#define[\t ]+METIS_VER_MAJOR[\t ]+([0-9]+)" "\\1" METIS_VERSION_MAJOR "${METIS_VERSION_MAJOR_LINE}")
++  string(REGEX REPLACE "^#define[\t ]+METIS_VER_MINOR[\t ]+([0-9]+)" "\\1" METIS_VERSION_MINOR "${METIS_VERSION_MINOR_LINE}")
++
++  set(METIS_VERSION "${METIS_VERSION_MAJOR}.${METIS_VERSION_MINOR}")
++endif()
++
++# Handle standard arguments
++include(FindPackageHandleStandardArgs)
++find_package_handle_standard_args(METIS
++  REQUIRED_VARS
++    METIS_LIBRARY
++    METIS_INCLUDE_DIR
++  VERSION_VAR METIS_VERSION
++)
++
++# Set output variables
++if(METIS_FOUND)
++  set(METIS_LIBRARIES ${METIS_LIBRARY})
++  set(METIS_INCLUDE_DIRS ${METIS_INCLUDE_DIR})
++
++  if(NOT TARGET metis::metis)
++    add_library(metis::metis UNKNOWN IMPORTED)
++    set_target_properties(metis::metis PROPERTIES
++      IMPORTED_LOCATION "${METIS_LIBRARY}"
++      INTERFACE_INCLUDE_DIRECTORIES "${METIS_INCLUDE_DIRS}"
++    )
++  endif()
++endif()
++
++# Mark advanced variables
++mark_as_advanced(
++  METIS_INCLUDE_DIR
++  METIS_LIBRARY
++)
+diff --git a/cmake/FindPARMETIS.cmake b/cmake/FindPARMETIS.cmake
+new file mode 100644
+index 0000000..8d680c5
+--- /dev/null
++++ b/cmake/FindPARMETIS.cmake
+@@ -0,0 +1,82 @@
++# FindPARMETIS.cmake
++# Finds the PARMETIS library and sets the following variables:
++#  PARMETIS_FOUND - True if PARMETIS was found
++#  PARMETIS_INCLUDE_DIRS - PARMETIS include directories
++#  PARMETIS_LIBRARIES - PARMETIS libraries
++#  PARMETIS_VERSION - PARMETIS version if found
++
++# Try to find PARMETIS using pkg-config first
++find_package(PkgConfig QUIET)
++if(PKG_CONFIG_FOUND)
++  pkg_check_modules(PC_PARMETIS QUIET parmetis)
++endif()
++
++# Find MPI as PARMETIS requires it
++find_package(MPI REQUIRED)
++
++# Find METIS as PARMETIS requires it
++find_package(METIS REQUIRED)
++
++# Find the PARMETIS header
++find_path(PARMETIS_INCLUDE_DIR
++  NAMES parmetis.h
++  PATHS
++    ${PC_PARMETIS_INCLUDE_DIRS}
++    /usr/include
++    /usr/local/include
++    $ENV{PARMETIS_DIR}/include
++  PATH_SUFFIXES parmetis
++)
++
++# Find the PARMETIS library
++find_library(PARMETIS_LIBRARY
++  NAMES parmetis
++  PATHS
++    ${PC_PARMETIS_LIBRARY_DIRS}
++    /usr/lib
++    /usr/local/lib
++    $ENV{PARMETIS_DIR}/lib
++)
++
++# Try to find version information
++if(PARMETIS_INCLUDE_DIR)
++  file(STRINGS "${PARMETIS_INCLUDE_DIR}/parmetis.h" PARMETIS_VERSION_MAJOR_LINE REGEX "^#define[\t ]+PARMETIS_MAJOR_VERSION[\t ]+[0-9]+")
++  file(STRINGS "${PARMETIS_INCLUDE_DIR}/parmetis.h" PARMETIS_VERSION_MINOR_LINE REGEX "^#define[\t ]+PARMETIS_MINOR_VERSION[\t ]+[0-9]+")
++
++  string(REGEX REPLACE "^#define[\t ]+PARMETIS_MAJOR_VERSION[\t ]+([0-9]+)" "\\1" PARMETIS_VERSION_MAJOR "${PARMETIS_VERSION_MAJOR_LINE}")
++  string(REGEX REPLACE "^#define[\t ]+PARMETIS_MINOR_VERSION[\t ]+([0-9]+)" "\\1" PARMETIS_VERSION_MINOR "${PARMETIS_VERSION_MINOR_LINE}")
++
++  set(PARMETIS_VERSION "${PARMETIS_VERSION_MAJOR}.${PARMETIS_VERSION_MINOR}")
++endif()
++
++# Handle standard arguments
++include(FindPackageHandleStandardArgs)
++find_package_handle_standard_args(PARMETIS
++  REQUIRED_VARS
++    PARMETIS_LIBRARY
++    PARMETIS_INCLUDE_DIR
++    MPI_FOUND
++    METIS_FOUND
++  VERSION_VAR PARMETIS_VERSION
++)
++
++# Set output variables
++if(PARMETIS_FOUND)
++  set(PARMETIS_LIBRARIES ${PARMETIS_LIBRARY} ${METIS_LIBRARIES} ${MPI_LIBRARIES})
++  set(PARMETIS_INCLUDE_DIRS ${PARMETIS_INCLUDE_DIR} ${METIS_INCLUDE_DIRS} ${MPI_INCLUDE_PATH})
++
++  if(NOT TARGET parmetis::parmetis)
++    add_library(parmetis::parmetis UNKNOWN IMPORTED)
++    set_target_properties(parmetis::parmetis PROPERTIES
++      IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
++      INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
++      INTERFACE_LINK_LIBRARIES "metis::metis;MPI::MPI_C"
++    )
++  endif()
++endif()
++
++# Mark advanced variables
++mark_as_advanced(
++  PARMETIS_INCLUDE_DIR
++  PARMETIS_LIBRARY
++)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index d1880b7..d2ea331 100644
+index 6d0cbdd..d98c408 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
 @@ -62,8 +62,6 @@ References
@@ -654,7 +875,7 @@ index d1880b7..d2ea331 100644
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
  
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
-@@ -285,20 +280,13 @@ endif()
+@@ -289,20 +284,13 @@ endif()
  
  if(SCALAPACK_FOUND)
    # need if _FOUND guard as can't overwrite imported target even if bad
@@ -676,37 +897,114 @@ index d1880b7..d2ea331 100644
  
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
-@@ -306,5 +294,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+@@ -310,5 +298,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
      endif()
    endif()
  endif()
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
+diff --git a/cmake/GitSubmodule.cmake b/cmake/GitSubmodule.cmake
+deleted file mode 100644
+index e7fe55d..0000000
+--- a/cmake/GitSubmodule.cmake
++++ /dev/null
+@@ -1,69 +0,0 @@
+-# get/update Git submodule directory to CMake, assuming the
+-# Git submodule directory is a CMake project.
+-# If the submodule directory is not in the same directory, descend level by level with multiple
+-# git_submodule() calls.
+-#
+-# For example, in the MUMPS project, we have submodule directories
+-# mumps/parmetis/METIS/GKlib
+-#
+-# from the mumps/ directory to enable METIS but not ParMETIS if the user desires, we do
+-# git_submodule(${PROJECT_SOURCE_DIR}/parmetis)
+-# if(MUMPS_parmetis)
+-#   add_subdirectory(${PROJECT_SOURCE_DIR}/parmetis)
+-#   # ParMETIS project itself handles METIS submodule, then METIS handles GKlib submodule
+-# else()
+-#   git_submodule(${PROJECT_SOURCE_DIR}/parmetis/METIS)
+-#   add_subdirectory(${PROJECT_SOURCE_DIR}/parmetis/METIS)
+-#   METIS project itself handles GKlib submodule
+-# endif()
+-
+-
+-function(git_submodule submod_dir)
+-
+-
+-if(EXISTS ${submod_dir}/CMakeLists.txt)
+-  return()
+-endif()
+-
+-find_package(Git REQUIRED)
+-
+-set(CMAKE_EXECUTE_PROCESS_COMMAND_ECHO STDOUT)
+-
+-cmake_path(GET submod_dir PARENT_PATH mod_dir)
+-# we need to descend level by level
+-
+-if(IS_DIRECTORY ${mod_dir}/.git)
+-
+-message(STATUS "${mod_dir} is a Git repository, updating submodule ${submod_dir}")
+-
+-execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive -- ${submod_dir}
+-  WORKING_DIRECTORY ${mod_dir}
+-  COMMAND_ERROR_IS_FATAL ANY
+-)
+-
+-else()
+-
+-cmake_path(GET submod_dir STEM submod_name)
+-message(STATUS "${PROJECT_SOURCE_DIR} is not a Git repository.")
+-message(STATUS "Getting ${mod_dir}/.gitmodules info to Git clone ${submod_name} into ${submod_dir}")
+-
+-execute_process(
+-  COMMAND ${GIT_EXECUTABLE} config
+-    --file ${mod_dir}/.gitmodules
+-    --get submodule.${submod_name}.url
+-  WORKING_DIRECTORY ${mod_dir}
+-  OUTPUT_VARIABLE submod_url
+-  OUTPUT_STRIP_TRAILING_WHITESPACE
+-  COMMAND_ERROR_IS_FATAL ANY
+-)
+-# Some platforms like Windows, Git might refuse to clone into a totally empty existing directory
+-# this is a known technique, to "git clone" from that empty submod_dir directory to make it work.
+-execute_process(
+-  COMMAND ${GIT_EXECUTABLE} clone ${submod_url} ${submod_dir}
+-  WORKING_DIRECTORY ${submod_dir}
+-  COMMAND_ERROR_IS_FATAL ANY
+-)
+-
+-endif()
+-
+-endfunction()
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 3f0997e..14ebbe6 100644
+index 98cece3..6776359 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
-@@ -1,11 +1,3 @@
+@@ -1,11 +1,2 @@
  # Handle options for finding LAPACK
- 
+-
 -if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -  set(LAPACK_VENDOR MKL)
 -endif()
 -
--if(find_static)
+-if(MUMPS_find_static)
 -  list(APPEND LAPACK_VENDOR STATIC)
 -endif()
 -
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 8727508..2132c73 100644
+index 677a3a1..22f89d4 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -3,39 +3,7 @@ include(GNUInstallDirs)
+@@ -1,52 +1,2 @@
+-include(ExternalProject)
+-include(GNUInstallDirs)
  
- if(find AND NOT TARGET SCALAPACK::SCALAPACK)
- 
+-if(MUMPS_find_SCALAPACK AND NOT TARGET SCALAPACK::SCALAPACK)
+-
 -# Make SCALAPACK_VENDOR match LAPACK_VENDOR
 -
 -if(NOT DEFINED SCALAPACK_VENDOR)
@@ -730,17 +1028,50 @@ index 8727508..2132c73 100644
 -endif()
 -
 -if(MKL IN_LIST SCALAPACK_VENDOR AND NOT MKL64 IN_LIST SCALAPACK_VENDOR)
--  if(intsize64)
+-  if(MUMPS_intsize64)
 -    list(APPEND SCALAPACK_VENDOR MKL64)
 -  endif()
 -endif()
 -
--if(find_static)
+-if(MUMPS_find_static)
 -  list(APPEND SCALAPACK_VENDOR STATIC)
 -endif()
 -
 -find_package(SCALAPACK COMPONENTS ${SCALAPACK_VENDOR})
+-
+-endif()
+-
+-if(SCALAPACK_FOUND OR TARGET SCALAPACK::SCALAPACK)
+-  return()
+-elseif(DEFINED SCALAPACK_VENDOR)
+-  message(FATAL_ERROR "Scalapack from ${SCALAPACK_VENDOR} not found.")
+-endif()
+-
+-# build scalapack
+-set(SCALAPACK_BUILD_TESTING off)
+-
+-git_submodule(${PROJECT_SOURCE_DIR}/scalapack)
+-add_subdirectory(${PROJECT_SOURCE_DIR}/scalapack)
 +find_package(SCALAPACK)
- 
- endif()
- 
+\ No newline at end of file
+diff --git a/parmetis b/parmetis
+deleted file mode 160000
+index dfa18ea..0000000
+--- a/parmetis
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit dfa18ea5e1710ff0b450a2b1dbce7677a0f9f627
+diff --git a/scalapack b/scalapack
+deleted file mode 160000
+index b0e5964..0000000
+--- a/scalapack
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit b0e5964292dc26e2fcb96c985103f47f8f007253
+diff --git a/scotch b/scotch
+deleted file mode 160000
+index 2894387..0000000
+--- a/scotch
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 28943871113c3abde289bcdc21fc938a8f0c07d5

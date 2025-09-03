@@ -60,6 +60,7 @@ ExternalProject_Add(sundials
   DEPENDS           ${SUNDIALS_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_SUNDIALS_URL}
   GIT_TAG           ${EXTERN_SUNDIALS_GIT_TAG}
+  GIT_SUBMODULES    ""
   SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/sundials
   BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/sundials-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
