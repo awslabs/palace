@@ -20,6 +20,8 @@ CEED_QFUNCTION(f_build_geom_factor_22)(void *, CeedInt Q, const CeedScalar *cons
 
     qd_attr[i] = attr[i];
     qd_wdetJ[i] = qw[i] * detJ;
+    // TODO: Isn't this inverse transpose of Jacobian?
+    // and why are we storing the transpose anyway?
     qd_adjJt[i + Q * 0] = adjJt_loc[0] / detJ;
     qd_adjJt[i + Q * 1] = adjJt_loc[1] / detJ;
     qd_adjJt[i + Q * 2] = adjJt_loc[2] / detJ;

@@ -18,7 +18,7 @@ CEED_QFUNCTION_HELPER CeedScalar DetJ22(const CeedScalar J[4])
 template <bool ComputeDet = false>
 CEED_QFUNCTION_HELPER CeedScalar AdjJt22(const CeedScalar J[4], CeedScalar adjJt[4])
 {
-  // Compute adj(J)^T / det(J) and store the result.
+  // Compute adj(J)^T and det(J) and store the result.
   // J: 0 2   adj(J):  J22 -J12
   //    1 3           -J21  J11
   adjJt[0] = J[3];

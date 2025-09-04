@@ -14,7 +14,7 @@
 // out[1] is active vector curl, shape [qcomp=dim, ncomp=1, Q]
 
 // In 2D, this actually uses the L2 Piola transformation on the curl (u = 1 / det(J) ̂u) and
-// the curl is has qcomp=1. There is no boundary integrator support in 2D.
+// the curl has qcomp=1. There is no boundary integrator support in 2D.
 // in[0] is geometry quadrature data, shape [ncomp=2+space_dim*dim, Q]
 // in[1] is quadrature weights, shape [Q]
 // in[2] is active vector, shape [qcomp=dim, ncomp=1, Q]
