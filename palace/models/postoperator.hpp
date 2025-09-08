@@ -93,25 +93,38 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // ParaView Measure & Print.
+  // Field output format control flags
+  bool enable_paraview_output = false;
+  bool enable_mfem_gf_output = false;
 
-  // Option to write ParaView fields at all and rate / number of iterations printed.
-  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (TRANSIENT)
-  std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
-  std::vector<std::size_t> paraview_save_indices = {};  // explicit saves for ParaView
-  // Whether any paraview fields will be written.
-  bool write_paraview_fields() const
-  {
-    return (paraview_delta_post > 0) || (paraview_n_post > 0) ||
-           !paraview_save_indices.empty();
+  // How many / which fields to output
+  std::size_t output_delta_post = 0;  // printing rate (TRANSIENT)
+  std::size_t output_n_post = 0;      // max printing (OTHER SOLVERS)
+  std::vector<std::size_t> output_save_indices = {};  // explicit saves
+  
+  // Whether any fields should be written at all
+  bool should_write_fields() const { return enable_paraview_output || enable_mfem_gf_output; }
+
+  // Whether any fields should be written for this step
+  bool should_write_fields(std::size_t step) const { return should_write_fields() && 
+    (output_delta_post > 0 && step % output_delta_post == 0) ||
+    (output_n_post > 0 && step < output_n_post) ||
+    std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(), step);
   }
-  // Whether paraview fields should be written for this particular step.
-  bool write_paraview_fields(std::size_t step);
+
+  // Whether fields should be written for a particular output format (at a given step)
+  bool should_write_paraview_fields() const { return enable_paraview_output; }
+  bool should_write_paraview_fields(std::size_t step) const { return enable_paraview_output && should_write_fields(step); }
+  bool should_write_mfem_gf_fields() const { return enable_mfem_gf_output; }
+  bool should_write_mfem_gf_fields(std::size_t step) const { return enable_mfem_gf_output && should_write_fields(step); }
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if write_paraview_fields() is true.
+  // and we only want initialize it if should_write_paraview_fields() returns true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+
+  // MFEM grid function output directory
+  std::string mfem_gf_output_dir;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
@@ -130,6 +143,7 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
+  void SetupFieldCoefficients();
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 
 public:
@@ -143,8 +157,10 @@ protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
   // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(double time, int step);
-  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteParaviewFields(double time, int step);
+  void WriteParaviewFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteMFEMGridFunctions(double time, int step);
+  void WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator = nullptr);
 
   // CSV Measure & Print.
 

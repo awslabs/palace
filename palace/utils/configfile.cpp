@@ -1881,6 +1881,14 @@ void DrivenSolverData::SetUp(json &solver)
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
 
+  // Parse output formats
+  auto output_formats_it = driven->find("OutputFormats");
+  if (output_formats_it != driven->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+  }
+
   // Debug
   if constexpr (JSON_DEBUG)
   {
@@ -1896,6 +1904,8 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
     std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
   }
 
   // Cleanup
@@ -1909,6 +1919,7 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("AdaptiveTol");
   driven->erase("AdaptiveMaxSamples");
   driven->erase("AdaptiveConvergenceMemory");
+  driven->erase("OutputFormats");
   MFEM_VERIFY(driven->empty(),
               "Found an unsupported configuration file keyword under \"Driven\"!\n"
                   << driven->dump(2));
@@ -1957,6 +1968,14 @@ void EigenSolverData::SetUp(json &solver)
 
   MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
 
+  // Parse output formats
+  auto output_formats_it = eigenmode->find("OutputFormats");
+  if (output_formats_it != eigenmode->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+  }
+
   // Cleanup
   eigenmode->erase("Target");
   eigenmode->erase("Tol");
@@ -1977,6 +1996,7 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("PreconditionerLag");
   eigenmode->erase("PreconditionerLagTol");
   eigenmode->erase("MaxRestart");
+  eigenmode->erase("OutputFormats");
   MFEM_VERIFY(eigenmode->empty(),
               "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
                   << eigenmode->dump(2));
@@ -2015,8 +2035,17 @@ void ElectrostaticSolverData::SetUp(json &solver)
   }
   n_post = electrostatic->value("Save", n_post);
 
+  // Parse output formats
+  auto output_formats_it = electrostatic->find("OutputFormats");
+  if (output_formats_it != electrostatic->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+  }
+
   // Cleanup
   electrostatic->erase("Save");
+  electrostatic->erase("OutputFormats");
   MFEM_VERIFY(electrostatic->empty(),
               "Found an unsupported configuration file keyword under \"Electrostatic\"!\n"
                   << electrostatic->dump(2));
@@ -2025,6 +2054,8 @@ void ElectrostaticSolverData::SetUp(json &solver)
   if constexpr (JSON_DEBUG)
   {
     std::cout << "Save: " << n_post << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
   }
 }
 
@@ -2037,8 +2068,17 @@ void MagnetostaticSolverData::SetUp(json &solver)
   }
   n_post = magnetostatic->value("Save", n_post);
 
+  // Parse output formats
+  auto output_formats_it = magnetostatic->find("OutputFormats");
+  if (output_formats_it != magnetostatic->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+  }
+
   // Cleanup
   magnetostatic->erase("Save");
+  magnetostatic->erase("OutputFormats");
   MFEM_VERIFY(magnetostatic->empty(),
               "Found an unsupported configuration file keyword under \"Magnetostatic\"!\n"
                   << magnetostatic->dump(2));
@@ -2047,6 +2087,8 @@ void MagnetostaticSolverData::SetUp(json &solver)
   if constexpr (JSON_DEBUG)
   {
     std::cout << "Save: " << n_post << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
   }
 }
 
@@ -2100,6 +2142,14 @@ void TransientSolverData::SetUp(json &solver)
                 "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
   }
 
+  // Parse output formats
+  auto output_formats_it = transient->find("OutputFormats");
+  if (output_formats_it != transient->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+  }
+
   // Cleanup
   transient->erase("Type");
   transient->erase("Excitation");
@@ -2111,6 +2161,7 @@ void TransientSolverData::SetUp(json &solver)
   transient->erase("Order");
   transient->erase("RelTol");
   transient->erase("AbsTol");
+  transient->erase("OutputFormats");
   MFEM_VERIFY(transient->empty(),
               "Found an unsupported configuration file keyword under \"Transient\"!\n"
                   << transient->dump(2));
@@ -2128,6 +2179,8 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "Order: " << order << '\n';
     std::cout << "RelTol: " << rel_tol << '\n';
     std::cout << "AbsTol: " << abs_tol << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
   }
 }
 
