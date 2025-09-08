@@ -953,5 +953,4 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                      mesh_tol);
 }
 
-
 }  // namespace palace::mesh

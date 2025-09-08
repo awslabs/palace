@@ -1,8 +1,8 @@
+#include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include <nlohmann/json.hpp>
-#include <vector>
+#include <catch2/generators/catch_generators_all.hpp>
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
