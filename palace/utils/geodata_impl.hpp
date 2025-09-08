@@ -9,6 +9,7 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
+#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -67,6 +68,20 @@ BoundingBall Welzl(std::vector<std::size_t> P, std::vector<std::size_t> R,
 BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
                                        const std::vector<Eigen::Vector3d> &vertices,
                                        int dominant_rank);
+
+// Compute a normal vector from an element transformation, optionally ensure aligned
+// (| normal ⋅ align | > 0)
+void Normal(mfem::ElementTransformation &T, mfem::Vector &normal,
+            const mfem::Vector *const align);
+
+// Determine the vertex mapping between donor and receiver boundary attributes.
+// Uses the translation vector or affine transformation matrix specified in the
+// configuration file. If not provided, attempts to automatically detect the
+// affine transformation between donor and receiver boundary vertices.
+std::vector<int>
+DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
+                               const struct palace::config::PeriodicData &data,
+                               const double tol = 1e-8);
 
 }  // namespace mesh
 

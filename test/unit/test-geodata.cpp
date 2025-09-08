@@ -1,7 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
-
+#include <nlohmann/json.hpp>
 #include <vector>
 
 #include "utils/geodata.hpp"
@@ -13,6 +13,7 @@
 
 namespace palace
 {
+using json = nlohmann::json;
 using namespace Catch;
 namespace fs = std::filesystem;
 
@@ -293,6 +294,23 @@ TEST_CASE("TetToHex", "[geodata]")
     }
   }
 #endif
+}
+
+TEST_CASE("PeriodicGmsh", "[geodata]")
+{
+  auto torus_path = fs::path(MFEM_DATA_PATH) / "periodic-torus-sector.msh";
+  std::ifstream fi(torus_path.string());
+  std::unique_ptr<mfem::Mesh> mesh = std::make_unique<mfem::Mesh>(fi, false, false, true);
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
+  auto config = json::parse(jsonstream);
+  config::BoundaryData boundary_torus;
+  REQUIRE_NOTHROW(boundary_torus.SetUp(*config.find("boundaries_periodic_torus")));
+  for (const auto &data : boundary_torus.periodic.boundary_pairs)
+  {
+    auto periodic_mapping = mesh::DeterminePeriodicVertexMapping(mesh, data);
+    REQUIRE(periodic_mapping.empty());
+  }
 }
 
 }  // namespace palace
