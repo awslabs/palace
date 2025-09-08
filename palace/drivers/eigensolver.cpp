@@ -159,13 +159,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     eigen->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
   }
-  else if (C || has_A2)
+  else if (has_A2)
   {
-    eigen->SetOperators(space_op, *K, *C, *M, scale);
-    if (has_A2)
+    if (C)
     {
-      eigen->SetNLInterpolation(*interp_op);
+      eigen->SetOperators(space_op, *K, *C, *M, scale);
     }
+    else
+    {
+      eigen->SetOperators(space_op, *K, *M, scale);
+    }
+    eigen->SetNLInterpolation(*interp_op);
+  }
+  else if (C)
+  {
+    eigen->SetOperators(*K, *C, *M, scale);
   }
   else
   {
