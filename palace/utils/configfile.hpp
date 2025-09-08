@@ -628,7 +628,6 @@ public:
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
-  // FloquetData floquet;
   BoundaryPostData postpro = {};
 
   void SetUp(json &config);
