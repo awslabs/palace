@@ -345,7 +345,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
-    qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    if (C)
+    {
+      qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    }
+    else
+    {
+      qn->SetOperators(space_op, *K, *M, EigenvalueSolver::ScaleType::NONE);
+    }
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
                              iodata.solver.eigenmode.preconditioner_lag_tol);
