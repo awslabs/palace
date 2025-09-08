@@ -37,7 +37,15 @@
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "MaxRestart": { "type" : "integer", "minimum": 0 },
+        "OutputFormats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "Paraview": { "type": "boolean" },
+            "MFEMGridFunction": { "type": "boolean" }
+          }
+        }
       }
     },
     "Driven":
@@ -99,7 +107,15 @@
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
-        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 }
+        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
+        "OutputFormats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "Paraview": { "type": "boolean" },
+            "MFEMGridFunction": { "type": "boolean" }
+          }
+        }
       }
     },
     "Transient":
@@ -118,7 +134,15 @@
         "SaveStep": { "type": "integer" },
         "Order": {"type": "integer", "minimum": 2, "maximum": 5},
         "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
-        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
+        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0},
+        "OutputFormats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "Paraview": { "type": "boolean" },
+            "MFEMGridFunction": { "type": "boolean" }
+          }
+        }
       }
     },
     "Electrostatic":
@@ -128,7 +152,15 @@
       "required": [],
       "properties":
       {
-        "Save": { "type": "integer", "minimum": 0 }
+        "Save": { "type": "integer", "minimum": 0 },
+        "OutputFormats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "Paraview": { "type": "boolean" },
+            "MFEMGridFunction": { "type": "boolean" }
+          }
+        }
       }
     },
     "Magnetostatic":
@@ -138,7 +170,15 @@
       "required": [],
       "properties":
       {
-        "Save": { "type": "integer", "minimum": 0 }
+        "Save": { "type": "integer", "minimum": 0 },
+        "OutputFormats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "Paraview": { "type": "boolean" },
+            "MFEMGridFunction": { "type": "boolean" }
+          }
+        }
       }
     },
     "Linear":

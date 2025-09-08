@@ -656,6 +656,16 @@ public:
 
 // Solver Configuration.
 
+struct OutputFormatsData
+{
+public:
+  // Enable Paraview output format.
+  bool paraview = true;
+
+  // Enable MFEM Grid Function output format.
+  bool mfem_grid_function = false;
+};
+
 struct DrivenSolverData
 {
 public:
@@ -680,6 +690,9 @@ public:
 
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;
+
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
 
   void SetUp(json &solver);
 };
@@ -748,6 +761,9 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
+
   void SetUp(json &solver);
 };
 
@@ -757,6 +773,9 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
+
   void SetUp(json &solver);
 };
 
@@ -765,6 +784,9 @@ struct MagnetostaticSolverData
 public:
   // Number of fields to write to disk.
   int n_post = 0;
+
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
 
   void SetUp(json &solver);
 };
@@ -799,6 +821,9 @@ public:
   // Adaptive time-stepping tolerances for CVODE and ARKODE.
   double rel_tol = 1e-4;
   double abs_tol = 1e-9;
+
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
 
   void SetUp(json &solver);
 };
