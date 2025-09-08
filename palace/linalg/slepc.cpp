@@ -363,6 +363,13 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
 }
 
 void SlepcEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                         const ComplexOperator &M,
+                                         EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
+}
+
+void SlepcEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                                          const ComplexOperator &C, const ComplexOperator &M,
                                          EigenvalueSolver::ScaleType type)
 {
@@ -882,6 +889,128 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
   normK = normC = normM = 0.0;
 }
 
+void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                        const ComplexOperator &M,
+                                        EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled linearized operators which define the block 2x2
+  // eigenvalue problem.
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opC = &C;
+  opM = &M;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A0));
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A1));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
+    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
+    PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
+                "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  x2.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+  y2.SetSize(opK->Height());
+  x1.UseDevice(true);
+  x2.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+
+  // Configure linear solver.
+  if (first)
+  {
+    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEPLinear);
+  }
+}
+
+void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
+                                        const ComplexOperator &K, const ComplexOperator &M,
+                                        EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled linearized operators which define the block 2x2
+  // eigenvalue problem.
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opM = &M;
+  space_op = &space_op_ref;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A0));
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A1));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
+    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
+    PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / normK;
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  x2.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+  y2.SetSize(opK->Height());
+  x1.UseDevice(true);
+  x2.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+
+  // Configure linear solver.
+  if (first)
+  {
+    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEPLinear);
+  }
+}
+
 void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
                                         const ComplexOperator &K, const ComplexOperator &C,
                                         const ComplexOperator &M,
@@ -914,10 +1043,7 @@ void SlepcPEPLinearSolver::SetOperators(SpaceOperator &space_op_ref,
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    if (opC)
-    {
-      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
-    }
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
@@ -1276,6 +1402,128 @@ SlepcPEPSolver::SlepcPEPSolver(MPI_Comm comm, int print, const std::string &pref
   normK = normC = normM = 0.0;
 }
 
+void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                  const ComplexOperator &M,
+                                  EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the quadratic polynomial
+  // eigenvalue problem.
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opC = &C;
+  opM = &M;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
+    PalacePetscCall(
+        MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
+    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A2, PetscVecType()));
+    Mat A[3] = {A0, A1, A2};
+    PalacePetscCall(PEPSetOperators(pep, 3, A));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
+                "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+
+  // Configure linear solver.
+  if (first)
+  {
+    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEP);
+  }
+}
+
+void SlepcPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                  const ComplexOperator &M,
+                                  EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the quadratic polynomial
+  // eigenvalue problem.
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opM = &M;
+  space_op = &space_op_ref;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
+    PalacePetscCall(
+        MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
+    PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A1, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(A2, PetscVecType()));
+    Mat A[3] = {A0, A1, A2};
+    PalacePetscCall(PEPSetOperators(pep, 3, A));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / normK;
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+
+  // Configure linear solver.
+  if (first)
+  {
+    ConfigurePCShell(GetST(), (void *)this, __pc_apply_PEP);
+  }
+}
+
 void SlepcPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
                                   const ComplexOperator &C, const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
@@ -1313,14 +1561,11 @@ void SlepcPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    if (opC)
-    {
-      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
-    }
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / (normK + gamma * normC);
@@ -1649,6 +1894,70 @@ SlepcNEPSolver::SlepcNEPSolver(MPI_Comm comm, int print, const std::string &pref
 }
 
 void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                  const ComplexOperator &M,
+                                  EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the quadratic polynomial
+  // eigenvalue problem.
+  const bool first = (opK == nullptr);
+  opK = &K;
+  opM = &M;
+  space_op = &space_op_ref;
+
+  if (first)
+  {
+    const PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &J));
+    PalacePetscCall(MatShellSetOperation(A, MATOP_MULT, (void (*)(void))__mat_apply_NEP_A));
+    PalacePetscCall(MatShellSetOperation(J, MATOP_MULT, (void (*)(void))__mat_apply_NEP_J));
+    PalacePetscCall(MatShellSetVecType(A, PetscVecType()));
+    PalacePetscCall(MatShellSetVecType(J, PetscVecType()));
+    PalacePetscCall(NEPSetFunction(nep, A, A, __form_NEP_function, NULL));
+    PalacePetscCall(NEPSetJacobian(nep, J, __form_NEP_jacobian, NULL));
+  }
+
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
+    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for NEP scaling!");
+    if (normK > 0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / normK;
+    }
+  }
+
+  // Set up workspace.
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A, nullptr, &v0));
+  }
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+
+  // Configure linear solver.
+  if (first)
+  {
+    // SLP.
+    PC pc;
+    KSP ksp;
+    EPS eps;
+    PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
+    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
+    PalacePetscCall(NEPSLPGetEPS(nep, &eps));
+    PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
+    PalacePetscCall(KSPGetPC(ksp, &pc));
+    PalacePetscCall(PCSetType(pc, PCSHELL));
+    PalacePetscCall(PCShellSetContext(pc, (void *)this));
+    PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
+  }
+}
+
+void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
                                   const ComplexOperator &C, const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
@@ -1678,14 +1987,11 @@ void SlepcNEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOper
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    if (opC)
-    {
-      normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
-    }
+    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for NEP scaling!");
-    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / (normK + gamma * normC);

@@ -61,6 +61,8 @@ public:
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type) = 0;
   virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                            const ComplexOperator &M, ScaleType type) = 0;
+  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                             const ComplexOperator &C, const ComplexOperator &M,
                             ScaleType type) = 0;
   virtual void SetNLInterpolation(const Interpolation &interp) = 0;

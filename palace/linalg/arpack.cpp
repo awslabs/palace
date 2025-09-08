@@ -206,6 +206,13 @@ void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
 }
 
 void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+}
+
+void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                                           const ComplexOperator &C,
                                           const ComplexOperator &M,
                                           EigenvalueSolver::ScaleType type)
@@ -675,6 +682,78 @@ ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   normK = normC = normM = 0.0;
 }
 
+void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                   const ComplexOperator &M,
+                                   EigenvalueSolver::ScaleType type)
+{
+  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
+  bool first = (opK == nullptr);
+  opK = &K;
+  opC = &C;
+  opM = &M;
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
+    normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
+    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
+                "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normC >= 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
+  }
+
+  // Set up workspace.
+  x1.SetSize(opK->Height());
+  x2.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+  y2.SetSize(opK->Height());
+  z1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  x2.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+  z1.UseDevice(true);
+  n = opK->Height();
+}
+
+void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
+                                   const ComplexOperator &M,
+                                   EigenvalueSolver::ScaleType type)
+{
+  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
+  bool first = (opK == nullptr);
+  opK = &K;
+  opM = &M;
+  space_op = &space_op_ref;
+  if (first && type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
+    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
+    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for PEP scaling!");
+    if (normK > 0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / normK;
+    }
+  }
+
+  // Set up workspace.
+  x1.SetSize(opK->Height());
+  x2.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+  y2.SetSize(opK->Height());
+  z1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  x2.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+  z1.UseDevice(true);
+  n = opK->Height();
+}
+
 void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
                                    const ComplexOperator &C, const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
@@ -688,10 +767,7 @@ void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOpe
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    if (opC)
-    {
-      normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
-    }
+    normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
     normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
