@@ -124,8 +124,9 @@ protected:
   // and we only want initialize it if should_write_paraview_fields() returns true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
-  // MFEM grid function output directory
+  // MFEM grid function output details
   std::string mfem_gf_output_dir;
+  const std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
