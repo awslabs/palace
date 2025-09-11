@@ -3064,11 +3064,28 @@ void MatchBoundaryEdges(
     const std::vector<std::unordered_map<int, int>> &hole_dof_to_edge_maps,
     std::vector<mfem::Array<int>> &hole_boundary_edges)
 {
+  // This function identifies which edges from a boundary submesh correspond to the 
+  // boundaries of holes in the parent mesh.
+  //
+  // The algorithm works in two phases:
+  // 1. Local matching: Match submesh edges to hole boundaries on the current processor
+  // 2. Cross-processor matching: Handle edges that span multiple processors in parallel
+  //
+  // Input:
+  // - mesh: The parent parallel mesh
+  // - boundary_submesh: A submesh containing boundary elements
+  // - submesh_boundary_edge_ids: Edges on the boundary of the submesh
+  // - submesh_to_parent_bdr_edge_map: Mapping from submesh edges to parent edges
+  // - hole_dof_to_edge_maps: For each hole, maps DoFs to edge IDs in parent mesh
+  //
+  // Output:
+  // - hole_boundary_edges: For each hole, the submesh edge IDs forming its boundary
+
   MPI_Comm comm = mesh.GetComm();
   int num_holes = static_cast<int>(hole_dof_to_edge_maps.size());
   int num_procs = Mpi::Size(comm);
 
-  // Initialize output arrays
+  // Initialize output array
   hole_boundary_edges.resize(num_holes);
 
   // Create edge sets for O(1) lookup
@@ -3100,7 +3117,8 @@ void MatchBoundaryEdges(
     }
   }
 
-  // Find unmatched edges for each hole
+  // Find unmatched edges for each hole, at this stage all hole edges purely local 
+  // to this rank have been found.
   std::vector<std::vector<int>> unmatched_hole_edges(num_holes);
   for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
   {
@@ -3114,6 +3132,8 @@ void MatchBoundaryEdges(
   }
 
   // Get global edge indices
+  // NOTE: This requires a conformal mesh. For meshes marked for nonconformal 
+  // adaptation, global edge indexing does not exist and this method will not work.
   mfem::Array<HYPRE_BigInt> global_edge_indices;
   mesh.GetGlobalEdgeIndices(global_edge_indices);
 
@@ -3173,18 +3193,36 @@ void ComputeSubmeshBoundaryEdgeOrientations(
     const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,
     std::unordered_map<int, double> &edge_oriented_lengths, int order)
 {
+  // This function computes the orientations and oriented lengths of boundary edges in a 
+  // submesh. The orientation is determined by comparing the cross product of 
+  // edge vectors with a reference loop normal vector. 
+  // For each boundary edge:
+  // 1. Find the adjacent interior element to establish geometric context
+  // 2. Compute the edge vector and identify the third vertex not on the edge
+  // 3. Calculate cross product of (third_vertex_to_edge_midpoint) × (edge_vector)
+  // 4. Compare this cross product with the loop normal to determine orientation
+  // 5. Use quadrature rule to compute curved edge lengths
+  // Input:
+  // - submesh: The submesh containing the boundary edges
+  // - inner_boundary_edges: Array of edge IDs forming the inner boundary
+  // - loop_normal: Reference normal vector for consistent orientation
+  // - order: Quadrature order for accurate integration of curved edges
+  // Output:
+  // - edge_orientations: Map from edge ID to orientation (+1 or -1)
+  // - edge_oriented_lengths: Map from edge ID to signed edge length
+
   edge_orientations.clear();
   edge_oriented_lengths.clear();
 
+  mfem::Array<int> elem_edges, orientations;
   for (int i = 0; i < inner_boundary_edges.Size(); i++)
   {
     int submesh_edge = inner_boundary_edges[i];
 
     // Find interior element adjacent to this boundary edge
     int adj_elem = -1;
-    for (int j = 0; j < submesh.GetNE(); j++)
+    for (int j = 0; j < submesh.GetNE() && adj_elem == -1; j++)
     {
-      mfem::Array<int> elem_edges, orientations;
       submesh.GetElementEdges(j, elem_edges, orientations);
       for (int k = 0; k < elem_edges.Size(); k++)
       {
@@ -3194,8 +3232,6 @@ void ComputeSubmeshBoundaryEdgeOrientations(
           break;
         }
       }
-      if (adj_elem != -1)
-        break;
     }
 
     MFEM_VERIFY(adj_elem != -1,
@@ -3206,14 +3242,50 @@ void ComputeSubmeshBoundaryEdgeOrientations(
     submesh.GetEdgeVertices(submesh_edge, edge_vertices);
     submesh.GetElementVertices(adj_elem, elem_vertices);
 
-    // Find third vertex (not on the edge)
-    int third_vertex = -1;
+    // Find vertices not on the edge and verify they're on the same side
+    // This handles non-convex elements (e.g., bow-tie quads) robustly
+    std::vector<int> non_edge_vertices;
     for (int v : elem_vertices)
     {
       if (v != edge_vertices[0] && v != edge_vertices[1])
       {
-        third_vertex = v;
-        break;
+        non_edge_vertices.push_back(v);
+      }
+    }
+    
+    MFEM_VERIFY(!non_edge_vertices.empty(), 
+                "No non-edge vertices found for element " << adj_elem);
+
+    // For elements with multiple non-edge vertices, verify they're on the same side
+    int third_vertex = non_edge_vertices[0];
+    if (non_edge_vertices.size() > 1)
+    {
+      // Use first edge vertex as reference point
+      const double *edge_ref = submesh.GetVertex(edge_vertices[0]);
+      const double *first_vert = submesh.GetVertex(non_edge_vertices[0]);
+      
+      // Compute reference vector from edge vertex to first non-edge vertex
+      mfem::Vector first_vec(3);
+      for (int d = 0; d < 3; d++)
+      {
+        first_vec[d] = first_vert[d] - edge_ref[d];
+      }
+
+      // Check all other non-edge vertices are on the same side
+      for (size_t i = 1; i < non_edge_vertices.size(); i++)
+      {
+        const double *vert = submesh.GetVertex(non_edge_vertices[i]);
+        mfem::Vector vec(3);
+        for (int d = 0; d < 3; d++)
+        {
+          vec[d] = vert[d] - edge_ref[d];
+        }
+        
+        // Check dot product is positive (same side)
+        double dot_product = first_vec * vec;
+        
+        MFEM_VERIFY(dot_product > 0.0,
+                    "Non-convex element detected: vertices on opposite sides of edge");
       }
     }
 
