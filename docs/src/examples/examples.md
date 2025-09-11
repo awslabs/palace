@@ -18,7 +18,7 @@ more details.
 
   - [Capacitance Matrix for Two Spheres](spheres.md)
   - [Inductance Matrix for a Pair of Concentric Rings](rings.md)
-  - [Radiation Patterns for a Dipole Antenna](antenna.md)
+  - [Dipole Antenna and Radiation Fields](antenna.md)
   - [Eigenmodes of a Cylinder](cylinder.md)
   - [Signal Propagation in a Coaxial Cable](coaxial.md)
   - [Crosstalk Between Coplanar Waveguides](cpw.md)

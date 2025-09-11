@@ -1182,7 +1182,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
 
-    PeriodicData &data = emplace_back();
+    PeriodicData data;
+
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required

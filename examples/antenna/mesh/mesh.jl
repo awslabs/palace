@@ -13,7 +13,7 @@ The generated mesh contains five regions:
 1. A 3D volume region (the space between the cylinders and the outer sphere)
 2. A large outer spherical boundary (typically set to "absorbing" boundary conditions)
 3. Two identical cylindrical conductors aligned on the z axis separated by a thin gap
-4. A flat rectangle aligned fills the gap between the cylinders along the xz plane
+4. A flat rectangle fills the gap between the cylinders along the xz plane
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ Extract the Gmsh tag in `object`.
 If `object` contains only one tag, return it as an integer, otherwise, preserve its
 container.
 
-Most gmsh functions return list of tuples like `[(2, 5), (2, 8), (2,10), ...]`, where the
+Most gmsh functions return list of tuples like `[(2, 5), (2, 8), (2, 10), ...]`, where the
 first number is dimensionality and the second is the integer tag associated to that object.
 
 #### Example
@@ -115,9 +115,9 @@ function generate_antenna_mesh(;
     # the 2D surfaces are properly embedded in the 3D space.
     #
     # Fragmenting produces:
-    # - 3 3D fragments (the domain and the interior of the cylinders)
-    # - 1 2D fragment for the rectangular port
-    # - For each arm, 4 2D fragments: the cylindrical area, one of the two surface caps, and
+    # - 3 3D entities (the domain and the interior of the cylinders)
+    # - 1 2D entity for the rectangular port
+    # - For each arm, 4 2D entities: the cylindrical area, one of the two surface caps, and
     #   the two fragments for the other cap. We get two fragments for the other cap because
     #   it is split in two by the rectangle
     #
@@ -131,7 +131,8 @@ function generate_antenna_mesh(;
     gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Create a new model. The name dipole is not important. If a model was already added,
-    # remove it first (this useful when interactively the body of this function in the REPL)
+    # remove it first (this is useful when interactively the body of this function in the
+    # REPL)
     if "dipole" in gmsh.model.list()
         gmsh.model.setCurrent("dipole")
         gmsh.model.remove()
@@ -255,8 +256,10 @@ function generate_antenna_mesh(;
     # Finally, use this Min field to determine element sizes
     gmsh.model.mesh.field.setAsBackgroundMesh(101)
 
-    # Set 3D meshing algorithm (10 = HXT, parallel tetrahedral mesher)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    # Set 2D/3D meshing algorithm. Chosen to be deterministic, not necessarily the
+    # best.
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
 
     # Generate 3D volume mesh and set to 3rd order elements
     gmsh.model.mesh.generate(3)

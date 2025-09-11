@@ -39,7 +39,6 @@ The format of this changelog is based on
   - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
     were failing. [PR #449](https://github.com/awslabs/palace/pull/471).
 
-
 ## [0.14.0] - 2025-08-20
 
   - Added `--version` command line flag for displaying Palace version information.

@@ -137,6 +137,76 @@ public:
                        std::complex<double> gamma, Vector &zr, Vector &zi);
 };
 
+// StaticVectorStorage allocates the array that underlies StaticVector.
+//
+// Why is StaticVectorStorage needed?
+//
+// StaticVector derives from mfem::Vector, but naively defining a class
+// StaticVector: public Vector containing a buffer array would not work because
+// due to C++ inheritance rules, Vector's constructor is called before the buffer is
+// initialized. Hence, we employ multiple inheritance to ensure that
+// StaticVectorStorage is initialized first (and thus the buffer).
+//
+// StaticVectorStorage is an implementation detail, do not use directly. Use
+// StaticVector<N> instead.
+namespace internal
+{
+template <int N>
+class StaticVectorStorage
+{
+protected:
+  std::array<double, N> buff;
+  static double *get_data(std::array<double, N> &arr) { return arr.data(); }
+
+  StaticVectorStorage() : buff{} {}
+};
+}  // namespace internal
+
+// A stack-allocated vector with compile-time fixed size.
+//
+// StaticVector provides a Vector interface backed by stack memory instead of
+// heap allocation. The size N is fixed at compile time, making it suitable for
+// small vectors where performance and avoiding dynamic allocation are
+// important.
+//
+// Template parameters:
+// - N: The fixed size of the vector (number of elements)
+//
+// Notes:
+// - Inherits from mfem::Vector, so can be used anywhere Vector is expected.
+// - Memory is automatically managed (no new/delete needed).
+// - Faster than dynamic Vector for small sizes due to stack allocation.
+//
+// Example usage:
+//
+// StaticVector<3> vec;  // 3D vector on stack
+// vec[0] = 1.0;
+// vec[1] = 2.0;
+// vec[2] = 3.0;
+//
+// vec.Sum();
+//
+template <int N>
+class StaticVector : private internal::StaticVectorStorage<N>, public Vector
+{
+public:
+  StaticVector() : internal::StaticVectorStorage<N>(), Vector(this->get_data(this->buff), N)
+  {
+  }
+
+  // Disallow resizing.
+  void SetSize(int size)
+  {
+    MFEM_ABORT("Cannot resize StaticVector: the size is fixed at compile time");
+  }
+
+  // Bring some of the base class operators in scope.
+  using Vector::operator=;
+  using Vector::operator*;
+  using Vector::operator();
+  using Vector::operator[];
+};
+
 namespace linalg
 {
 
@@ -262,6 +332,26 @@ void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
 void Sqrt(Vector &x, double s = 1.0);
+
+// Compute the 3D Cartesian product between A and B and store the result in C.
+// If add is true, accumulate the result to C instead of overwriting its
+// content.
+template <typename VecTypeA, typename VecTypeB, typename VecTypeC>
+void Cross3(const VecTypeA &A, const VecTypeB &B, VecTypeC &C, bool add = false)
+{
+  if (add)
+  {
+    C[0] += A[1] * B[2] - A[2] * B[1];
+    C[1] += A[2] * B[0] - A[0] * B[2];
+    C[2] += A[0] * B[1] - A[1] * B[0];
+  }
+  else
+  {
+    C[0] = A[1] * B[2] - A[2] * B[1];
+    C[1] = A[2] * B[0] - A[0] * B[2];
+    C[2] = A[0] * B[1] - A[1] * B[0];
+  }
+}
 
 }  // namespace linalg
 

@@ -50,7 +50,7 @@
     },
     "Solver":
     {
-        "Order": 2,
+        "Order": 1,
         "Device": "CPU",
         "Driven":
         {
@@ -58,8 +58,8 @@
             [
                 {
                     "Type": "Point",
-                    "Freq": [0.07, 0.0749], // GHz
-                    "SaveStep": 2
+                    "Freq": [0.0749], // GHz
+                    "SaveStep": 1
                 }
             ]
         },

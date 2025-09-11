@@ -81,7 +81,7 @@ struct Measurement
     std::vector<std::pair<double, double>> thetaphis;
 
     // Components of the electric field.
-    std::vector<std::vector<std::complex<double>>> E_field;
+    std::vector<std::array<std::complex<double>, 3>> E_field;
   };
 
   // Data for both lumped and wave port.

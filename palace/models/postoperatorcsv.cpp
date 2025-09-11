@@ -606,25 +606,23 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   }
 
   using fmt::format;
-  farfield_E = TableWithCSVFile(post_dir / "farfield-E.csv");
+
+  farfield_E = TableWithCSVFile(post_dir / "farfield-rE.csv");
 
   Table t;  // Define table locally first due to potential reload.
 
   int v_dim = surf_post_op.GetVDim();
-  int scale_col = 2 * v_dim;  // Real + Imag components
-  int nr_expected_measurement_cols = 3 + scale_col; // freq, theta, phi
+  int scale_col = 2 * v_dim;                         // Real + Imag components
+  int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
   int nr_expected_measurement_rows = surf_post_op.farfield.size();
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
-  t.insert(
-      Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
   t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
   for (size_t i_dim = 0; i_dim < v_dim; i_dim++)
   {
-    t.insert(format("rE{}_re", i_dim),
-                            format("r*Re{{E_{}}} (V)", DimLabel(i_dim)));
-    t.insert(format("rE{}_im", i_dim),
-                            format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
+    t.insert(format("rE{}_re", i_dim), format("r*Re{{E_{}}} (V)", DimLabel(i_dim)));
+    t.insert(format("rE{}_im", i_dim), format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
   }
 
   MoveTableValidateReload(*farfield_E, std::move(t));
