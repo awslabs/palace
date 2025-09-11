@@ -106,10 +106,11 @@ protected:
   bool should_write_fields() const { return enable_paraview_output || enable_mfem_gf_output; }
 
   // Whether any fields should be written for this step
-  bool should_write_fields(std::size_t step) const { return should_write_fields() &&
-    (output_delta_post > 0 && step % output_delta_post == 0) ||
-    (output_n_post > 0 && step < output_n_post) ||
-    std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(), step);
+  bool should_write_fields(std::size_t step) const { return should_write_fields() && (
+      (output_delta_post > 0 && step % output_delta_post == 0) ||
+      (output_n_post > 0 && step < output_n_post) ||
+      std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(), step)
+    );
   }
 
   // Whether fields should be written for a particular output format (at a given step)
