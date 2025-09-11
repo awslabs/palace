@@ -562,8 +562,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       if constexpr (HasComplexGridFunction<solver_t>())
       {
         // Write real and imaginary parts separately
-        fs::path e_real_filename = fs::path(mfem_gf_output_dir) / fmt::format("E_real_{:06d}.gf", step);
-        fs::path e_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format("E_imag_{:06d}.gf", step);
+        fs::path e_real_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "E_real_{:0{}d}.gf", step, pad_digits_default);
+        fs::path e_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "E_imag_{:0{}d}.gf", step, pad_digits_default);
         
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
@@ -574,7 +576,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path e_filename = fs::path(mfem_gf_output_dir) / fmt::format("E_{:06d}.gf", step);
+        fs::path e_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "E_{:0{}d}.gf", step, pad_digits_default);
         std::ofstream e_file(e_filename);
         E->Real().Save(e_file);
       }
@@ -588,8 +591,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       if constexpr (HasComplexGridFunction<solver_t>())
       {
         // Write real and imaginary parts separately
-        fs::path b_real_filename = fs::path(mfem_gf_output_dir) / fmt::format("B_real_{:06d}.gf", step);
-        fs::path b_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format("B_imag_{:06d}.gf", step);
+        fs::path b_real_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "B_real_{:0{}d}.gf", step, pad_digits_default);
+        fs::path b_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "B_imag_{:0{}d}.gf", step, pad_digits_default);
         
         std::ofstream b_real_file(b_real_filename);
         std::ofstream b_imag_file(b_imag_filename);
@@ -600,7 +605,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path b_filename = fs::path(mfem_gf_output_dir) / fmt::format("B_{:06d}.gf", step);
+        fs::path b_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+          "B_{:0{}d}.gf", step, pad_digits_default);
         std::ofstream b_file(b_filename);
         B->Real().Save(b_file);
       }
@@ -611,7 +617,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   {
     if (V)
     {
-      fs::path v_filename = fs::path(mfem_gf_output_dir) / fmt::format("V_{:06d}.gf", step);
+      fs::path v_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+        "V_{:0{}d}.gf", step, pad_digits_default);
       std::ofstream v_file(v_filename);
       V->Real().Save(v_file);
     }
@@ -621,7 +628,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   {
     if (A)
     {
-      fs::path a_filename = fs::path(mfem_gf_output_dir) / fmt::format("A_{:06d}.gf", step);
+      fs::path a_filename = fs::path(mfem_gf_output_dir) / fmt::format(
+        "A_{:0{}d}.gf", step, pad_digits_default);
       std::ofstream a_file(a_filename);
       A->Real().Save(a_file);
     }
