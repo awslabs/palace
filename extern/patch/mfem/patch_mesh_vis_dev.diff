@@ -440,10 +440,10 @@ index 945bf36f16..edc6ab14d3 100644
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 10709fe944..0c28d313c1 100644
+index f2cfef429d..c080aa9942 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -6410,7 +6410,7 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6417,7 +6417,7 @@ void ParMesh::PrintVTU(std::string pathname,
                         VTKFormat format,
                         bool high_order_output,
                         int compression_level,
@@ -452,7 +452,7 @@ index 10709fe944..0c28d313c1 100644
  {
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
-@@ -6470,7 +6470,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6477,7 +6477,8 @@ void ParMesh::PrintVTU(std::string pathname,
  
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);
@@ -463,7 +463,7 @@ index 10709fe944..0c28d313c1 100644
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 22fc31bb74..cc421c56dc 100644
+index 0c71e60ed9..d5e8bedee1 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -788,7 +788,7 @@ public:

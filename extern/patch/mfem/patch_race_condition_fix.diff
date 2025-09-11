@@ -120,7 +120,7 @@ index ab1977ddbe..fb51d44181 100644
     {
        return FiniteElement::GetDofToQuad(ir, mode);
 diff --git a/linalg/densemat.hpp b/linalg/densemat.hpp
-index abeb411a2b..df3c02fd93 100644
+index abeb411a2b..c4409215a2 100644
 --- a/linalg/densemat.hpp
 +++ b/linalg/densemat.hpp
 @@ -83,6 +83,38 @@ public:
@@ -147,8 +147,7 @@ index abeb411a2b..df3c02fd93 100644
 +   void NewMemoryAndSize(const Memory<real_t> &mem, int i, int j, bool own_mem,
 +                         int offset = 0)
 +   {
-+      data.Delete();
-+      height = i; width = j;
++      if (OwnsData()) { data.Delete(); }
 +      if (own_mem)
 +      {
 +         data = mem;
@@ -157,6 +156,7 @@ index abeb411a2b..df3c02fd93 100644
 +      {
 +         data.MakeAlias(mem, offset, i*j);
 +      }
++      height = i; width = j;
 +   }
 +
     /// Change the data array and the size of the DenseMatrix.
