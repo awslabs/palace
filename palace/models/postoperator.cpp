@@ -4,12 +4,9 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <string>
-#include <fmt/format.h>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
-#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
