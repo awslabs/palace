@@ -102,11 +102,17 @@ protected:
   std::size_t output_n_post = 0;      // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
   
+  // Whether any output formats were specified
+  bool any_output_formats() const { return enable_paraview_output || enable_mfem_gf_output; }
+  bool anything_to_save() const { return (output_delta_post > 0) || (output_n_post > 0) || 
+    !output_save_indices.empty();
+  }
+
   // Whether any fields should be written at all
-  bool should_write_fields() const { return enable_paraview_output || enable_mfem_gf_output; }
+  bool should_write_fields() const { return any_output_formats() && anything_to_save(); }
 
   // Whether any fields should be written for this step
-  bool should_write_fields(std::size_t step) const { return should_write_fields() && (
+  bool should_write_fields(std::size_t step) const { return any_output_formats() && (
       (output_delta_post > 0 && step % output_delta_post == 0) ||
       (output_n_post > 0 && step < output_n_post) ||
       std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(), step)
@@ -114,9 +120,9 @@ protected:
   }
 
   // Whether fields should be written for a particular output format (at a given step)
-  bool should_write_paraview_fields() const { return enable_paraview_output; }
+  bool should_write_paraview_fields() const { return enable_paraview_output && anything_to_save(); }
   bool should_write_paraview_fields(std::size_t step) const { return enable_paraview_output && should_write_fields(step); }
-  bool should_write_mfem_gf_fields() const { return enable_mfem_gf_output; }
+  bool should_write_mfem_gf_fields() const { return enable_mfem_gf_output && anything_to_save(); }
   bool should_write_mfem_gf_fields(std::size_t step) const { return enable_mfem_gf_output && should_write_fields(step); }
 
   // ParaView data collection: writing fields to disk for visualization.
