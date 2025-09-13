@@ -421,11 +421,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
-  if (!should_write_paraview_fields())
-  {
-    return;
-  }
-  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  BlockTimer bt(Timer::IO);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -450,12 +446,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indicator)
 {
-  if (!should_write_paraview_fields())
-  {
-    return;
-  }
-
-  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
+  BlockTimer bt(Timer::IO);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -535,11 +526,6 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
-  if (!should_write_mfem_gf_fields(step))
-  {
-    return;
-  }
-
   BlockTimer bt(Timer::IO);
 
   // Create output directory if it doesn't exist
@@ -645,11 +631,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
 {
-  if (!should_write_mfem_gf_fields())
-  {
-    return;
-  }
-
   BlockTimer bt(Timer::IO);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
@@ -1117,7 +1098,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   if (should_write_mfem_gf_fields(step))
   {
     Mpi::Print("\n");
-    WriteMFEMGridFunctions(omega.real(), step);
+    auto ind = 1 + std::distance(output_save_indices.begin(),
+                                 std::lower_bound(output_save_indices.begin(),
+                                                  output_save_indices.end(), step));
+    WriteMFEMGridFunctions(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk (MFEM grid functions) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
