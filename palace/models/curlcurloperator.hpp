@@ -103,9 +103,11 @@ public:
 
   // Assemble flux loop excitation vector for specified flux loop index
   void GetFluxExcitationVector(int idx, Vector &RHS);
+  void GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values);
 
   // Solve 2D surface curl problem for flux loop boundary conditions
   Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
+  void SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }

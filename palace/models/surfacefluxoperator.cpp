@@ -63,9 +63,15 @@ SurfaceFluxOperator::SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
                                              const FiniteElementSpace &nd_fespace) const
 {
   const auto &data = GetSource(idx);
-  auto result =
-      palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx);
-  return *result;
+  return palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx);
+}
+
+void SurfaceFluxOperator::SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
+                                                  const FiniteElementSpace &nd_fespace,
+                                                  Vector &result) const
+{
+  const auto &data = GetSource(idx);
+  palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx, result);
 }
 
 }  // namespace palace

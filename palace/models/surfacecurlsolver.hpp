@@ -18,10 +18,15 @@ class FiniteElementSpace;
 class SurfaceFluxData;
 
 // Solve 2D surface curl problem for flux loop initial condition
-std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &data,
-                                                const IoData &iodata, const Mesh &mesh,
-                                                const FiniteElementSpace &nd_fespace,
-                                                int flux_loop_idx);
+Vector SolveSurfaceCurlProblem(const SurfaceFluxData &data,
+                               const IoData &iodata, const Mesh &mesh,
+                               const FiniteElementSpace &nd_fespace,
+                               int flux_loop_idx);
+
+// Overload with pre-allocated result vector
+void SolveSurfaceCurlProblem(const SurfaceFluxData &data, const IoData &iodata,
+                             const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+                             int flux_loop_idx, Vector &result);
 
 // Verify flux through holes using computed magnetic field B
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,

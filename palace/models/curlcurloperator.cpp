@@ -237,8 +237,24 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 
 void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
 {
-  // Solve 2D surface curl problem for this specific flux loop
-  Vector flux_solution = SolveSurfaceCurlProblem(idx);
+  GetFluxExcitationVector(idx, RHS, nullptr);
+}
+
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values)
+{
+  // Assemble the surface flux excitation for this specific flux loop
+  // by solving the 2D surface curl problem on the metallic surface
+  // that contains the flux hole.
+  Vector flux_solution;
+  if (boundary_values)
+  {
+    SolveSurfaceCurlProblem(idx, *boundary_values);
+    flux_solution = *boundary_values;  // Use the pre-allocated result
+  }
+  else
+  {
+    flux_solution = SolveSurfaceCurlProblem(idx);
+  }
 
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
@@ -277,6 +293,15 @@ Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
   return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
+}
+
+void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const
+{
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
+
+  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), result);
 }
 
 }  // namespace palace

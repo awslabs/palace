@@ -20,10 +20,19 @@
 namespace palace
 {
 
-std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data,
-                                                const IoData &iodata, const Mesh &mesh,
-                                                const FiniteElementSpace &nd_fespace,
-                                                int flux_loop_idx)
+Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data,
+                               const IoData &iodata, const Mesh &mesh,
+                               const FiniteElementSpace &nd_fespace,
+                               int flux_loop_idx)
+{
+  Vector result;
+  SolveSurfaceCurlProblem(flux_data, iodata, mesh, nd_fespace, flux_loop_idx, result);
+  return result;
+}
+
+void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
+                             const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+                             int flux_loop_idx, Vector &result)
 {
   // Use flux loop configuration from SurfaceFluxData
 
@@ -31,12 +40,6 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data
   std::vector<int> surface_attrs = flux_data.fluxloop_pec;
   surface_attrs.insert(surface_attrs.end(), flux_data.hole_attributes.begin(),
                        flux_data.hole_attributes.end());
-
-  Vector loop_normal(3);
-  for (int i = 0; i < 3; i++)
-  {
-    loop_normal[i] = flux_data.direction[i];
-  }
 
   // Use parameters
   const mfem::ParFiniteElementSpace *fespace = &nd_fespace.Get();
@@ -145,6 +148,9 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data
   mfem::ParFiniteElementSpace h1_fespace(&boundary_submesh, &h1_fec);
   mfem::ConstantCoefficient one(1.0);
 
+  // Create loop normal vector from flux data direction
+  Vector loop_normal(const_cast<double*>(flux_data.direction.data()), 3);
+
   for (int h = 0; h < num_holes; h++)
   {
     hole_bdr_markers[h].SetSize(boundary_submesh.bdr_attributes.Max());
@@ -157,8 +163,8 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data
     perimeter_form.Assemble();
 
     double local_perimeter = perimeter_form.Sum();
-    MPI_Allreduce(&local_perimeter, &hole_perimeters[h], 1, MPI_DOUBLE, MPI_SUM,
-                  boundary_submesh.GetComm());
+    hole_perimeters[h] = local_perimeter;
+    Mpi::GlobalSum(1, &hole_perimeters[h], boundary_submesh.GetComm());
 
     hole_field_values[h] = flux_values[h] / hole_perimeters[h];
 
@@ -363,32 +369,11 @@ std::unique_ptr<Vector> SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data
   A_3d = 0.0;
   mfem::ParSubMesh::Transfer(A, A_3d);
 
-  // Extract true DOFs and return as Vector
-  auto result = std::make_unique<Vector>();
-  result->SetSize(fespace->GetTrueVSize());
-  result->UseDevice(true);
-  A_3d.GetTrueDofs(*result);
+  // Extract true DOFs and populate result vector
+  result.SetSize(fespace->GetTrueVSize());
+  result.UseDevice(true);
+  A_3d.GetTrueDofs(result);
 
-  // Clear large temporary objects to free memory
-  hole_dof_to_edge_maps.clear();
-  hole_ess_tdof_lists.clear();
-  hole_ldof_markers.clear();
-  hole_boundary_edge_ldofs.clear();
-  hole_boundary_edges.clear();
-  hole_edge_sets.clear();
-  hole_edge_to_dofs_maps.clear();
-  hole_boundary_edge_dofs.clear();
-  hole_bdr_markers.clear();
-  hole_edge_lengths.clear();
-  attr_to_elements.clear();
-  submesh_to_parent_bdr_edge_map.clear();
-
-  // Clear Palace-specific objects
-  submesh_nd_fecs.clear();
-  submesh_h1_fecs.clear();
-  submesh_vec.clear();
-
-  return result;
 }
 
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
@@ -412,16 +397,13 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
     flux_form.Assemble();
 
     double computed_flux = flux_form * B_gf;
-    double global_flux;
-    MPI_Allreduce(&computed_flux, &global_flux, 1, MPI_DOUBLE, MPI_SUM, comm);
+    Mpi::GlobalSum(1, &computed_flux, comm);
 
-    int rank;
-    MPI_Comm_rank(comm, &rank);
-    if (rank == 0)
+    if (Mpi::Root(comm))
     {
       Mpi::Print("Hole attribute {:d}: Target flux = {:.6e}, Computed flux = {:.6e}, Error "
                  "= {:.6e}\n",
-                 hole_attr, target_flux, global_flux, std::abs(global_flux - target_flux));
+                 hole_attr, target_flux, computed_flux, std::abs(computed_flux - target_flux));
     }
   }
 }
@@ -429,10 +411,7 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
 void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
                                int current_flux_loop_idx, const Mesh &mesh, MPI_Comm comm)
 {
-  int rank;
-  MPI_Comm_rank(comm, &rank);
-
-  if (rank == 0)
+  if (Mpi::Root(comm))
   {
     Mpi::Print("FluxLoop {:d} excitation - Flux through all holes:\n",
                current_flux_loop_idx);
@@ -457,16 +436,12 @@ void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &
       flux_form.Assemble();
 
       double computed_flux = flux_form * B_gf;
-      double global_flux;
-      MPI_Allreduce(&computed_flux, &global_flux, 1, MPI_DOUBLE, MPI_SUM, comm);
+      Mpi::GlobalSum(1, &computed_flux, comm);
 
-      if (rank == 0)
-      {
-        Mpi::Print(
-            "  Loop {:d} Hole {:d}: Target = {:.6e}, Computed = {:.6e}, Error = {:.6e}\n",
-            loop_idx, hole_attr, target_flux, global_flux,
-            std::abs(global_flux - target_flux));
-      }
+      Mpi::Print(
+          "  Loop {:d} Hole {:d}: Target = {:.6e}, Computed = {:.6e}, Error = {:.6e}\n",
+          loop_idx, hole_attr, target_flux, computed_flux,
+          std::abs(computed_flux - target_flux));
     }
   }
 }

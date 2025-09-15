@@ -76,6 +76,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                (n_step > 1) ? "boundaries" : "boundary");
   }
   auto t0 = Timer::Now();
+  
+  // Pre-allocate boundary values vector for flux loop optimization
+  Vector boundary_values;
 
   for (int step = 0; step < n_step; step++)
   {
@@ -103,7 +106,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
-      curlcurl_op.GetFluxExcitationVector(idx, RHS);
+      curlcurl_op.GetFluxExcitationVector(idx, RHS, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
       Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
     }
@@ -166,12 +169,11 @@ void MagnetostaticSolver::PostprocessTerminals(
   int n_flux = static_cast<int>(surf_flux_op.Size());
   int n = A.size();
   std::vector<bool> is_flux_loop(n, false);
-
   for (int i = n_current; i < n; i++)
     is_flux_loop[i] = true;
 
-  mfem::DenseMatrix M(n), Mm(n);
-  mfem::DenseMatrix R(n);  // Temporary for computation only
+  // Allocate final result matrices
+  mfem::DenseMatrix M(n), Minv(n), Mm(n);
 
   // Compute cross-energy matrix and diagonals
   mfem::DenseMatrix cross_energy(n);
@@ -183,12 +185,6 @@ void MagnetostaticSolver::PostprocessTerminals(
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
 
-    // Diagonal terms from energy
-    if (is_flux_loop[i])
-      R(i, i) = cross_energy(i, i) / (Phi_inc[i] * Phi_inc[i]);
-    else
-      M(i, i) = cross_energy(i, i) / (I_inc[i] * I_inc[i]);
-
     // Off-diagonal cross-energies
     for (int j = i + 1; j < n; j++)
     {
@@ -198,13 +194,20 @@ void MagnetostaticSolver::PostprocessTerminals(
     }
   }
 
-  // For mixed current-flux excitations, solve a constraint system to find off-diagonal
-  // terms. Since M_ij = energy/(I_i*I_j) and R_ij = energy/(Φ_i*Φ_j) use different
-  // normalizations, cross-terms between current and flux excitations cannot be computed
-  // directly. Instead, we use the constraint M×R = I to solve for all off-diagonal
-  // elements simultaneously.
   if (n_current > 0 && n_flux > 0)
   {
+    // Mixed current-flux case: use constraint system M×R = I
+    mfem::DenseMatrix R(n);
+    
+    // Diagonal terms from energy
+    for (int i = 0; i < n; i++)
+    {
+      if (is_flux_loop[i])
+        R(i, i) = cross_energy(i, i) / (Phi_inc[i] * Phi_inc[i]);
+      else
+        M(i, i) = cross_energy(i, i) / (I_inc[i] * I_inc[i]);
+    }
+
     int n_off = n * (n - 1) / 2;  // Number of off-diagonal elements
     mfem::DenseMatrix A_sys(n * n, 2 * n_off);
     mfem::Vector b_sys(n * n), x_sol(2 * n_off);
@@ -252,45 +255,42 @@ void MagnetostaticSolver::PostprocessTerminals(
         idx++;
       }
     }
+    
+    // Compute Minv = R
+    Minv = R;
+  }
+  else if (n_flux == n)
+  {
+    // Pure flux case: compute reluctance first, then get inductance by inversion
+    for (int i = 0; i < n; i++)
+    {
+      Minv(i, i) = cross_energy(i, i) / (Phi_inc[i] * Phi_inc[i]);
+      for (int j = i + 1; j < n; j++)
+      {
+        Minv(i, j) = Minv(j, i) = cross_energy(i, j) / (Phi_inc[i] * Phi_inc[j]);
+      }
+    }
+    // Get inductance from reluctance: M = R^{-1}
+    M = Minv;
+    M.Invert();
   }
   else
   {
-    // Pure current or pure flux - use simplified approach
+    // Pure current case: compute inductance directly, then get reluctance by inversion
     for (int i = 0; i < n; i++)
     {
+      M(i, i) = cross_energy(i, i) / (I_inc[i] * I_inc[i]);
       for (int j = i + 1; j < n; j++)
       {
-        MFEM_VERIFY(is_flux_loop[i] == is_flux_loop[j],
-                    "Mixed current-flux terms should be handled by the general case!");
-        if (is_flux_loop[i] && is_flux_loop[j])
-        {
-          R(i, j) = R(j, i) = cross_energy(i, j) / (Phi_inc[i] * Phi_inc[j]);
-        }
-        else if (!is_flux_loop[i] && !is_flux_loop[j])
-        {
-          M(i, j) = M(j, i) = cross_energy(i, j) / (I_inc[i] * I_inc[j]);
-        }
+        M(i, j) = M(j, i) = cross_energy(i, j) / (I_inc[i] * I_inc[j]);
       }
     }
-
-    // Convert flux reluctance to inductance
-    if (n_flux > 0)
-    {
-      mfem::DenseMatrix R_flux(n_flux), M_flux(n_flux);
-      for (int i = 0; i < n_flux; i++)
-        for (int j = 0; j < n_flux; j++)
-          R_flux(i, j) = R(n_current + i, n_current + j);
-
-      M_flux = R_flux;
-      M_flux.Invert();
-
-      for (int i = 0; i < n_flux; i++)
-        for (int j = 0; j < n_flux; j++)
-          M(n_current + i, n_current + j) = M_flux(i, j);
-    }
+    // Get reluctance from inductance: R = M^{-1}
+    Minv = M;
+    Minv.Invert();
   }
 
-  // Compute Mm matrix only
+  // Compute Mm matrix from final M
   for (int i = 0; i < n; i++)
   {
     Mm(i, i) = M(i, i);
@@ -303,9 +303,6 @@ void MagnetostaticSolver::PostprocessTerminals(
       }
     }
   }
-
-  mfem::DenseMatrix Minv(M);
-  Minv.Invert();
 
   // Only root writes to disk
   if (!root)
@@ -352,6 +349,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
 
   // Write out a file with source current excitations.
+  if (n_current > 0)
   {
     TableWithCSVFile terminal_I(post_dir / "terminal-I.csv");
     terminal_I.table.insert(Column("i", "i", 0, 0, 2, ""));

@@ -56,6 +56,8 @@ public:
   // Solve surface curl problem for given flux loop index
   palace::Vector SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
                                          const FiniteElementSpace &nd_fespace) const;
+  void SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
+                               const FiniteElementSpace &nd_fespace, palace::Vector &result) const;
 };
 
 }  // namespace palace
