@@ -721,6 +721,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           return {};
         }());
     pc->SetSaveAssembled(false);
+    pc->SetDropSmallEntries(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.
