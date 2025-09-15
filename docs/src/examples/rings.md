@@ -95,7 +95,8 @@ in the configuration file. The postprocessed magnetic flux values are written to
 include_example_file("rings", "surface-F.csv") # hide
 ```
 
-Diving this with the values from `postpro/terminal-I.csv`,
+Combining with the values in `postpro/terminal-I.csv` we can compute the
+inductance matrix in this alternative fashion,
 
 ```@example include_example
 include_example_file("rings", "terminal-I.csv") # hide
@@ -123,8 +124,11 @@ for i = 1:size(result, 1) #hide
 end #hide
 ```
 
-The values computed using the flux integral method are in close agreement to those above, as
-expected.
+The values computed using the flux integral method are in close agreement to
+those above, as expected. This method of calculating the inductance matrix
+directly from flux values is in general less accurate than using the energy
+method, due to convergence properties of finite element functional outputs, but
+serves as a validation of the energy calculation.
 
 Lastly, we visualize the magnitude of the magnetic flux density field for the excitations of
 the inner and outer rings. The files for this visualization are again saved to the
