@@ -146,6 +146,150 @@ public:
   }
 };
 
+// Computes integrand for far-field rE calculations.
+//
+// Evaluates the integrand required to compute far-field electric field rE_∞(r̂)
+// at multiple observation directions r₀ (specified by a vector of (θ, ϕ)s)
+//
+//   r E_∞(r₀) = (ik/4π) r₀ × ∫_S [n̂ × E - Z r₀ × (n̂ × H)] e^{ikr₀·r'} dS
+//
+// where:
+//   - S is the boundary surface with outward normal n̂
+//   - E, H are the electric and magnetic fields on the surface
+//   - k = ω/c is the wavenumber
+//   - Z is the impedance
+//   - r₀ = (sin θ cos φ, sin θ sin φ, cos θ) are observation directions
+//   - r' are source points on the surface
+//
+// For efficiency, BdrFarFieldBatchCoefficient processes multiple points at the
+// same time and does not include the pre-factor of r × .
+//
+// Note:
+// - This equation is only valid in three dimensional space
+// - This equation is only valid when all the materials have scalar μ and ε
+// - The implementation assumes S is an external boundary (this assumption may be relaxed)
+//
+// Note also:
+//
+// This class does not behave as most MFEM Coefficient (as it does not have an
+// Eval method). The main reason for this is that we need to perform complex
+// vector integrals, which are not well supported by MFEM and splitting the
+// complex integral into its real and imaginary components would lead to
+// substantial overhead. For a similar reason, we work with std::arrays instead
+// of ComplexVectors.
+class BdrFarFieldBatchCoefficient : public BdrGridFunctionCoefficient
+{
+private:
+  const GridFunction &E, &B;
+  const MaterialOperator &mat_op;
+  const double omega;
+  std::vector<std::array<double, 3>> r_naughts;  // The various target directions.
+
+public:
+  template <typename T, typename U>
+  static std::array<std::complex<double>, 3> cross_product(const T &a, const U &b)
+  {
+    return {
+        {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}};
+  }
+
+  const std::array<double, 3> &GetRNaught(size_t index) const { return r_naughts[index]; }
+
+  BdrFarFieldBatchCoefficient(const GridFunction &E, const GridFunction &B,
+                              const MaterialOperator &mat_op, double omega,
+                              const std::vector<std::pair<double, double>> &theta_phi_pairs)
+    : BdrGridFunctionCoefficient(*E.Real().ParFESpace()->GetParMesh()), E(E), B(B),
+      mat_op(mat_op), omega(omega)
+  {
+    MFEM_VERIFY(E.VectorDim() == 3, "FarField computations require 3D vector fields!");
+
+    r_naughts.reserve(theta_phi_pairs.size());
+    for (const auto &[theta, phi] : theta_phi_pairs)
+    {
+      r_naughts.push_back({{std::sin(theta) * std::cos(phi),
+                            std::sin(theta) * std::sin(phi), std::cos(theta)}});
+    }
+  }
+
+  std::vector<std::array<std::complex<double>, 3>>
+  EvalComplexBatch(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+  {
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceFluxCoefficient!");
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);  // this updates FET
+    MFEM_VERIFY(!FET.Elem2,
+                "FarField computations are only supported on external boundaries.")
+
+    mfem::Vector r_phys(3);  // r
+    T.Transform(ip, r_phys);
+
+    // Evaluate E and B fields on this element. This step is expensive, so we
+    // batch all the theta, phis.
+    mfem::Vector E_real(3), E_imag(3), B_real(3), B_imag(3);
+    E.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_real);
+    E.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), E_imag);
+    B.Real().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_real);
+    B.Imag().GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), B_imag);
+
+    std::array<std::complex<double>, 3> E_complex{
+        {std::complex<double>(E_real[0], E_imag[0]),
+         std::complex<double>(E_real[1], E_imag[1]),
+         std::complex<double>(E_real[2], E_imag[2])}};
+
+    // We assume that the material is isotropic, so the wave speed is one and
+    // well defined.
+    double wave_speed = mat_op.GetLightSpeedMax(FET.Elem1->Attribute);
+    double k = omega / wave_speed;
+    std::complex<double> prefactor(0, k / (4 * M_PI));
+
+    // Z * H = c0 * B.
+    mfem::Vector ZH_real(3), ZH_imag(3);
+    mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);
+    mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_imag, ZH_imag);
+
+    std::array<std::complex<double>, 3> ZH_complex{
+        {std::complex<double>(ZH_real[0], ZH_imag[0]),
+         std::complex<double>(ZH_real[1], ZH_imag[1]),
+         std::complex<double>(ZH_real[2], ZH_imag[2])}};
+
+    mfem::Vector normal(3);
+    GetNormal(T, normal, ori);
+
+    auto n_cross_E = cross_product(normal, E_complex);    // n̂ × E
+    auto n_cross_ZH = cross_product(normal, ZH_complex);  // n̂ × ZH
+
+    std::vector<std::array<std::complex<double>, 3>> results;
+    results.reserve(r_naughts.size());
+
+    // Process all (theta, phi)s.
+    for (const auto &r_naught : r_naughts)
+    {
+      // r₀·r'.
+      double phase =
+          k * (r_naught[0] * r_phys[0] + r_naught[1] * r_phys[1] + r_naught[2] * r_phys[2]);
+
+      auto r_cross_n_cross_ZH = cross_product(r_naught, n_cross_ZH);  // Z r₀ × (n̂ × H).
+
+      std::array<std::complex<double>, 3> integrand;
+      for (int i = 0; i < 3; i++)
+      {
+        integrand[i] = n_cross_E[i] - r_cross_n_cross_ZH[i];
+      }
+
+      std::complex<double> phase_factor{std::cos(phase), std::sin(phase)};
+
+      for (auto &val : integrand)
+      {
+        val *= prefactor * phase_factor;
+      }
+
+      results.push_back(integrand);
+    }
+
+    return results;
+  }
+};
+
 // Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.

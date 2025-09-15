@@ -25,10 +25,12 @@ The format of this changelog is based on
 
 ## [0.14.0] - 2025-08-20
 
+  - Added support for extraction of electric fields in the radiative zone. [PR
+    #449](https://github.com/awslabs/palace/pull/449).
   - Added `--version` command line flag for displaying Palace version information.
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
-  - Added an improvement to numeric wave ports to avoid targetting evanescent modes at
+  - Added an improvement to numeric wave ports to avoid targeting evanescent modes at
     higher operating frequencies. Also finite conductivity boundaries
     (`config["Boundaries"]["Conductivity"]`) are automatically marked as PEC for the wave
     port mode solve (previously these were marked as PMC unless specified under

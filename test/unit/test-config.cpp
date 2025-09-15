@@ -220,3 +220,82 @@ TEST_CASE("Config Driven Solver", "[config]")
     CHECK_THROWS(config::DrivenSolverData().SetUp(*config.find(c)));
   }
 }
+
+TEST_CASE("FarField", "[config]")
+{
+  constexpr double delta_eps = 1.0e-6;  // Precision in angle comparisons (rad)
+
+  SECTION("Missing FarField section")
+  {
+    json postpro = json::object();
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.attributes.empty());
+    REQUIRE(data.thetaphis.empty());
+  }
+
+  SECTION("Basic setup with attributes only")
+  {
+    // This should produce a warning because there is no target point.
+    json postpro = {{"FarField", {{"Attributes", {1, 3, 5}}}}};
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.attributes == std::vector<int>{1, 3, 5});
+    REQUIRE(data.thetaphis.empty());
+  }
+
+  SECTION("NSample generation")
+  {
+    json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 9}}}};
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.attributes == std::vector<int>{1});
+    REQUIRE(data.thetaphis.size() == 9);
+  }
+
+  SECTION("ThetaPhis conversion to radians")
+  {
+    json postpro = {
+        {"FarField", {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}}}}}};
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.thetaphis.size() == 2);
+    REQUIRE(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
+    REQUIRE(data.thetaphis[0].second == Catch::Approx(0.0).margin(delta_eps));
+    REQUIRE(data.thetaphis[1].first == Catch::Approx(M_PI / 2).margin(delta_eps));
+    REQUIRE(data.thetaphis[1].second == Catch::Approx(M_PI).margin(delta_eps));
+  }
+
+  SECTION("Duplicate removal")
+  {
+    json postpro = {
+        {"FarField",
+         {{"Attributes", {1}},
+          {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}}}};
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.thetaphis.size() == 2);
+  }
+
+  SECTION("Combined NSample and ThetaPhis")
+  {
+    json postpro = {
+        {"FarField",
+         {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}}}};
+    config::FarFieldPostData data;
+
+    data.SetUp(postpro);
+
+    REQUIRE(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis
+  }
+}
