@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Generated with:
-# julia -e 'include("mesh/mesh.jl"); generate_coaxial_mesh(filename="coaxial.msh", refinement=2, order=2)'
+# julia -e 'include("mesh/mesh.jl"); generate_coaxial_mesh(filename="coaxial.msh")'
 
 using Gmsh: gmsh
 
 """
     generate_coaxial_mesh(;
         filename::AbstractString,
-        refinement::Integer     = 0,
-        order::Integer          = 1,
+        refinement::Integer     = 2,
+        order::Integer          = 2,
         inner_diameter_mm::Real = 1.6383,
         outer_diameter_mm::Real = 5.461,
         length_mm::Real         = 40.0,
@@ -33,8 +33,8 @@ Generate a mesh for the coaxial cable example using Gmsh
 """
 function generate_coaxial_mesh(;
     filename::AbstractString,
-    refinement::Integer     = 0,
-    order::Integer          = 1,
+    refinement::Integer     = 2,
+    order::Integer          = 2,
     inner_diameter_mm::Real = 1.6383,
     outer_diameter_mm::Real = 5.461,
     length_mm::Real         = 40.0,

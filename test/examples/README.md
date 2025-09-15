@@ -65,3 +65,11 @@ the baseline script:
 ./baseline --dry-run          # Test without updating files
 ./baseline -np 4              # Use 4 MPI processes
 ```
+
+> [!WARNING]
+> In the `Eigenmode` problem type, Palace can find more results than the number
+> of request ones. This depends on details that can vary across platforms. For
+> this reason, it is important to ensure that the reference solution does not
+> include more modes than the number specified in the JSON file. Currently, it
+> is up to you to make sure that this is the case by manually inspecting and
+> editing the files.
