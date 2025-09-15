@@ -27,6 +27,8 @@ From this directory, run:
 ```bash
 julia -e 'include("mesh.jl"); generate_spheres_mesh(; filename="spheres.msh")'
 ```
+This generates the mesh used in the example.
+
 To visualize the mesh in Gmsh's graphical interface, add the `gui=true` parameter:
 ```bash
 julia -e 'include("mesh.jl"); generate_spheres_mesh(; filename="spheres.msh", gui=true)'
@@ -191,15 +193,18 @@ function generate_spheres_mesh(;
     # Finally, use this Min field to determine element sizes
     gmsh.model.mesh.field.setAsBackgroundMesh(101)
 
-    # Choose 3D meshing algorithm (10 = HXT, a parallel tetrahedral mesher)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    # Choose meshing algorithm. Typically, we would choose HXT, 10, because it
+    # is parallel and high-performance, but it is not reproducible, so best to
+    # stick with something more stable for this example.
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     gmsh.model.mesh.generate(3) # 3 means generate a 3D volume mesh
     gmsh.model.mesh.setOrder(3) # 3 means cubically curved elements
 
     # Set mesh format version as required by Palace
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     println("\nFinished generating mesh. Physical group tags:")

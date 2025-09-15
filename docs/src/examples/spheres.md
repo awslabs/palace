@@ -3,6 +3,12 @@
 <!--- SPDX-License-Identifier: Apache-2.0 --->
 ```
 
+```@setup include_example
+function include_example_file(example_path, filename)
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
+end
+```
+
 # Capacitance Matrix for Two Spheres
 
 !!! note
@@ -57,10 +63,8 @@ the finite element approximation to ``3``.
 The resulting extracted Maxwell capacitance matrix is saved to disk in the CSV file
 `postpro/terminal-C.csv`:
 
-```
-               i,             C[i][1] (F),             C[i][2] (F)
- 1.000000000e+00,        +1.237470370e-12,        -4.771228724e-13
- 2.000000000e+00,        -4.771228724e-13,        +2.478512148e-12
+```@example include_example
+include_example_file("spheres", "terminal-C.csv") # hide
 ```
 
 In this case, the analytic solution yields
@@ -80,10 +84,8 @@ coefficients by *Palace* are ``0.57\%``, ``1.9\%``, and ``3.5\%``, respectively.
 The mutual capacitance matrix can be computed from its Maxwell counterpart, and is saved in
 `postpro/terminal-Cm.csv`:
 
-```
-               i,           C_m[i][1] (F),           C_m[i][2] (F)
- 1.000000000e+00,        +7.603474979e-13,        +4.771228724e-13
- 2.000000000e+00,        +4.771228724e-13,        +2.001389275e-12
+```@example include_example
+include_example_file("spheres", "terminal-Cm.csv") # hide
 ```
 
 Additionally, while the typical approach used by *Palace* for lumped parameter extraction
@@ -93,13 +95,9 @@ configuration file for this example contains this information under
 [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D).
 The resulting capacitances are written to `postpro/terminal-C.csv`:
 
+```@example include_example
+include_example_file("spheres", "terminal-C.csv") # hide
 ```
-               i,                C[1] (F),                C[2] (F)
- 1.000000000e+00,        +1.219442420e-12,        -4.711796343e-13
- 2.000000000e+00,        -4.701844045e-13,        +2.443672442e-12
-```
-
-and agree closely with the values computed using the default method above, as expected.
 
 Finally, the `postpro/paraview` directory contains files for visualizing the computed field
 solutions with ParaView. Below we present the electrostatic potential fields for each
