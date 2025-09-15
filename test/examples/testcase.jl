@@ -97,11 +97,7 @@ function testcase(
             if !skip_rowcount
                 @test nrow(data) == nrow(dataref) || logdump(data, dataref)
             end
-            # For Eigenmode simulations, some solvers find more modes than requested. This
-            # is very sensitive to details, so only compare the first nrows that both data
-            # and dataref have.
             data = data[1:min(nrow(data), nrow(dataref)), :]
-            dataref = dataref[1:min(nrow(data), nrow(dataref)), :]
 
             # Check the number of columns matches, before removing any excluded columns
             @test ncol(data) == ncol(dataref)
