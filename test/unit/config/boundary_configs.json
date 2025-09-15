@@ -140,4 +140,11 @@
       "WavePort"  : [ { "Attributes": [6], "Index": 2,                             "Excitation": 0 } ]
     }
   },
+  "boundaries_periodic_torus" : {
+    "Boundaries" : {
+      "Periodic" : {
+        "BoundaryPairs" : [ { "DonorAttributes": [1], "ReceiverAttributes": [2]} ]
+      }
+    }
+  }
 }

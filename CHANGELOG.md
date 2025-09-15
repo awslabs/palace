@@ -16,6 +16,12 @@ The format of this changelog is based on
   - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
     subsequent modes are ordered by decreasing propagation constant.
+  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file) were
+    failing. The periodic boundary condition specification has also changed slightly,
+    `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary pairs, built
+    into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
+    and a single global Floquet wave vector can be specified in
+    `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
 
 ## [0.14.0] - 2025-08-20
 
