@@ -22,6 +22,8 @@ The format of this changelog is based on
     into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
     and a single global Floquet wave vector can be specified in
     `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+  - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
+    direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
 
 ## [0.14.0] - 2025-08-20
 
