@@ -853,6 +853,10 @@ public:
   // direct solver.
   bool complex_coarse_solve = false;
 
+  // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
+  // solver.
+  bool drop_small_entries = true;
+
   // Choose left or right preconditioning.
   PreconditionerSide pc_side = PreconditionerSide::DEFAULT;
 
