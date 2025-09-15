@@ -149,7 +149,7 @@ function generate_coaxial_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
 
-    gmsh.option.setNumber("Mesh.Algorithm", 10)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
     gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     gmsh.model.mesh.generate(3)
