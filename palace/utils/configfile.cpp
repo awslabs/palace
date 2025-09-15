@@ -1886,7 +1886,8 @@ void DrivenSolverData::SetUp(json &solver)
   if (output_formats_it != driven->end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
-    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+    output_formats.mfem_grid_function =
+        output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
   }
 
   // Debug
@@ -1905,7 +1906,8 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
     std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
     std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function
+              << '\n';
   }
 
   // Cleanup
@@ -1973,7 +1975,8 @@ void EigenSolverData::SetUp(json &solver)
   if (output_formats_it != eigenmode->end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
-    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+    output_formats.mfem_grid_function =
+        output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
   }
 
   // Cleanup
@@ -2040,7 +2043,8 @@ void ElectrostaticSolverData::SetUp(json &solver)
   if (output_formats_it != electrostatic->end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
-    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+    output_formats.mfem_grid_function =
+        output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
   }
 
   // Cleanup
@@ -2055,7 +2059,8 @@ void ElectrostaticSolverData::SetUp(json &solver)
   {
     std::cout << "Save: " << n_post << '\n';
     std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function
+              << '\n';
   }
 }
 
@@ -2073,7 +2078,8 @@ void MagnetostaticSolverData::SetUp(json &solver)
   if (output_formats_it != magnetostatic->end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
-    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+    output_formats.mfem_grid_function =
+        output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
   }
 
   // Cleanup
@@ -2088,7 +2094,8 @@ void MagnetostaticSolverData::SetUp(json &solver)
   {
     std::cout << "Save: " << n_post << '\n';
     std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function
+              << '\n';
   }
 }
 
@@ -2147,7 +2154,8 @@ void TransientSolverData::SetUp(json &solver)
   if (output_formats_it != transient->end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
-    output_formats.mfem_grid_function = output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
+    output_formats.mfem_grid_function =
+        output_formats_it->value("MFEMGridFunction", output_formats.mfem_grid_function);
   }
 
   // Cleanup
@@ -2180,7 +2188,8 @@ void TransientSolverData::SetUp(json &solver)
     std::cout << "RelTol: " << rel_tol << '\n';
     std::cout << "AbsTol: " << abs_tol << '\n';
     std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function << '\n';
+    std::cout << "OutputFormats.MFEMGridFunction: " << output_formats.mfem_grid_function
+              << '\n';
   }
 }
 
