@@ -198,3 +198,5 @@ feature. For this example, the resulting 3D radiation pattern is shown below.
 ## References
 
 [1] Stutzman, W. L., & Thiele, G. A., *Antenna Theory and Design* (3rd ed.), John Wiley & Sons, 2012.
+
+TIP: USE GLMAKIE FOR INTERACTIVE

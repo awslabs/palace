@@ -365,9 +365,7 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
     const GridFunction *B, double omega) const
 {
   if (theta_phi_pairs.empty())
-  {
     return {};
-  }
 
   BdrFarFieldBatchCoefficient coeff(*E, *B, mat_op, omega, theta_phi_pairs);
 
@@ -375,14 +373,11 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Initialize integrals.
+  // Initialize integrals (initialized to 0 ).
   std::vector<std::array<std::complex<double>, 3>> integrals(theta_phi_pairs.size());
-  for (auto &integral : integrals)
-  {
-    integral.fill({0.0, 0.0});
-  }
 
   // Integrate.
+  // TODO: Add OpenMP.
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
@@ -390,28 +385,25 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
 
     auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(i);
     const auto *fe = nd_fespace.GetBE(i);
-    int integration_order = fem::DefaultIntegrationOrder::Get(*T);
-    const auto *ir = &mfem::IntRules.Get(fe->GetGeomType(), integration_order);
+    const auto *ir = &mfem::IntRules.Get(fe->GetGeomType(), T->OrderJ());
 
     for (int j = 0; j < ir->GetNPoints(); j++)
     {
-      const auto &ip = ir->IntPoint(j);
+      const mfem::IntegrationPoint &ip = ir->IntPoint(j);
       T->SetIntPoint(&ip);
 
       auto f_vals = coeff.EvalComplexBatch(*T, ip);
       double w = ip.weight * T->Weight();
 
       for (size_t k = 0; k < theta_phi_pairs.size(); k++)
-      {
         for (int d = 0; d < 3; d++)
-        {
           integrals[k][d] += w * f_vals[k][d];
-        }
-      }
     }
   }
 
-  // Apply MPI reduction across all the results.
+  // Apply MPI reduction across all the results. We re-interpret the entire
+  // result as a single vector so that we can perform the reduction through a
+  // single MPI call.
   std::complex<double> *data_ptr =
       reinterpret_cast<std::complex<double> *>(integrals.data());
   size_t total_elements = integrals.size() * 3;  // Each integral has 3 components

@@ -13,20 +13,35 @@ The format of this changelog is based on
 
 ## In progress
 
+#### New Features
+
+  - Added support for extraction of electric fields in the radiative zone.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
+    additional information. [PR
+    #449](https://github.com/awslabs/palace/pull/449).
+
+#### Notable Changes
+
+  - The periodic boundary condition specification has also changed slightly,
+    `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary
+    pairs, built into the mesh file or not, should be specified in
+    `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
+    vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+    [PR #449](https://github.com/awslabs/palace/pull/471).
+
+#### Bug Fixes
+
   - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
-    subsequent modes are ordered by decreasing propagation constant.
-  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file) were
-    failing. The periodic boundary condition specification has also changed slightly,
-    `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary pairs, built
-    into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
-    and a single global Floquet wave vector can be specified in
-    `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+    subsequent modes are ordered by decreasing propagation constant. [PR
+    #448](https://github.com/awslabs/palace/pull/448)
+  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
+    were failing. [PR #449](https://github.com/awslabs/palace/pull/471).
+
 
 ## [0.14.0] - 2025-08-20
 
-  - Added support for extraction of electric fields in the radiative zone. [PR
-    #449](https://github.com/awslabs/palace/pull/449).
   - Added `--version` command line flag for displaying Palace version information.
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.

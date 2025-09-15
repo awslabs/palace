@@ -58,8 +58,8 @@
             [
                 {
                     "Type": "Point",
-                    "Freq": [0.0749], // GHz
-                    "SaveStep": 1
+                    "Freq": [0.07, 0.0749], // GHz
+                    "SaveStep": 2
                 }
             ]
         },
