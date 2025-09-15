@@ -197,6 +197,38 @@
         }
       }
     },
+    "FluxLoop":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "HoleAttributes", "FluxAmounts", "FluxLoopPEC", "Direction"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "FluxLoopPEC": { "$ref": "#/$defs/Attributes" },
+          "HoleAttributes": { "$ref": "#/$defs/Attributes" },
+          "FluxAmounts":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "number" }
+          },
+          "Direction":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "Regularization": { "type": "number", "exclusiveMinimum": 0.0 }
+        }
+      }
+    },
     "Ground":
     {
       "type": "object",

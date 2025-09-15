@@ -44,6 +44,10 @@
     [
         ...
     ],
+    "FluxLoop":
+    [
+        ...
+    ],
     "Ground":
     {
         ...
@@ -116,6 +120,10 @@ This boundary prescribes a unit source surface current excitation on the given b
 order to excite a frequency or time domain driven simulation or magnetostatic simulation.
 For the magnetostatic simulation type, entries of the inductance matrix are extracted
 corresponding to each surface current boundary.
+
+`"FluxLoop"` :  Array of objects for configuring flux loop boundary conditions for
+prescribing magnetic flux through holes in conducting surfaces. Used for inductance
+calculations and electromagnetic simulations involving flux loops.
 
 `"Ground"` :  Top-level object for specifying ground, or zero voltage, boundary conditions
 for for electrostatic simulations.
@@ -478,6 +486,36 @@ same total current as a single-element source.
 current boundaries and should not be combined with the `"CoordinateSystem"` field described
 above. Each element of a multielement current source can be described by its own unique
 direction, and corresponding coordinate system.
+
+## `boundaries["FluxLoop"]`
+
+```json
+"FluxLoop":
+[
+    {
+        "Index": <int>,
+        "FluxLoopPEC": [<int array>],
+        "HoleAttributes": [<int array>],
+        "FluxAmounts": [<float array>],
+        "Direction": [<float array>]
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` : Index of this flux loop boundary, used in postprocessing output files and to index the computed inductance matrix.
+
+`"FluxLoopPEC" [None]` : Integer array of mesh boundary attributes for the conducting surface containing the holes.
+Conducting surfaces that don't have flux holes on them should have traditional PEC boundary conditions imposed.
+
+`"HoleAttributes" [None]` : Integer array of mesh boundary attributes for the holes through which magnetic flux is prescribed.
+
+`"FluxAmounts" [None]` : Floating point array specifying the magnetic flux amounts through each hole, in the same order as "HoleAttributes".
+Positive values indicate flux in the direction of "Direction".
+
+`"Direction" [None]` : Floating point array of length 3 specifying the normal direction vector for the flux loop, used to determine flux orientation.
 
 ## `boundaries["Ground"]`
 

@@ -617,6 +617,31 @@ public:
   void SetUp(json &boundaries);
 };
 
+struct FluxLoopData
+{
+public:
+  // List of boundary attributes for the metal surface.
+  std::vector<int> fluxloop_pec = {};
+
+  // List of boundary attributes for holes (one per hole).
+  std::vector<int> hole_attributes = {};
+
+  // Flux amounts for each hole (same size as hole_attributes).
+  std::vector<double> flux_amounts = {};
+
+  // Direction vector for flux orientation.
+  std::array<double, 3> direction = {0.0, 0.0, 1.0};
+
+  // Regularization parameter for curl-curl system stability.
+  double regularization = 1e-6;
+};
+
+struct FluxBoundaryData : public internal::DataMap<FluxLoopData>
+{
+public:
+  void SetUp(json &boundaries);
+};
+
 struct BoundaryData
 {
 public:
@@ -635,6 +660,7 @@ public:
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
   FloquetData floquet;
+  FluxBoundaryData fluxloop = {};
   BoundaryPostData postpro = {};
 
   void SetUp(json &config);

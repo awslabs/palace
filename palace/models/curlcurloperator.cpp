@@ -35,7 +35,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs)),
     rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
-    surf_j_op(iodata, *mesh.back())
+    surf_j_op(iodata, *mesh.back()), surf_flux_op(iodata)
 {
   // Finalize setup.
   CheckBoundaryProperties();
@@ -94,6 +94,22 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
       continue;  // Can just ignore if wrong
     }
     dbc_bcs.Append(attr);
+  }
+  // Add flux loop boundary attributes as essential boundaries
+  std::set<int> flux_attrs;
+  for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+  {
+    for (auto attr : data.fluxloop_pec)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
+      {
+        flux_attrs.insert(attr);
+      }
+    }
+  }
+  for (auto attr : flux_attrs)
+  {
+    dbc_bcs.Append(attr);  // Each attribute added only once
   }
   return dbc_bcs;
 }
@@ -193,7 +209,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
+void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 {
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to
@@ -217,6 +233,75 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   rhs.UseDevice(true);
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
+}
+
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
+{
+  GetFluxExcitationVector(idx, RHS, nullptr);
+}
+
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values)
+{
+  // Assemble the surface flux excitation for this specific flux loop
+  // by solving the 2D surface curl problem on the metallic surface
+  // that contains the flux hole.
+  Vector flux_solution;
+  if (boundary_values)
+  {
+    SolveSurfaceCurlProblem(idx, *boundary_values);
+    flux_solution = *boundary_values;  // Use the pre-allocated result
+  }
+  else
+  {
+    flux_solution = SolveSurfaceCurlProblem(idx);
+  }
+
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  // Early exit if boundary values are zero
+  double boundary_norm = linalg::Norml2(GetComm(), flux_solution);
+  if (boundary_norm < 1e-12)
+  {
+    return;
+  }
+
+  // Cache original matrix if not already cached
+  if (!K_orig_)
+  {
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    BilinearForm k(GetNDSpace());
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+    auto k_mat = k.Assemble(GetNDSpaces(), false);
+    K_orig_ = std::make_unique<ParOperator>(std::move(k_mat.back()), GetNDSpace());
+  }
+
+  // Compute RHS = -K × boundary_values for boundary-interior coupling
+  K_orig_->Mult(flux_solution, RHS);
+  RHS *= -1.0;
+
+  // Set boundary DOF entries to the prescribed values
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), flux_solution);
+}
+
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
+{
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
+
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
+}
+
+void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const
+{
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
+
+  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), result);
 }
 
 }  // namespace palace

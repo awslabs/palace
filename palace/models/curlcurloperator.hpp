@@ -9,9 +9,12 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfacefluxoperator.hpp"
 
 namespace palace
 {
@@ -47,6 +50,12 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
+  // Operator for flux loop excitation.
+  SurfaceFluxOperator surf_flux_op;
+
+  // Cached original matrix for flux loop boundary-interior coupling
+  mutable std::unique_ptr<ParOperator> K_orig_;
+
   mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
@@ -58,6 +67,7 @@ public:
 
   // Access to underlying BC operator objects for postprocessing.
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
@@ -89,7 +99,15 @@ public:
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
-  void GetExcitationVector(int idx, Vector &RHS);
+  void GetCurrentExcitationVector(int idx, Vector &RHS);
+
+  // Assemble flux loop excitation vector for specified flux loop index
+  void GetFluxExcitationVector(int idx, Vector &RHS);
+  void GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values);
+
+  // Solve 2D surface curl problem for flux loop boundary conditions
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
+  void SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
