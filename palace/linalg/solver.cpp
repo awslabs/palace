@@ -81,7 +81,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       PtAPi->StealParallelAssemble();
     }
-    A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+    if (drop_small_entries)
+    {
+      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+    }
     pc->SetOperator(*A);
     if (!save_assembled)
     {
@@ -90,7 +93,16 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAr)
   {
-    pc->SetOperator(*hAr);
+    if (drop_small_entries)
+    {
+      A = std::make_unique<mfem::HypreParMatrix>(*hAr);
+      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      pc->SetOperator(*A);
+    }
+    else
+    {
+      pc->SetOperator(*hAr);
+    }
     if (PtAPr && !save_assembled)
     {
       PtAPr->StealParallelAssemble();
@@ -98,7 +110,16 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAi)
   {
-    pc->SetOperator(*hAi);
+    if (drop_small_entries)
+    {
+      A = std::make_unique<mfem::HypreParMatrix>(*hAi);
+      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      pc->SetOperator(*A);
+    }
+    else
+    {
+      pc->SetOperator(*hAi);
+    }
     if (PtAPi && !save_assembled)
     {
       PtAPi->StealParallelAssemble();
