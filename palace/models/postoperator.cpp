@@ -136,7 +136,9 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
     output_delta_post = iodata.solver.transient.delta_post;
   }
 
+
   mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
+
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -528,8 +530,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::IO);
 
+
   // Create output directory if it doesn't exist
   fs::create_directories(mfem_gf_output_dir);
+
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -540,6 +544,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
 
+  const int local_rank = mesh.GetMyRank();
+
   // Write grid functions using MFEM's built-in Save method
   // Use 6-digit padding to match MFEM's pad_digits_default
   if constexpr (HasEGridFunction<solver_t>())
@@ -549,13 +555,18 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       if constexpr (HasComplexGridFunction<solver_t>())
       {
         // Write real and imaginary parts separately
-        fs::path e_real_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "E_real_{:0{}d}.gf", step, pad_digits_default);
-        fs::path e_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "E_imag_{:0{}d}.gf", step, pad_digits_default);
+        fs::path e_real_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+        fs::path e_imag_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
 
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
+
 
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
@@ -563,13 +574,15 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path e_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "E_{:0{}d}.gf", step, pad_digits_default);
+        fs::path e_filename = fs::path(mfem_gf_output_dir) /
+                              fmt::format("E_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                          local_rank, pad_digits_default);
         std::ofstream e_file(e_filename);
         E->Real().Save(e_file);
       }
     }
   }
+
 
   if constexpr (HasBGridFunction<solver_t>())
   {
@@ -578,10 +591,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       if constexpr (HasComplexGridFunction<solver_t>())
       {
         // Write real and imaginary parts separately
-        fs::path b_real_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "B_real_{:0{}d}.gf", step, pad_digits_default);
-        fs::path b_imag_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "B_imag_{:0{}d}.gf", step, pad_digits_default);
+        fs::path b_real_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("B_real_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+        fs::path b_imag_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("B_imag_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
 
         std::ofstream b_real_file(b_real_filename);
         std::ofstream b_imag_file(b_imag_filename);
@@ -592,35 +609,41 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path b_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-          "B_{:0{}d}.gf", step, pad_digits_default);
+        fs::path b_filename = fs::path(mfem_gf_output_dir) /
+                              fmt::format("B_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                          local_rank, pad_digits_default);
         std::ofstream b_file(b_filename);
         B->Real().Save(b_file);
       }
     }
   }
 
+
   if constexpr (HasVGridFunction<solver_t>())
   {
     if (V)
     {
-      fs::path v_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-        "V_{:0{}d}.gf", step, pad_digits_default);
+      fs::path v_filename = fs::path(mfem_gf_output_dir) /
+                            fmt::format("V_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                        local_rank, pad_digits_default);
       std::ofstream v_file(v_filename);
       V->Real().Save(v_file);
     }
   }
 
+
   if constexpr (HasAGridFunction<solver_t>())
   {
     if (A)
     {
-      fs::path a_filename = fs::path(mfem_gf_output_dir) / fmt::format(
-        "A_{:0{}d}.gf", step, pad_digits_default);
+      fs::path a_filename = fs::path(mfem_gf_output_dir) /
+                            fmt::format("A_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                        local_rank, pad_digits_default);
       std::ofstream a_file(a_filename);
       A->Real().Save(a_file);
     }
   }
+
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
@@ -633,29 +656,37 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 {
   BlockTimer bt(Timer::IO);
 
+
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
+
 
   // Write the mesh partitioning and (optionally) error indicators at the final step.
   // Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
 
+
   // Create output directory if it doesn't exist
   fs::create_directories(mfem_gf_output_dir);
+
 
   // Create piecewise constant finite element space for rank and error indicator
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
   mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
 
+  const int local_rank = mesh.GetMyRank();
+
   // Write mesh partitioning (rank information)
   {
     mfem::GridFunction rank(&pwconst_fespace);
-    rank = mesh.GetMyRank() + 1;
+    rank = local_rank + 1;
 
-    fs::path rank_filename = fs::path(mfem_gf_output_dir) / "rank.gf";
+    fs::path rank_filename = fs::path(mfem_gf_output_dir) /
+                             fmt::format("rank.gf.{:0{}d}", local_rank, pad_digits_default);
     std::ofstream rank_file(rank_filename);
     rank.Save(rank_file);
   }
+
 
   // Write error indicator if provided
   if (indicator)
@@ -665,10 +696,13 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
     eta = indicator->Local();
 
-    fs::path indicator_filename = fs::path(mfem_gf_output_dir) / "indicator.gf";
+    fs::path indicator_filename =
+        fs::path(mfem_gf_output_dir) /
+        fmt::format("indicator.gf.{:0{}d}", local_rank, pad_digits_default);
     std::ofstream indicator_file(indicator_filename);
     eta.Save(indicator_file);
   }
+
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
 
@@ -678,7 +712,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 
   Mpi::Barrier(fem_op->GetComm());
 }
-
 
 // Measurements.
 
