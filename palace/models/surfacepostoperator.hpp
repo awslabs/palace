@@ -104,13 +104,8 @@ public:
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 
-  std::vector<std::complex<double>> GetFarFieldrE(double theta, double phi,
-                                                  const GridFunction *E,
-                                                  const GridFunction *B,
-                                                  double omega) const;
-
   // Batch version for multiple theta/phi pairs
-  std::vector<std::vector<std::complex<double>>>
+  std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
                 const GridFunction *E, const GridFunction *B, double omega) const;
 

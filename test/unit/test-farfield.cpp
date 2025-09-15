@@ -42,7 +42,7 @@ using namespace electromagnetics;
 namespace
 {
 
-// Test constants
+// Test constants.
 constexpr double ATOL = 1e-4;
 constexpr double RTOL = 1e-6;
 constexpr int NUM_THETA = 50;
@@ -296,8 +296,7 @@ TEST_CASE("PostOperator", "[farfield]")
   std::string mesh_path = std::string(PALACE_TEST_MESH_DIR "/gmsh/") + mesh_name;
   double freq_Hz = GENERATE(35e6, 50e6);
   std::vector<int> attributes =
-      (mesh_name == "two_hemispheres.msh") ? std::vector<int>{2, 3} :
-      std::vector<int>{2};
+      (mesh_name == "two_hemispheres.msh") ? std::vector<int>{2, 3} : std::vector<int>{2};
 
   runFarFieldTest(freq_Hz, mesh_path, attributes);
 }
