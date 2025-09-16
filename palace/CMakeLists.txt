@@ -265,6 +265,76 @@ if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   )
 endif()
 
+# Add Palace version information
+set_property(
+  SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_VERSION=\"${PROJECT_VERSION}\""
+)
+
+# Add dependency version information
+if(nlohmann_json_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_NLOHMANN_JSON_VERSION=\"${nlohmann_json_VERSION}\""
+  )
+endif()
+
+if(fmt_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_FMT_VERSION=\"${fmt_VERSION}\""
+  )
+endif()
+
+if(scn_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SCN_VERSION=\"${scn_VERSION}\""
+  )
+endif()
+
+if(Eigen3_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_EIGEN_VERSION=\"${Eigen3_VERSION}\""
+  )
+endif()
+
+if(MFEM_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_MFEM_VERSION=\"${MFEM_VERSION}\""
+  )
+endif()
+
+if(libCEED_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_VERSION=\"${libCEED_VERSION}\""
+  )
+endif()
+
+if(PALACE_WITH_SLEPC AND PETSc_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_PETSC_VERSION=\"${PETSc_VERSION}\""
+  )
+endif()
+
+if(PALACE_WITH_SLEPC AND SLEPc_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SLEPC_VERSION=\"${SLEPc_VERSION}\""
+  )
+endif()
+
+if(PALACE_WITH_ARPACK AND arpackng_VERSION)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_ARPACK_VERSION=\"${arpackng_VERSION}\""
+  )
+endif()
+
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
 if(NOT DEFINED CONSTEXPR_SQRT_SUPPORT_CACHE)
