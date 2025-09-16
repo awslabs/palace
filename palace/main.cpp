@@ -57,44 +57,47 @@ static void PrintPalaceVersionInfo(MPI_Comm comm)
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
   }
-  
+
   // Print build dependencies
   Mpi::Print(comm, "\nBuild dependencies:\n");
-  
+
+#define PRINT_VERSION(NAME, VERSION_MACRO) \
+  Mpi::Print(comm, "  " NAME ": {}\n", VERSION_MACRO)
+
 #if defined(PALACE_MFEM_VERSION)
-  Mpi::Print(comm, "  MFEM: {}\n", PALACE_MFEM_VERSION);
+  PRINT_VERSION("MFEM", PALACE_MFEM_VERSION);
 #endif
 
 #if defined(PALACE_LIBCEED_VERSION)
-  Mpi::Print(comm, "  libCEED: {}\n", PALACE_LIBCEED_VERSION);
+  PRINT_VERSION("libCEED", PALACE_LIBCEED_VERSION);
 #endif
 
 #if defined(PALACE_WITH_SLEPC) && defined(PALACE_SLEPC_VERSION)
-  Mpi::Print(comm, "  SLEPc: {}\n", PALACE_SLEPC_VERSION);
+  PRINT_VERSION("SLEPc", PALACE_SLEPC_VERSION);
 #endif
 
 #if defined(PALACE_WITH_SLEPC) && defined(PALACE_PETSC_VERSION)
-  Mpi::Print(comm, "  PETSc: {}\n", PALACE_PETSC_VERSION);
+  PRINT_VERSION("PETSc", PALACE_PETSC_VERSION);
 #endif
 
 #if defined(PALACE_WITH_ARPACK) && defined(PALACE_ARPACK_VERSION)
-  Mpi::Print(comm, "  ARPACK: {}\n", PALACE_ARPACK_VERSION);
+  PRINT_VERSION("ARPACK", PALACE_ARPACK_VERSION);
 #endif
 
 #if defined(PALACE_NLOHMANN_JSON_VERSION)
-  Mpi::Print(comm, "  nlohmann/json: {}\n", PALACE_NLOHMANN_JSON_VERSION);
+  PRINT_VERSION("nlohmann/json", PALACE_NLOHMANN_JSON_VERSION);
 #endif
 
 #if defined(PALACE_FMT_VERSION)
-  Mpi::Print(comm, "  fmt: {}\n", PALACE_FMT_VERSION);
+  PRINT_VERSION("fmt", PALACE_FMT_VERSION);
 #endif
 
 #if defined(PALACE_SCN_VERSION)
-  Mpi::Print(comm, "  scn: {}\n", PALACE_SCN_VERSION);
+  PRINT_VERSION("scn", PALACE_SCN_VERSION);
 #endif
 
 #if defined(PALACE_EIGEN_VERSION)
-  Mpi::Print(comm, "  Eigen: {}\n", PALACE_EIGEN_VERSION);
+  PRINT_VERSION("Eigen", PALACE_EIGEN_VERSION);
 #endif
 
   Mpi::Print(comm, "\n");
