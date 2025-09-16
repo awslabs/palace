@@ -40,6 +40,66 @@ static const char *GetPalaceGitTag()
   return commit;
 }
 
+static const char *GetPalaceVersion()
+{
+#if defined(PALACE_VERSION)
+  static const char *version = PALACE_VERSION;
+#else
+  static const char *version = "UNKNOWN";
+#endif
+  return version;
+}
+
+static void PrintPalaceVersionInfo(MPI_Comm comm)
+{
+  Mpi::Print(comm, "Palace version: {}\n", GetPalaceVersion());
+  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  {
+    Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
+  }
+  
+  // Print build dependencies
+  Mpi::Print(comm, "\nBuild dependencies:\n");
+  
+#if defined(PALACE_MFEM_VERSION)
+  Mpi::Print(comm, "  MFEM: {}\n", PALACE_MFEM_VERSION);
+#endif
+
+#if defined(PALACE_LIBCEED_VERSION)
+  Mpi::Print(comm, "  libCEED: {}\n", PALACE_LIBCEED_VERSION);
+#endif
+
+#if defined(PALACE_WITH_SLEPC) && defined(PALACE_SLEPC_VERSION)
+  Mpi::Print(comm, "  SLEPc: {}\n", PALACE_SLEPC_VERSION);
+#endif
+
+#if defined(PALACE_WITH_SLEPC) && defined(PALACE_PETSC_VERSION)
+  Mpi::Print(comm, "  PETSc: {}\n", PALACE_PETSC_VERSION);
+#endif
+
+#if defined(PALACE_WITH_ARPACK) && defined(PALACE_ARPACK_VERSION)
+  Mpi::Print(comm, "  ARPACK: {}\n", PALACE_ARPACK_VERSION);
+#endif
+
+#if defined(PALACE_NLOHMANN_JSON_VERSION)
+  Mpi::Print(comm, "  nlohmann/json: {}\n", PALACE_NLOHMANN_JSON_VERSION);
+#endif
+
+#if defined(PALACE_FMT_VERSION)
+  Mpi::Print(comm, "  fmt: {}\n", PALACE_FMT_VERSION);
+#endif
+
+#if defined(PALACE_SCN_VERSION)
+  Mpi::Print(comm, "  scn: {}\n", PALACE_SCN_VERSION);
+#endif
+
+#if defined(PALACE_EIGEN_VERSION)
+  Mpi::Print(comm, "  Eigen: {}\n", PALACE_EIGEN_VERSION);
+#endif
+
+  Mpi::Print(comm, "\n");
+}
+
 static const char *GetPalaceCeedJitSourceDir()
 {
 #if defined(PALACE_LIBCEED_JIT_SOURCE)
@@ -220,7 +280,7 @@ int main(int argc, char *argv[])
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
                "Options:\n"
                "  -h, --help           Show this help message and exit\n"
-               "  --version            Show version information and exit\n"
+               "  -V, --version        Show version information and exit\n"
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
@@ -232,9 +292,9 @@ int main(int argc, char *argv[])
       Help();
       return 0;
     }
-    if (argv_i == "--version")
+    if ((argv_i == "-V") || (argv_i == "--version"))
     {
-      Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
+      PrintPalaceVersionInfo(world_comm);
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
