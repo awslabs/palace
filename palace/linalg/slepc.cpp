@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
 #include "linalg/nleps.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -2083,6 +2084,7 @@ PetscReal SlepcNEPSolver::GetBackwardScaling(PetscScalar l) const
 
 }  // namespace palace::slepc
 
+
 PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
@@ -2457,9 +2459,11 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
         std::abs(ctx->lambda.imag()), palace::Operator::DIAG_ZERO);
-    ctx->opA_pc = ctx->space_op->GetSystemMatrix(
-        1.0 + 0i, ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK,
-        ctx->opC, ctx->opM, ctx->opA2_pc.get());
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
+    ctx->opA_pc = palace::BuildParSumOperator<4, palace::ComplexOperator>(
+      {1.0 + 0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0+0i},
+      {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()});
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
     ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(
         1.0 + 0i, ctx->lambda, ctx->lambda * ctx->lambda,
         ctx->lambda.imag());
@@ -2474,9 +2478,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    // palace::Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
     ctx->opProj->Mult(ctx->y1);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    // palace::Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
   }
   PetscCall(ToPetscVec(ctx->y1, y));
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2490,9 +2494,11 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
-  ctxF->opA = ctxF->space_op->GetSystemMatrix(1.0 + 0i, lambda,
-                                              lambda * lambda, ctxF->opK, ctxF->opC,
-                                              ctxF->opM, ctxF->opA2.get());
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
+  ctxF->opA = palace::BuildParSumOperator<4, palace::ComplexOperator>(
+      {1.0 + 0i, lambda, lambda * lambda, 1.0 + 0i},
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()});
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2513,9 +2519,11 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
   ctxF->opAJ = ctxF->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(
       denom, ctxF->opA2p.get(), ctxF->opA2.get(), palace::Operator::DIAG_ZERO);
-  ctxF->opJ = ctxF->space_op->GetSystemMatrix(
-      std::complex<double>(0.0, 0.0), 1.0 + 0i, 2.0 * lambda,
-      ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get());
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
+  ctxF->opJ = palace::BuildParSumOperator<4, palace::ComplexOperator>(
+      {0.0 + 0i, 1.0 + 0i, 2.0 * lambda, 1.0 + 0i},
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()});
+  palace::Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

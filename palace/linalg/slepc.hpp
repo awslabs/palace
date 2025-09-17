@@ -85,6 +85,8 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
+  std::optional<std::function<const ComplexOperator&(std::complex<double>)>> opA2;
+
 protected:
   // Control print level for debugging.
   int print;
