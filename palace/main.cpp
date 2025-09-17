@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
                "Options:\n"
                "  -h, --help           Show this help message and exit\n"
-               "  -v, --version        Show version information and exit\n"
+               "  -V, --version        Show version information and exit\n"
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
@@ -277,7 +277,7 @@ int main(int argc, char *argv[])
       Help();
       return 0;
     }
-    if ((argv_i == "-v") || (argv_i == "--version"))
+    if ((argv_i == "-V") || (argv_i == "--version"))
     {
       PrintPalaceVersionInfo(world_comm);
       return 0;

@@ -11,7 +11,7 @@ Wrapper for launching Palace using MPI
 
 Options:
   -h, --help                       Show this help message and exit
-  -v, --version                    Show version information and exit
+  -V, --version                    Show version information and exit
   -dry-run, --dry-run              Parse configuration file for errors and exit
   -serial, --serial                Call Palace without MPI launcher, default is false
   -np, --np NUM_PROCS              How many MPI processes to use, default is 1
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
         help
         exit 0
         ;;
-        -v|--version)
+        -V|--version)
         VERSION="--version"
         shift
         ;;
