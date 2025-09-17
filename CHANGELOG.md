@@ -22,6 +22,8 @@ The format of this changelog is based on
     into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
     and a single global Floquet wave vector can be specified in
     `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+  - Added support for circuit synthesis from the PROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort` fields to make circuit. Prints out the projected matrices of the driven problem as well as the basis orthogonalization matrix.
 
 ## [0.14.0] - 2025-08-20
 
