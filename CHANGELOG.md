@@ -24,6 +24,8 @@ The format of this changelog is based on
     [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
     additional information. [PR
     449](https://github.com/awslabs/palace/pull/449).
+  - Added support for circuit synthesis from the PROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort` fields to make circuit. Prints out the projected matrices of the driven problem as well as the basis orthogonalization matrix.
 
 #### Interface Changes
 
