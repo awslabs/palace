@@ -79,6 +79,8 @@ The format of this changelog is based on
   - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
     direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
     [PR 476](https://github.com/awslabs/palace/pull/476).
+  - Added support for circuit synthesis from the PROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort` fields to make circuit. Prints out the projected matrices of the driven problem as well as the basis orthogonalization matrix.
 
 #### Interface Changes
 
