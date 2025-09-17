@@ -81,6 +81,10 @@ public:
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1;
 
+  // References to matrices defining the (possibly quadratic) eigenvalue problem
+  // (not owned).
+  const ComplexOperator *opK, *opC, *opM;
+
 protected:
   // Control print level for debugging.
   int print;
@@ -167,12 +171,15 @@ public:
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
 
-  // Set the update frequency and tolerance of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq,
-                            double preconditioner_update_tol) override;
+  // Set the function for calling
+  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>, std::complex<double>, double)>);
 
-  // Set the maximum number of restarts with the same initial guess.
-  void SetMaxRestart(int max_num_restart) override;
+  // // Set the update frequency and tolerance of the preconditioner.
+  // void SetPreconditionerLag(int preconditioner_update_freq,
+  //                           double preconditioner_update_tol) override;
+
+  // // Set the maximum number of restarts with the same initial guess.
+  // void SetMaxRestart(int max_num_restart) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
@@ -281,9 +288,6 @@ public:
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
 
-  // References to matrices defining the generalized eigenvalue problem (not owned).
-  const ComplexOperator *opK, *opM;
-
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normM;
@@ -318,10 +322,6 @@ public:
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
-
-  // References to matrices defining the quadratic polynomial eigenvalue problem
-  // (not owned).
-  const ComplexOperator *opK, *opC, *opM;
 
   // Workspace vectors for operator applications.
   mutable ComplexVector x2, y2;
@@ -425,10 +425,6 @@ public:
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
 
-  // References to matrices defining the quadratic polynomial eigenvalue problem
-  // (not owned).
-  const ComplexOperator *opK, *opC, *opM;
-
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
@@ -520,17 +516,15 @@ class SlepcNEPSolver : public SlepcNEPSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
-  using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
   using SlepcEigenvalueSolver::sinvert;
 
-  // References to matrices defining the quadratic eigenvalue problem
-  // (not owned).
-  const ComplexOperator *opK, *opC, *opM;
+  // // References to matrices defining the quadratic eigenvalue problem
+  // // (not owned).
+  // const ComplexOperator *opK, *opC, *opM;
 
   // Operators for the nonlinear eigenvalue problem.
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;

@@ -310,8 +310,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                     std::complex<double>(-target * target, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      std::complex<double>(1.0, 0.0), 1i * target,
-      std::complex<double>(-target * target, 0.0), target);
+      1.0 + 0i, 1i * target, -target * target + 0i, target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
@@ -341,8 +340,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       nonlinear_type != NonlinearEigenSolver::SLP)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-    std::unique_ptr<NonLinearEigenvalueSolver> qn;
-    qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+    auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     if (C)
@@ -376,7 +374,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     qn->SetInitialGuess(eigenvalues, eigenvectors, errors);
     eigen = std::move(qn);
+
+    // Suppress wave port output during Newton iterations.
+    space_op.GetWavePortOp().SetSuppressOutput(true);
     num_conv = eigen->Solve();
+    space_op.GetWavePortOp().SetSuppressOutput(false);
   }
 
   BlockTimer bt2(Timer::POSTPRO);

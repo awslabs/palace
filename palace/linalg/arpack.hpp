@@ -123,17 +123,17 @@ protected:
 public:
   ArpackEigenvalueSolver(MPI_Comm comm, int print);
 
-  // Set operators for the generalized eigenvalue problem, the quadratic polynomial
-  // eigenvalue problem, or for the nonlinear eigenvalue problem.
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
-                    ScaleType type) override;
+  // // Set operators for the generalized eigenvalue problem, the quadratic polynomial
+  // // eigenvalue problem, or for the nonlinear eigenvalue problem.
+  // void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+  //                   ScaleType type) override;
+  // void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+  //                   const ComplexOperator &M, ScaleType type) override;
+  // void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+  //                   const ComplexOperator &M, ScaleType type) override;
+  // void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+  //                   const ComplexOperator &C, const ComplexOperator &M,
+  //                   ScaleType type) override;
   void SetNLInterpolation(const Interpolation &interp) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
@@ -161,12 +161,12 @@ public:
   // Set maximum number of Arnoldi update iterations.
   void SetMaxIter(int max_it) override;
 
-  // Set the update frequency and tolerance of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq,
-                            double preconditioner_update_tol) override;
+  // // Set the update frequency and tolerance of the preconditioner.
+  // void SetPreconditionerLag(int preconditioner_update_freq,
+  //                           double preconditioner_update_tol) override;
 
-  // Set the maximum number of restarts with the same initial guess.
-  void SetMaxRestart(int max_num_restart) override;
+  // // Set the maximum number of restarts with the same initial guess.
+  // void SetMaxRestart(int max_num_restart) override;
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
@@ -222,7 +222,16 @@ public:
   ArpackEPSSolver(MPI_Comm comm, int print);
 
   using ArpackEigenvalueSolver::SetOperators;
+  // Set operators for the generalized eigenvalue problem, the quadratic polynomial
+  // eigenvalue problem, or for the nonlinear eigenvalue problem.
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
 
   int Solve() override;
@@ -257,6 +266,7 @@ public:
   ArpackPEPSolver(MPI_Comm comm, int print);
 
   using ArpackEigenvalueSolver::SetOperators;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
@@ -264,6 +274,7 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
+
 
   int Solve() override;
 };

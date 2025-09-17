@@ -57,15 +57,30 @@ public:
   // Set operators for the generalized eigenvalue problem, quadratic polynomial
   // eigenvalue problem, or nonlinear eigenvalue problem.
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                            ScaleType type) = 0;
+                            ScaleType type)
+  {
+    MFEM_ABORT("SetOperators not defined!");
+  }
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                            const ComplexOperator &M, ScaleType type) = 0;
+                            const ComplexOperator &M, ScaleType type)
+  {
+    MFEM_ABORT("SetOperators not defined!");
+  }
   virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                            const ComplexOperator &M, ScaleType type) = 0;
+                            const ComplexOperator &M, ScaleType type)
+  {
+    MFEM_ABORT("SetOperators not defined!");
+  }
   virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                             const ComplexOperator &C, const ComplexOperator &M,
-                            ScaleType type) = 0;
-  virtual void SetNLInterpolation(const Interpolation &interp) = 0;
+                            ScaleType type)
+  {
+    MFEM_ABORT("SetOperators not defined!");
+  }
+  virtual void SetNLInterpolation(const Interpolation &interp)
+  {
+    MFEM_ABORT("SetNLInterpolation not defined!");
+  }
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
@@ -92,12 +107,12 @@ public:
   // Set maximum number of Arnoldi update iterations.
   virtual void SetMaxIter(int max_it) = 0;
 
-  // Set the update frequency and tolerance of the preconditioner.
-  virtual void SetPreconditionerLag(int preconditioner_update_freq,
-                                    double preconditioner_update_tol) = 0;
+  // // Set the update frequency and tolerance of the preconditioner.
+  // virtual void SetPreconditionerLag(int preconditioner_update_freq,
+  //                                   double preconditioner_update_tol) = 0;
 
-  // Set the maximum number of restarts with the same initial guess.
-  virtual void SetMaxRestart(int max_num_restart) = 0;
+  // // Set the maximum number of restarts with the same initial guess.
+  // virtual void SetMaxRestart(int max_num_restart) = 0;
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.

@@ -190,46 +190,40 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
   cstatn_c();
 }
 
-void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                          const ComplexOperator &M,
-                                          EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
-}
 
-void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                          const ComplexOperator &C,
-                                          const ComplexOperator &M,
-                                          EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
-}
+// void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
+//                                           const ComplexOperator &C,
+//                                           const ComplexOperator &M,
+//                                           EigenvalueSolver::ScaleType type)
+// {
+//   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+// }
 
-void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                                          const ComplexOperator &M,
-                                          EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
-}
+// void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+//                                           const ComplexOperator &M,
+//                                           EigenvalueSolver::ScaleType type)
+// {
+//   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+// }
 
-void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                                          const ComplexOperator &C,
-                                          const ComplexOperator &M,
-                                          EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
-}
+// void ArpackEigenvalueSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+//                                           const ComplexOperator &C,
+//                                           const ComplexOperator &M,
+//                                           EigenvalueSolver::ScaleType type)
+// {
+//   MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+// }
 
-void ArpackEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
-                                                  double preconditioner_update_tol)
-{
-  MFEM_ABORT("SetPreconditionerLag not defined for base class ArpackEigenvalueSolver!");
-}
+// void ArpackEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+//                                                   double preconditioner_update_tol)
+// {
+//   MFEM_ABORT("SetPreconditionerLag not defined for base class ArpackEigenvalueSolver!");
+// }
 
-void ArpackEigenvalueSolver::SetMaxRestart(int max_num_restart)
-{
-  MFEM_ABORT("SetMaxRestart not defined for base class ArpackEigenvalueSolver!");
-}
+// void ArpackEigenvalueSolver::SetMaxRestart(int max_num_restart)
+// {
+//   MFEM_ABORT("SetMaxRestart not defined for base class ArpackEigenvalueSolver!");
+// }
 
 void ArpackEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
 {
@@ -559,6 +553,31 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   n = opK->Height();
 }
 
+
+void ArpackEPSSolver::SetOperators(const ComplexOperator &K,
+                                          const ComplexOperator &C,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for ArpackEPSSolver!");
+}
+
+void ArpackEPSSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for ArpackEPSSolver!");
+}
+
+void ArpackEPSSolver::SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                                          const ComplexOperator &C,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for ArpackEPSSolver!");
+}
+
+
 int ArpackEPSSolver::Solve()
 {
   // Set some defaults (default maximum iterations from SLEPc).
@@ -682,6 +701,14 @@ ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
   normK = normC = normM = 0.0;
 }
 
+
+void ArpackPEPSolver::SetOperators(const ComplexOperator &K,
+                                    const ComplexOperator &M,
+                                    EigenvalueSolver::ScaleType type)
+{
+  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
+}
+
 void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                                    const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
@@ -718,6 +745,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   z1.UseDevice(true);
   n = opK->Height();
 }
+
 
 void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
                                    const ComplexOperator &M,

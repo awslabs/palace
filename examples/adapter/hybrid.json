@@ -52,6 +52,7 @@
       "Tol": 1.0e-6,
       "Target": 6.6,
       "Save": 3,
+      // "NonlinearType": "SLP"
     },
     "Linear":
     {

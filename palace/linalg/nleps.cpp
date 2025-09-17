@@ -13,6 +13,8 @@
 namespace palace
 {
 
+using namespace std::complex_literals;
+
 // Base class methods.
 
 NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
@@ -29,53 +31,11 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   opB = nullptr;
 }
 
-void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
 
-void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                             const ComplexOperator &C,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
-                                             const ComplexOperator &K,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
-                                             const ComplexOperator &K,
-                                             const ComplexOperator &C,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
-{
-  MFEM_ABORT("SetNLInterpolation not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
-                                                     double preconditioner_update_tol)
-{
-  MFEM_ABORT("SetPreconditionerLag not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetMaxRestart(int max_num_restart)
-{
-  MFEM_ABORT("SetMaxRestart not defined for base class NonLinearEigenvalueSolver!");
-}
+// void NonLinearEigenvalueSolver::SetMaxRestart(int max_num_restart)
+// {
+//   MFEM_ABORT("SetMaxRestart not defined for base class NonLinearEigenvalueSolver!");
+// }
 
 void NonLinearEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
@@ -408,9 +368,6 @@ int QuasiNewtonSolver::Solve()
   // Delta used in to compute divided difference Jacobian.
   const auto delta = std::sqrt(std::numeric_limits<double>::epsilon());
 
-  // Suppress wave port output during Newton iterations.
-  space_op->GetWavePortOp().SetSuppressOutput(true);
-
   // Set a seed and distribution for random Eigen vectors to ensure the same values on all
   // ranks.
   unsigned int seed = nev;
@@ -437,7 +394,7 @@ int QuasiNewtonSolver::Solve()
     }
 
     // Set the eigenpair estimate to the initial guess.
-    std::complex<double> eig, eig_opInv;
+    std::complex<double> eig;
     if (guess_idx < num_init_guess)
     {
       eig = init_eigenvalues[guess_idx];
@@ -448,7 +405,7 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       space_op->GetRandomInitialVector(v);
     }
-    eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
+    auto eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
     linalg::SetRandom(GetComm(), c, seed);  // set seed for deterministic behavior
@@ -473,9 +430,9 @@ int QuasiNewtonSolver::Solve()
     // Set the linear solver operators.
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                            Operator::DIAG_ZERO);
-    opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
+    opA = space_op->GetSystemMatrix(1.0 + 0i, eig, eig * eig, opK,
                                     opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0),
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0i,
                                                              eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
@@ -528,7 +485,7 @@ int QuasiNewtonSolver::Solve()
       // Compute u = A * v.
       auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                  Operator::DIAG_ZERO);
-      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig,
+      auto A = space_op->GetSystemMatrix(1.0 + 0i, eig, eig * eig,
                                          opK, opC, opM, A2n.get());
       A->Mult(v, u);
       if (k > 0)  // Deflation
@@ -612,7 +569,7 @@ int QuasiNewtonSolver::Solve()
       auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
           denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
       auto opJ = space_op->GetSystemMatrix(
-          std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0),
+          std::complex<double>(0.0, 0.0), 1.0 + 0i,
           std::complex<double>(2.0, 0.0) * eig, opK, opC, opM, opAJ.get());
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
@@ -646,10 +603,10 @@ int QuasiNewtonSolver::Solve()
         eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                Operator::DIAG_ZERO);
-        opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
+        opA = space_op->GetSystemMatrix(1.0 + 0i, eig, eig * eig, opK,
                                         opC, opM, opA2.get());
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
-            std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
+            1.0 + 0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
@@ -727,8 +684,6 @@ int QuasiNewtonSolver::Solve()
 
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
-
-  space_op->GetWavePortOp().SetSuppressOutput(false);
 
   return nev;
 }

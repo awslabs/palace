@@ -34,8 +34,11 @@ static PetscErrorCode __pc_apply_NEP(PC, Vec, Vec);
 static PetscErrorCode __form_NEP_function(NEP, PetscScalar, Mat, Mat, void *);
 static PetscErrorCode __form_NEP_jacobian(NEP, PetscScalar, Mat, void *);
 
+using namespace std::complex_literals;
+
 namespace
 {
+
 
 inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y, int block = 0,
                                    int nblocks = 1)
@@ -382,16 +385,16 @@ void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
   has_A2 = true;
 }
 
-void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
-                                                 double preconditioner_update_tol)
-{
-  MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
-}
+// void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+//                                                  double preconditioner_update_tol)
+// {
+//   MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
+// }
 
-void SlepcEigenvalueSolver::SetMaxRestart(int max_num_restart)
-{
-  MFEM_ABORT("SetMaxRestart not defined for base class SlepcEigenvalueSolver!");
-}
+// void SlepcEigenvalueSolver::SetMaxRestart(int max_num_restart)
+// {
+//   MFEM_ABORT("SetMaxRestart not defined for base class SlepcEigenvalueSolver!");
+// }
 
 void SlepcEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
@@ -1134,7 +1137,7 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
   {
     auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
                                                               Operator::DIAG_ZERO);
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    A2->AddMult(x, r, 1.0 + 0i);
   }
   return linalg::Norml2(GetComm(), r);
 }
@@ -1616,7 +1619,7 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   {
     auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
                                                               Operator::DIAG_ZERO);
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    A2->AddMult(x, r, 1.0 + 0i);
   }
   return linalg::Norml2(GetComm(), r);
 }
@@ -2053,7 +2056,7 @@ PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
                                                             Operator::DIAG_ZERO);
   if (A2)
   {
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    A2->AddMult(x, r, 1.0 + 0i);
   }
   return linalg::Norml2(GetComm(), r);
 }
@@ -2177,13 +2180,13 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   }
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, 1.0 + 0i);
   }
   ctx->y2 *= ctx->gamma;
-  ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+  ctx->opK->AddMult(ctx->x1, ctx->y2, 1.0 + 0i);
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(0, ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(0, ctx->x1, ctx->y2, 1.0 + 0i);
   }
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
@@ -2205,7 +2208,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   ctx->opM->Mult(ctx->x2, ctx->y2);
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(2, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(2, ctx->x2, ctx->y2, 1.0 + 0i);
   }
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
@@ -2268,10 +2271,10 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   else
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
-    ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opK->AddMult(ctx->x1, ctx->y1, 1.0 + 0i);
     if (ctx->opInterp)
     {
-      ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+      ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, 1.0 + 0i);
     }
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
@@ -2306,7 +2309,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   ctx->opK->Mult(ctx->x1, ctx->y1);
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, 1.0 + 0i);
   }
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -2331,7 +2334,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   }
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, 1.0 + 0i);
   }
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -2349,7 +2352,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   ctx->opM->Mult(ctx->x1, ctx->y1);
   if (ctx->opInterp)
   {
-    ctx->opInterp->AddMult(2, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
+    ctx->opInterp->AddMult(2, ctx->x1, ctx->y1, 1.0 + 0i);
   }
   PetscCall(ToPetscVec(ctx->y1, y));
 
@@ -2455,10 +2458,10 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
         std::abs(ctx->lambda.imag()), palace::Operator::DIAG_ZERO);
     ctx->opA_pc = ctx->space_op->GetSystemMatrix(
-        std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK,
+        1.0 + 0i, ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK,
         ctx->opC, ctx->opM, ctx->opA2_pc.get());
     ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(
-        std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda,
+        1.0 + 0i, ctx->lambda, ctx->lambda * ctx->lambda,
         ctx->lambda.imag());
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
     ctx->new_lambda = false;
@@ -2487,7 +2490,7 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
-  ctxF->opA = ctxF->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
+  ctxF->opA = ctxF->space_op->GetSystemMatrix(1.0 + 0i, lambda,
                                               lambda * lambda, ctxF->opK, ctxF->opC,
                                               ctxF->opM, ctxF->opA2.get());
   ctxF->lambda = lambda;
@@ -2511,7 +2514,7 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   ctxF->opAJ = ctxF->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(
       denom, ctxF->opA2p.get(), ctxF->opA2.get(), palace::Operator::DIAG_ZERO);
   ctxF->opJ = ctxF->space_op->GetSystemMatrix(
-      std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2.0 * lambda,
+      std::complex<double>(0.0, 0.0), 1.0 + 0i, 2.0 * lambda,
       ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get());
   PetscFunctionReturn(PETSC_SUCCESS);
 }
