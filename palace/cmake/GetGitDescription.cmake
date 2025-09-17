@@ -98,3 +98,30 @@ function(git_describe _var)
     set(${_var} "${out}" PARENT_SCOPE)
   endif()
 endfunction()
+
+
+# Helper to get git SHA for a dependency
+function(get_dependency_git_sha dep_source_dir _var)
+  find_package(Git QUIET)
+  if(NOT GIT_FOUND)
+    message(WARNING "Git not found, cannot get SHA for ${dep_source_dir}")
+    return()
+  endif()
+
+  # Run git describe in the given source directory
+  # Do not consider parent directories (--git-dir .git)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" --git-dir .git describe --tags --always --dirty
+    WORKING_DIRECTORY "${dep_source_dir}"
+    RESULT_VARIABLE res
+    OUTPUT_VARIABLE out
+    ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT res EQUAL 0)
+    message(DEBUG "Git SHA for not found in ${dep_source_dir}")
+    set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
+  else()
+    message(DEBUG "Git SHA for ${dep_name_source_dir}: ${out}")
+    set(${_var} ${out} PARENT_SCOPE)
+  endif()
+endfunction()

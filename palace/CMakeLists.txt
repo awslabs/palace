@@ -265,69 +265,40 @@ if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   )
 endif()
 
-# Add dependency version information
-if(nlohmann_json_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_NLOHMANN_JSON_VERSION=\"${nlohmann_json_VERSION}\""
-  )
-endif()
 
-if(fmt_VERSION)
+# For each dependency with a git SHA, set a compile definition <DEPENDENCY>_COMMIT_SHA
+set(dependency_folders
+  STRUMPACK
+  arpack-ng
+  eigen
+  fmt
+  gslib
+  hypre
+  json
+  libCEED
+  libxsmm
+  magma
+  metis
+  mfem
+  mumps
+  parmetis
+  petsc
+  scalapack
+  scn
+  slepc
+  sundials
+  superlu_dist
+)
+foreach(dep_folder IN LISTS dependency_folders)
+  message(DEBUG "Checking dependency in folder ${dep_folder}")
+  get_dependency_git_sha("${CMAKE_BINARY_DIR}/../extern/${dep_folder}" dep_sha)
+  message(DEBUG "Git SHA for ${dep_folder}: ${dep_sha}")
+  string(REPLACE "-" "_" dep_folder_sanitized "${dep_folder}")
   set_property(
     SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_FMT_VERSION=\"${fmt_VERSION}\""
+    APPEND PROPERTY COMPILE_DEFINITIONS "${dep_folder_sanitized}_COMMIT_SHA=\"${dep_sha}\""
   )
-endif()
-
-if(scn_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SCN_VERSION=\"${scn_VERSION}\""
-  )
-endif()
-
-if(Eigen3_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_EIGEN_VERSION=\"${Eigen3_VERSION}\""
-  )
-endif()
-
-if(MFEM_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_MFEM_VERSION=\"${MFEM_VERSION}\""
-  )
-endif()
-
-if(libCEED_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_VERSION=\"${libCEED_VERSION}\""
-  )
-endif()
-
-if(PALACE_WITH_SLEPC AND PETSc_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_PETSC_VERSION=\"${PETSc_VERSION}\""
-  )
-endif()
-
-if(PALACE_WITH_SLEPC AND SLEPc_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SLEPC_VERSION=\"${SLEPc_VERSION}\""
-  )
-endif()
-
-if(PALACE_WITH_ARPACK AND arpackng_VERSION)
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_ARPACK_VERSION=\"${arpackng_VERSION}\""
-  )
-endif()
+endforeach()
 
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)

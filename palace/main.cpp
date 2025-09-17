@@ -42,54 +42,47 @@ static const char *GetPalaceGitTag()
 
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
+
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
   }
 
-  // Print build dependencies
   Mpi::Print(comm, "\nBuild dependencies:\n");
 
-#define PRINT_VERSION(NAME, VERSION_MACRO) \
-  Mpi::Print(comm, "  " NAME ": {}\n", VERSION_MACRO)
+// X-macro to check if a dependency macro is defined and print the SHA
+#define X(DEP_NAME) \
+    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", DEP_NAME ## _COMMIT_SHA);
 
-#if defined(PALACE_MFEM_VERSION)
-  PRINT_VERSION("MFEM", PALACE_MFEM_VERSION);
-#endif
+// List of dependencies and their corresponding macros
+#define PRINT_DEP_SHA_LIST \
+  X(STRUMPACK) \
+  X(arpack_ng) \
+  X(eigen) \
+  X(fmt) \
+  X(gslib) \
+  X(hypre) \
+  X(json) \
+  X(libCEED) \
+  X(libxsmm) \
+  X(magma) \
+  X(metis) \
+  X(mfem) \
+  X(mumps) \
+  X(parmetis) \
+  X(petsc) \
+  X(scalapack) \
+  X(scn) \
+  X(slepc) \
+  X(sundials) \
+  X(superlu_dist)
 
-#if defined(PALACE_LIBCEED_VERSION)
-  PRINT_VERSION("libCEED", PALACE_LIBCEED_VERSION);
-#endif
+// Iterate over the list and print if macro is defined
+PRINT_DEP_SHA_LIST
 
-#if defined(PALACE_WITH_SLEPC) && defined(PALACE_SLEPC_VERSION)
-  PRINT_VERSION("SLEPc", PALACE_SLEPC_VERSION);
-#endif
+#undef X
 
-#if defined(PALACE_WITH_SLEPC) && defined(PALACE_PETSC_VERSION)
-  PRINT_VERSION("PETSc", PALACE_PETSC_VERSION);
-#endif
 
-#if defined(PALACE_WITH_ARPACK) && defined(PALACE_ARPACK_VERSION)
-  PRINT_VERSION("ARPACK", PALACE_ARPACK_VERSION);
-#endif
-
-#if defined(PALACE_NLOHMANN_JSON_VERSION)
-  PRINT_VERSION("nlohmann/json", PALACE_NLOHMANN_JSON_VERSION);
-#endif
-
-#if defined(PALACE_FMT_VERSION)
-  PRINT_VERSION("fmt", PALACE_FMT_VERSION);
-#endif
-
-#if defined(PALACE_SCN_VERSION)
-  PRINT_VERSION("scn", PALACE_SCN_VERSION);
-#endif
-
-#if defined(PALACE_EIGEN_VERSION)
-  PRINT_VERSION("Eigen", PALACE_EIGEN_VERSION);
-#endif
-
-  Mpi::Print(comm, "\n");
 }
 
 static const char *GetPalaceCeedJitSourceDir()
