@@ -40,19 +40,8 @@ static const char *GetPalaceGitTag()
   return commit;
 }
 
-static const char *GetPalaceVersion()
-{
-#if defined(PALACE_VERSION)
-  static const char *version = PALACE_VERSION;
-#else
-  static const char *version = "UNKNOWN";
-#endif
-  return version;
-}
-
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
-  Mpi::Print(comm, "Palace version: {}\n", GetPalaceVersion());
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());

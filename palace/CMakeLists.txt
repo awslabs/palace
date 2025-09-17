@@ -265,12 +265,6 @@ if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   )
 endif()
 
-# Add Palace version information
-set_property(
-  SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_VERSION=\"${PROJECT_VERSION}\""
-)
-
 # Add dependency version information
 if(nlohmann_json_VERSION)
   set_property(
