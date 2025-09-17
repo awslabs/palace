@@ -5,6 +5,7 @@
 #define PALACE_LINALG_RAP_HPP
 
 #include <memory>
+#include <array>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
@@ -199,6 +200,76 @@ public:
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
                                  const std::complex<double> a = 1.0) const override;
 };
+
+
+template <std::size_t N>
+auto BuildParSumOperator(std::array<double,N> coeff, std::array<const ParOperator * const,N> ops, const FiniteElementSpace &fespace)
+{
+  // Compute height and width
+  int h=-1, w=-1;
+  for (auto p : ops)
+    if (p)
+    {
+      h = p->Height();
+      w = p->Width();
+      break;
+    }
+  MFEM_VERIFY(h > 0 && w > 0, "At least one");
+
+  auto sum = std::make_unique<SumOperator>(h, w);
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (!ops[i] && coeff[i] != 0)
+    {
+      sum->AddOperator(ops[i]->LocalOperator(), coeff[i]);
+    }
+  }
+  return std::make_unique<ParOperator>(std::move(sum), fespace);
+}
+
+template <std::size_t N>
+auto BuildParSumOperator(std::array<std::complex<double>,N> coeff, std::array<const ComplexParOperator * const,N> ops, const FiniteElementSpace &fespace)
+{
+  // Compute height and width
+  int h=-1, w=-1;
+  for (auto p : ops)
+    if (p)
+    {
+      h = p->Height();
+      w = p->Width();
+      break;
+    }
+  MFEM_VERIFY(h > 0 && w > 0, "At least one");
+
+  auto sumr = std::make_unique<SumOperator>(h, w);
+  auto sumi = std::make_unique<SumOperator>(h, w);
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (!ops[i] && coeff[i].real() != 0)
+    {
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].real());
+      }
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Imag(), coeff[i].real());
+      }
+    }
+    if (!ops[i] && coeff[i].imag() != 0)
+    {
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Imag(), -coeff[i].imag());
+      }
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].imag());
+      }
+    }
+  }
+  return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+}
 
 }  // namespace palace
 

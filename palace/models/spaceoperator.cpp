@@ -486,134 +486,6 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   }
 }
 
-namespace
-{
-
-auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
-                         const ParOperator *K, const ParOperator *C, const ParOperator *M,
-                         const ParOperator *A2, const FiniteElementSpace &fespace)
-{
-  auto sum = std::make_unique<SumOperator>(h, w);
-  if (K && a0 != 0.0)
-  {
-    sum->AddOperator(K->LocalOperator(), a0);
-  }
-  if (C && a1 != 0.0)
-  {
-    sum->AddOperator(C->LocalOperator(), a1);
-  }
-  if (M && a2 != 0.0)
-  {
-    sum->AddOperator(M->LocalOperator(), a2);
-  }
-  if (A2)
-  {
-    sum->AddOperator(A2->LocalOperator(), 1.0);
-  }
-  return std::make_unique<ParOperator>(std::move(sum), fespace);
-}
-
-auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<double> a1,
-                         std::complex<double> a2, const ComplexParOperator *K,
-                         const ComplexParOperator *C, const ComplexParOperator *M,
-                         const ComplexParOperator *A2, const FiniteElementSpace &fespace)
-{
-  // Block 2 x 2 equivalent-real formulation for each term in the sum:
-  //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
-  //                    [ sumi ]      [ ai   ar ] [ Ai ] .
-  auto sumr = std::make_unique<SumOperator>(h, w);
-  auto sumi = std::make_unique<SumOperator>(h, w);
-  if (K)
-  {
-    if (a0.real() != 0.0)
-    {
-      if (K->LocalOperator().Real())
-      {
-        sumr->AddOperator(*K->LocalOperator().Real(), a0.real());
-      }
-      if (K->LocalOperator().Imag())
-      {
-        sumi->AddOperator(*K->LocalOperator().Imag(), a0.real());
-      }
-    }
-    if (a0.imag() != 0.0)
-    {
-      if (K->LocalOperator().Imag())
-      {
-        sumr->AddOperator(*K->LocalOperator().Imag(), -a0.imag());
-      }
-      if (K->LocalOperator().Real())
-      {
-        sumi->AddOperator(*K->LocalOperator().Real(), a0.imag());
-      }
-    }
-  }
-  if (C && a1 != 0.0)
-  {
-    if (a1.real() != 0.0)
-    {
-      if (C->LocalOperator().Real())
-      {
-        sumr->AddOperator(*C->LocalOperator().Real(), a1.real());
-      }
-      if (C->LocalOperator().Imag())
-      {
-        sumi->AddOperator(*C->LocalOperator().Imag(), a1.real());
-      }
-    }
-    if (a1.imag() != 0.0)
-    {
-      if (C->LocalOperator().Imag())
-      {
-        sumr->AddOperator(*C->LocalOperator().Imag(), -a1.imag());
-      }
-      if (C->LocalOperator().Real())
-      {
-        sumi->AddOperator(*C->LocalOperator().Real(), a1.imag());
-      }
-    }
-  }
-  if (M && a2 != 0.0)
-  {
-    if (a2.real() != 0.0)
-    {
-      if (M->LocalOperator().Real())
-      {
-        sumr->AddOperator(*M->LocalOperator().Real(), a2.real());
-      }
-      if (M->LocalOperator().Imag())
-      {
-        sumi->AddOperator(*M->LocalOperator().Imag(), a2.real());
-      }
-    }
-    if (a2.imag() != 0.0)
-    {
-      if (M->LocalOperator().Imag())
-      {
-        sumr->AddOperator(*M->LocalOperator().Imag(), -a2.imag());
-      }
-      if (M->LocalOperator().Real())
-      {
-        sumi->AddOperator(*M->LocalOperator().Real(), a2.imag());
-      }
-    }
-  }
-  if (A2)
-  {
-    if (A2->LocalOperator().Real())
-    {
-      sumr->AddOperator(*A2->LocalOperator().Real(), 1.0);
-    }
-    if (A2->LocalOperator().Imag())
-    {
-      sumi->AddOperator(*A2->LocalOperator().Imag(), 1.0);
-    }
-  }
-  return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
-}
-
-}  // namespace
-
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -656,8 +528,7 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetSystemMatrix must not be empty!");
 
-  auto A = BuildParSumOperator(height, width, a0, a1, a2, PtAP_K, PtAP_C, PtAP_M, PtAP_A2,
-                               GetNDSpace());
+  auto A = BuildParSumOperator<4>({a0,a1,a2,ScalarType{1}}, {PtAP_K, PtAP_C, PtAP_M, PtAP_A2}, GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
 }
@@ -933,8 +804,7 @@ SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
 
   int height = PtAP_A->LocalOperator().Height();
   int width = PtAP_A->LocalOperator().Width();
-  auto DD = BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A, PtAP_B,
-                                nullptr, nullptr, GetNDSpace());
+  auto DD = BuildParSumOperator<2>({1.0 / eps, -1.0 / eps}, {PtAP_A, PtAP_B}, GetNDSpace());
   DD->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return DD;
 }
