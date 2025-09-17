@@ -136,6 +136,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
 
   mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
+  mfem_gf_bdr_output_dir = (post_dir / "gridfunction" / fmt::format("{}_boundary", OutputFolderName(solver_t))).string();
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -529,6 +530,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   // Create output directory if it doesn't exist
   fs::create_directories(mfem_gf_output_dir);
+  fs::create_directories(mfem_gf_bdr_output_dir);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -538,6 +540,36 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
+
+  // Create grid function for vector coefficients
+  mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
+  mfem::ParGridFunction gridfunc_vector(&fespace);
+
+  // Create grid function for scalar coefficients
+  mfem::L2_FECollection pwconst_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
+  mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+  mfem::ParGridFunction gridfunc_scalar(&pwconst_fespace);
+
+  // Get boundary attributes
+  mfem::Array<int> boundary_attributes;
+  std::set<int> attr_set;
+
+  // Collect unique boundary attributes
+  for (int i = 0; i < mesh.GetNBE(); i++) {
+      attr_set.insert(mesh.GetBdrAttribute(i));
+  }
+
+  // Convert to Array
+  boundary_attributes.SetSize(attr_set.size());
+  int idx = 0;
+  for (int attr : attr_set) {
+    boundary_attributes[idx++] = attr;
+  }
+  //mfem::ParMesh *boundary_mesh = new mfem::ParMesh(mesh, true);
+  //std::cout << "mesh GlobalNE: " << mesh.GetGlobalNE() << " bdr mesh GlobalNE: " << boundary_mesh->GetGlobalNE() << "\n";
+  //mfem::ND_FECollection fec(fespace.GetMaxElementOrder(), boundary_mesh->Dimension());
+  //mfem::ParFiniteElementSpace bdr_fespace(boundary_mesh, &fec);
+  //mfem::ParGridFunction gf_bdr_vector(&bdr_fespace);
 
   const int local_rank = mesh.GetMyRank();
 
@@ -559,11 +591,35 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
+        fs::path e_bdr_real_filename =
+            fs::path(mfem_gf_bdr_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+        fs::path e_bdr_imag_filename =
+            fs::path(mfem_gf_bdr_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
 
+        std::ofstream e_bdr_real_file(e_bdr_real_filename);
+        std::ofstream e_bdr_imag_file(e_bdr_imag_filename);
+
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
+
+        std::cout << "project E_sr\n";
+        gridfunc_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
+        //gf_bdr_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
+        std::cout << "project E_si\n";
+        gridfunc_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
+        //gf_bdr_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
+        std::cout << "save\n";
+        gridfunc_vector.Save(e_bdr_real_file);
+        gridfunc_vector.Save(e_bdr_imag_file);
+        //gf_bdr_vector.Save(e_bdr_real_file);
+        //gf_bdr_vector.Save(e_bdr_imag_file);
       }
       else
       {
@@ -635,6 +691,36 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
+  if (U_e)
+  {
+    fs::path u_e_filename = fs::path(mfem_gf_output_dir) /
+                            fmt::format("U_e_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                        local_rank, pad_digits_default);
+    std::ofstream u_e_file(u_e_filename);
+    gridfunc_scalar.ProjectCoefficient(*U_e.get());
+    gridfunc_scalar.Save(u_e_file);
+  }
+
+  if (U_m)
+  {
+    fs::path u_m_filename = fs::path(mfem_gf_output_dir) /
+                            fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                        local_rank, pad_digits_default);
+    std::ofstream u_m_file(u_m_filename);
+    gridfunc_scalar.ProjectCoefficient(*U_m.get());
+    gridfunc_scalar.Save(u_m_file);
+  }
+
+  if (S)
+  {
+    fs::path s_filename = fs::path(mfem_gf_output_dir) /
+                          fmt::format("S_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
+                                      local_rank, pad_digits_default);
+    std::ofstream s_file(s_filename);
+    gridfunc_vector.ProjectCoefficient(*S.get());
+    gridfunc_vector.Save(s_file);
+  }
+
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
@@ -688,12 +774,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
     eta.Save(indicator_file);
   }
 
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-
-  // Save NDSpace ParMesh files; necessary to visualize grid functions.
+  // Save ParMesh files; necessary to visualize grid functions.
   fs::path mesh_filename = fs::path(mfem_gf_output_dir) / "mesh";
-  fem_op->GetNDSpace().GetParMesh().Save(mesh_filename);
+  mesh.Save(mesh_filename);
 
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   Mpi::Barrier(fem_op->GetComm());
 }
 
