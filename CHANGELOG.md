@@ -31,6 +31,8 @@ The format of this changelog is based on
     use in a non-amr simulation. [Issue 444](https://github.com/awslabs/palace/issues/444).
   - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect
     results for some lumped port boundary conditions. [Issue 501](https://github.com/awslabs/palace/issues/501).
+  - Added support for circuit synthesis from the PROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort` fields to make circuit. Prints out the projected matrices of the driven problem as well as the basis orthogonalization matrix.
 
 ## [0.14.0] - 2025-08-20
 
