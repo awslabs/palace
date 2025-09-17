@@ -28,6 +28,90 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
   this->width = op.Width();
 }
 
+bool IsSymmetric(const mfem::HypreParMatrix& A, double tol = 1e-12) {
+    MPI_Comm comm = A.GetComm();
+
+    // Check if square
+    if (A.GetGlobalNumRows() != A.GetGlobalNumCols()) return false;
+
+    // Create A^T
+    mfem::HypreParMatrix* AT = A.Transpose();
+
+    // Compute A - A^T
+    mfem::HypreParMatrix* diff = mfem::Add(1.0, A, -1.0, *AT);
+
+    // Get Frobenius norm of difference
+    double local_norm_sq = 0.0;
+    hypre_ParCSRMatrix* parcsr_diff = *diff;
+    hypre_CSRMatrix* diag = hypre_ParCSRMatrixDiag(parcsr_diff);
+    hypre_CSRMatrix* offd = hypre_ParCSRMatrixOffd(parcsr_diff);
+
+    // Sum squares of diagonal block entries
+    HYPRE_Real* diag_data = hypre_CSRMatrixData(diag);
+    HYPRE_Int diag_nnz = hypre_CSRMatrixNumNonzeros(diag);
+    for (HYPRE_Int i = 0; i < diag_nnz; i++) {
+        local_norm_sq += diag_data[i] * diag_data[i];
+    }
+
+    // Sum squares of off-diagonal block entries
+    HYPRE_Real* offd_data = hypre_CSRMatrixData(offd);
+    HYPRE_Int offd_nnz = hypre_CSRMatrixNumNonzeros(offd);
+    for (HYPRE_Int i = 0; i < offd_nnz; i++) {
+        local_norm_sq += offd_data[i] * offd_data[i];
+    }
+
+    // Global reduction
+    double global_norm_sq;
+    MPI_Allreduce(&local_norm_sq, &global_norm_sq, 1, MPI_DOUBLE, MPI_SUM, comm);
+
+    // Cleanup
+    delete AT;
+    delete diff;
+    std::cout << "sqrt(global_norm_sq): " << sqrt(global_norm_sq) << "\n";
+    return sqrt(global_norm_sq) <= tol;
+}
+
+bool IsSymmetricSerial(const mfem::HypreParMatrix& A, double tol = 1e-12) {
+    // Get CSR data (assuming single processor)
+    hypre_ParCSRMatrix* parcsr_A = A;
+    hypre_CSRMatrix* csr = hypre_ParCSRMatrixDiag(parcsr_A);
+
+    HYPRE_Int* I = hypre_CSRMatrixI(csr);
+    HYPRE_Int* J = hypre_CSRMatrixJ(csr);
+    HYPRE_Real* data = hypre_CSRMatrixData(csr);
+    HYPRE_Int nrows = hypre_CSRMatrixNumRows(csr);
+    HYPRE_Real max_diff = 0.0;
+    // Check each entry A(i,j) against A(j,i)
+    bool ret = true;
+    for (HYPRE_Int i = 0; i < nrows; i++) {
+        for (HYPRE_Int k = I[i]; k < I[i+1]; k++) {
+            HYPRE_Int j = J[k];
+            HYPRE_Real a_ij = data[k];
+
+            // Find A(j,i)
+            HYPRE_Real a_ji = 0.0;
+            bool found = false;
+            for (HYPRE_Int l = I[j]; l < I[j+1]; l++) {
+                if (J[l] == i) {
+                    a_ji = data[l];
+                    found = true;
+                    break;
+                }
+            }
+            max_diff = std::max(max_diff, std::abs(a_ij - a_ji) / std::abs(a_ij));
+            // Check symmetry
+            if (std::abs(a_ij - a_ji) > tol * std::abs(a_ij))
+            {
+              ret = false;
+              //return false;
+            }
+        }
+    }
+    std::cout << "max_diff: " << max_diff << "\n";
+    return ret;
+    //return true;
+}
+
 template <>
 void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
@@ -83,7 +167,9 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     }
     if (drop_small_entries)
     {
+      std::cout << "before NNZ: " << A->NNZ() << " IsSymmetric(A): " << IsSymmetric(*A.get()) << " SerialVersion: " << IsSymmetricSerial(*A.get()) << "\n";
       A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      std::cout << "after NNZ: " << A->NNZ() << " IsSymmetric(A): " << IsSymmetric(*A.get()) << " SerialVersion: " << IsSymmetricSerial(*A.get()) << "\n";
     }
     pc->SetOperator(*A);
     if (!save_assembled)
