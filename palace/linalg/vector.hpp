@@ -204,9 +204,9 @@ inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)
 
 // Calculate the vector 2-norm.
 template <typename VecType>
-inline auto Norml2(MPI_Comm comm, const VecType &x, bool squared = false)
+inline auto Norml2(MPI_Comm comm, const VecType &x)
 {
-  return squared ? std::abs(Dot(comm, x, x)) : std::sqrt(std::abs(Dot(comm, x, x)));
+  return std::sqrt(std::abs(Dot(comm, x, x)));
 }
 
 // Normalize the vector, possibly with respect to an SPD matrix B.

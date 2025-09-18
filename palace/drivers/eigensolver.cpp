@@ -48,7 +48,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Interpolation> interp_op;
   if (has_A2 && nonlinear_type != NonlinearEigenSolver::SLP)
   {
-    const int npoints = 3;  // Always use second order interpolation for now
+    constexpr int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
     interp_op = std::make_unique<NewtonInterpolationOperator>(space_op);
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
@@ -306,12 +306,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), K.get(),
+  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target,
+                                    -target * target + 0.0i, K.get(),
                                     C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      std::complex<double>(1.0, 0.0), 1i * target,
-      std::complex<double>(-target * target, 0.0), target);
+    1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
