@@ -102,8 +102,8 @@ void NonLinearEigenvalueSolver::SetInitialGuess(
       init_eig.size() == init_V.size(),
       "SetInitialGuess requires the same number of eigenvalues and eigenvectors guesses!");
 
-  init_eigenvalues.resize(init_eig.size());
-  init_eigenvectors.resize(init_eig.size());
+  init_eigenvalues.resize(0);
+  init_eigenvectors.resize(0);
 
   // If the number of initial guesses is greater than the number of requested modes
   // de-prioritize the initial guesses that have larger errors.
@@ -134,10 +134,10 @@ void NonLinearEigenvalueSolver::SetInitialGuess(
                 }
               });
   }
-  for (int i = 0; i < init_eig.size(); i++)
+  for (auto i : indices)
   {
-    init_eigenvalues[i] = init_eig[indices[i]];
-    init_eigenvectors[i] = init_V[indices[i]];
+    init_eigenvalues.emplace_back(init_eig[i]);
+    init_eigenvectors.emplace_back(init_V[i]);
   }
 }
 
