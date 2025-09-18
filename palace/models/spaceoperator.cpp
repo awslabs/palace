@@ -859,14 +859,13 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
-  constexpr bool skip_zeros = false, assemble_q_data = false;
   if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
   {
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
   }
   else
   {
-    AssemblePreconditioner(a0, a2, a2, a3, br_vec, br_aux_vec);
+    AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec);
   }
 
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
