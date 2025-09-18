@@ -217,16 +217,18 @@ public:
 template <std::size_t N>
 auto BuildParSumOperator(const std::array<double,N> &coeff, const std::array<const ParOperator *,N> &ops)
 {
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   auto it = std::find_if(ops.begin(), ops.end(), [](auto p){ return p != nullptr; });
   MFEM_VERIFY(it != ops.end(), "BuildParSumOperator requires at least one valid ParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
   // TODO: Check all ops using the same fespace?
 
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   auto sum = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
   for (std::size_t i = 0; i < coeff.size(); i++)
   {
-    if (!ops[i] && coeff[i] != 0)
+    if (ops[i] && coeff[i] != 0)
     {
       sum->AddOperator(ops[i]->LocalOperator(), coeff[i]);
     }
@@ -238,16 +240,18 @@ auto BuildParSumOperator(const std::array<double,N> &coeff, const std::array<con
 template <std::size_t N>
 auto BuildParSumOperator(const std::array<std::complex<double>,N> &coeff, const std::array<const ComplexParOperator *,N> &ops)
 {
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   auto it = std::find_if(ops.begin(), ops.end(), [](auto p){ return p != nullptr; });
   MFEM_VERIFY(it != ops.end(), "BuildParSumOperator requires at least one valid ComplexParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
 
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   auto sumr = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
   auto sumi = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
   for (std::size_t i = 0; i < coeff.size(); i++)
   {
-    if (!ops[i] && coeff[i].real() != 0)
+    if (ops[i] && coeff[i].real() != 0)
     {
       if (ops[i]->LocalOperator().Real())
       {
@@ -258,7 +262,7 @@ auto BuildParSumOperator(const std::array<std::complex<double>,N> &coeff, const 
         sumi->AddOperator(*ops[i]->LocalOperator().Imag(), coeff[i].real());
       }
     }
-    if (!ops[i] && coeff[i].imag() != 0)
+    if (ops[i] && coeff[i].imag() != 0)
     {
       if (ops[i]->LocalOperator().Imag())
       {

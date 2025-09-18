@@ -77,6 +77,14 @@ public:
   {
     MFEM_ABORT("SetOperators not defined!");
   }
+
+  virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+    std::function<const ComplexOperator&(std::complex<double>)> A2, ScaleType type)
+  {
+    MFEM_ABORT("SetOperators not defined!");
+  }
+
+
   virtual void SetNLInterpolation(const Interpolation &interp)
   {
     MFEM_ABORT("SetNLInterpolation not defined!");
