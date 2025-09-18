@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_RAP_HPP
 #define PALACE_LINALG_RAP_HPP
 
+#include <array>
 #include <memory>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -72,6 +73,12 @@ public:
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
+
+  // Accessor for trial finite element space.
+  const FiniteElementSpace &TrialFiniteElementSpace() const { return trial_fespace; }
+
+  // Accessor for test finite element space.
+  const FiniteElementSpace &TestFiniteElementSpace() const { return test_fespace; }
 
   // Set essential boundary condition true dofs for square operators.
   void SetEssentialTrueDofs(const mfem::Array<int> &tdof_list, DiagonalPolicy policy);
@@ -171,6 +178,12 @@ public:
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
 
+  // Accessor for trial finite element space.
+  const FiniteElementSpace &TrialFiniteElementSpace() const { return trial_fespace; }
+
+  // Accessor for test finite element space.
+  const FiniteElementSpace &TestFiniteElementSpace() const { return test_fespace; }
+
   // Set essential boundary condition true dofs for square operators.
   void SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                             Operator::DiagonalPolicy policy);
@@ -199,6 +212,96 @@ public:
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
                                  const std::complex<double> a = 1.0) const override;
 };
+
+// Combine a collection of ParOperator into a weighted summation.
+template <std::size_t N>
+auto BuildParSumOperator(const std::array<double, N> &coeff,
+                         const std::array<const ParOperator *, N> &ops)
+{
+  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  MFEM_VERIFY(it != ops.end(),
+              "BuildParSumOperator requires at least one valid ParOperator!");
+  const auto first_op = *it;
+  const auto &fespace = first_op->TrialFiniteElementSpace();
+  MFEM_VERIFY(
+      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+                  { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
+      "All ComplexParOperators must have the same FiniteElementSpace!");
+
+  auto sum = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (ops[i] && coeff[i] != 0)
+    {
+      sum->AddOperator(ops[i]->LocalOperator(), coeff[i]);
+    }
+  }
+  return std::make_unique<ParOperator>(std::move(sum), fespace);
+}
+
+// Combine a collection of ComplexParOperator into a weighted summation.
+template <std::size_t N>
+auto BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
+                         const std::array<const ComplexParOperator *, N> &ops)
+{
+  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  MFEM_VERIFY(it != ops.end(),
+              "BuildParSumOperator requires at least one valid ComplexParOperator!");
+  const auto first_op = *it;
+  const auto &fespace = first_op->TrialFiniteElementSpace();
+  MFEM_VERIFY(
+      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+                  { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
+      "All ComplexParOperators must have the same FiniteElementSpace!");
+
+  auto sumr = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
+  auto sumi = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (ops[i] && coeff[i].real() != 0)
+    {
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].real());
+      }
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Imag(), coeff[i].real());
+      }
+    }
+    if (ops[i] && coeff[i].imag() != 0)
+    {
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Imag(), -coeff[i].imag());
+      }
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].imag());
+      }
+    }
+  }
+  return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+}
+
+// Dispatch for ParOperators which have been type erased.
+template <std::size_t N, typename OperType>
+auto BuildParSumOperator(
+    const std::array<
+        typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                  std::complex<double>, double>::type,
+        N> &coeff,
+    const std::array<const OperType *, N> &ops)
+{
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
+
+  std::array<const ParOperType *, N> par_ops;
+  std::transform(ops.begin(), ops.end(), par_ops.begin(),
+                 [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
+  return BuildParSumOperator(coeff, par_ops);
+}
 
 }  // namespace palace
 
