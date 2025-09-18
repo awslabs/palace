@@ -602,8 +602,7 @@ void SpaceOperator::AssemblePreconditioner(
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fpr(mat_op.MaxCeedAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddDampingCoefficients(a1.imag(), fr);
@@ -612,11 +611,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0.real(), fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
                                assemble_q_data);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
@@ -630,8 +629,7 @@ void SpaceOperator::AssemblePreconditioner(
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fpr(mat_op.MaxCeedAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0, dfr, fr);
   AddStiffnessBdrCoefficients(a0, fbr);
   AddDampingCoefficients(a1, fr);
@@ -640,11 +638,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0, fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
                                assemble_q_data);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
@@ -739,11 +737,22 @@ SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
   const auto *PtAP_A = (A) ? dynamic_cast<const ParOperType *>(A) : nullptr;
   const auto *PtAP_B = (B) ? dynamic_cast<const ParOperType *>(B) : nullptr;
   MFEM_VERIFY((!A || PtAP_A) && (!B || PtAP_B),
-              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "SpaceOperator requires ParOperator or ComplexParOperator for divided difference matrix "
               "construction!");
+  int height = -1, width = -1;
+  if (PtAP_A)
+  {
+    height = PtAP_A->LocalOperator().Height();
+    width = PtAP_A->LocalOperator().Width();
+  }
+  else if (PtAP_B)
+  {
+    height = PtAP_B->LocalOperator().Height();
+    width = PtAP_B->LocalOperator().Width();
+  }
+  MFEM_VERIFY(height >= 0 && width >= 0,
+              "At least one argument to GetDividedDifferenceMatrix must not be empty!");
 
-  int height = PtAP_A->LocalOperator().Height();
-  int width = PtAP_A->LocalOperator().Width();
   auto DD = BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A, PtAP_B,
                                 nullptr, nullptr, GetNDSpace());
   DD->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);

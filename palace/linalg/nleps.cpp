@@ -13,6 +13,7 @@
 namespace palace
 {
 
+using namespace std::complex_literals;
 // Base class methods.
 
 NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
@@ -413,7 +414,7 @@ int QuasiNewtonSolver::Solve()
 
   // Set a seed and distribution for random Eigen vectors to ensure the same values on all
   // ranks.
-  unsigned int seed = nev;
+  unsigned int seed = 1337;
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
@@ -473,9 +474,9 @@ int QuasiNewtonSolver::Solve()
     // Set the linear solver operators.
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                            Operator::DIAG_ZERO);
-    opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
+    opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK,
                                     opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(std::complex<double>(1.0, 0.0),
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i,
                                                              eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
@@ -528,7 +529,7 @@ int QuasiNewtonSolver::Solve()
       // Compute u = A * v.
       auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                  Operator::DIAG_ZERO);
-      auto A = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig,
+      auto A = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig,
                                          opK, opC, opM, A2n.get());
       A->Mult(v, u);
       if (k > 0)  // Deflation
@@ -612,8 +613,7 @@ int QuasiNewtonSolver::Solve()
       auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
           denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
       auto opJ = space_op->GetSystemMatrix(
-          std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0),
-          std::complex<double>(2.0, 0.0) * eig, opK, opC, opM, opAJ.get());
+        0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, opK, opC, opM, opAJ.get());
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
@@ -646,10 +646,10 @@ int QuasiNewtonSolver::Solve()
         eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                Operator::DIAG_ZERO);
-        opA = space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), eig, eig * eig, opK,
+        opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK,
                                         opC, opM, opA2.get());
         opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
-            std::complex<double>(1.0, 0.0), eig, eig * eig, eig.imag());
+            1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
@@ -795,7 +795,7 @@ ScalarType elementarySymmetric(const std::vector<ScalarType> &points, const int 
          points[n - 1] * elementarySymmetric(points, k - 1, n - 1);
 }
 
-void NewtonInterpolationOperator::Interpolate(const int order,
+void NewtonInterpolationOperator::Interpolate(int order,
                                               const std::complex<double> sigma_min,
                                               const std::complex<double> sigma_max)
 {

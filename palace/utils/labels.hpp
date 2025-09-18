@@ -35,7 +35,7 @@ enum class EigenSolverBackend : char
 // Nonlinear eigenvalue solver type.
 enum class NonlinearEigenSolver : char
 {
-  DEFAULT,
+  //DEFAULT,
   HYBRID,
   SLP
 };

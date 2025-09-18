@@ -708,7 +708,7 @@ public:
   bool pep_linear = true;
 
   // Nonlinear eigenvalue solver type.
-  NonlinearEigenSolver nonlinear_type = NonlinearEigenSolver::DEFAULT;
+  NonlinearEigenSolver nonlinear_type = NonlinearEigenSolver::HYBRID;
 
   // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
   bool refine_nonlinear = true;
@@ -717,7 +717,8 @@ public:
   // eigenvalue solver used to generate the initial guess.
   double linear_tol = 1e-3;
 
-  // Upper end of the target range for nonlinear eigenvalue solver [GHz].
+  // Upper end of the target range for nonlinear eigenvalue solver [GHz]. A value <0
+  // will use the default (3 * target).
   double target_upper = -1;
 
   // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
