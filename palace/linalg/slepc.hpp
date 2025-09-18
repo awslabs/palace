@@ -24,10 +24,10 @@
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;
 typedef struct _p_PEP *PEP;
+typedef struct _p_NEP *NEP;
 typedef struct _p_BV *BV;
 typedef struct _p_ST *ST;
 typedef struct _p_RG *RG;
-typedef struct _p_NEP *NEP;
 
 namespace palace
 {

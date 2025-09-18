@@ -46,7 +46,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   bool has_A2 = (A2 != nullptr);
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   std::unique_ptr<Interpolation> interp_op;
-  if (has_A2 && nonlinear_type != NonlinearEigenSolver::SLP)
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     constexpr int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -180,7 +180,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetOperators(*K, *M, scale);
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-  const double tol = (has_A2 && nonlinear_type != NonlinearEigenSolver::SLP)
+  const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
                          ? iodata.solver.eigenmode.linear_tol
                          : iodata.solver.eigenmode.tol;
   eigen->SetTol(tol);
@@ -337,7 +337,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   if (has_A2 && iodata.solver.eigenmode.refine_nonlinear &&
-      nonlinear_type != NonlinearEigenSolver::SLP)
+      nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
     std::unique_ptr<NonLinearEigenvalueSolver> qn;

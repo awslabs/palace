@@ -76,7 +76,7 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "D
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver,
-                           {{NonlinearEigenSolver::DEFAULT, "Default"},
+                           {//{NonlinearEigenSolver::DEFAULT, "Default"},
                             {NonlinearEigenSolver::HYBRID, "Hybrid"},
                             {NonlinearEigenSolver::SLP, "SLP"}})
 
