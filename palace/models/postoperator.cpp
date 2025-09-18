@@ -17,7 +17,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
-
+#include "utils/prettyprint.hpp" // remove later
 namespace palace
 {
 
@@ -551,7 +551,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mfem::ParGridFunction gridfunc_scalar(&pwconst_fespace);
 
   // Get boundary attributes
-  mfem::Array<int> boundary_attributes;
+  mfem::Array<int> boundary_attributes, marker;
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   std::set<int> attr_set;
 
   // Collect unique boundary attributes
@@ -565,11 +566,33 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   for (int attr : attr_set) {
     boundary_attributes[idx++] = attr;
   }
+  Mpi::Print("bdr_attr_max: {}, bdr attr:", bdr_attr_max); utils::PrettyPrint(boundary_attributes);
+  //marker.SetSize(bdr_attr_max); marker = 1; // all surfaces?
+  marker = mesh::AttrToMarker(bdr_attr_max, boundary_attributes);
+
   //mfem::ParMesh *boundary_mesh = new mfem::ParMesh(mesh, true);
   //std::cout << "mesh GlobalNE: " << mesh.GetGlobalNE() << " bdr mesh GlobalNE: " << boundary_mesh->GetGlobalNE() << "\n";
   //mfem::ND_FECollection fec(fespace.GetMaxElementOrder(), boundary_mesh->Dimension());
   //mfem::ParFiniteElementSpace bdr_fespace(boundary_mesh, &fec);
   //mfem::ParGridFunction gf_bdr_vector(&bdr_fespace);
+
+  /*
+  // Not sure this is appropriate since submesh should be ONE CONNECTED SUBSET of the parent mesh...
+  std::unique_ptr<Mesh> bdr_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(mesh, boundary_attributes)));
+
+  std::unique_ptr<mfem::FiniteElementCollection> bdr_vec_fec = std::make_unique<mfem::ND_FECollection>(fespace.GetMaxElementOrder(),
+                                                        bdr_mesh->Dimension());
+  std::unique_ptr<mfem::FiniteElementCollection> bdr_sca_fec = std::make_unique<mfem::L2_FECollection>(fespace.GetMaxElementOrder(),
+                                                        bdr_mesh->Dimension());
+  std::unique_ptr<FiniteElementSpace> bdr_vec_fespace = std::make_unique<FiniteElementSpace>(*bdr_mesh, bdr_vec_fec.get());
+  std::unique_ptr<FiniteElementSpace> bdr_sca_fespace = std::make_unique<FiniteElementSpace>(*bdr_mesh,bdr_sca_fec.get());
+
+  GridFunction E0t(nd_fespace), E0n(h1_fespace);
+  port_E0t = std::make_unique<GridFunction>(*port_nd_fespace, true);
+  port_E0n = std::make_unique<GridFunction>(*port_h1_fespace, true);
+  port_E = std::make_unique<GridFunction>(*port_nd_fespace, true);
+*/
 
   const int local_rank = mesh.GetMyRank();
 
@@ -604,22 +627,33 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
         std::ofstream e_imag_file(e_imag_filename);
 
         std::ofstream e_bdr_real_file(e_bdr_real_filename);
-        std::ofstream e_bdr_imag_file(e_bdr_imag_filename);
+       //std::ofstream e_bdr_imag_file(e_bdr_imag_filename);
 
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
 
         std::cout << "project E_sr\n";
-        gridfunc_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
-        //gf_bdr_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
-        std::cout << "project E_si\n";
-        gridfunc_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
-        //gf_bdr_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
-        std::cout << "save\n";
+        gridfunc_vector = 0.0;
+        marker = 1; //marker[1] = 1;// test
+        mfem::Vector vConst(3); vConst = 0.1234;
+        mfem::VectorConstantCoefficient test(vConst);
+        //gridfunc_vector.ProjectBdrCoefficient(*E_sr.get(), marker);
+        gridfunc_vector.ProjectBdrCoefficient(test, marker);
+        //gridfunc_vector.ProjectBdrCoefficientTangent(test, marker);
+        //gridfunc_vector.ProjectBdrCoefficientNormal(test, marker);
+
+        //gridfunc_vector.ProjectBdrCoefficientTangent(*E_sr.get(), marker);
+        //gridfunc_vector.ProjectBdrCoefficientNormal(*E_sr.get(), marker);
+        std::cout << " gridfunc_vector min/max: " << gridfunc_vector.Min() << " " << gridfunc_vector.Max() << "\n";
         gridfunc_vector.Save(e_bdr_real_file);
-        gridfunc_vector.Save(e_bdr_imag_file);
-        //gf_bdr_vector.Save(e_bdr_real_file);
-        //gf_bdr_vector.Save(e_bdr_imag_file);
+        //gf_bdr_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
+        //std::cout << "project E_si\n";
+        //gridfunc_vector = 0.0;
+        //gridfunc_vector.ProjectBdrCoefficient(*E_si.get(), marker);
+        ////gf_bdr_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
+        //gridfunc_vector.Save(e_bdr_imag_file);
+        ////gf_bdr_vector.Save(e_bdr_real_file);
+        ////gf_bdr_vector.Save(e_bdr_imag_file);
       }
       else
       {
@@ -697,6 +731,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                             fmt::format("U_e_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
     std::ofstream u_e_file(u_e_filename);
+    gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_e.get());
     gridfunc_scalar.Save(u_e_file);
   }
@@ -707,6 +742,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                             fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
     std::ofstream u_m_file(u_m_filename);
+    gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_m.get());
     gridfunc_scalar.Save(u_m_file);
   }
@@ -717,6 +753,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                           fmt::format("S_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                       local_rank, pad_digits_default);
     std::ofstream s_file(s_filename);
+    gridfunc_vector = 0.0;
     gridfunc_vector.ProjectCoefficient(*S.get());
     gridfunc_vector.Save(s_file);
   }
