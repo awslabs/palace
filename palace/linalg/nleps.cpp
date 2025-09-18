@@ -461,12 +461,12 @@ int QuasiNewtonSolver::Solve()
     }
 
     // Normalize random c vector.
-    double norm_c = std::sqrt(linalg::Norml2(GetComm(), c, true) + c2.squaredNorm());
+    double norm_c = std::sqrt(std::abs(linalg::Dot(GetComm(), c, c)) + c2.squaredNorm());
     c *= 1.0 / norm_c;
     c2 *= 1.0 / norm_c;
 
     // Normalize eigenvector estimate.
-    double norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
+    double norm_v = std::sqrt(std::abs(linalg::Dot(GetComm(), v, v)) + v2.squaredNorm());
     v *= 1.0 / norm_v;
     v2 *= 1.0 / norm_v;
 
@@ -516,7 +516,7 @@ int QuasiNewtonSolver::Solve()
 
     // Compute w0 = T^-1 c and normalize it.
     deflated_solve(c, c2, w0, w2);
-    double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
+    double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
     w0 *= 1.0 / norm_w0;
     w2 *= 1.0 / norm_w0;
 
@@ -546,7 +546,7 @@ int QuasiNewtonSolver::Solve()
       }
 
       // Compute residual.
-      res = std::sqrt(linalg::Norml2(GetComm(), u, true) + u2.squaredNorm());
+      res = std::sqrt(std::abs(linalg::Dot(GetComm(), u, u)) + u2.squaredNorm());
       if (print > 0)
       {
         Mpi::Print(GetComm(),
@@ -653,7 +653,7 @@ int QuasiNewtonSolver::Solve()
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
-        double norm_w0 = std::sqrt(linalg::Norml2(GetComm(), w0, true) + w2.squaredNorm());
+        double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
         w0 *= 1.0 / norm_w0;
         w2 *= 1.0 / norm_w0;
       }
@@ -664,7 +664,7 @@ int QuasiNewtonSolver::Solve()
       // Update and normalize eigenvector estimate.
       v += u;
       v2 += u2;
-      norm_v = std::sqrt(linalg::Norml2(GetComm(), v, true) + v2.squaredNorm());
+      norm_v = std::sqrt(std::abs(linalg::Dot(GetComm(), v, v)) + v2.squaredNorm());
       v *= 1.0 / norm_v;
       v2 *= 1.0 / norm_v;
 

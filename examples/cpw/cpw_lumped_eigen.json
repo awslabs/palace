@@ -9,9 +9,10 @@
   {
     "Mesh": "mesh/cpw_lumped_0.msh",
     "L0": 1.0e-6,  // μm
-      "Refinement": {
-          "UniformLevels": 0
-      },
+    "Refinement":
+    {
+      "UniformLevels": 0
+    }
   },
   "Domains":
   {
@@ -59,7 +60,6 @@
       {
         "Index": 1,
         "R": 56.02,  // Ω, 2-element uniform
-        //"Excitation": true,
         "Elements":
         [
           {

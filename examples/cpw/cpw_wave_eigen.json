@@ -9,9 +9,10 @@
   {
     "Mesh": "mesh/cpw_wave_0.msh",
     "L0": 1.0e-6,  // μm
-      "Refinement": {
-          "UniformLevels": 0
-      },
+    "Refinement":
+    {
+      "UniformLevels": 0
+    }
   },
   "Domains":
   {
@@ -59,41 +60,25 @@
         "Index": 1,
         "Attributes": [4],
         "Mode": 1,
-        "Offset": 0.0,
-        "MaxIts": 100,
-        "KSPTol": 1e-8,
-        "EigenTol": 1e-6,
-        "Verbose": 0
+        "Offset": 0.0
       },
       {
         "Index": 2,
         "Attributes": [5],
         "Mode": 1,
-        "Offset": 0.0,
-        "MaxIts": 100,
-        "KSPTol": 1e-8,
-        "EigenTol": 1e-6,
-        "Verbose": 0
+        "Offset": 0.0
       },
       {
         "Index": 3,
         "Attributes": [6],
         "Mode": 1,
-        "Offset": 0.0,
-        "MaxIts": 100,
-        "KSPTol": 1e-8,
-        "EigenTol": 1e-6,
-        "Verbose": 0
+        "Offset": 0.0
       },
       {
         "Index": 4,
         "Attributes": [7],
         "Mode": 1,
-        "Offset": 0.0,
-        "MaxIts": 100,
-        "KSPTol": 1e-8,
-        "EigenTol": 1e-6,
-        "Verbose": 0
+        "Offset": 0.0
       }
     ],
     "Postprocessing":
