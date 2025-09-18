@@ -221,7 +221,7 @@ For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be spec
 Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
 all can be built so the user can decide at runtime which solver to use.
 
-For unit testing, *Palace* relies on the
-[Catch2 library](https://github.com/catchorg/Catch2), which is automatically downloaded and
-built when building the `unit-tests` target. See the [Developer Notes](developer.md#Testing)
-for more information.
+For unit testing, *Palace* relies on the [Catch2
+library](https://github.com/catchorg/Catch2), which is automatically downloaded
+and built when building the `unit-tests` target. See the [Developer
+Notes](developer/testing.md) for more information.

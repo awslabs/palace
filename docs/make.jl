@@ -46,7 +46,7 @@ makedocs(
             "examples/coaxial.md",
             "examples/cpw.md"
         ],
-        "developer.md",
+        "For Developers" => Any["developer/notes.md", "developer/testing.md"],
         "reference.md"
     ]
 )
