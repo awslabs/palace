@@ -737,7 +737,8 @@ SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
   const auto *PtAP_A = (A) ? dynamic_cast<const ParOperType *>(A) : nullptr;
   const auto *PtAP_B = (B) ? dynamic_cast<const ParOperType *>(B) : nullptr;
   MFEM_VERIFY((!A || PtAP_A) && (!B || PtAP_B),
-              "SpaceOperator requires ParOperator or ComplexParOperator for divided difference matrix "
+              "SpaceOperator requires ParOperator or ComplexParOperator for divided "
+              "difference matrix "
               "construction!");
   int height = -1, width = -1;
   if (PtAP_A)

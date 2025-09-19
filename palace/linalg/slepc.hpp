@@ -85,7 +85,7 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  std::optional<std::function<const ComplexOperator&(std::complex<double>)>> opA2;
+  std::optional<std::function<const ComplexOperator &(std::complex<double>)>> opA2;
 
 protected:
   // Control print level for debugging.
@@ -173,15 +173,17 @@ public:
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
 
- // Set the preconditioner update function.
-  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>, std::complex<double>, double)>);
+  // Set the preconditioner update function.
+  void SetPreconditionerUpdate(
+      std::function<std::unique_ptr<ComplexOperator>(
+          std::complex<double>, std::complex<double>, std::complex<double>, double)>);
 
   // Set the update frequency and tolerance of the preconditioner.
-  //void SetPreconditionerLag(int preconditioner_update_freq,
+  // void SetPreconditionerLag(int preconditioner_update_freq,
   //                          double preconditioner_update_tol) override;
 
   // Set the maximum number of restarts with the same initial guess.
-  //void SetMaxRestart(int max_num_restart) override;
+  // void SetMaxRestart(int max_num_restart) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
@@ -219,7 +221,7 @@ public:
   virtual operator PetscObject() const = 0;
 
   // Reference to space operator to compute the frequency-dependent A2 operator.
-  SpaceOperator *space_op; // remove??
+  SpaceOperator *space_op;  // remove??
 };
 
 // Base class for SLEPc's EPS problem type.
@@ -518,9 +520,7 @@ class SlepcNEPSolver : public SlepcNEPSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
-  //using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
-  //using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;

@@ -96,18 +96,6 @@ protected:
 public:
   NonLinearEigenvalueSolver(MPI_Comm comm, int print);
 
-  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
-  // eigenvalue problem.
-  //void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-  //                  ScaleType type) override;
-  //void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-  //                  const ComplexOperator &M, ScaleType type) override;
-  //void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-  //                  const ComplexOperator &M, ScaleType type) override;
-  //void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-  //                  const ComplexOperator &C, const ComplexOperator &M,
-  //                  ScaleType type) override;
-  //void SetNLInterpolation(const Interpolation &interp) override;
   // The linear solver will be configured to compute the action of T(σ)⁻¹
   // where σ is the current eigenvalue estimate.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
@@ -131,13 +119,6 @@ public:
 
   // Set maximum number of Arnoldi update iterations.
   void SetMaxIter(int max_it) override;
-
-  // Set the update frequency of the preconditioner.
-  //void SetPreconditionerLag(int preconditioner_update_freq,
-  //                          double preconditioner_update_tol) override;
-
-  // Set the maximum number of restarts with the same initial guess.
-  //void SetMaxRestart(int max_num_restart) override;
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
