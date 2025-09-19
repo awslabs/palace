@@ -244,7 +244,8 @@ auto BuildParSumOperator(const std::array<double, N> &coeff,
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
       "All ComplexParOperators must have the same FiniteElementSpace!");
 
-  auto sum = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
+  auto sum = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
+                                           first_op->LocalOperator().Width());
   for (std::size_t i = 0; i < coeff.size(); i++)
   {
     if (ops[i] && coeff[i] != 0)
@@ -270,8 +271,10 @@ auto BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
       "All ComplexParOperators must have the same FiniteElementSpace!");
 
-  auto sumr = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
-  auto sumi = std::make_unique<SumOperator>(first_op->Height(), first_op->Width());
+  auto sumr = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
+                                            first_op->LocalOperator().Width());
+  auto sumi = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
+                                            first_op->LocalOperator().Width());
   for (std::size_t i = 0; i < coeff.size(); i++)
   {
     if (ops[i] && coeff[i].real() != 0)
