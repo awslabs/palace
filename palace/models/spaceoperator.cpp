@@ -542,13 +542,6 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
 {
-void SpaceOperator::AssemblePreconditioner(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, double a3,
-    std::vector<std::unique_ptr<Operator>> &br_vec,
-    std::vector<std::unique_ptr<Operator>> &br_aux_vec,
-    std::vector<std::unique_ptr<Operator>> &bi_vec,
-    std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
-{
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
       dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
@@ -753,9 +746,9 @@ SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
   }
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetDividedDifferenceMatrix must not be empty!");
+  auto DD = BuildParSumOperator({ScalarType{1.0 / eps}, ScalarType{-1.0 / eps}},
+                                {PtAP_A, PtAP_B});
 
-  auto DD = BuildParSumOperator(height, width, 1.0 / eps, -1.0 / eps, 0.0, PtAP_A, PtAP_B,
-                                nullptr, nullptr, GetNDSpace());
   DD->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return DD;
 }
