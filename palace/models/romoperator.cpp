@@ -52,8 +52,9 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
   }
 }
 
+// template <typename EigenDerived>
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexOperator &A, Eigen::MatrixXcd &Ar,
+                               const ComplexOperator &A, Eigen::Ref<Eigen::MatrixXcd> Ar,
                                ComplexVector &r, int n0)
 {
   // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
@@ -95,7 +96,8 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
 }
 
 inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
-                               const ComplexVector &b, Eigen::VectorXcd &br, int n0)
+                               const ComplexVector &b, Eigen::Ref<Eigen::VectorXcd> br,
+                               int n0)
 {
   // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
   // processes as a sequential n-dimensional vector.
@@ -340,17 +342,30 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
-  auto excitation_helper = space_op.GetPortExcitations();
+  // Reserve sizes in workings space.
+  MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
-  // The initial PROM basis is empty. The provided maximum dimension is the number of sample
-  // points (2 basis vectors per point). Basis orthogonalization method is configured using
-  // GMRES/FGMRES settings.
-  MFEM_VERIFY(max_size_per_excitation * excitation_helper.Size() > 0,
-              "Reduced order basis storage must have > 0 columns!");
-  V.resize(2 * max_size_per_excitation * excitation_helper.Size(), Vector());
+  // PROM works with real vectors, so complex solutions provide two vectors.
+  max_prom_size = 2 * max_size_per_excitation * space_op.GetPortExcitations().Size();
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
+  }
 
-  // Set up MRI.
-  for (const auto &[excitation_idx, data] : excitation_helper)
+  // Fully pre-allocate small matrices to maximum size. We will use sub-matrix views.
+  Kr.conservativeResizeLike(Eigen::MatrixXd::Zero(max_prom_size, max_prom_size));
+  Mr.conservativeResizeLike(Eigen::MatrixXd::Zero(max_prom_size, max_prom_size));
+  Cr.conservativeResizeLike(Eigen::MatrixXd::Zero(max_prom_size, max_prom_size));
+  RHS1r.conservativeResizeLike(Eigen::VectorXcd::Zero(max_prom_size));
+
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(max_prom_size, max_prom_size));
+
+  // Reserve empty vectors but don't pre-allocate actual memory size due to overhead.
+  V.reserve(max_prom_size);
+  v_node_label.reserve(max_prom_size);
+
+  // Set up MinimalRationalInterpolation.
+  for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
   {
     mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
   }
@@ -376,6 +391,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   else
   {
     // Project RHS1 to RHS1r with current PROM.
+    auto dim_V = V.size();
     if (dim_V > 0)
     {
       MPI_Comm comm = space_op.GetComm();
@@ -421,63 +437,58 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
-
-  // Update V. The basis is always real (each complex solution adds two basis vectors if it
-  // has a nonzero real and imaginary parts).
+  // Update PROM basis V. The basis is always real (each complex solution adds two basis
+  // vectors, if it has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
 
-  const double normr = linalg::Norml2(comm, u.Real());
-  const double normi = linalg::Norml2(comm, u.Imag());
-  const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
+  const auto norm_re = linalg::Norml2(comm, u.Real());
+  const auto norm_im = linalg::Norml2(comm, u.Imag());
+  const auto norm_tol = ORTHOG_TOL * std::sqrt(norm_re * norm_re + norm_im * norm_im);
+  const bool has_real = (norm_re > norm_tol);
+  const bool has_imag = (norm_im > norm_tol);
 
-  const std::size_t dim_V_new = dim_V + std::size_t(has_real) + std::size_t(has_imag);
-  MFEM_VERIFY(dim_V_new <= V.size(),
-              "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V_old = dim_V;
-  v_node_label.reserve(dim_V_new);
-  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
+  const std::size_t dim_V_old = V.size();
+
+  MFEM_VERIFY(
+      dim_V_old + std::size_t(has_real) + std::size_t(has_imag) <= max_prom_size,
+      "Internal Error: Trying to add more than vectors to PROM than size allocated!");
+
+  auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view full_label)
+  {
+    auto dim_V = V.size();
+
+    auto &V_current = V.emplace_back();
+    V_current = vector;  // TODO: Combine with above but must ensure correct deep-copy?
+
+    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, V_current,
+                        orth_R.col(dim_V).head(dim_V + 1).data(), dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), V_current);
+    V_current *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(full_label);
+  };
 
   if (has_real)
   {
-    V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
-    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(fmt::format("{}_re", node_label));
-    dim_V++;
+    add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label));
   }
   if (has_imag)
   {
-    V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], orth_R.col(dim_V).data(), dim_V);
-    orth_R(dim_V, dim_V) = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(fmt::format("{}_im", node_label));
-    dim_V++;
+    add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
   }
 
-  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
-  // matrix and first dim0 entries of each vector and the projection uses the values
-  // computed for the unchanged basis vectors.
-  Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  // Update reduced-order operators. Use block view onto pre-allocated matrices.
+  const std::size_t dim_V_new = V.size();
+  ProjectMatInternal(comm, V, *K, Kr.topLeftCorner(dim_V_new, dim_V_new), r, dim_V_old);
   if (C)
   {
-    Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+    ProjectMatInternal(comm, V, *C, Cr.topLeftCorner(dim_V_new, dim_V_new), r, dim_V_old);
   }
-  Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *M, Mr.topLeftCorner(dim_V_new, dim_V_new), r, dim_V_old);
   if (RHS1.Size())
   {
-    RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
+    ProjectVecInternal(comm, V, RHS1, RHS1r.head(dim_V_new), dim_V_old);
   }
-  // Placeholder matrices.
-  Ar.resize(dim_V, dim_V);
-  RHSr.resize(dim_V);
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
@@ -494,7 +505,20 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
   // only nonzero on boundaries, will be empty if not needed.
-  if (has_A2 && Ar.rows() > 0)
+
+  auto dim_V = V.size();
+
+  // No basis states ill-defined: return zero vector to match current behaviour.
+  if (dim_V == 0)
+  {
+    u = 0.0;
+    return;
+  }
+
+  Ar.resize(dim_V, dim_V);
+  RHSr.resize(dim_V);
+
+  if (has_A2)
   {
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
@@ -503,14 +527,14 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   {
     Ar.setZero();
   }
-  Ar += Kr;
+  Ar += Kr.topLeftCorner(dim_V, dim_V);
   if (C)
   {
-    Ar += (1i * omega) * Cr;
+    Ar += (1i * omega) * Cr.topLeftCorner(dim_V, dim_V);
   }
-  Ar += (-omega * omega) * Mr;
+  Ar += (-omega * omega) * Mr.topLeftCorner(dim_V, dim_V);
 
-  if (has_RHS2 && RHSr.size() > 0)
+  if (has_RHS2)
   {
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
     ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
@@ -521,7 +545,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   if (has_RHS1)
   {
-    RHSr += (1i * omega) * RHS1r;
+    RHSr += (1i * omega) * RHS1r.head(dim_V);
   }
 
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
