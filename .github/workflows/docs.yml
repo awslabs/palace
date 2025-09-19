@@ -7,6 +7,10 @@ on:
     tags: '*'
   pull_request:
 
+permissions:
+  packages: write
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,9 +24,6 @@ env:
 
 jobs:
   build-docs:
-    permissions:
-      packages: write
-      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

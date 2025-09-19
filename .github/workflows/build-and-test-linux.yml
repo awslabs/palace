@@ -1,5 +1,8 @@
 name: Build and Test (Linux)
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
