@@ -528,8 +528,8 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetSystemMatrix must not be empty!");
 
-  auto A = BuildParSumOperator<4>({a0, a1, a2, ScalarType{1}},
-                                  {PtAP_K, PtAP_C, PtAP_M, PtAP_A2});
+  auto A =
+      BuildParSumOperator({a0, a1, a2, ScalarType{1}}, {PtAP_K, PtAP_C, PtAP_M, PtAP_A2});
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
 }

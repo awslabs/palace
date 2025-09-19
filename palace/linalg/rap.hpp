@@ -14,6 +14,22 @@
 namespace palace
 {
 
+namespace detail
+{
+template <class T, std::size_t N, std::size_t... I>
+constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
+                                                           std::index_sequence<I...>)
+{
+  return {{std::move(a[I])...}};
+}
+}  // namespace detail
+
+template <class T, std::size_t N>
+constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
+{
+  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
+}
+
 //
 // A parallel operator represented by RAP constructed through the actions of R, A, and P,
 // usually with R = Pᵀ, and with possible eliminated essential BC. Here R and P are the
@@ -285,7 +301,7 @@ auto BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
 }
 
 // Dispatch for ParOperators which have been type erased.
-template <std::size_t N, typename OperType>
+template <typename OperType, std::size_t N>
 auto BuildParSumOperator(
     const std::array<
         typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
@@ -300,7 +316,16 @@ auto BuildParSumOperator(
   std::array<const ParOperType *, N> par_ops;
   std::transform(ops.begin(), ops.end(), par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
-  return BuildParSumOperator(coeff, par_ops);
+  return BuildParSumOperator(coeff, std::move(par_ops));
+}
+
+// Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
+// and types.
+template <std::size_t N, typename ScalarType, typename OperatorType>
+auto BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperatorType *(&&ops_in)[N])
+{
+  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)),
+                             to_array<const OperatorType *>(std::move(ops_in)));
 }
 
 }  // namespace palace
