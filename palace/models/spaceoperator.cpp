@@ -338,8 +338,6 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   AddStiffnessBdrCoefficients(1.0, fb);
   AddRealPeriodicCoefficients(1.0, f);
   AddImagPeriodicCoefficients(1.0, fc);
-  AddRealPeriodicCoefficients(1.0, f);
-  AddImagPeriodicCoefficients(1.0, fc);
   int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
