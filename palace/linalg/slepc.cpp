@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
 #include "linalg/nleps.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -33,6 +34,8 @@ static PetscErrorCode __mat_apply_NEP_B(Mat, Vec, Vec);
 static PetscErrorCode __pc_apply_NEP(PC, Vec, Vec);
 static PetscErrorCode __form_NEP_function(NEP, PetscScalar, Mat, Mat, void *);
 static PetscErrorCode __form_NEP_jacobian(NEP, PetscScalar, Mat, void *);
+
+using namespace std::complex_literals;
 
 namespace
 {
@@ -382,16 +385,16 @@ void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
   has_A2 = true;
 }
 
-void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
-                                                 double preconditioner_update_tol)
-{
-  MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
-}
+//void SlepcEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
+//                                                 double preconditioner_update_tol)
+//{
+//  MFEM_ABORT("SetPreconditionerLag not defined for base class SlepcEigenvalueSolver!");
+//}
 
-void SlepcEigenvalueSolver::SetMaxRestart(int max_num_restart)
-{
-  MFEM_ABORT("SetMaxRestart not defined for base class SlepcEigenvalueSolver!");
-}
+//void SlepcEigenvalueSolver::SetMaxRestart(int max_num_restart)
+//{
+//  MFEM_ABORT("SetMaxRestart not defined for base class SlepcEigenvalueSolver!");
+//}
 
 void SlepcEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
@@ -2454,6 +2457,7 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
         std::abs(ctx->lambda.imag()), palace::Operator::DIAG_ZERO);
+    // BuildParSumOperator here instead of GetSystemMatrix
     ctx->opA_pc = ctx->space_op->GetSystemMatrix(
         std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK,
         ctx->opC, ctx->opM, ctx->opA2_pc.get());
@@ -2487,6 +2491,7 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  // BuildParSumOperator here instead of GetSystemMatrix
   ctxF->opA = ctxF->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
                                               lambda * lambda, ctxF->opK, ctxF->opC,
                                               ctxF->opM, ctxF->opA2.get());
@@ -2508,6 +2513,7 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   ctxF->opA2p = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
       std::abs(lambda.imag()) * (1.0 + eps), palace::Operator::DIAG_ZERO);
   std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
+  // BuildParSumOperator here instead of GetDividedDifferenceMatrix and GetSystemMatrix
   ctxF->opAJ = ctxF->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(
       denom, ctxF->opA2p.get(), ctxF->opA2.get(), palace::Operator::DIAG_ZERO);
   ctxF->opJ = ctxF->space_op->GetSystemMatrix(

@@ -30,54 +30,6 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   opB = nullptr;
 }
 
-void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetOperators(const ComplexOperator &K,
-                                             const ComplexOperator &C,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
-                                             const ComplexOperator &K,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetOperators(SpaceOperator &space_op,
-                                             const ComplexOperator &K,
-                                             const ComplexOperator &C,
-                                             const ComplexOperator &M,
-                                             EigenvalueSolver::ScaleType type)
-{
-  MFEM_ABORT("SetOperators not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
-{
-  MFEM_ABORT("SetNLInterpolation not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetPreconditionerLag(int preconditioner_update_freq,
-                                                     double preconditioner_update_tol)
-{
-  MFEM_ABORT("SetPreconditionerLag not defined for base class NonLinearEigenvalueSolver!");
-}
-
-void NonLinearEigenvalueSolver::SetMaxRestart(int max_num_restart)
-{
-  MFEM_ABORT("SetMaxRestart not defined for base class NonLinearEigenvalueSolver!");
-}
-
 void NonLinearEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
 {
   opInv = &ksp;
@@ -409,12 +361,9 @@ int QuasiNewtonSolver::Solve()
   // Delta used in to compute divided difference Jacobian.
   const auto delta = std::sqrt(std::numeric_limits<double>::epsilon());
 
-  // Suppress wave port output during Newton iterations.
-  space_op->GetWavePortOp().SetSuppressOutput(true);
-
   // Set a seed and distribution for random Eigen vectors to ensure the same values on all
   // ranks.
-  unsigned int seed = 1337;
+  unsigned int seed = 111;
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
@@ -728,8 +677,6 @@ int QuasiNewtonSolver::Solve()
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
 
-  space_op->GetWavePortOp().SetSuppressOutput(false);
-
   return nev;
 }
 
@@ -780,8 +727,8 @@ NewtonInterpolationOperator::NewtonInterpolationOperator(SpaceOperator &space_op
 // Compute the elementary symmetric polynomial. Used to convert from Newton to monomial
 // basis.
 template <typename ScalarType>
-ScalarType elementarySymmetric(const std::vector<ScalarType> &points, const int k,
-                               const int n)
+ScalarType elementarySymmetric(const std::vector<ScalarType> &points, int k,
+                              int n)
 {
   if (k == 0)
   {
@@ -848,7 +795,7 @@ void NewtonInterpolationOperator::Interpolate(int order,
   }
 }
 
-void NewtonInterpolationOperator::Mult(const int order, const ComplexVector &x,
+void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
                                        ComplexVector &y) const
 {
   MFEM_VERIFY(order >= 0 && order < num_points,
@@ -865,7 +812,7 @@ void NewtonInterpolationOperator::Mult(const int order, const ComplexVector &x,
   }
 }
 
-void NewtonInterpolationOperator::AddMult(const int order, const ComplexVector &x,
+void NewtonInterpolationOperator::AddMult(int order, const ComplexVector &x,
                                           ComplexVector &y, std::complex<double> a) const
 {
   this->Mult(order, x, rhs);

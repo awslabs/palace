@@ -98,16 +98,16 @@ public:
 
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
-                    ScaleType type) override;
-  void SetNLInterpolation(const Interpolation &interp) override;
+  //void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+  //                  ScaleType type) override;
+  //void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+  //                  const ComplexOperator &M, ScaleType type) override;
+  //void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+  //                  const ComplexOperator &M, ScaleType type) override;
+  //void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+  //                  const ComplexOperator &C, const ComplexOperator &M,
+  //                  ScaleType type) override;
+  //void SetNLInterpolation(const Interpolation &interp) override;
   // The linear solver will be configured to compute the action of T(σ)⁻¹
   // where σ is the current eigenvalue estimate.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
@@ -133,11 +133,11 @@ public:
   void SetMaxIter(int max_it) override;
 
   // Set the update frequency of the preconditioner.
-  void SetPreconditionerLag(int preconditioner_update_freq,
-                            double preconditioner_update_tol) override;
+  //void SetPreconditionerLag(int preconditioner_update_freq,
+  //                          double preconditioner_update_tol) override;
 
   // Set the maximum number of restarts with the same initial guess.
-  void SetMaxRestart(int max_num_restart) override;
+  //void SetMaxRestart(int max_num_restart) override;
 
   // Set target spectrum for the eigensolver. When a spectral transformation is used, this
   // applies to the spectrum of the shifted operator.
@@ -216,10 +216,10 @@ public:
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
-                            double preconditioner_update_tol) override;
+                            double preconditioner_update_tol);
 
   // Set the maximum number of restarts with the same initial guess.
-  void SetMaxRestart(int max_num_restart) override;
+  void SetMaxRestart(int max_num_restart);
 
   // Solve the nonlinear eigenvalue problem.
   int Solve() override;
@@ -235,10 +235,10 @@ class Interpolation
 public:
   Interpolation() = default;
   virtual ~Interpolation() = default;
-  virtual void Interpolate(const int order, const std::complex<double> sigma_min,
+  virtual void Interpolate(int order, const std::complex<double> sigma_min,
                            const std::complex<double> sigma_max) = 0;
-  virtual void Mult(const int order, const ComplexVector &x, ComplexVector &y) const = 0;
-  virtual void AddMult(const int order, const ComplexVector &x, ComplexVector &y,
+  virtual void Mult(int order, const ComplexVector &x, ComplexVector &y) const = 0;
+  virtual void AddMult(int order, const ComplexVector &x, ComplexVector &y,
                        std::complex<double> a = 1.0) const = 0;
 };
 
@@ -268,12 +268,12 @@ public:
   NewtonInterpolationOperator(SpaceOperator &space_op);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
-  void Interpolate(const int order, const std::complex<double> sigma_min,
+  void Interpolate(int order, const std::complex<double> sigma_min,
                    const std::complex<double> sigma_max);
 
   // Perform multiplication with interpolation operator of specified order.
-  void Mult(const int order, const ComplexVector &x, ComplexVector &y) const;
-  void AddMult(const int order, const ComplexVector &x, ComplexVector &y,
+  void Mult(int order, const ComplexVector &x, ComplexVector &y) const;
+  void AddMult(int order, const ComplexVector &x, ComplexVector &y,
                std::complex<double> a = 1.0) const;
 };
 
