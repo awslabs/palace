@@ -1,5 +1,8 @@
 name: Documentation Preview Cleanup
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     types: [closed]
