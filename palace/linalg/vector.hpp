@@ -112,9 +112,15 @@ public:
   // In-place addition (*this) += alpha * x.
   void AXPY(std::complex<double> alpha, const ComplexVector &x);
   void Add(std::complex<double> alpha, const ComplexVector &x) { AXPY(alpha, x); }
+  void Subtract(std::complex<double> alpha, const ComplexVector &x) { AXPY(-alpha, x); }
   ComplexVector &operator+=(const ComplexVector &x)
   {
     AXPY(1.0, x);
+    return *this;
+  }
+  ComplexVector &operator-=(const ComplexVector &x)
+  {
+    AXPY(-1.0, x);
     return *this;
   }
 
