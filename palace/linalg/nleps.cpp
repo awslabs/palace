@@ -423,10 +423,9 @@ int QuasiNewtonSolver::Solve()
     // Set the linear solver operators.
     opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                            Operator::DIAG_ZERO);
-    opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK,
-                                    opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i,
-                                                             eig, eig * eig, eig.imag());
+    opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM, opA2.get());
+    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, eig, eig * eig,
+                                                             eig.imag());
     opInv->SetOperators(*opA, *opP);
 
     // Linear solve with the extended operator of the deflated problem.
@@ -478,8 +477,8 @@ int QuasiNewtonSolver::Solve()
       // Compute u = A * v.
       auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                  Operator::DIAG_ZERO);
-      auto A = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig,
-                                         opK, opC, opM, A2n.get());
+      auto A =
+          space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM, A2n.get());
       A->Mult(v, u);
       if (k > 0)  // Deflation
       {
@@ -561,8 +560,8 @@ int QuasiNewtonSolver::Solve()
           std::complex<double>(0.0, delta * std::abs(eig.imag()));
       auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
           denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
-      auto opJ = space_op->GetSystemMatrix(
-        0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, opK, opC, opM, opAJ.get());
+      auto opJ = space_op->GetSystemMatrix(0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, opK, opC, opM,
+                                           opAJ.get());
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
@@ -595,14 +594,15 @@ int QuasiNewtonSolver::Solve()
         eig_opInv = eig;
         opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
                                                                Operator::DIAG_ZERO);
-        opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK,
-                                        opC, opM, opA2.get());
-        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(
-            1.0 + 0.0i, eig, eig * eig, eig.imag());
+        opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM,
+                                        opA2.get());
+        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, eig, eig * eig,
+                                                                 eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
-        double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
+        double norm_w0 =
+            std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
         w0 *= 1.0 / norm_w0;
         w2 *= 1.0 / norm_w0;
       }
@@ -727,8 +727,7 @@ NewtonInterpolationOperator::NewtonInterpolationOperator(SpaceOperator &space_op
 // Compute the elementary symmetric polynomial. Used to convert from Newton to monomial
 // basis.
 template <typename ScalarType>
-ScalarType elementarySymmetric(const std::vector<ScalarType> &points, int k,
-                              int n)
+ScalarType elementarySymmetric(const std::vector<ScalarType> &points, int k, int n)
 {
   if (k == 0)
   {

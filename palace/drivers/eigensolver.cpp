@@ -306,11 +306,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target,
-                                    -target * target + 0.0i, K.get(),
-                                    C.get(), M.get(), A2.get());
+  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
+                                    K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-    1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
+      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
@@ -340,7 +339,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-    auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
+    auto qn =
+        std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     if (C)
