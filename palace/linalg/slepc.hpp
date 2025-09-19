@@ -14,6 +14,7 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <string>
 #include <mpi.h>
 #include "linalg/eps.hpp"
