@@ -593,15 +593,17 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     out.WriteFullTableTrunc();
   };
 
+  auto dim_V = V.size();
+
   // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
   // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
-  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+  auto v_d = orth_R.topLeftCorner(dim_V, dim_V).diagonal().cwiseInverse().asDiagonal();
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
   // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 
   auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
+  auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr.topLeftCorner(dim_V, dim_V) * v_d;
   print_table(m_Linv.real(), "rom-Linv-re.csv");
   if (K->Imag())
   {
@@ -609,9 +611,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   }
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  auto m_C = (unit_farad * v_d) * Mr * v_d;
+  auto m_C = (unit_farad * v_d) * Mr.topLeftCorner(dim_V, dim_V) * v_d;
   print_table(m_C.real(), "rom-C-re.csv");
-  if (C->Imag())
+  if (M->Imag())
   {
     print_table(m_C.imag(), "rom-C-im.csv");
   }
@@ -621,16 +623,16 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   if (C)
   {
     auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr * v_d;
+    auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr.topLeftCorner(dim_V, dim_V) * v_d;
     print_table(m_Rinv.real(), "rom-Rinv-re.csv");
-    if (M->Imag())
+    if (C->Imag())
     {
       print_table(m_Rinv.imag(), "rom-Rinv-im.csv");
     }
   }
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
-  print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
+  print_table(orth_R.topLeftCorner(dim_V, dim_V), "rom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
