@@ -6,11 +6,14 @@
 
 #include <complex>
 #include <memory>
+#include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -34,10 +37,10 @@ private:
   std::vector<double> z;
 
 public:
-  MinimalRationalInterpolation(int max_size);
-  void AddSolutionSample(double omega, const ComplexVector &u,
-                         const SpaceOperator &space_op, Orthogonalization orthog_type);
-  std::vector<double> FindMaxError(int N) const;
+  MinimalRationalInterpolation(std::size_t max_size);
+  void AddSolutionSample(double omega, const ComplexVector &u, MPI_Comm comm,
+                         Orthogonalization orthog_type);
+  std::vector<double> FindMaxError(std::size_t N) const;
 
   const auto &GetSamplePoints() const { return z; }
 };
@@ -50,15 +53,22 @@ class RomOperator
 {
 private:
   // Reference to HDM discretization (not owned).
+  // TODO(C++20): Use std::reference_wrapper with incomplete types.
   SpaceOperator &space_op;
 
   // Used for constructing & resuse of RHS1.
   int excitation_idx_cache = 0;
 
-  // HDM system matrices and excitation RHS.
+  // HDM system matrices and excitation:
+  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
+  // - Excitation / drive: = iω RHS1 + RHS2(ω).
+  // - Vector r is internal vector workspace of size RHS
+  // - The non-quadratic operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - Need to recompute RHS1 when excitation index changes.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  // Defaults: will be toggeled by SetExcitationIndex & SolveHDM.
+
+  // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;
@@ -66,33 +76,52 @@ private:
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
-  // PROM matrices and vectors.
-  Eigen::MatrixXcd Kr, Mr, Cr, Ar;
-  Eigen::VectorXcd RHS1r;
+  // Total maximum size of PROM matrices
+  std::size_t max_prom_size;
+
+  // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
+  // order basis defined below. Memory for matrices is fully pre-allocated to maximum size
+  // in ctor. We use Eigen block views are used during projection to act on appropriate
+  // V.size() x V.size() sub-matrices as the sub-block is extended in UpdatePROM.
+  Eigen::MatrixXcd Kr, Mr, Cr;
+  Eigen::VectorXcd RHS1r;  // Need to recompute drive vector on excitation change.
+
+  // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
+  // SolvePROM. Define them here so memory allocation is reused in "online" evaluation.
+  Eigen::MatrixXcd Ar;
   Eigen::VectorXcd RHSr;
 
-  // PROM reduced-order basis (real-valued) and active dimension.
+  // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
-  std::size_t dim_V = 0;
   Orthogonalization orthog_type;
 
-  // MRIs: one for each excitation index.
+  // Label to distinguish port modes from solution  projection and to print PROM matrices
+  std::vector<std::string> v_node_label;
+
+  // Upper-triangular orthognoalization matrix R; U = VR with U modes. Memory pre-allocated.
+  Eigen::MatrixXd orth_R;
+
+  // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
 
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);
+  RomOperator(const IoData &iodata, SpaceOperator &space_op,
+              std::size_t max_size_per_excitation);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
   // Return PROM dimension.
-  auto GetReducedDimension() const { return dim_V; }
+  auto GetReducedDimension() const { return V.size(); }
 
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const
   {
     return mri.at(excitation_idx).GetSamplePoints();
   }
+
+  // Return overlap matrix form orthogonalization of vectors in ROM.
+  const auto &GetRomOrthogonalityMatrix() const { return orth_R; }
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
@@ -101,7 +130,7 @@ public:
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add field configuration to the reduced-order basis and update the PROM.
-  void UpdatePROM(const ComplexVector &u);
+  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
@@ -113,13 +142,16 @@ public:
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
-  std::vector<double> FindMaxError(int excitation_idx, int N = 1) const
+  std::vector<double> FindMaxError(int excitation_idx, std::size_t N = 1) const
   {
     return mri.at(excitation_idx).FindMaxError(N);
   }
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+
+  // Print PROM matrices to file include in input (SI) units.
+  void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
 };
 
 }  // namespace palace
