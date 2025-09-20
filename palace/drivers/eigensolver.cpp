@@ -41,8 +41,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
+  auto funcA2 = [&space_op](double omega) -> std::unique_ptr<ComplexOperator>
+  { return space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO); };
+  auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
+                           std::complex<double> a2,
+                           double omega) -> std::unique_ptr<ComplexOperator>
+  { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega); };
   const double target = iodata.solver.eigenmode.target;
-  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(target, Operator::DIAG_ZERO);
+  auto A2 = funcA2(target);  // space_op.GetExtraSystemMatrix<ComplexOperator>(target,
+                             // Operator::DIAG_ZERO);
   bool has_A2 = (A2 != nullptr);
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   std::unique_ptr<Interpolation> interp_op;
@@ -50,7 +57,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     constexpr int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
-    interp_op = std::make_unique<NewtonInterpolationOperator>(space_op);
+    interp_op = std::make_unique<NewtonInterpolationOperator>(
+        funcA2, space_op.GetNDDbcTDofLists(), A2->Width());
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
   }
 
@@ -158,6 +166,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    eigen->SetExtraSystemMatrix(funcA2);
+    eigen->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());
+    eigen->SetPreconditionerUpdate(funcP);
   }
   else if (has_A2)
   {
@@ -170,6 +181,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(space_op, *K, *M, scale);
     }
     eigen->SetNLInterpolation(*interp_op);
+    eigen->SetExtraSystemMatrix(funcA2);
   }
   else if (C)
   {
@@ -351,12 +363,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(space_op, *K, *M, EigenvalueSolver::ScaleType::NONE);
     }
+    qn->SetExtraSystemMatrix(funcA2);
+    qn->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());
+    qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
                              iodata.solver.eigenmode.preconditioner_lag_tol);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
     qn->SetLinearSolver(*ksp);
     qn->SetShiftInvert(1i * target);
+
     // Use linearized eigensolve solution as initial guess.
     std::vector<std::complex<double>> eigenvalues;
     std::vector<ComplexVector> eigenvectors;
@@ -370,7 +386,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       linalg::NormalizePhase(space_op.GetComm(), v0);
       eigenvalues.push_back(eigen->GetEigenvalue(i));
       eigenvectors.push_back(v0);
-      errors.push_back(eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE));
+      errors.push_back(eigen->GetError(
+          i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the
+                                                       // nonlinear solver?
     }
     qn->SetInitialGuess(eigenvalues, eigenvectors, errors);
     eigen = std::move(qn);

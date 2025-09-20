@@ -86,7 +86,16 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  std::optional<std::function<const ComplexOperator &(std::complex<double>)>> opA2;
+  // Optional function to compute the A2 operator.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+
+  // Optional function to compute the preconditioner matrix.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(
+      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      funcP;
+
+  // List of ND DOFs.
+  std::vector<mfem::Array<int>> nd_dbc_tdofs;
 
 protected:
   // Control print level for debugging.
@@ -174,17 +183,16 @@ public:
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
 
+  // Set the frequency-dependent A2 matrix function.
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
   // Set the preconditioner update function.
-  void SetPreconditionerUpdate(
-      std::function<std::unique_ptr<ComplexOperator>(
-          std::complex<double>, std::complex<double>, std::complex<double>, double)>);
+  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                   std::complex<double>, std::complex<double>,
+                                   std::complex<double>, double)>) override;
 
-  // Set the update frequency and tolerance of the preconditioner.
-  // void SetPreconditionerLag(int preconditioner_update_freq,
-  //                          double preconditioner_update_tol) override;
-
-  // Set the maximum number of restarts with the same initial guess.
-  // void SetMaxRestart(int max_num_restart) override;
+  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;

@@ -400,6 +400,26 @@ void SlepcEigenvalueSolver::SetBMat(const Operator &B)
   opB = &B;
 }
 
+void SlepcEigenvalueSolver::SetExtraSystemMatrix(
+    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+{
+  funcA2 = A2;
+}
+
+void SlepcEigenvalueSolver::SetPreconditionerUpdate(
+    std::function<std::unique_ptr<ComplexOperator>(
+        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+        P)
+{
+  funcP = P;
+}
+
+void SlepcEigenvalueSolver::SetNDDbcTDofLists(
+    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
+{
+  nd_dbc_tdofs = nd_dbc_tdof_lists;
+}
+
 void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
 {
   ST st = GetST();
@@ -1122,12 +1142,17 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (has_A2)
+  if (funcA2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                              Operator::DIAG_ZERO);
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    auto A2 = (*funcA2)(std::abs(l.imag()));
+    A2->AddMult(x, r, 1.0 + 0.0i);
   }
+  // if (has_A2)
+  //{
+  //   auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+  //                                                             Operator::DIAG_ZERO);
+  //   A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  // }
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1604,12 +1629,17 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (has_A2)
+  if (funcA2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                              Operator::DIAG_ZERO);
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    auto A2 = (*funcA2)(std::abs(l.imag()));
+    A2->AddMult(x, r, 1.0 + 0.0i);
   }
+  // if (has_A2)
+  //{
+  //   auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+  //                                                             Operator::DIAG_ZERO);
+  //   A2->AddMult(x, r, 1.0 + 0.0i);
+  // }
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -2041,12 +2071,17 @@ PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                            Operator::DIAG_ZERO);
-  if (A2)
+  if (funcA2)
   {
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    auto A2 = (*funcA2)(std::abs(l.imag()));
+    A2->AddMult(x, r, 1.0 + 0.0i);
   }
+  // auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
+  //                                                           Operator::DIAG_ZERO);
+  // if (A2)
+  // {
+  //   A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+  //}
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -2444,15 +2479,14 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   {
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
-    ctx->opA2_pc = ctx->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
-        std::abs(ctx->lambda.imag()), palace::Operator::DIAG_ZERO);
-    // BuildParSumOperator here instead of GetSystemMatrix
-    ctx->opA_pc = ctx->space_op->GetSystemMatrix(
-        std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda, ctx->opK,
-        ctx->opC, ctx->opM, ctx->opA2_pc.get());
-    ctx->opP_pc = ctx->space_op->GetPreconditionerMatrix<palace::ComplexOperator>(
-        std::complex<double>(1.0, 0.0), ctx->lambda, ctx->lambda * ctx->lambda,
-        ctx->lambda.imag());
+    ctx->opA2_pc = (*ctx->funcA2)(std::abs(ctx->lambda.imag()));
+    auto A = palace::BuildParSumOperator(
+        {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
+        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()});
+    A->SetEssentialTrueDofs(ctx->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
+    ctx->opA_pc = std::move(A);
+    ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
+                                ctx->lambda * ctx->lambda, ctx->lambda.imag());
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
     ctx->new_lambda = false;
   }
@@ -2478,12 +2512,11 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
-  ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
-      std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
-  // BuildParSumOperator here instead of GetSystemMatrix
-  ctxF->opA = ctxF->space_op->GetSystemMatrix(std::complex<double>(1.0, 0.0), lambda,
-                                              lambda * lambda, ctxF->opK, ctxF->opC,
-                                              ctxF->opM, ctxF->opA2.get());
+  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
+  auto A = palace::BuildParSumOperator({1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
+                                       {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()});
+  A->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
+  ctxF->opA = std::move(A);
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2496,18 +2529,19 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   // J(λ) = C + 2 λ M + A2'(Im{λ}).
-  ctxF->opA2 = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
-      std::abs(lambda.imag()), palace::Operator::DIAG_ZERO);
+  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  ctxF->opA2p = ctxF->space_op->GetExtraSystemMatrix<palace::ComplexOperator>(
-      std::abs(lambda.imag()) * (1.0 + eps), palace::Operator::DIAG_ZERO);
+  ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
   std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
-  // BuildParSumOperator here instead of GetDividedDifferenceMatrix and GetSystemMatrix
-  ctxF->opAJ = ctxF->space_op->GetDividedDifferenceMatrix<palace::ComplexOperator>(
-      denom, ctxF->opA2p.get(), ctxF->opA2.get(), palace::Operator::DIAG_ZERO);
-  ctxF->opJ = ctxF->space_op->GetSystemMatrix(
-      std::complex<double>(0.0, 0.0), std::complex<double>(1.0, 0.0), 2.0 * lambda,
-      ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get());
+  auto opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                          {ctxF->opA2p.get(), ctxF->opA2.get()});
+  opAJ->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ZERO);
+  ctxF->opAJ = std::move(opAJ);
+  auto opJ =
+      palace::BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
+                                  {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()});
+  opJ->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
+  ctxF->opJ = std::move(opJ);
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
