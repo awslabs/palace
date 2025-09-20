@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -219,6 +220,26 @@ void QuasiNewtonSolver::SetMaxRestart(int max_num_restart)
   max_restart = max_num_restart;
 }
 
+void QuasiNewtonSolver::SetExtraSystemMatrix(
+    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+{
+  funcA2 = A2;
+}
+
+void QuasiNewtonSolver::SetPreconditionerUpdate(
+    std::function<std::unique_ptr<ComplexOperator>(
+        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+        P)
+{
+  funcP = P;
+}
+
+void QuasiNewtonSolver::SetNDDbcTDofLists(
+    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
+{
+  nd_dbc_tdofs = nd_dbc_tdof_lists;
+}
+
 void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
                                      const ComplexOperator &M,
                                      EigenvalueSolver::ScaleType type)
@@ -396,7 +417,8 @@ int QuasiNewtonSolver::Solve()
     else
     {
       eig = sigma;
-      space_op->GetRandomInitialVector(v);
+      linalg::SetRandom(GetComm(), v);
+      linalg::SetSubVector(v, nd_dbc_tdofs.back(), 0.0);
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
@@ -421,11 +443,12 @@ int QuasiNewtonSolver::Solve()
     v2 *= 1.0 / norm_v;
 
     // Set the linear solver operators.
-    opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                           Operator::DIAG_ZERO);
-    opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM, opA2.get());
-    opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, eig, eig * eig,
-                                                             eig.imag());
+    opA2 = (*funcA2)(std::abs(eig.imag()));
+    auto A = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                                         {opK, opC, opM, opA2.get()});
+    A->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
+    opA = std::move(A);
+    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
     // Linear solve with the extended operator of the deflated problem.
@@ -475,10 +498,10 @@ int QuasiNewtonSolver::Solve()
     while (it < nleps_it)
     {
       // Compute u = A * v.
-      auto A2n = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                                 Operator::DIAG_ZERO);
-      auto A =
-          space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM, A2n.get());
+      auto A2n = (*funcA2)(std::abs(eig.imag()));
+      auto A = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                                           {opK, opC, opM, A2n.get()});
+      A->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
       A->Mult(v, u);
       if (k > 0)  // Deflation
       {
@@ -554,14 +577,16 @@ int QuasiNewtonSolver::Solve()
       }
 
       // Compute w = J * v.
-      auto opA2p = space_op->GetExtraSystemMatrix<ComplexOperator>(
-          std::abs(eig.imag()) * (1.0 + delta), Operator::DIAG_ZERO);
+      auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
       const std::complex<double> denom =
           std::complex<double>(0.0, delta * std::abs(eig.imag()));
-      auto opAJ = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
-          denom, opA2p.get(), A2n.get(), Operator::DIAG_ZERO);
-      auto opJ = space_op->GetSystemMatrix(0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, opK, opC, opM,
-                                           opAJ.get());
+      auto AJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                            {opA2p.get(), A2n.get()});
+      AJ->SetEssentialTrueDofs(nd_dbc_tdofs.back(), palace::Operator::DIAG_ZERO);
+      std::unique_ptr<ComplexOperator> opAJ = std::move(AJ);
+      auto opJ = palace::BuildParSumOperator(
+          {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i}, {opK, opC, opM, opAJ.get()});
+      opJ->SetEssentialTrueDofs(nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
@@ -592,12 +617,12 @@ int QuasiNewtonSolver::Solve()
       if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
-        opA2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(eig.imag()),
-                                                               Operator::DIAG_ZERO);
-        opA = space_op->GetSystemMatrix(1.0 + 0.0i, eig, eig * eig, opK, opC, opM,
-                                        opA2.get());
-        opP = space_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, eig, eig * eig,
-                                                                 eig.imag());
+        opA2 = (*funcA2)(std::abs(eig.imag()));
+        auto A_pc = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                                                {opK, opC, opM, opA2.get()});
+        A_pc->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
+        opA = std::move(A_pc);
+        opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         deflated_solve(c, c2, w0, w2);
@@ -691,8 +716,7 @@ double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexV
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                            Operator::DIAG_ZERO);
+  auto A2 = (*funcA2)(std::abs(l.imag()));
   A2->AddMult(x, r, 1.0);
   return linalg::Norml2(comm, r);
 }
@@ -717,10 +741,12 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
   return normK + t * normC + t * t * normM;
 }
 
-NewtonInterpolationOperator::NewtonInterpolationOperator(SpaceOperator &space_op)
-  : space_op(&space_op)
+NewtonInterpolationOperator::NewtonInterpolationOperator(
+    std::function<std::unique_ptr<ComplexOperator>(double)> funcA2,
+    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists, int size)
+  : funcA2(funcA2), nd_dbc_tdofs(nd_dbc_tdof_lists)
 {
-  rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  rhs.SetSize(size);  // need to get size some other way...
   rhs.UseDevice(true);
 }
 
@@ -767,15 +793,15 @@ void NewtonInterpolationOperator::Interpolate(int order,
     {
       if (k == 0)
       {
-        auto A2j = space_op->GetExtraSystemMatrix<ComplexOperator>(points[j].imag(),
-                                                                   Operator::DIAG_ZERO);
+        auto A2j = (funcA2)(points[j].imag());
         ops[k].push_back(std::move(A2j));
       }
       else
       {
         std::complex<double> denom = points[j + k] - points[j];
-        auto A2dd = space_op->GetDividedDifferenceMatrix<ComplexOperator>(
-            denom, ops[k - 1][j + 1].get(), ops[k - 1][j].get(), Operator::DIAG_ZERO);
+        auto A2dd = palace::BuildParSumOperator(
+            {1.0 / denom, -1.0 / denom}, {ops[k - 1][j + 1].get(), ops[k - 1][j].get()});
+        A2dd->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ZERO);
         ops[k].push_back(std::move(A2dd));
       }
     }

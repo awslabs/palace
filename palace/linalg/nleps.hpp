@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -68,7 +69,7 @@ protected:
   const DivFreeSolver<ComplexVector> *opProj;
 
   // Reference to SpaceOperator to compute A2 matrix.
-  SpaceOperator *space_op;
+  SpaceOperator *space_op;  // remove?
 
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
@@ -165,6 +166,17 @@ private:
   // Operators used in the iterative linear solver.
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
+  // Function to compute the A2 operator.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+
+  // Function to compute the preconditioner matrix.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(
+      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      funcP;
+
+  // List of ND DOFs.
+  std::vector<mfem::Array<int>> nd_dbc_tdofs;
+
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
@@ -194,6 +206,17 @@ public:
   void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
                     const ComplexOperator &C, const ComplexOperator &M,
                     ScaleType type) override;
+
+  // Set the frequency-dependent A2 matrix function.
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
+  // Set the preconditioner update function.
+  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                   std::complex<double>, std::complex<double>,
+                                   std::complex<double>, double)>) override;
+
+  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
@@ -227,8 +250,11 @@ public:
 class NewtonInterpolationOperator : public Interpolation
 {
 private:
-  // Reference to SpaceOperator to compute A2 matrix.
-  SpaceOperator *space_op;
+  // Function to compute the A2 operator.
+  std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
+
+  // List of ND DOFs.
+  std::vector<mfem::Array<int>> nd_dbc_tdofs;
 
   // Number of points used in the interpolation.
   int num_points;
@@ -246,7 +272,9 @@ private:
   mutable ComplexVector rhs;
 
 public:
-  NewtonInterpolationOperator(SpaceOperator &space_op);
+  NewtonInterpolationOperator(
+      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2,
+      const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists, const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(int order, const std::complex<double> sigma_min,
