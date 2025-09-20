@@ -32,6 +32,13 @@ enum class EigenSolverBackend : char
   ARPACK
 };
 
+// Nonlinear eigenvalue solver type.
+enum class NonlinearEigenSolver : char
+{
+  HYBRID,
+  SLP
+};
+
 // Surface fluxes.
 enum class SurfaceFlux : char
 {

@@ -57,6 +57,9 @@ protected:
   std::complex<double> sigma;
   bool sinvert;
 
+  // Boolean to handle frequency-dependent A2 operator.
+  bool has_A2;
+
   // Storage for computed eigenvalues.
   std::unique_ptr<std::complex<double>[]> eig;
   std::unique_ptr<int[]> perm;
@@ -74,7 +77,13 @@ protected:
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  const ComplexKspSolver *opInv;
+  ComplexKspSolver *opInv;
+
+  // Reference to space operator to compute the frequency-dependent A2 operator.
+  SpaceOperator *space_op;
+
+  // Reference to interpolation operator for nonlinear term (not owned).
+  const Interpolation *opInterp;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -114,18 +123,12 @@ protected:
 public:
   ArpackEigenvalueSolver(MPI_Comm comm, int print);
 
-  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
-  // eigenvalue problem.
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
-
+  void SetNLInterpolation(const Interpolation &interp) override;
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  void SetLinearSolver(const ComplexKspSolver &ksp) override;
+  void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
@@ -238,6 +241,11 @@ public:
   using ArpackEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+                    const ComplexOperator &C, const ComplexOperator &M,
+                    ScaleType type) override;
 
   int Solve() override;
 };

@@ -386,8 +386,8 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                     std::complex<double>(-omega * omega, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
-  auto P =
-      space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
   ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
