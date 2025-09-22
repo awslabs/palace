@@ -1820,7 +1820,8 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 }
 
 void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                  const ComplexOperator &M, EigenvalueSolver::ScaleType type)
+                                  const ComplexOperator &M,
+                                  EigenvalueSolver::ScaleType type)
 {
   // Construct shell matrices for the scaled operators which define the quadratic polynomial
   // eigenvalue problem.

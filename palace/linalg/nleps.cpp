@@ -271,7 +271,8 @@ void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOper
 }
 
 void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                     const ComplexOperator &M, EigenvalueSolver::ScaleType type)
+                                     const ComplexOperator &M,
+                                     EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);

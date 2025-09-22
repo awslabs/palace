@@ -80,7 +80,7 @@ protected:
   ComplexKspSolver *opInv;
 
   // Reference to interpolation operator for nonlinear term (not owned).
-  const Interpolation *opInterp; // remove later?
+  const Interpolation *opInterp;  // remove later?
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).

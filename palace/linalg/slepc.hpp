@@ -345,7 +345,8 @@ public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
@@ -440,7 +441,8 @@ public:
   SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetBMat(const Operator &B) override;
@@ -545,9 +547,10 @@ public:
   SlepcNEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C, const ComplexOperator &M,
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, ScaleType type) override;
   void SetBMat(const Operator &B) override;
 };
 

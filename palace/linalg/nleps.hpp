@@ -198,7 +198,8 @@ public:
   QuasiNewtonSolver(MPI_Comm comm, int print);
 
   using NonLinearEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
