@@ -52,6 +52,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   bool has_A2 = (A2 != nullptr);
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   std::unique_ptr<Interpolation> interp_op;
+  std::unique_ptr<ComplexOperator> Ko, Co, Mo;  // original K, C, M
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     constexpr int npoints = 3;  // Always use second order interpolation for now
@@ -59,6 +60,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     interp_op = std::make_unique<NewtonInterpolationOperator>(
         funcA2, space_op.GetNDDbcTDofLists(), A2->Width());
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
+    // K' = Ko + A2_0, C' = Co + A2_1, M' = Mo + A2_2
+    // Ko = std::move(K); Co = std::move(C); Mo = std::move(M);
+    // K = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(0), Ko});
+    // C = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(1), Co});
+    // M = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(2), Mo});
   }
 
   const auto &Curl = space_op.GetCurlMatrix();

@@ -8,6 +8,7 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
