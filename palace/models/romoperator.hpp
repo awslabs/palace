@@ -53,6 +53,7 @@ class RomOperator
 {
 private:
   // Reference to HDM discretization (not owned).
+  // TODO(C++20): Use std::reference_wrapper with incomplete types.
   SpaceOperator &space_op;
 
   // Used for constructing & reuse of RHS1.
@@ -76,20 +77,24 @@ private:
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
-  // order basis defined below. Frequency dependant matrix Ar and RHSr are assembled and
-  // used only during SolvePROM.
+  // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
-  Eigen::VectorXcd RHS1r;       // Extend but need to recompute on excitation change
-  Eigen::MatrixXcd Ar;          // Pre-allocation only: assembled and used in SolvePROM
-  Eigen::VectorXcd RHSr;        // Pre-allocation only: assembled and used in SolvePROM
+  Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
 
-  // PROM reduced-order basis (real-valued) and active dimension.
+  // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
+  // SolvePROM. Define them here so memory allocation is reused in "online" evaluation.
+  Eigen::MatrixXcd Ar;
+  Eigen::VectorXcd RHSr;
+
+  // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
-  std::size_t dim_V = 0;
   Orthogonalization orthog_type;
-  std::vector<std::string> v_node_label;  // Label to distinguish port modes from solution
-                                          // projection and to print PROM matrices
-  Eigen::MatrixXd orth_R;                 // Upper-triangular R; U = VR with U modes
+
+  // Label to distinguish port modes from solution  projection and to print PROM matrices
+  std::vector<std::string> v_node_label;
+
+  // Upper-triangular orthognoalization matrix R; U = VR with U modes. Memory pre-allocated.
+  Eigen::MatrixXd orth_R;
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
@@ -102,7 +107,7 @@ public:
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
   // Return PROM dimension.
-  auto GetReducedDimension() const { return dim_V; }
+  auto GetReducedDimension() const { return V.size(); }
 
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const
