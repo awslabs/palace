@@ -52,7 +52,7 @@ private:
   mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
-  DiagonalPolicy diag_policy;
+  DiagonalPolicy diag_policy = DiagonalPolicy::DIAG_ZERO;
 
   // Assembled operator as a parallel Hypre matrix. If assembled, the local operator is not
   // deleted.
@@ -106,6 +106,10 @@ public:
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
 
+  // Get the diagonal policy that was most recently used. If there are no essential dofs,
+  // and thus no valid policy, will error.
+  DiagonalPolicy GetDiagonalPolicy() const;
+
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
   void EliminateRHS(const Vector &x, Vector &b) const;
@@ -148,7 +152,8 @@ private:
   mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
-  Operator::DiagonalPolicy diag_policy;
+  Operator::DiagonalPolicy diag_policy = Operator::DiagonalPolicy::DIAG_ZERO;
+  ;
 
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
@@ -211,6 +216,10 @@ public:
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
 
+  // Get the diagonal policy that was most recently used. If there are no essential dofs,
+  // and thus no valid policy, will error.
+  Operator::DiagonalPolicy GetDiagonalPolicy() const;
+
   void AssembleDiagonal(ComplexVector &diag) const override;
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
@@ -229,10 +238,12 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-// Combine a collection of ParOperator into a weighted summation.
+// Combine a collection of ParOperator into a weighted summation. If set_essential is true,
+// extract the essential dofs from the operator array, and apply to the summed operator.
 template <std::size_t N>
 auto BuildParSumOperator(const std::array<double, N> &coeff,
-                         const std::array<const ParOperator *, N> &ops)
+                         const std::array<const ParOperator *, N> &ops,
+                         bool set_essential = true)
 {
   auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
@@ -253,13 +264,33 @@ auto BuildParSumOperator(const std::array<double, N> &coeff,
       sum->AddOperator(ops[i]->LocalOperator(), coeff[i]);
     }
   }
-  return std::make_unique<ParOperator>(std::move(sum), fespace);
+
+  auto O = std::make_unique<ParOperator>(std::move(sum), fespace);
+  if (set_essential)
+  {
+    // Extract essential dof pointer from first operator with one.
+    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
+                               { return p != nullptr && p->GetEssentialTrueDofs(); });
+    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+    // Use implied ordering of enumeration.
+    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+    for (auto p : ops)
+    {
+      policy = p ? std::max(policy, p->GetDiagonalPolicy()) : policy;
+    }
+    O->SetEssentialTrueDofs(*ess_dofs, policy);
+  }
+
+  return O;
 }
 
-// Combine a collection of ComplexParOperator into a weighted summation.
+// Combine a collection of ComplexParOperator into a weighted summation. If set_essential is
+// true, extract the essential dofs from the operator array, and apply to the summed
+// operator.
 template <std::size_t N>
 auto BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
-                         const std::array<const ComplexParOperator *, N> &ops)
+                         const std::array<const ComplexParOperator *, N> &ops,
+                         bool set_essential = true)
 {
   auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
@@ -300,7 +331,22 @@ auto BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
       }
     }
   }
-  return std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+  auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+  if (set_essential)
+  {
+    // Extract essential dof pointer from first operator with one.
+    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
+                               { return p != nullptr && p->GetEssentialTrueDofs(); });
+    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+    // Use implied ordering of enumeration.
+    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+    for (auto p : ops)
+    {
+      policy = p ? std::max(policy, p->GetDiagonalPolicy()) : policy;
+    }
+    O->SetEssentialTrueDofs(*ess_dofs, policy);
+  }
+  return O;
 }
 
 // Dispatch for ParOperators which have been type erased.
@@ -325,10 +371,12 @@ auto BuildParSumOperator(
 // Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
 // and types.
 template <std::size_t N, typename ScalarType, typename OperatorType>
-auto BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperatorType *(&&ops_in)[N])
+auto BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperatorType *(&&ops_in)[N],
+                         bool set_essential = true)
 {
   return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)),
-                             to_array<const OperatorType *>(std::move(ops_in)));
+                             to_array<const OperatorType *>(std::move(ops_in)),
+                             set_essential);
 }
 
 }  // namespace palace

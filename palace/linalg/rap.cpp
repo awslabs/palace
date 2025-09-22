@@ -46,6 +46,13 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   diag_policy = policy;
 }
 
+Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
+{
+  MFEM_VERIFY(dbc_tdof_list.Size() > 0,
+              "There is no DiagonalPolicy if no essential dofs have been set!");
+  return diag_policy;
+}
+
 void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 {
   MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
@@ -448,6 +455,13 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   {
     RAPi->SetEssentialTrueDofs(tdof_list, Operator::DiagonalPolicy::DIAG_ZERO);
   }
+}
+
+Operator::DiagonalPolicy ComplexParOperator::GetDiagonalPolicy() const
+{
+  MFEM_VERIFY(dbc_tdof_list.Size() > 0,
+              "There is no DiagonalPolicy if no essential dofs have been set!");
+  return diag_policy;
 }
 
 void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
