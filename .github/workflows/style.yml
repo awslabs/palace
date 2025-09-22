@@ -1,5 +1,8 @@
 name: Style
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
