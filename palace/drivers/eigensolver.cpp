@@ -48,8 +48,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                            double omega) -> std::unique_ptr<ComplexOperator>
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega); };
   const double target = iodata.solver.eigenmode.target;
-  auto A2 = funcA2(target);  // space_op.GetExtraSystemMatrix<ComplexOperator>(target,
-                             // Operator::DIAG_ZERO);
+  auto A2 = funcA2(target);
   bool has_A2 = (A2 != nullptr);
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   std::unique_ptr<Interpolation> interp_op;
@@ -165,31 +164,26 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
-    eigen->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
     eigen->SetExtraSystemMatrix(funcA2);
     eigen->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());
     eigen->SetPreconditionerUpdate(funcP);
   }
-  else if (has_A2)
+  else
   {
     if (C)
     {
-      eigen->SetOperators(space_op, *K, *C, *M, scale);
+      eigen->SetOperators(*K, *C, *M, scale);
     }
     else
     {
-      eigen->SetOperators(space_op, *K, *M, scale);
+      eigen->SetOperators(*K, *M, scale);
     }
-    eigen->SetNLInterpolation(*interp_op);
-    eigen->SetExtraSystemMatrix(funcA2);
-  }
-  else if (C)
-  {
-    eigen->SetOperators(*K, *C, *M, scale);
-  }
-  else
-  {
-    eigen->SetOperators(*K, *M, scale);
+    if (has_A2)
+    {
+      eigen->SetNLInterpolation(*interp_op);
+      eigen->SetExtraSystemMatrix(funcA2);
+    }
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -357,11 +351,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     if (C)
     {
-      qn->SetOperators(space_op, *K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+      qn->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
     }
     else
     {
-      qn->SetOperators(space_op, *K, *M, EigenvalueSolver::ScaleType::NONE);
+      qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     qn->SetExtraSystemMatrix(funcA2);
     qn->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());

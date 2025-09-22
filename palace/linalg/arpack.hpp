@@ -79,11 +79,8 @@ protected:
   // (polynomial with shift-and-invert) (not owned).
   ComplexKspSolver *opInv;
 
-  // Reference to space operator to compute the frequency-dependent A2 operator.
-  SpaceOperator *space_op;
-
   // Reference to interpolation operator for nonlinear term (not owned).
-  const Interpolation *opInterp;
+  const Interpolation *opInterp; // remove later?
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -92,6 +89,17 @@ protected:
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
   const Operator *opB;
+
+  // Optional function to compute the A2 operator.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+
+  // Optional function to compute the preconditioner matrix.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(
+      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      funcP;
+
+  // List of ND DOFs.
+  std::vector<mfem::Array<int>> nd_dbc_tdofs;
 
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1, z1;
@@ -136,6 +144,17 @@ public:
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.
   void SetBMat(const Operator &B) override;
+
+  // Set the frequency-dependent A2 matrix function.
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
+  // Set the preconditioner update function.
+  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                   std::complex<double>, std::complex<double>,
+                                   std::complex<double>, double)>) override;
+
+  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
 
   // Get scaling factors used by the solver.
   double GetScalingGamma() const override { return gamma; }
@@ -241,10 +260,7 @@ public:
   using ArpackEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
 
   int Solve() override;

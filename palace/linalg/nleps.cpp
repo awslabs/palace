@@ -240,15 +240,13 @@ void QuasiNewtonSolver::SetNDDbcTDofLists(
   nd_dbc_tdofs = nd_dbc_tdof_lists;
 }
 
-void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
-                                     const ComplexOperator &M,
+void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                      EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
-  space_op = &space_op_ref;
 
   if (first && type != ScaleType::NONE)
   {
@@ -272,16 +270,14 @@ void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexO
   y1.UseDevice(true);
 }
 
-void QuasiNewtonSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
-                                     const ComplexOperator &C, const ComplexOperator &M,
-                                     EigenvalueSolver::ScaleType type)
+void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                     const ComplexOperator &M, EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opC = &C;
   opM = &M;
-  space_op = &space_op_ref;
 
   if (first && type != ScaleType::NONE)
   {

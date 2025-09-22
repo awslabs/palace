@@ -68,9 +68,6 @@ protected:
   // (not owned).
   const DivFreeSolver<ComplexVector> *opProj;
 
-  // Reference to SpaceOperator to compute A2 matrix.
-  SpaceOperator *space_op;  // remove?
-
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
   const Operator *opB;
@@ -201,11 +198,9 @@ public:
   QuasiNewtonSolver(MPI_Comm comm, int print);
 
   using NonLinearEigenvalueSolver::SetOperators;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                    const ComplexOperator &C, const ComplexOperator &M,
-                    ScaleType type) override;
 
   // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(

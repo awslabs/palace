@@ -17,6 +17,8 @@
 #include "linalg/nleps.hpp"
 #include "utils/communication.hpp"
 
+using namespace std::complex_literals;
+
 namespace
 {
 
@@ -177,7 +179,6 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
   opInv = nullptr;
   opProj = nullptr;
   opB = nullptr;
-  space_op = nullptr;
   opInterp = nullptr;
 
   // Configure debugging output.
@@ -212,6 +213,26 @@ void ArpackEigenvalueSolver::SetBMat(const Operator &B)
   MFEM_VERIFY(!opB || opB->Height() == B.Height(),
               "Invalid modification of eigenvalue problem size!");
   opB = &B;
+}
+
+void ArpackEigenvalueSolver::SetExtraSystemMatrix(
+    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+{
+  funcA2 = A2;
+}
+
+void ArpackEigenvalueSolver::SetPreconditionerUpdate(
+    std::function<std::unique_ptr<ComplexOperator>(
+        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+        P)
+{
+  funcP = P;
+}
+
+void ArpackEigenvalueSolver::SetNDDbcTDofLists(
+    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
+{
+  nd_dbc_tdofs = nd_dbc_tdof_lists;
 }
 
 void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
@@ -678,15 +699,14 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   n = opK->Height();
 }
 
-void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
-                                   const ComplexOperator &M,
+void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
 {
   MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
-  space_op = &space_op_ref;
+
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
@@ -696,44 +716,6 @@ void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOpe
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / normK;
-    }
-  }
-
-  // Set up workspace.
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  z1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
-  z1.UseDevice(true);
-  n = opK->Height();
-}
-
-void ArpackPEPSolver::SetOperators(SpaceOperator &space_op_ref, const ComplexOperator &K,
-                                   const ComplexOperator &C, const ComplexOperator &M,
-                                   EigenvalueSolver::ScaleType type)
-{
-  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
-  bool first = (opK == nullptr);
-  opK = &K;
-  opC = &C;
-  opM = &M;
-  space_op = &space_op_ref;
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(comm, *opC, opC->IsReal());
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
-                "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normC >= 0.0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / (normK + gamma * normC);
     }
   }
 
@@ -837,15 +819,15 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     opK->Mult(x1, z1);
     if (has_A2)
     {
-      opInterp->AddMult(0, x1, z1, std::complex<double>(1.0, 0.0));
+      opInterp->AddMult(0, x1, z1, 1.0 + 0.0i);
     }
     if (opC)
     {
-      opC->AddMult(x2, z1, std::complex<double>(gamma, 0.0));
+      opC->AddMult(x2, z1, gamma + 0.0i);
     }
     if (has_A2)
     {
-      opInterp->AddMult(1, x2, z1, std::complex<double>(gamma, 0.0));
+      opInterp->AddMult(1, x2, z1, gamma + 0.0i);
     }
     opInv->Mult(z1, y2);
     y2 *= -1.0 / (gamma * gamma);
@@ -862,15 +844,15 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     opM->Mult(y2, z1);
     if (has_A2)
     {
-      opInterp->AddMult(2, y2, z1, std::complex<double>(1.0, 0.0));
+      opInterp->AddMult(2, y2, z1, 1.0 + 0.0i);
     }
     if (opC)
     {
-      opC->AddMult(x1, z1, std::complex<double>(1.0, 0.0));
+      opC->AddMult(x1, z1, 1.0 + 0.0i);
     }
     if (has_A2)
     {
-      opInterp->AddMult(1, x1, z1, std::complex<double>(1.0, 0.0));
+      opInterp->AddMult(1, x1, z1, 1.0 + 0.0i);
     }
     opInv->Mult(z1, y1);
     y1 *= -gamma;
@@ -920,11 +902,10 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (has_A2)
+  if (funcA2)
   {
-    auto A2 = space_op->GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                              Operator::DIAG_ZERO);
-    A2->AddMult(x, r, std::complex<double>(1.0, 0.0));
+    auto A2 = (*funcA2)(std::abs(l.imag()));
+    A2->AddMult(x, r, 1.0 + 0.0i);
   }
   return linalg::Norml2(comm, r);
 }

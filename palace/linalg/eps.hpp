@@ -61,19 +61,9 @@ public:
   {
     MFEM_ABORT("SetOperators not defined!");
   }
+
   virtual void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                             const ComplexOperator &M, ScaleType type)
-  {
-    MFEM_ABORT("SetOperators not defined!");
-  }
-  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                            const ComplexOperator &M, ScaleType type)
-  {
-    MFEM_ABORT("SetOperators not defined!");
-  }
-  virtual void SetOperators(SpaceOperator &space_op, const ComplexOperator &K,
-                            const ComplexOperator &C, const ComplexOperator &M,
-                            ScaleType type)
   {
     MFEM_ABORT("SetOperators not defined!");
   }
