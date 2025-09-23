@@ -192,7 +192,9 @@ protected:
   const char *GetName() const override { return "QuasiNewton"; }
 
 public:
-  QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv, MPI_Comm comm, int print); // take an EigenvalueSolver in the constructor? from which we get the initial guesses?
+  QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv, MPI_Comm comm,
+                    int print);  // take an EigenvalueSolver in the constructor? from which
+                                 // we get the initial guesses?
 
   using NonLinearEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,

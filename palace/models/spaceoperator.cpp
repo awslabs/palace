@@ -716,41 +716,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
-template <typename OperType, typename ScalarType>
-std::unique_ptr<OperType>
-SpaceOperator::GetDividedDifferenceMatrix(ScalarType eps, const OperType *A,
-                                          const OperType *B,
-                                          Operator::DiagonalPolicy diag_policy)
-{
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-  const auto *PtAP_A = (A) ? dynamic_cast<const ParOperType *>(A) : nullptr;
-  const auto *PtAP_B = (B) ? dynamic_cast<const ParOperType *>(B) : nullptr;
-  MFEM_VERIFY((!A || PtAP_A) && (!B || PtAP_B),
-              "SpaceOperator requires ParOperator or ComplexParOperator for divided "
-              "difference matrix "
-              "construction!");
-  int height = -1, width = -1;
-  if (PtAP_A)
-  {
-    height = PtAP_A->LocalOperator().Height();
-    width = PtAP_A->LocalOperator().Width();
-  }
-  else if (PtAP_B)
-  {
-    height = PtAP_B->LocalOperator().Height();
-    width = PtAP_B->LocalOperator().Width();
-  }
-  MFEM_VERIFY(height >= 0 && width >= 0,
-              "At least one argument to GetDividedDifferenceMatrix must not be empty!");
-  auto DD = BuildParSumOperator({ScalarType{1.0 / eps}, ScalarType{-1.0 / eps}},
-                                {PtAP_A, PtAP_B});
-
-  DD->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
-  return DD;
-}
-
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {
@@ -1012,11 +977,4 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>, double);
 
-template std::unique_ptr<Operator>
-SpaceOperator::GetDividedDifferenceMatrix(double, const Operator *, const Operator *,
-                                          Operator::DiagonalPolicy);
-template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetDividedDifferenceMatrix(std::complex<double>, const ComplexOperator *,
-                                          const ComplexOperator *,
-                                          Operator::DiagonalPolicy);
 }  // namespace palace

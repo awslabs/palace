@@ -2307,9 +2307,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = (*ctx->funcA2)(std::abs(ctx->lambda.imag()));
-    ctx->opA_pc = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+    ctx->opA_pc = palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
-        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true));
+        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
                                 ctx->lambda * ctx->lambda, ctx->lambda.imag());
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
@@ -2338,9 +2338,9 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
-  ctxF->opA = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+  ctxF->opA = palace::BuildParSumOperator(
       {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
-      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true));
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true);
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2357,11 +2357,11 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
   std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
-  ctxF->opAJ = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
-      {1.0 / denom, -1.0 / denom}, {ctxF->opA2p.get(), ctxF->opA2.get()}, true));
-  ctxF->opJ = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+  ctxF->opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                           {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
+  ctxF->opJ = palace::BuildParSumOperator(
       {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
-      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()}, true));
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()}, true);
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

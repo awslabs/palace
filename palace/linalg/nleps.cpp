@@ -199,31 +199,33 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 }
 
 // Quasi-Newton specific methods.
-QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv, MPI_Comm comm, int print)
+QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv,
+                                     MPI_Comm comm, int print)
   : NonLinearEigenvalueSolver(comm, print)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
 
-  //linear_eigensolver->GetEigenvalue(i);
-    std::vector<std::complex<double>> init_eig;
-    std::vector<ComplexVector> init_V;
-    std::vector<double> init_errors;
-    //std::vector<std::complex<double>> eigenvalues;
-    //std::vector<ComplexVector> eigenvectors;
-    //std::vector<double> errors;
-    //for (int i = 0; i < num_conv; i++)
-    //{
-    //  ComplexVector v0;
-    //  v0.SetSize(Curl.Width());
-    //  v0.UseDevice(true);
-    //  linear_eigensolver.GetEigenvector(i, v0);
-    //  linalg::NormalizePhase(comm, v0);
-    //  ieigenvalues.push_back(linear_eigensolver.GetEigenvalue(i));
-    //  eigenvectors.push_back(v0);
-    //  errors.push_back(linear_eigensolver.GetError(
-    //      i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the nonlinear solver?
-    //}
+  // linear_eigensolver->GetEigenvalue(i);
+  std::vector<std::complex<double>> init_eig;
+  std::vector<ComplexVector> init_V;
+  std::vector<double> init_errors;
+  // std::vector<std::complex<double>> eigenvalues;
+  // std::vector<ComplexVector> eigenvectors;
+  // std::vector<double> errors;
+  // for (int i = 0; i < num_conv; i++)
+  //{
+  //   ComplexVector v0;
+  //   v0.SetSize(Curl.Width());
+  //   v0.UseDevice(true);
+  //   linear_eigensolver.GetEigenvector(i, v0);
+  //   linalg::NormalizePhase(comm, v0);
+  //   ieigenvalues.push_back(linear_eigensolver.GetEigenvalue(i));
+  //   eigenvectors.push_back(v0);
+  //   errors.push_back(linear_eigensolver.GetError(
+  //       i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the
+  //       nonlinear solver?
+  // }
 
   // Below copied from NonlinearEigenvalueSolver::SetInitialGuess
 
@@ -266,8 +268,6 @@ QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int 
     init_eigenvectors[i] = init_V[indices[i]];
   }
 */
-
-
 }
 
 // Set the update frequency of the preconditioner.
@@ -499,11 +499,8 @@ int QuasiNewtonSolver::Solve()
 
     // Set the linear solver operators.
     opA2 = (*funcA2)(std::abs(eig.imag()));
-    std::unique_ptr<ComplexOperator> test =
-        std::make_unique<ComplexOperator>(BuildParSumOperator(
-            {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
-    opA = std::make_unique<ComplexOperator>(BuildParSumOperator(
-        {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
+    opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                              {opK, opC, opM, opA2.get()}, true);
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
@@ -555,8 +552,8 @@ int QuasiNewtonSolver::Solve()
     {
       // Compute u = A * v.
       auto A2n = (*funcA2)(std::abs(eig.imag()));
-      auto A = std::make_unique<ComplexOperator>(BuildParSumOperator(
-          {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, A2n.get()}, true));
+      auto A = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                                   {opK, opC, opM, A2n.get()}, true);
       A->Mult(v, u);
       if (k > 0)  // Deflation
       {
@@ -635,11 +632,10 @@ int QuasiNewtonSolver::Solve()
       auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
       const std::complex<double> denom =
           std::complex<double>(0.0, delta * std::abs(eig.imag()));
-      auto opAJ = std::make_unique<ComplexOperator>(
-          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true));
-      auto opJ = std::make_unique<ComplexOperator>(
-          BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
-                              {opK, opC, opM, opAJ.get()}, true));
+      std::unique_ptr<ComplexOperator> opAJ =
+          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
+      auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
+                                     {opK, opC, opM, opAJ.get()}, true);
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
@@ -671,8 +667,8 @@ int QuasiNewtonSolver::Solve()
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(std::abs(eig.imag()));
-        opA = std::make_unique<ComplexOperator>(BuildParSumOperator(
-            {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
+        opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
+                                  {opK, opC, opM, opA2.get()}, true);
         opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
@@ -849,9 +845,9 @@ void NewtonInterpolationOperator::Interpolate(int order,
       else
       {
         std::complex<double> denom = points[j + k] - points[j];
-        auto A2dd = std::make_unique<ComplexOperator>(
+        auto A2dd =
             BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                {ops[k - 1][j + 1].get(), ops[k - 1][j].get()}, true));
+                                {ops[k - 1][j + 1].get(), ops[k - 1][j].get()}, true);
         ops[k].push_back(std::move(A2dd));
       }
     }

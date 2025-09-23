@@ -345,12 +345,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 && iodata.solver.eigenmode.refine_nonlinear && //remove refine_nonlinear and pass it to Quasi-Newton solver here instead?
+  if (has_A2 &&
+      iodata.solver.eigenmode.refine_nonlinear &&  // remove refine_nonlinear and pass it to
+                                                   // Quasi-Newton solver here instead?
       nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-    auto qn =
-        std::make_unique<QuasiNewtonSolver>(std::move(*eigen), num_conv, space_op.GetComm(), iodata.problem.verbose);
+    auto qn = std::make_unique<QuasiNewtonSolver>(
+        std::move(*eigen), num_conv, space_op.GetComm(), iodata.problem.verbose);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     if (C)
@@ -370,7 +372,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetLinearSolver(*ksp);
     qn->SetShiftInvert(1i * target);
 
-    // Use linearized eigensolve solution as initial guess. // Move this inside the Quasi-Newton constructor?
+    // Use linearized eigensolve solution as initial guess. // Move this inside the
+    // Quasi-Newton constructor?
     std::vector<std::complex<double>> eigenvalues;
     std::vector<ComplexVector> eigenvectors;
     std::vector<double> errors;
