@@ -3,11 +3,11 @@
   {
     "Type": "Magnetostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro_multi_flux"
   },
   "Model":
   {
-    "Mesh": "mesh/circular_hole.msh",
+    "Mesh": "mesh/two_square_sheets.msh",
     "L0": 1.0e-6  // μm
   },
   "Domains":
@@ -24,8 +24,8 @@
       "Probe":
       [
         {
-          "Index": 1,  // Center of the hole
-          "Center": [0.0, 0.0, 0.0]
+          "Index": 1, 
+          "Center": [-2.5, 0.0, 0.0]
         }
       ],
       "Energy":
@@ -50,7 +50,14 @@
         "FluxLoopPEC": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0], // in units of flux quantum (Φ_0 = 2.0678e-15 Wb)
-        "Direction": "+Z"
+        "Direction": [0.0, 0.0, 1.0]
+      },
+      {
+        "Index": 2,
+        "FluxLoopPEC": [10],
+        "HoleAttributes": [11],
+        "FluxAmounts": [1.0],
+        "Direction": [0.0, 0.0, 1.0]
       }
     ]
   },
@@ -71,4 +78,3 @@
     }
   }
 }
-

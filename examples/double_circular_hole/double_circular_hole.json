@@ -24,7 +24,7 @@
       "Probe":
       [
         {
-          "Index": 1,  // Center of the hole on the left
+          "Index": 1,
           "Center": [-2.5, 0.0, 0.0]
         }
       ],
@@ -49,7 +49,7 @@
         "Index": 1,
         "FluxLoopPEC": [8],
         "HoleAttributes": [9, 10],
-        "FluxAmounts": [1.0, -1.0],
+        "FluxAmounts": [1.0, -1.0], // in units of flux quantum (Φ_0 = 2.0678e-15 Wb)
         "Direction": "+Z"
       }
     ]

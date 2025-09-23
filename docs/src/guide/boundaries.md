@@ -173,7 +173,7 @@ flux loop boundary condition works by:
  1. **Identifying holes**: Mesh boundary attributes specify holes through which flux is
     prescribed
  2. **Constraining flux**: The total magnetic flux through each hole is set to the specified
-    value
+    value (in flux quantum units, i.e. 2.0678e-15 Wb)
  3. **Solving surface problem**: A 3D surface curl problem that determines the required boundary
     conditions on specific 2D boundaries connected to the hole regions
  4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix

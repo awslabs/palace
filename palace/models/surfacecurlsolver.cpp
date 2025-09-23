@@ -34,26 +34,26 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
                              const Mesh &mesh, const FiniteElementSpace &nd_fespace,
                              int flux_loop_idx, Vector &result)
 {
-  // Use flux loop configuration from SurfaceFluxData
-
-  std::vector<double> flux_values = flux_data.flux_amounts;
-  std::vector<int> surface_attrs = flux_data.fluxloop_pec;
-  surface_attrs.insert(surface_attrs.end(), flux_data.hole_attributes.begin(),
-                       flux_data.hole_attributes.end());
-
-  // Use parameters
   const mfem::ParFiniteElementSpace *fespace = &nd_fespace.Get();
   int order = iodata.solver.order;
 
   MPI_Comm comm = mesh.GetComm();
   const auto &pmesh = mesh.Get();
 
-  // First attribute is the metal surface, rest are holes
-  int bdr_attr_metal = surface_attrs[0];
-  mfem::Array<int> hole_surface_attrs;
-  for (int i = 1; i < static_cast<int>(surface_attrs.size()); i++)
+  // Extract metal surface and hole attributes from flux_data
+  mfem::Array<int> metal_surface_attrs;
+  for (int metal_attr : flux_data.fluxloop_pec)
   {
-    hole_surface_attrs.Append(surface_attrs[i]);
+    metal_surface_attrs.Append(metal_attr);
+  }
+  
+  // Validate that we have at least one metal surface attribute
+  MFEM_VERIFY(metal_surface_attrs.Size() > 0, 
+              "At least one metal surface attribute must be specified in FluxLoopPEC!");
+  mfem::Array<int> hole_surface_attrs;
+  for (int hole_attr : flux_data.hole_attributes)
+  {
+    hole_surface_attrs.Append(hole_attr);
   }
   int num_holes = hole_surface_attrs.Size();
 
@@ -74,11 +74,9 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
         nullptr, nullptr, nullptr);
   }
 
-  // Create submesh
-  mfem::Array<int> bdr_attr_marker(1);
-  bdr_attr_marker[0] = bdr_attr_metal;
+  // Create submesh from all metal surface attributes
   mfem::ParSubMesh boundary_submesh =
-      mfem::ParSubMesh::CreateFromBoundary(pmesh, bdr_attr_marker);
+      mfem::ParSubMesh::CreateFromBoundary(pmesh, metal_surface_attrs);
 
   // Extract submesh boundary edges
   mfem::Array<int> submesh_boundary_edge_ids;
@@ -101,9 +99,13 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   mesh::MatchBoundaryEdges(pmesh, boundary_submesh, submesh_boundary_edge_ids,
                            submesh_to_parent_bdr_edge_map, hole_dof_to_edge_maps,
                            hole_boundary_edges);
-  // Assign boundary attributes and create edge sets
-  int current_attr =
-      boundary_submesh.bdr_attributes.Size() > 0 ? boundary_submesh.bdr_attributes[0] : 1;
+  // Assign boundary attributes and create edge sets  
+  // Find the maximum existing boundary attribute to avoid conflicts
+  int current_attr = 1;
+  if (boundary_submesh.bdr_attributes.Size() > 0)
+  {
+    current_attr = boundary_submesh.bdr_attributes.Max();
+  }
   std::vector<int> hole_boundary_attrs(num_holes);
   std::vector<std::unordered_set<int>> hole_edge_sets(num_holes);
   for (int h = 0; h < num_holes; h++)
@@ -120,18 +122,17 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
     for (int h = 0; h < num_holes; h++)
     {
       bool is_hole_boundary = false;
-      for (int j = 0; j < edges.Size(); j++)
+      for (int j = 0; j < edges.Size() && !is_hole_boundary; j++)
       {
         if (hole_edge_sets[h].count(edges[j]))
         {
           is_hole_boundary = true;
-          break;
+          boundary_submesh.GetBdrElement(i)->SetAttribute(hole_boundary_attrs[h]);
         }
       }
       if (is_hole_boundary)
       {
-        boundary_submesh.GetBdrElement(i)->SetAttribute(hole_boundary_attrs[h]);
-        break;
+        break;  // Exit hole loop once we've assigned an attribute
       }
     }
   }
@@ -161,12 +162,10 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
     perimeter_form.AddBoundaryIntegrator(new mfem::BoundaryLFIntegrator(one),
                                          hole_bdr_markers[h]);
     perimeter_form.Assemble();
-
     double local_perimeter = perimeter_form.Sum();
     hole_perimeters[h] = local_perimeter;
     Mpi::GlobalSum(1, &hole_perimeters[h], boundary_submesh.GetComm());
-
-    hole_field_values[h] = flux_values[h] / hole_perimeters[h];
+    hole_field_values[h] = flux_data.flux_amounts[h] / hole_perimeters[h];
 
     mesh::ComputeSubmeshBoundaryEdgeOrientations(boundary_submesh, hole_boundary_edges[h],
                                                  loop_normal, hole_edge_orientations[h],
@@ -182,16 +181,15 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   std::vector<std::unordered_map<int, mfem::Array<int>>> hole_edge_to_dofs_maps(num_holes);
   std::vector<mfem::Array<int>> hole_boundary_edge_dofs(num_holes);
 
+  mfem::Array<int> edge_dofs; 
   for (int h = 0; h < num_holes; h++)
   {
     for (int i = 0; i < hole_boundary_edges[h].Size(); i++)
     {
       int edge_idx = hole_boundary_edges[h][i];
-      mfem::Array<int> edge_dofs;
       nd_fespace_submesh.GetEdgeDofs(edge_idx, edge_dofs);
       hole_edge_to_dofs_maps[h][edge_idx] = edge_dofs;
-      for (int j = 0; j < edge_dofs.Size(); j++)
-        hole_boundary_edge_dofs[h].Append(edge_dofs[j]);
+      hole_boundary_edge_dofs[h].Append(edge_dofs);
     }
   }
 
@@ -270,8 +268,8 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
 
   // First synchronize the marker itself to ensure all processors agree on which DoFs to
   // sync
-  mfem::GroupCommunicator *gc =
-      submesh_nd_fespaces.GetFESpaceAtLevel(0).Get().ScalarGroupComm();
+  auto gc = std::unique_ptr<mfem::GroupCommunicator>(
+      submesh_nd_fespaces.GetFESpaceAtLevel(0).Get().ScalarGroupComm());
   mfem::Array<int> global_marker(ldof_marker_submesh);
   gc->Reduce<int>(global_marker.GetData(), mfem::GroupCommunicator::BitOR<int>);
   gc->Bcast(global_marker);
@@ -282,7 +280,6 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   gc->ReduceMarked<double>(values.GetData(), global_marker, 0,
                            mfem::GroupCommunicator::MaxAbs<double>);
   gc->Bcast(values.GetData());
-  delete gc;
 
   // Create unit coefficient for curl-curl term and the regularization coefficient
   MaterialPropertyCoefficient reg_coeff(boundary_submesh.attributes.Max());
@@ -327,42 +324,49 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   KspSolver ksp(iodata, submesh_nd_fespaces, &submesh_h1_fespaces);
   ksp.SetOperators(*K_op, *K_op);
 
-  X = 0.0;
-  ksp.Mult(RHS, X);
+  // Solve the 2D surface curl problem
+  if constexpr (true)
+  {
+    // Use Palace's KSP solver (production approach)
+    X = 0.0;
+    ksp.Mult(RHS, X);
 
-  // Set solution directly in MFEM GridFunction
-  A.SetFromTrueDofs(X);
+    // Set solution directly in MFEM GridFunction
+    A.SetFromTrueDofs(X);
+  }
+  else
+  {
+    // Alternative debugging approach using direct MFEM solver
+    // Set up and solve system
+    mfem::ParBilinearForm a(&nd_fespace_submesh);
 
-  /*
-  // Set up and solve system
-  mfem::ParBilinearForm a(&nd_fespace_submesh);
+    // Add curl term: ∫ (curl A) · (curl v) dΩ
+    mfem::ConstantCoefficient curl_reg(1.0);
+    a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(curl_reg));
 
-  // Add curl term: ∫ (curl A) · (curl v) dΩ
-  mfem::ConstantCoefficient curl_reg(1.0);
-  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(curl_reg));
+    // Add small regularization for stability
+    mfem::ConstantCoefficient reg_param(1e-6);
+    a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(reg_param));
 
-  // Add small regularization for stability
-  mfem::ConstantCoefficient reg_param(1e-6);
-  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(reg_param));
+    nd_fespace_submesh.GetEssentialTrueDofs(combined_inner_bdr_marker, submesh_ess_tdof_list);
+    a.Assemble();
+    mfem::ParLinearForm b(&nd_fespace_submesh);
+    b.Assemble();
 
-  nd_fespace_submesh.GetEssentialTrueDofs(combined_inner_bdr_marker, submesh_ess_tdof_list);
-  a.Assemble();
-  mfem::ParLinearForm b(&nd_fespace_submesh);
-  b.Assemble();
+    mfem::HypreParMatrix A_mat;
+    Vector B, X;
+    a.FormLinearSystem(submesh_ess_tdof_list, A, b, A_mat, X, B);
 
-  mfem::HypreParMatrix A_mat;
-  Vector B, X;
-  a.FormLinearSystem(submesh_ess_tdof_list, A, b, A_mat, X, B);
+    mfem::GMRESSolver gmres(MPI_COMM_WORLD);
+    gmres.SetOperator(A_mat);
+    gmres.SetRelTol(1e-8);
+    gmres.SetMaxIter(1000);
+    gmres.SetPrintLevel(0);
+    gmres.Mult(B, X);
 
-  mfem::GMRESSolver gmres(MPI_COMM_WORLD);
-  gmres.SetOperator(A_mat);
-  gmres.SetRelTol(1e-8);
-  gmres.SetMaxIter(1000);
-  gmres.SetPrintLevel(0);
-  gmres.Mult(B, X);
+    a.RecoverFEMSolution(X, b, A);
+  }
 
-  a.RecoverFEMSolution(X, b, A);
-  */
 
   // Transfer to parent mesh
   mfem::ParGridFunction A_3d(const_cast<mfem::ParFiniteElementSpace *>(fespace));
@@ -381,7 +385,7 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                             const std::vector<double> &target_fluxes, const Mesh &mesh,
                             MPI_Comm comm)
 {
-  for (int h = 0; h < static_cast<int>(hole_attributes.size()); h++)
+  for (std::size_t h = 0; h < hole_attributes.size(); h++)
   {
     int hole_attr = hole_attributes[h];
     double target_flux = target_fluxes[h];
@@ -420,7 +424,7 @@ void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &
   // Compute flux through all holes in all flux loops
   for (const auto &[loop_idx, flux_data] : iodata.boundaries.fluxloop)
   {
-    for (int h = 0; h < static_cast<int>(flux_data.hole_attributes.size()); h++)
+    for (std::size_t h = 0; h < flux_data.hole_attributes.size(); h++)
     {
       int hole_attr = flux_data.hole_attributes[h];
       double target_flux =

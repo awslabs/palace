@@ -370,12 +370,12 @@ void MagnetostaticSolver::PostprocessTerminals(
   {
     TableWithCSVFile terminal_Phi(post_dir / "terminal-Phi.csv");
     terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
-    terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (unit flux)");
+    terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (flux quantum units)");
     int i = n_current;
     for (const auto &[idx, data] : surf_flux_op)
     {
       terminal_Phi.table["i"] << double(idx);
-      terminal_Phi.table["Phiinc"] << Phi_inc[i];  // Keep as dimensionless
+      terminal_Phi.table["Phiinc"] << Phi_inc[i]; // in flux quantum units
       i++;
     }
     terminal_Phi.WriteFullTableTrunc();
