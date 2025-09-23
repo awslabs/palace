@@ -499,7 +499,10 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
                                                                const ComplexOperator *K,
                                                                const ComplexOperator *M)
 {
-  return BuildParSumOperator({a0, a2}, {K->Real(), M->Real()}, false);
+  const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
+  const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;
+  return BuildParSumOperator(
+      {a0, a2}, {PtAP_K ? PtAP_K->Real() : nullptr, PtAP_M ? PtAP_M->Real() : nullptr});
 }
 
 namespace
