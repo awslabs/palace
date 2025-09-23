@@ -342,6 +342,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
+  auto max_prom_size = 2 * max_size_per_excitation * space_op.GetPortExcitations().Size();
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
+  }
+
   // Reserve empty vectors but don't pre-allocate actual memory size due to overhead.
   V.reserve(max_prom_size);
   v_node_label.reserve(max_prom_size);
