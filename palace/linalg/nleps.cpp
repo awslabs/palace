@@ -199,11 +199,75 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 }
 
 // Quasi-Newton specific methods.
-QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm, int print)
+QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv, MPI_Comm comm, int print)
   : NonLinearEigenvalueSolver(comm, print)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
+
+  //linear_eigensolver->GetEigenvalue(i);
+    std::vector<std::complex<double>> init_eig;
+    std::vector<ComplexVector> init_V;
+    std::vector<double> init_errors;
+    //std::vector<std::complex<double>> eigenvalues;
+    //std::vector<ComplexVector> eigenvectors;
+    //std::vector<double> errors;
+    //for (int i = 0; i < num_conv; i++)
+    //{
+    //  ComplexVector v0;
+    //  v0.SetSize(Curl.Width());
+    //  v0.UseDevice(true);
+    //  linear_eigensolver.GetEigenvector(i, v0);
+    //  linalg::NormalizePhase(comm, v0);
+    //  ieigenvalues.push_back(linear_eigensolver.GetEigenvalue(i));
+    //  eigenvectors.push_back(v0);
+    //  errors.push_back(linear_eigensolver.GetError(
+    //      i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the nonlinear solver?
+    //}
+
+  // Below copied from NonlinearEigenvalueSolver::SetInitialGuess
+
+  /*
+  init_eigenvalues.resize(init_eig.size());
+  init_eigenvectors.resize(init_eig.size());
+
+  // If the number of initial guesses is greater than the number of requested modes
+  // de-prioritize the initial guesses that have larger errors.
+  std::vector<size_t> indices(init_eig.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  if (init_eig.size() > nev)
+  {
+    double min_error = init_errors[0];
+    for (const auto error : init_errors)
+    {
+      min_error = std::min(min_error, error);
+    }
+    const double threshold = 100.0 * min_error;
+    std::sort(indices.begin(), indices.end(),
+              [&](const auto i, const auto j)
+              {
+                if (init_errors[i] < threshold && init_errors[j] > threshold)
+                {
+                  return true;
+                }
+                else if (init_errors[i] > threshold && init_errors[j] < threshold)
+                {
+                  return false;
+                }
+                else
+                {
+                  return init_eig[i].imag() < init_eig[j].imag();
+                }
+              });
+  }
+  for (int i = 0; i < init_eig.size(); i++)
+  {
+    init_eigenvalues[i] = init_eig[indices[i]];
+    init_eigenvectors[i] = init_V[indices[i]];
+  }
+*/
+
+
 }
 
 // Set the update frequency of the preconditioner.
