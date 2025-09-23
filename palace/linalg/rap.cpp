@@ -959,9 +959,15 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
 // Explicit instantiation.
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[2],
                                                           const Operator *(&&)[2], bool);
+template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[3],
+                                                          const Operator *(&&)[3], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[4],
                                                           const Operator *(&&)[4], bool);
 
+template std::unique_ptr<ComplexParOperator>
+    BuildParSumOperator(std::complex<double> (&&)[2], const ComplexOperator *(&&)[2], bool);
+template std::unique_ptr<ComplexParOperator>
+    BuildParSumOperator(std::complex<double> (&&)[3], const ComplexOperator *(&&)[3], bool);
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[4], const ComplexOperator *(&&)[4], bool);
 
