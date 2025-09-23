@@ -57,8 +57,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     constexpr int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
-    interp_op = std::make_unique<NewtonInterpolationOperator>(
-        funcA2, space_op.GetNDDbcTDofLists(), A2->Width());
+    interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
     interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
     // K' = Ko + A2_0, C' = Co + A2_1, M' = Mo + A2_2
     // Ko = std::move(K); Co = std::move(C); Mo = std::move(M);
@@ -172,7 +171,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
     eigen->SetExtraSystemMatrix(funcA2);
-    eigen->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -364,7 +362,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     qn->SetExtraSystemMatrix(funcA2);
-    qn->SetNDDbcTDofLists(space_op.GetNDDbcTDofLists());
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,

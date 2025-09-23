@@ -99,9 +99,6 @@ protected:
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
       funcP;
 
-  // List of ND DOFs.
-  std::vector<mfem::Array<int>> nd_dbc_tdofs;
-
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1, z1;
 
@@ -154,8 +151,6 @@ public:
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
                                    std::complex<double>, double)>) override;
-
-  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
 
   // Get scaling factors used by the solver.
   double GetScalingGamma() const override { return gamma; }

@@ -94,9 +94,6 @@ public:
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
       funcP;
 
-  // List of ND DOFs.
-  std::vector<mfem::Array<int>> nd_dbc_tdofs;
-
 protected:
   // Control print level for debugging.
   int print;
@@ -186,8 +183,6 @@ public:
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
                                    std::complex<double>, double)>) override;
-
-  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;

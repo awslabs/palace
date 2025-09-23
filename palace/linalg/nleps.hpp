@@ -171,9 +171,6 @@ private:
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
       funcP;
 
-  // List of ND DOFs.
-  std::vector<mfem::Array<int>> nd_dbc_tdofs;
-
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
@@ -212,8 +209,6 @@ public:
                                    std::complex<double>, std::complex<double>,
                                    std::complex<double>, double)>) override;
 
-  void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists) override;
-
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
                             double preconditioner_update_tol);
@@ -249,9 +244,6 @@ private:
   // Function to compute the A2 operator.
   std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
 
-  // List of ND DOFs.
-  std::vector<mfem::Array<int>> nd_dbc_tdofs;
-
   // Number of points used in the interpolation.
   int num_points;
 
@@ -269,12 +261,14 @@ private:
 
 public:
   NewtonInterpolationOperator(
-      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2,
-      const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists, const int size);
+      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(int order, const std::complex<double> sigma_min,
                    const std::complex<double> sigma_max);
+
+  // Get the interpolation operator of specified order.
+  std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const;
 
   // Perform multiplication with interpolation operator of specified order.
   void Mult(int order, const ComplexVector &x, ComplexVector &y) const;

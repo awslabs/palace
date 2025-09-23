@@ -399,12 +399,6 @@ void SlepcEigenvalueSolver::SetPreconditionerUpdate(
   funcP = P;
 }
 
-void SlepcEigenvalueSolver::SetNDDbcTDofLists(
-    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
-{
-  nd_dbc_tdofs = nd_dbc_tdof_lists;
-}
-
 void SlepcEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
 {
   ST st = GetST();
@@ -2313,11 +2307,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = (*ctx->funcA2)(std::abs(ctx->lambda.imag()));
-    auto A = palace::BuildParSumOperator(
+    ctx->opA_pc = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
-        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()});
-    A->SetEssentialTrueDofs(ctx->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
-    ctx->opA_pc = std::move(A);
+        {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true));
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
                                 ctx->lambda * ctx->lambda, ctx->lambda.imag());
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
@@ -2346,10 +2338,9 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(Im{λ}).
   ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
-  auto A = palace::BuildParSumOperator({1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
-                                       {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()});
-  A->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
-  ctxF->opA = std::move(A);
+  ctxF->opA = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+      {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true));
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2366,15 +2357,11 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
   std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
-  auto opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                          {ctxF->opA2p.get(), ctxF->opA2.get()});
-  opAJ->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ZERO);
-  ctxF->opAJ = std::move(opAJ);
-  auto opJ =
-      palace::BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
-                                  {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()});
-  opJ->SetEssentialTrueDofs(ctxF->nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
-  ctxF->opJ = std::move(opJ);
+  ctxF->opAJ = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+      {1.0 / denom, -1.0 / denom}, {ctxF->opA2p.get(), ctxF->opA2.get()}, true));
+  ctxF->opJ = std::make_unique<palace::ComplexOperator>(palace::BuildParSumOperator(
+      {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
+      {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()}, true));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

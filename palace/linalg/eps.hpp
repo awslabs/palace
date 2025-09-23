@@ -92,11 +92,6 @@ public:
     MFEM_ABORT("SetPreconditionerUpdate not defined!");
   }
 
-  virtual void SetNDDbcTDofLists(const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
-  {
-    MFEM_ABORT("SetNDDbcTdofLists not defined!");
-  }
-
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no

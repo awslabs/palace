@@ -229,12 +229,6 @@ void ArpackEigenvalueSolver::SetPreconditionerUpdate(
   funcP = P;
 }
 
-void ArpackEigenvalueSolver::SetNDDbcTDofLists(
-    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
-{
-  nd_dbc_tdofs = nd_dbc_tdof_lists;
-}
-
 void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
 {
   if (nev > 0 && num_eig != nev)

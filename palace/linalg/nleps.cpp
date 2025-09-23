@@ -234,12 +234,6 @@ void QuasiNewtonSolver::SetPreconditionerUpdate(
   funcP = P;
 }
 
-void QuasiNewtonSolver::SetNDDbcTDofLists(
-    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists)
-{
-  nd_dbc_tdofs = nd_dbc_tdof_lists;
-}
-
 void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                      EigenvalueSolver::ScaleType type)
 {
@@ -415,7 +409,7 @@ int QuasiNewtonSolver::Solve()
     {
       eig = sigma;
       linalg::SetRandom(GetComm(), v);
-      linalg::SetSubVector(v, nd_dbc_tdofs.back(), 0.0);
+      // linalg::SetSubVector(v, nd_dbc_tdofs.back(), 0.0); // fix this!!!
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
@@ -441,10 +435,11 @@ int QuasiNewtonSolver::Solve()
 
     // Set the linear solver operators.
     opA2 = (*funcA2)(std::abs(eig.imag()));
-    auto A = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                         {opK, opC, opM, opA2.get()});
-    A->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
-    opA = std::move(A);
+    std::unique_ptr<ComplexOperator> test =
+        std::make_unique<ComplexOperator>(BuildParSumOperator(
+            {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
+    opA = std::make_unique<ComplexOperator>(BuildParSumOperator(
+        {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
 
@@ -496,9 +491,8 @@ int QuasiNewtonSolver::Solve()
     {
       // Compute u = A * v.
       auto A2n = (*funcA2)(std::abs(eig.imag()));
-      auto A = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                           {opK, opC, opM, A2n.get()});
-      A->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
+      auto A = std::make_unique<ComplexOperator>(BuildParSumOperator(
+          {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, A2n.get()}, true));
       A->Mult(v, u);
       if (k > 0)  // Deflation
       {
@@ -577,13 +571,11 @@ int QuasiNewtonSolver::Solve()
       auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
       const std::complex<double> denom =
           std::complex<double>(0.0, delta * std::abs(eig.imag()));
-      auto AJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                            {opA2p.get(), A2n.get()});
-      AJ->SetEssentialTrueDofs(nd_dbc_tdofs.back(), palace::Operator::DIAG_ZERO);
-      std::unique_ptr<ComplexOperator> opAJ = std::move(AJ);
-      auto opJ = palace::BuildParSumOperator(
-          {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i}, {opK, opC, opM, opAJ.get()});
-      opJ->SetEssentialTrueDofs(nd_dbc_tdofs.back(), palace::Operator::DIAG_ONE);
+      auto opAJ = std::make_unique<ComplexOperator>(
+          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true));
+      auto opJ = std::make_unique<ComplexOperator>(
+          BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
+                              {opK, opC, opM, opAJ.get()}, true));
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
@@ -615,10 +607,8 @@ int QuasiNewtonSolver::Solve()
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(std::abs(eig.imag()));
-        auto A_pc = palace::BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                                {opK, opC, opM, opA2.get()});
-        A_pc->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ONE);
-        opA = std::move(A_pc);
+        opA = std::make_unique<ComplexOperator>(BuildParSumOperator(
+            {1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i}, {opK, opC, opM, opA2.get()}, true));
         opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
@@ -739,9 +729,8 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
 }
 
 NewtonInterpolationOperator::NewtonInterpolationOperator(
-    std::function<std::unique_ptr<ComplexOperator>(double)> funcA2,
-    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists, int size)
-  : funcA2(funcA2), nd_dbc_tdofs(nd_dbc_tdof_lists)
+    std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, int size)
+  : funcA2(funcA2)
 {
   rhs.SetSize(size);  // need to get size some other way...
   rhs.UseDevice(true);
@@ -796,9 +785,9 @@ void NewtonInterpolationOperator::Interpolate(int order,
       else
       {
         std::complex<double> denom = points[j + k] - points[j];
-        auto A2dd = palace::BuildParSumOperator(
-            {1.0 / denom, -1.0 / denom}, {ops[k - 1][j + 1].get(), ops[k - 1][j].get()});
-        A2dd->SetEssentialTrueDofs(nd_dbc_tdofs.back(), Operator::DIAG_ZERO);
+        auto A2dd = std::make_unique<ComplexOperator>(
+            BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                {ops[k - 1][j + 1].get(), ops[k - 1][j].get()}, true));
         ops[k].push_back(std::move(A2dd));
       }
     }
@@ -816,6 +805,22 @@ void NewtonInterpolationOperator::Interpolate(int order,
     }
   }
 }
+
+// std::unique_ptr<ComplexOperator>
+// NewtonInterpolationOperator::GetInterpolationOperator(int order)
+// {
+//   MFEM_VERIFY(order >= 0 && order < num_points,
+//               "Order must be greater than or equal to 0 and smaller than the number of "
+//               "interpolation points!");
+
+//   mfem::Array<std::unique_ptr<ComplexOperator>> sum_ops(num_points);
+//   mfem::Array<std::complex<double>> sum_coeffs(num_points);
+//   for (int j = 0; j < num_points; j++)
+//   {
+//     sum_c
+//     sum_ops[j] = ops[j][0];
+//   }
+// }
 
 void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
                                        ComplexVector &y) const
