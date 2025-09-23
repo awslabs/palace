@@ -240,44 +240,17 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
                     const std::array<const ComplexParOperator *, N> &ops,
                     bool set_essential = true);
 
-// Dispatch for ParOperators which have been type erased. Requires explicit instantiation.
-template <typename OperType, std::size_t N>
-typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                          ComplexParOperator, ParOperator>::type
-BuildParSumOperator(
-    const std::array<
-        typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                  std::complex<double>, double>::type,
-        N> &coeff,
-    const std::array<const OperType *, N> &ops, bool set_essential = true);
-
-namespace detail
-{
-// Helper for conversion to std::array
-template <class T, std::size_t N, std::size_t... I>
-constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
-                                                           std::index_sequence<I...>)
-{
-  return {{std::move(a[I])...}};
-}
-}  // namespace detail
-
-template <class T, std::size_t N>
-constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
-{
-  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
-}
-
 // Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
 // and types.
-template <std::size_t N, typename ScalarType, typename OperatorType>
-auto BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperatorType *(&&ops_in)[N],
-                         bool set_essential = true)
-{
-  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)),
-                             to_array<const OperatorType *>(std::move(ops_in)),
-                             set_essential);
-}
+template <std::size_t N>
+std::unique_ptr<ParOperator> BuildParSumOperator(double (&&coeff_in)[N],
+                                                 const ParOperator *(&&ops_in)[N],
+                                                 bool set_essential = true);
+
+template <std::size_t N>
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
+                    const ComplexParOperator *(&&ops_in)[N], bool set_essential = true);
 
 }  // namespace palace
 

@@ -911,34 +911,50 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
   return O;
 }
 
-// Dispatch for ParOperators which have been type erased.
-template <typename OperType, std::size_t N>
-typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                          ComplexParOperator, ParOperator>::type
-BuildParSumOperator(
-    const std::array<
-        typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                  std::complex<double>, double>::type,
-        N> &coeff,
-    const std::array<const OperType *, N> &ops, bool set_essential)
+// TODO: replace with std::to_array in c++20.
+namespace detail
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
+// Helper for conversion to std::array
+template <class T, std::size_t N, std::size_t... I>
+constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
+                                                           std::index_sequence<I...>)
+{
+  return {{std::move(a[I])...}};
+}
+}  // namespace detail
 
-  std::array<const ParOperType *, N> par_ops;
-  std::transform(ops.begin(), ops.end(), par_ops.begin(),
-                 [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
-  return BuildParSumOperator(coeff, std::move(par_ops), set_essential);
+template <class T, std::size_t N>
+constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
+{
+  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
+}
+
+template <std::size_t N>
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
+                    const ComplexParOperator *(&&ops_in)[N], bool set_essential)
+{
+  return BuildParSumOperator(to_array<std::complex<double>>(std::move(coeff_in)),
+                             to_array<const ComplexParOperator *>(std::move(ops_in)),
+                             set_essential);
+}
+
+template <std::size_t N>
+std::unique_ptr<ParOperator> BuildParSumOperator(double (&&coeff_in)[N],
+                                                 const ParOperator *(&&ops_in)[N],
+                                                 bool set_essential)
+{
+  return BuildParSumOperator(to_array<double>(std::move(coeff_in)),
+                             to_array<const ParOperator *>(std::move(ops_in)),
+                             set_essential);
 }
 
 // Explicit instantiation.
-template std::unique_ptr<ComplexParOperator>
-BuildParSumOperator(const std::array<std::complex<double>, 4> &,
-                    const std::array<const ComplexParOperator *, 4> &, bool set_essential);
+template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[4],
+                                                          const ParOperator *(&&)[4], bool);
 
-template std::unique_ptr<ParOperator>
-BuildParSumOperator(const std::array<double, 4> &,
-                    const std::array<const ParOperator *, 4> &, bool set_essential);
+template std::unique_ptr<ComplexParOperator>
+    BuildParSumOperator(std::complex<double> (&&)[4], const ComplexParOperator *(&&)[4],
+                        bool);
 
 }  // namespace palace
