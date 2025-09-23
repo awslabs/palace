@@ -1,12 +1,10 @@
-```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-```
 
 # Crosstalk Between Coplanar Waveguides
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/cpw/`](https://github.com/awslabs/palace/blob/main/examples/cpw)
     directory of the *Palace* source code.
@@ -123,7 +121,7 @@ small value of ``|S_{41}|``.
 ```
 
 !!! note
-    
+
     The examples files for uniform sampling in `examples/cpw` actually specify excitations
     on two ports ("multi-excitation"). The two excitation are run in sequence during a
     single palace simulation.

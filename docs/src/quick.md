@@ -1,7 +1,5 @@
-```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-```
 
 ```@setup json
 using JSON
@@ -136,7 +134,7 @@ nothing # hide
 ```
 
 !!! note "spack command not found"
-    
+
     If you get a `command not found` error, revisit the [Spack instructions](https://spack.readthedocs.io/en/latest/getting_started.html)
     and ensure you've completed all steps, including sourcing the setup script (the command starting with `.`).
     Consider adding this to your shell initialization file (typically, `.bashrc` or `.zshrc`).
@@ -165,7 +163,7 @@ nothing # hide
 ```
 
 !!! tip "Loading Palace"
-    
+
     You need to load *Palace* with `spack load palace` in each new shell session.
     For convenience, add this command to your shell initialization file if you are a frequent *Palace* user.
 
@@ -308,13 +306,13 @@ When configuring `Postprocessing`, you must specify an `Index` that determines
 the suffix for column headers in the output CSV files. For example, with `Index: 1`, the probe output will show headers like `E_x[1]`.
 
 !!! note "What is the difference between `Attributes` and `Index`?"
-    
+
     `Attributes` identify mesh regions and come from the mesh file. In our example,
     attributes 1-4 identify the vacuum region, outer boundary, and two spheres.
-    
+
     `Index` is used only for postprocessing and defines a notation used in the output CSV files. It has no relation to mesh attributes and can
     be any positive integer.
-    
+
     Note how `Attributes` is an array and `Index` an integer: multiple attributes might
     be needed to specify a given region in the mesh that corresponds to a single output.
 
@@ -381,9 +379,9 @@ If you've followed along, you should now have two files:
 ```
 
 !!! note "Do not have the files?"
-    
+
     If you need to download the files, run:
-    
+
     ```bash
     mkdir -p mesh
     curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh
@@ -487,7 +485,7 @@ page](examples/spheres.md).
  1. Launch ParaView and navigate to your `postpro/paraview` directory
 
  2. Open the volume data:
-    
+
       + Click File → Open → Navigate to
         `postpro/paraview/electrostatic/electrostatic.pvd`, nothing should be
         rendered so far
@@ -496,14 +494,14 @@ page](examples/spheres.md).
       + In the Coloring section, select `V`, the sphere should now be colored
         according to the potential values
  3. Create a slice to see inside:
-    
+
       + From the menu bar, select Filters → Common → Slice
       + In the Properties panel (left side), set the Origin to (0, 0, 0)
       + Set the Normal to (0, 1, 0) for a vertical slice along the Y-axis
       + Click Apply
       + Use the mouse to rotate and zoom until you can see the outlines of both inner spheres
  4. Add the boundary surfaces:
-    
+
       + Click File → Open → Navigate to `postpro/paraview/electrostatic_boundaries/electrostatic_boundaries.pvd`
       + Click Apply in the Properties panel
       + In the Coloring section, select `V`
