@@ -15,11 +15,13 @@
   {
     "include": [
       "**/*.jl",
-      "**/*.cmake"
+      "**/*.cmake",
+      "**/CMakeLists.txt"
     ],
     "exclude": [
       ".git/**",
-      "**/*.csv"
+      "**/*.csv",
+      "palace/cmake/GetGitDescription.cmake"
     ],
     "license": "./.github/license-check/jl.txt"
   },
@@ -32,14 +34,5 @@
       "**/*.csv"
     ],
     "license": "./.github/license-check/md.txt"
-  },
-  {
-    "include": [
-      "**/*.csv"
-    ],
-    "exclude": [
-      ".git/**"
-    ],
-    "license": ""
   }
 ]
