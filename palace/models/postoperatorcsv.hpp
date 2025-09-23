@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP
 #define PALACE_MODELS_POST_OPERATOR_CSV_HPP
 
