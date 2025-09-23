@@ -1,0 +1,33 @@
+[
+  {
+    "include": [
+      "**/*.cpp",
+      "**/*.c",
+      "**/*.h",
+      "**/*.hpp"
+    ],
+    "exclude": [
+      ".git/**"
+    ],
+    "license": "./.github/license-check/c.txt"
+  },
+  {
+    "include": [
+      "**/*.jl"
+    ],
+    "exclude": [
+      ".git/**"
+    ],
+    "license": "./.github/license-check/jl.txt"
+  },
+  {
+    "include": [
+      "**/*.md"
+    ],
+    "exclude": [
+      ".git/**",
+      "CHANGELOG.md"
+    ],
+    "license": "./.github/license-check/md.txt"
+  }
+]
