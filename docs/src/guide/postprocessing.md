@@ -1,6 +1,5 @@
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-
 # Postprocessing and Visualization
 
 As described in the section [Problem Types](problem.md), each simulation type writes

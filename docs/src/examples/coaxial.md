@@ -1,10 +1,9 @@
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-
 # Signal Propagation in a Coaxial Cable
 
 !!! note
-
+    
     The files for this example can be found in the
     [`examples/coaxial/`](https://github.com/awslabs/palace/blob/main/examples/coaxial)
     directory of the *Palace* source code.

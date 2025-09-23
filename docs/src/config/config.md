@@ -1,6 +1,5 @@
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-
 # Overview
 
 A configuration file written in the [JSON format](https://en.wikipedia.org/wiki/JSON) is

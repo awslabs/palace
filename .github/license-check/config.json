@@ -7,8 +7,7 @@
       "**/*.hpp"
     ],
     "exclude": [
-      ".git/**",
-      "**/*.csv"
+      ".git/**"
     ],
     "license": "./.github/license-check/c.txt"
   },
@@ -20,7 +19,6 @@
     ],
     "exclude": [
       ".git/**",
-      "**/*.csv",
       "palace/cmake/GetGitDescription.cmake"
     ],
     "license": "./.github/license-check/jl.txt"
@@ -30,8 +28,7 @@
       "**/*.md"
     ],
     "exclude": [
-      ".git/**",
-      "**/*.csv"
+      ".git/**"
     ],
     "license": "./.github/license-check/md.txt"
   }

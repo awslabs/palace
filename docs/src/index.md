@@ -1,6 +1,5 @@
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
-
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
