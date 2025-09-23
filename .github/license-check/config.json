@@ -7,16 +7,19 @@
       "**/*.hpp"
     ],
     "exclude": [
-      ".git/**"
+      ".git/**",
+      "**/*.csv"
     ],
     "license": "./.github/license-check/c.txt"
   },
   {
     "include": [
-      "**/*.jl"
+      "**/*.jl",
+      "**/*.cmake"
     ],
     "exclude": [
-      ".git/**"
+      ".git/**",
+      "**/*.csv"
     ],
     "license": "./.github/license-check/jl.txt"
   },
@@ -26,8 +29,17 @@
     ],
     "exclude": [
       ".git/**",
-      "CHANGELOG.md"
+      "**/*.csv"
     ],
     "license": "./.github/license-check/md.txt"
+  },
+  {
+    "include": [
+      "**/*.csv"
+    ],
+    "exclude": [
+      ".git/**"
+    ],
+    "license": ""
   }
 ]
