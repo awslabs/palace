@@ -939,22 +939,30 @@ BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                              set_essential);
 }
 
-template <std::size_t N>
-std::unique_ptr<ParOperator> BuildParSumOperator(double (&&coeff_in)[N],
-                                                 const ParOperator *(&&ops_in)[N],
-                                                 bool set_essential)
+template <std::size_t N, typename ScalarType, typename OperType>
+std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
+                                   ComplexParOperator, ParOperator>>
+BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
+                    bool set_essential)
 {
-  return BuildParSumOperator(to_array<double>(std::move(coeff_in)),
-                             to_array<const ParOperator *>(std::move(ops_in)),
+  using ParOperType =
+      typename std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
+                                  ComplexParOperator, ParOperator>;
+
+  std::array<const ParOperType *, N> par_ops;
+  std::transform(ops_in, ops_in + N, par_ops.begin(),
+                 [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
+  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)), std::move(par_ops),
                              set_essential);
 }
 
 // Explicit instantiation.
+template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[2],
+                                                          const Operator *(&&)[2], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[4],
-                                                          const ParOperator *(&&)[4], bool);
+                                                          const Operator *(&&)[4], bool);
 
 template std::unique_ptr<ComplexParOperator>
-    BuildParSumOperator(std::complex<double> (&&)[4], const ComplexParOperator *(&&)[4],
-                        bool);
+    BuildParSumOperator(std::complex<double> (&&)[4], const ComplexOperator *(&&)[4], bool);
 
 }  // namespace palace

@@ -242,15 +242,11 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
 
 // Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
 // and types.
-template <std::size_t N>
-std::unique_ptr<ParOperator> BuildParSumOperator(double (&&coeff_in)[N],
-                                                 const ParOperator *(&&ops_in)[N],
-                                                 bool set_essential = true);
-
-template <std::size_t N>
-std::unique_ptr<ComplexParOperator>
-BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
-                    const ComplexParOperator *(&&ops_in)[N], bool set_essential = true);
+template <std::size_t N, typename ScalarType, typename OperType>
+std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
+                                   ComplexParOperator, ParOperator>>
+BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
+                    bool set_essential = true);
 
 }  // namespace palace
 

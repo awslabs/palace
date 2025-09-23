@@ -492,86 +492,14 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *K, const OperType *C, const OperType *M,
                                const OperType *A2)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-
-  const auto *PtAP_K = (K) ? dynamic_cast<const ParOperType *>(K) : nullptr;
-  const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;
-  const auto *PtAP_M = (M) ? dynamic_cast<const ParOperType *>(M) : nullptr;
-  const auto *PtAP_A2 = (A2) ? dynamic_cast<const ParOperType *>(A2) : nullptr;
-  MFEM_VERIFY((!K || PtAP_K) && (!C || PtAP_C) && (!M || PtAP_M) && (!A2 || PtAP_A2),
-              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
-              "construction!");
-
-  int height = -1, width = -1;
-  if (PtAP_K)
-  {
-    height = PtAP_K->LocalOperator().Height();
-    width = PtAP_K->LocalOperator().Width();
-  }
-  else if (PtAP_C)
-  {
-    height = PtAP_C->LocalOperator().Height();
-    width = PtAP_C->LocalOperator().Width();
-  }
-  else if (PtAP_M)
-  {
-    height = PtAP_M->LocalOperator().Height();
-    width = PtAP_M->LocalOperator().Width();
-  }
-  else if (PtAP_A2)
-  {
-    height = PtAP_A2->LocalOperator().Height();
-    width = PtAP_A2->LocalOperator().Width();
-  }
-  MFEM_VERIFY(height >= 0 && width >= 0,
-              "At least one argument to GetSystemMatrix must not be empty!");
-
-  auto A = BuildParSumOperator({a0, a1, a2, ScalarType{1}},
-                               {PtAP_K, PtAP_C, PtAP_M, PtAP_A2}, true);
-  return A;
+  return BuildParSumOperator({a0, a1, a2, ScalarType{1}}, {K, C, M, A2});
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
                                                                const ComplexOperator *K,
                                                                const ComplexOperator *M)
 {
-  const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
-  const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;
-  MFEM_VERIFY(
-      (!K || PtAP_K) && (!M || PtAP_M),
-      "SpaceOperator requires ComplexParOperator for inner product matrix construction!");
-
-  int height = -1, width = -1;
-  if (PtAP_K)
-  {
-    height = PtAP_K->LocalOperator().Height();
-    width = PtAP_K->LocalOperator().Width();
-  }
-  else if (PtAP_M)
-  {
-    height = PtAP_M->LocalOperator().Height();
-    width = PtAP_M->LocalOperator().Width();
-  }
-  MFEM_VERIFY(height >= 0 && width >= 0,
-              "At least one argument to GetInnerProductMatrix must not be empty!");
-
-  auto sum = std::make_unique<SumOperator>(height, width);
-  if (PtAP_K && a0 != 0.0)
-  {
-    MFEM_VERIFY(
-        PtAP_K->LocalOperator().Real(),
-        "Missing real part of stiffness matrix for inner product matrix construction!");
-    sum->AddOperator(*PtAP_K->LocalOperator().Real(), a0);
-  }
-  if (PtAP_M && a2 != 0.0)
-  {
-    MFEM_VERIFY(PtAP_M->LocalOperator().Real(),
-                "Missing real part of mass matrix for inner product matrix construction!");
-    sum->AddOperator(*PtAP_M->LocalOperator().Real(), a2);
-  }
-  return std::make_unique<ParOperator>(std::move(sum), GetNDSpace());
+  return BuildParSumOperator({a0, a2}, {K->Real(), M->Real()}, false);
 }
 
 namespace
