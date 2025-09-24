@@ -8,7 +8,6 @@
 
 #include <complex>
 #include <memory>
-#include <optional>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -75,7 +74,7 @@ protected:
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  ComplexKspSolver *opInv;
+  const ComplexKspSolver *opInv;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -232,8 +231,6 @@ public:
   using ArpackEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
 
   int Solve() override;
 };

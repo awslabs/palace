@@ -86,14 +86,6 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  // Optional function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
-
-  // Optional function to compute the preconditioner matrix.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
-      funcP;
-
 protected:
   // Control print level for debugging.
   int print;
@@ -168,15 +160,6 @@ public:
   // Get scaling factors used by the solver.
   PetscReal GetScalingGamma() const override { return gamma; }
   PetscReal GetScalingDelta() const override { return delta; }
-
-  // Set the frequency-dependent A2 matrix function.
-  void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
-
-  // Set the preconditioner update function.
-  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
-                                   std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
 
   // Set shift-and-invert spectral transformation.
   void SetShiftInvert(std::complex<double> s, bool precond = false) override;
@@ -332,8 +315,6 @@ public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
@@ -426,8 +407,6 @@ public:
   SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   using SlepcEigenvalueSolver::SetOperators;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetBMat(const Operator &B) override;
@@ -509,6 +488,14 @@ public:
   // Operators for the nonlinear eigenvalue problem.
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
 
+  // Function to compute the A2 operator.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+
+  // Function to compute the preconditioner matrix.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(
+      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      funcP;
+
   // Eigenvalue estimate at current iteration.
   PetscScalar lambda;
 
@@ -537,6 +524,15 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
   void SetBMat(const Operator &B) override;
+
+  // Set the frequency-dependent A2 matrix function.
+  void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
+  // Set the preconditioner update function.
+  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                   std::complex<double>, std::complex<double>,
+                                   std::complex<double>, double)>) override;
 };
 
 }  // namespace slepc

@@ -150,7 +150,6 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 }
 
 // Quasi-Newton specific methods.
-// QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv,
 QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm,
                                      std::unique_ptr<EigenvalueSolver> linear_eigensolver,
                                      int num_conv, int print, bool refine)
@@ -408,9 +407,10 @@ int QuasiNewtonSolver::Solve()
   // ranks.
   unsigned int seed = 111;
   std::mt19937 gen(seed);
-  std::uniform_real_distribution<> dis(-1.0, 1.0);
+  std::uniform_real_distribution<> dist_real(-1.0, 1.0);
 
   const int num_init_guess = eigenvalues.size();
+  std::uniform_int_distribution<int> dist_int(0, num_init_guess - 1);
   int k = 0, restart = 0, guess_idx = 0;
   while (k < nev)
   {
@@ -439,7 +439,24 @@ int QuasiNewtonSolver::Solve()
     else
     {
       eig = sigma;
-      linalg::SetRandom(GetComm(), v);  // Use the average of eigenvectors???
+      if (num_init_guess < 3)
+      {
+        // Set purely random vector.
+        linalg::SetRandom(GetComm(), v);
+        linalg::SetSubVector(
+            v, *dynamic_cast<const ComplexParOperator *>(opK)->GetEssentialTrueDofs(), 0.0);
+      }
+      else
+      {
+        // Set random vector as the average of two distinct randomly-chosen initial guesses.
+        int i1 = dist_int(gen);
+        int i2;
+        do
+        {
+          i2 = dist_int(gen);
+        } while (i2 == i1);
+        v.AXPBYPCZ(0.5, eigenvectors[i1], 0.5, eigenvectors[i2], 0.0);
+      }
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
@@ -449,8 +466,8 @@ int QuasiNewtonSolver::Solve()
     v2.conservativeResize(k);
     for (int i = 0; i < k; i++)
     {
-      c2(i) = std::complex<double>(dis(gen), dis(gen));
-      v2(i) = std::complex<double>(dis(gen), dis(gen));
+      c2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
+      v2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
     }
 
     // Normalize random c vector.

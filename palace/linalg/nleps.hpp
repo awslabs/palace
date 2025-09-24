@@ -71,6 +71,14 @@ protected:
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1;
 
+  // // Function to compute the A2 operator.
+  // std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+
+  // // Function to compute the preconditioner matrix.
+  // std::optional<std::function<std::unique_ptr<ComplexOperator>(
+  //     std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+  //     funcP;
+
   // Helper routine for computing the eigenvector normalization.
   double GetEigenvectorNorm(const ComplexVector &x, ComplexVector &Bx) const;
 

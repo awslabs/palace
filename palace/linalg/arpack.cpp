@@ -14,7 +14,6 @@
 #include <stat_c.hpp>
 // clang-format on
 #include "linalg/divfree.hpp"
-#include "linalg/nleps.hpp"
 #include "utils/communication.hpp"
 
 using namespace std::complex_literals;
@@ -654,40 +653,6 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
     {
       gamma = std::sqrt(normK / normM);
       delta = 2.0 / (normK + gamma * normC);
-    }
-  }
-
-  // Set up workspace.
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  z1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
-  z1.UseDevice(true);
-  n = opK->Height();
-}
-
-void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                   EigenvalueSolver::ScaleType type)
-{
-  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
-  bool first = (opK == nullptr);
-  opK = &K;
-  opM = &M;
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(comm, *opK, opK->IsReal());
-    normM = linalg::SpectralNorm(comm, *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for PEP scaling!");
-    if (normK > 0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / normK;
     }
   }
 
