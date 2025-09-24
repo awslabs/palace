@@ -914,7 +914,7 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
 // TODO: replace with std::to_array in c++20.
 namespace detail
 {
-// Helper for conversion to std::array
+// Helper for conversion to std::array.
 template <class T, std::size_t N, std::size_t... I>
 constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
                                                            std::index_sequence<I...>)
