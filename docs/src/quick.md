@@ -1,5 +1,8 @@
+```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
+```
+
 ```@setup json
 using JSON
 using OrderedCollections # Needed to preserve printing order as in the original file

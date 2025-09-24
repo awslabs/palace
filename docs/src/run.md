@@ -1,5 +1,8 @@
+```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
+```
+
 # Running *Palace*
 
 Once installed into a directory `<INSTALL_DIR>`, a parallel simulation using *Palace* can

@@ -1,15 +1,17 @@
+```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
+```
+
 ```@setup include_example
 function include_example_file(example_path, filename)
     print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
 end
-```
 
 # Inductance Matrix for a Pair of Concentric Rings
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/rings/`](https://github.com/awslabs/palace/blob/main/examples/rings)
     directory of the *Palace* source code.

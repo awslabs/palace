@@ -1,5 +1,8 @@
+```@raw html
 <!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
 <!--- SPDX-License-Identifier: Apache-2.0 --->
+```
+
 # Overview
 
 This user guide provides an overview of the different types of electromagnetic simulations
