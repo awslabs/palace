@@ -7,11 +7,12 @@
 function include_example_file(example_path, filename)
     print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
 end
+```
 
 # Capacitance Matrix for Two Spheres
 
 !!! note
-
+    
     The files for this example can be found in the
     [`examples/spheres/`](https://github.com/awslabs/palace/blob/main/examples/spheres)
     directory of the *Palace* source code.

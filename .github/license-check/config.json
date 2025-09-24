@@ -25,10 +25,19 @@
   },
   {
     "include": [
+      "docs/**/*.md"
+    ],
+    "exclude": [
+    ],
+    "license": "./.github/license-check/md_html.txt"
+  },
+  {
+    "include": [
       "**/*.md"
     ],
     "exclude": [
-      ".git/**"
+      ".git/**",
+      "docs/**/*.md"
     ],
     "license": "./.github/license-check/md.txt"
   }
