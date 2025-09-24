@@ -75,11 +75,6 @@ public:
     MFEM_ABORT("SetOperators not defined!");
   }
 
-  virtual void SetNLInterpolation(const Interpolation &interp)
-  {
-    MFEM_ABORT("SetNLInterpolation not defined!");
-  }
-
   virtual void SetExtraSystemMatrix(std::function<std::unique_ptr<ComplexOperator>(double)>)
   {
     MFEM_ABORT("SetExtraSystemMatrix not defined!");

@@ -297,7 +297,6 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
     PalacePetscCall(
         MatShellSetOperation(A0, MATOP_MULT_HERMITIAN_TRANSPOSE,
                              (void (*)(void))__mat_apply_hermitian_transpose_shell));
-
     SVD svd;
     PetscInt num_conv;
     PetscReal sigma;
@@ -332,12 +331,10 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   region = true;
   sigma = 0.0;
   gamma = delta = 1.0;
-  has_A2 = false;
 
   opInv = nullptr;
   opProj = nullptr;
   opB = nullptr;
-  opInterp = nullptr;
 
   B0 = nullptr;
   v0 = nullptr;
@@ -362,12 +359,6 @@ void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const Complex
                                          EigenvalueSolver::ScaleType type)
 {
   MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
-}
-
-void SlepcEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
-{
-  opInterp = &interp;
-  has_A2 = true;
 }
 
 void SlepcEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
@@ -890,7 +881,6 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   opK = &K;
   opC = &C;
   opM = &M;
-
   if (first)
   {
     const PetscInt n = opK->Height();
@@ -1055,11 +1045,6 @@ PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVect
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (funcA2)
-  {
-    auto A2 = (*funcA2)(std::abs(l.imag()));
-    A2->AddMult(x, r, 1.0 + 0.0i);
-  }
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -1471,11 +1456,6 @@ PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (funcA2)
-  {
-    auto A2 = (*funcA2)(std::abs(l.imag()));
-    A2->AddMult(x, r, 1.0 + 0.0i);
-  }
   return linalg::Norml2(GetComm(), r);
 }
 
@@ -2029,16 +2009,8 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   {
     ctx->y2 = 0.0;
   }
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(1, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
-  }
   ctx->y2 *= ctx->gamma;
   ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(0, ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  }
   ctx->y2 *= -ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -2057,10 +2029,6 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
   ctx->y1 = ctx->x1;
   ctx->opM->Mult(ctx->x2, ctx->y2);
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(2, ctx->x2, ctx->y2, std::complex<double>(1.0, 0.0));
-  }
   ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
 
@@ -2123,10 +2091,6 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   {
     ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
     ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    if (ctx->opInterp)
-    {
-      ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    }
     ctx->opInv->Mult(ctx->y1, ctx->y2);
     if (ctx->opProj)
     {
@@ -2158,10 +2122,6 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(0, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2183,10 +2143,6 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   {
     ctx->y1 = 0.0;
   }
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(1, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2201,10 +2157,6 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
-  if (ctx->opInterp)
-  {
-    ctx->opInterp->AddMult(2, ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-  }
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);

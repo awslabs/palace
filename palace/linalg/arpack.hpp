@@ -58,9 +58,6 @@ protected:
   std::complex<double> sigma;
   bool sinvert;
 
-  // Boolean to handle frequency-dependent A2 operator.
-  bool has_A2;
-
   // Storage for computed eigenvalues.
   std::unique_ptr<std::complex<double>[]> eig;
   std::unique_ptr<int[]> perm;
@@ -80,9 +77,6 @@ protected:
   // (polynomial with shift-and-invert) (not owned).
   ComplexKspSolver *opInv;
 
-  // Reference to interpolation operator for nonlinear term (not owned).
-  const Interpolation *opInterp;  // remove later?
-
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
   const DivFreeSolver<ComplexVector> *opProj;
@@ -90,14 +84,6 @@ protected:
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
   const Operator *opB;
-
-  // Optional function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
-
-  // Optional function to compute the preconditioner matrix.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
-      funcP;
 
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1, z1;
@@ -129,11 +115,10 @@ protected:
 public:
   ArpackEigenvalueSolver(MPI_Comm comm, int print);
 
-  void SetNLInterpolation(const Interpolation &interp) override;
-  // For the linear generalized case, the linear solver should be configured to compute the
-  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
-  // case, the linear solver should be configured to compute the action of M⁻¹ (with no
-  // spectral transformation) or P(σ)⁻¹.
+  //  For the linear generalized case, the linear solver should be configured to compute the
+  //  action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
+  //  case, the linear solver should be configured to compute the action of M⁻¹ (with no
+  //  spectral transformation) or P(σ)⁻¹.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -142,15 +127,6 @@ public:
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.
   void SetBMat(const Operator &B) override;
-
-  // Set the frequency-dependent A2 matrix function.
-  void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
-
-  // Set the preconditioner update function.
-  void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
-                                   std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
 
   // Get scaling factors used by the solver.
   double GetScalingGamma() const override { return gamma; }

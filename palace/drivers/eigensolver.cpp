@@ -14,6 +14,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -50,20 +51,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(target);
   bool has_A2 = (A2 != nullptr);
-  NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+
+  // Extend K, C, M operators with interpolated A2 operator.
+  // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
+  std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
   std::unique_ptr<Interpolation> interp_op;
-  std::unique_ptr<ComplexOperator> Ko, Co, Mo;  // original K, C, M
+  std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
+  NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
-    constexpr int npoints = 3;  // Always use second order interpolation for now
     const double target_max = iodata.solver.eigenmode.target_upper;
     interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
-    interp_op->Interpolate(npoints - 1, 1i * target, 1i * target_max);
-    // K' = Ko + A2_0, C' = Co + A2_1, M' = Mo + A2_2
-    // Ko = std::move(K); Co = std::move(C); Mo = std::move(M);
-    // K = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(0), Ko});
-    // C = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(1), Co});
-    // M = BuildParSumOperator({1.0+0i, 1.0+0i}, {interp_op.GetOrderMat(2), Mo});
+    interp_op->Interpolate(1i * target, 1i * target_max);
+    A2_0 = interp_op->GetInterpolationOperator(0);
+    A2_1 = interp_op->GetInterpolationOperator(1);
+    A2_2 = interp_op->GetInterpolationOperator(2);
+    Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});
+    Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
+    Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});
   }
 
   const auto &Curl = space_op.GetCurlMatrix();
@@ -175,18 +180,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    if (C)
+    if (has_A2)
+    {
+      eigen->SetOperators(*Kp, *Cp, *Mp, scale);
+    }
+    else if (C)
     {
       eigen->SetOperators(*K, *C, *M, scale);
     }
     else
     {
       eigen->SetOperators(*K, *M, scale);
-    }
-    if (has_A2)
-    {
-      eigen->SetNLInterpolation(*interp_op);
-      eigen->SetExtraSystemMatrix(funcA2);
     }
   }
   eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
@@ -345,14 +349,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    : "");
   }
 
-  if (has_A2 &&
-      iodata.solver.eigenmode.refine_nonlinear &&  // remove refine_nonlinear and pass it to
-                                                   // Quasi-Newton solver here instead?
-      nonlinear_type == NonlinearEigenSolver::HYBRID)
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     Mpi::Print("\n Refining eigenvalues with Quasi-Newton solver\n");
-    auto qn = std::make_unique<QuasiNewtonSolver>(
-        std::move(*eigen), num_conv, space_op.GetComm(), iodata.problem.verbose);
+    auto qn = std::make_unique<QuasiNewtonSolver>(space_op.GetComm(), std::move(eigen),
+                                                  num_conv, iodata.problem.verbose,
+                                                  iodata.solver.eigenmode.refine_nonlinear);
     qn->SetTol(iodata.solver.eigenmode.tol);
     qn->SetMaxIter(iodata.solver.eigenmode.max_it);
     if (C)
@@ -371,26 +373,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
     qn->SetLinearSolver(*ksp);
     qn->SetShiftInvert(1i * target);
-
-    // Use linearized eigensolve solution as initial guess. // Move this inside the
-    // Quasi-Newton constructor?
-    std::vector<std::complex<double>> eigenvalues;
-    std::vector<ComplexVector> eigenvectors;
-    std::vector<double> errors;
-    for (int i = 0; i < num_conv; i++)
-    {
-      ComplexVector v0;
-      v0.SetSize(Curl.Width());
-      v0.UseDevice(true);
-      eigen->GetEigenvector(i, v0);
-      linalg::NormalizePhase(space_op.GetComm(), v0);
-      eigenvalues.push_back(eigen->GetEigenvalue(i));
-      eigenvectors.push_back(v0);
-      errors.push_back(eigen->GetError(
-          i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the
-                                                       // nonlinear solver?
-    }
-    qn->SetInitialGuess(eigenvalues, eigenvectors, errors);
     eigen = std::move(qn);
 
     // Suppress wave port output during nonlinear eigensolver iterations.

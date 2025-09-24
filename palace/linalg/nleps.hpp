@@ -54,10 +54,6 @@ protected:
   std::vector<ComplexVector> eigenvectors;
   std::unique_ptr<int[]> perm;
 
-  // Storage for eigenpairs initial guesses.
-  std::vector<std::complex<double>> init_eigenvalues;
-  std::vector<ComplexVector> init_eigenvectors;
-
   // Storage for computed residual norms and eigenvector scalings.
   std::unique_ptr<double[]> res, xscale;
 
@@ -128,11 +124,6 @@ public:
   // Set an initial vector for the solution subspace.
   void SetInitialSpace(const ComplexVector &v) override;
 
-  // Set initial guess for the eigenpairs.
-  void SetInitialGuess(const std::vector<std::complex<double>> &init_eig,
-                       const std::vector<ComplexVector> &init_V,
-                       const std::vector<double> &init_errors);
-
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   int Solve() override = 0;
 
@@ -171,6 +162,12 @@ private:
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
       funcP;
 
+  // Linear eigenvalue solver used to set initial guess.
+  std::unique_ptr<EigenvalueSolver> linear_eigensolver_;
+
+  // Number of eigenmode initial guesses.
+  int nev_linear;
+
   // Operator norms for scaling.
   mutable double normK, normC, normM;
 
@@ -183,6 +180,12 @@ private:
   // Maximum number of Newton attempts with the same initial guess.
   int max_restart;
 
+  // Refine linear eigenvalues with nonlinear Newton eigenvalue solver.
+  bool refine_nonlinear;
+
+  // Set the initial guesses from the linear eigenvalue solver results.
+  void SetInitialGuess();
+
 protected:
   double GetResidualNorm(std::complex<double> l, const ComplexVector &x,
                          ComplexVector &r) const override;
@@ -192,9 +195,8 @@ protected:
   const char *GetName() const override { return "QuasiNewton"; }
 
 public:
-  QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv, MPI_Comm comm,
-                    int print);  // take an EigenvalueSolver in the constructor? from which
-                                 // we get the initial guesses?
+  QuasiNewtonSolver(MPI_Comm comm, std::unique_ptr<EigenvalueSolver> linear_eigensolver,
+                    int num_conv, int print, bool refine);
 
   using NonLinearEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
@@ -232,8 +234,9 @@ class Interpolation
 public:
   Interpolation() = default;
   virtual ~Interpolation() = default;
-  virtual void Interpolate(int order, const std::complex<double> sigma_min,
+  virtual void Interpolate(const std::complex<double> sigma_min,
                            const std::complex<double> sigma_max) = 0;
+  virtual std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const = 0;
   virtual void Mult(int order, const ComplexVector &x, ComplexVector &y) const = 0;
   virtual void AddMult(int order, const ComplexVector &x, ComplexVector &y,
                        std::complex<double> a = 1.0) const = 0;
@@ -246,8 +249,8 @@ private:
   // Function to compute the A2 operator.
   std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
 
-  // Number of points used in the interpolation.
-  int num_points;
+  // Number of points used in the interpolation (currently always second order).
+  int num_points = 3;
 
   // Interpolation points.
   std::vector<std::complex<double>> points;
@@ -266,7 +269,7 @@ public:
       std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
-  void Interpolate(int order, const std::complex<double> sigma_min,
+  void Interpolate(const std::complex<double> sigma_min,
                    const std::complex<double> sigma_max);
 
   // Get the interpolation operator of specified order.

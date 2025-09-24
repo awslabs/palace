@@ -105,9 +105,6 @@ protected:
   PetscScalar sigma;
   bool sinvert, region;
 
-  // Boolean to handle frequency-dependent A2 operator.
-  bool has_A2;
-
   // Storage for computed residual norms and eigenvector normalizations.
   std::unique_ptr<PetscReal[]> res, xscale;
 
@@ -115,9 +112,6 @@ protected:
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
   ComplexKspSolver *opInv;
-
-  // Reference to interpolation operator for nonlinear term (not owned).
-  const Interpolation *opInterp;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
@@ -157,11 +151,11 @@ public:
                     ScaleType type) override;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
-  void SetNLInterpolation(const Interpolation &interp) override;
-  // For the linear generalized case, the linear solver should be configured to compute the
-  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
-  // case, the linear solver should be configured to compute the action of M⁻¹ (with no
-  // spectral transformation) or P(σ)⁻¹.
+
+  //  For the linear generalized case, the linear solver should be configured to compute the
+  //  action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
+  //  case, the linear solver should be configured to compute the action of M⁻¹ (with no
+  //  spectral transformation) or P(σ)⁻¹.
   void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
@@ -315,9 +309,7 @@ class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
-  using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;
@@ -414,9 +406,7 @@ class SlepcPEPSolver : public SlepcPEPSolverBase
 public:
   using SlepcEigenvalueSolver::delta;
   using SlepcEigenvalueSolver::gamma;
-  using SlepcEigenvalueSolver::has_A2;
   using SlepcEigenvalueSolver::opB;
-  using SlepcEigenvalueSolver::opInterp;
   using SlepcEigenvalueSolver::opInv;
   using SlepcEigenvalueSolver::opProj;
   using SlepcEigenvalueSolver::sigma;

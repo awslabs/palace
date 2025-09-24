@@ -174,12 +174,10 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
   gamma = delta = 1.0;
   sinvert = false;
   sigma = 0.0;
-  has_A2 = false;
 
   opInv = nullptr;
   opProj = nullptr;
   opB = nullptr;
-  opInterp = nullptr;
 
   // Configure debugging output.
   a_int logfill = 6, ndigit = -6, mgetv0 = 0;
@@ -189,12 +187,6 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
           _aup2, _aitr, _eigh, _gets, _apps, _eupd, _aupd, _aup2, _aitr, _eigh, _gets,
           _apps, _eupd);
   cstatn_c();
-}
-
-void ArpackEigenvalueSolver::SetNLInterpolation(const Interpolation &interp)
-{
-  opInterp = &interp;
-  has_A2 = true;
 }
 
 void ArpackEigenvalueSolver::SetLinearSolver(ComplexKspSolver &ksp)
@@ -213,20 +205,6 @@ void ArpackEigenvalueSolver::SetBMat(const Operator &B)
   MFEM_VERIFY(!opB || opB->Height() == B.Height(),
               "Invalid modification of eigenvalue problem size!");
   opB = &B;
-}
-
-void ArpackEigenvalueSolver::SetExtraSystemMatrix(
-    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
-{
-  funcA2 = A2;
-}
-
-void ArpackEigenvalueSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
-        P)
-{
-  funcP = P;
 }
 
 void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
@@ -811,17 +789,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
     }
 
     opK->Mult(x1, z1);
-    if (has_A2)
-    {
-      opInterp->AddMult(0, x1, z1, 1.0 + 0.0i);
-    }
     if (opC)
     {
       opC->AddMult(x2, z1, gamma + 0.0i);
-    }
-    if (has_A2)
-    {
-      opInterp->AddMult(1, x2, z1, gamma + 0.0i);
     }
     opInv->Mult(z1, y2);
     y2 *= -1.0 / (gamma * gamma);
@@ -836,17 +806,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   {
     y2.AXPBYPCZ(sigma, x1, gamma, x2, 0.0);  // Just temporarily
     opM->Mult(y2, z1);
-    if (has_A2)
-    {
-      opInterp->AddMult(2, y2, z1, 1.0 + 0.0i);
-    }
     if (opC)
     {
       opC->AddMult(x1, z1, 1.0 + 0.0i);
-    }
-    if (has_A2)
-    {
-      opInterp->AddMult(1, x1, z1, 1.0 + 0.0i);
     }
     opInv->Mult(z1, y1);
     y1 *= -gamma;
@@ -896,11 +858,6 @@ double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVec
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (funcA2)
-  {
-    auto A2 = (*funcA2)(std::abs(l.imag()));
-    A2->AddMult(x, r, 1.0 + 0.0i);
-  }
   return linalg::Norml2(comm, r);
 }
 

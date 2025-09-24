@@ -86,55 +86,6 @@ void NonLinearEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
   MFEM_ABORT("SetInitialSpace not defined for base class NonLinearEigenvalueSolver!");
 }
 
-void NonLinearEigenvalueSolver::SetInitialGuess(
-    const std::vector<std::complex<double>> &init_eig,
-    const std::vector<ComplexVector> &init_V, const std::vector<double> &init_errors)
-{
-  MFEM_VERIFY(n > 0, "Must call SetOperators before using SetInitialguess for nonlinear "
-                     "eigenvalue solver!");
-  MFEM_VERIFY(
-      init_eig.size() == init_V.size(),
-      "SetInitialGuess requires the same number of eigenvalues and eigenvectors guesses!");
-
-  init_eigenvalues.resize(init_eig.size());
-  init_eigenvectors.resize(init_eig.size());
-
-  // If the number of initial guesses is greater than the number of requested modes
-  // de-prioritize the initial guesses that have larger errors.
-  std::vector<size_t> indices(init_eig.size());
-  std::iota(indices.begin(), indices.end(), 0);
-  if (init_eig.size() > nev)
-  {
-    double min_error = init_errors[0];
-    for (const auto error : init_errors)
-    {
-      min_error = std::min(min_error, error);
-    }
-    const double threshold = 100.0 * min_error;
-    std::sort(indices.begin(), indices.end(),
-              [&](const auto i, const auto j)
-              {
-                if (init_errors[i] < threshold && init_errors[j] > threshold)
-                {
-                  return true;
-                }
-                else if (init_errors[i] > threshold && init_errors[j] < threshold)
-                {
-                  return false;
-                }
-                else
-                {
-                  return init_eig[i].imag() < init_eig[j].imag();
-                }
-              });
-  }
-  for (int i = 0; i < init_eig.size(); i++)
-  {
-    init_eigenvalues[i] = init_eig[indices[i]];
-    init_eigenvectors[i] = init_V[indices[i]];
-  }
-}
-
 std::complex<double> NonLinearEigenvalueSolver::GetEigenvalue(int i) const
 {
   MFEM_VERIFY(i >= 0 && i < nev,
@@ -199,75 +150,15 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 }
 
 // Quasi-Newton specific methods.
-QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv,
-                                     MPI_Comm comm, int print)
-  : NonLinearEigenvalueSolver(comm, print)
+// QuasiNewtonSolver::QuasiNewtonSolver(EigenvalueSolver &&linear_eigensolver, int num_conv,
+QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm,
+                                     std::unique_ptr<EigenvalueSolver> linear_eigensolver,
+                                     int num_conv, int print, bool refine)
+  : linear_eigensolver_(std::move(linear_eigensolver)), nev_linear(num_conv),
+    refine_nonlinear(refine), NonLinearEigenvalueSolver(comm, print)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
-
-  // linear_eigensolver->GetEigenvalue(i);
-  std::vector<std::complex<double>> init_eig;
-  std::vector<ComplexVector> init_V;
-  std::vector<double> init_errors;
-  // std::vector<std::complex<double>> eigenvalues;
-  // std::vector<ComplexVector> eigenvectors;
-  // std::vector<double> errors;
-  // for (int i = 0; i < num_conv; i++)
-  //{
-  //   ComplexVector v0;
-  //   v0.SetSize(Curl.Width());
-  //   v0.UseDevice(true);
-  //   linear_eigensolver.GetEigenvector(i, v0);
-  //   linalg::NormalizePhase(comm, v0);
-  //   ieigenvalues.push_back(linear_eigensolver.GetEigenvalue(i));
-  //   eigenvectors.push_back(v0);
-  //   errors.push_back(linear_eigensolver.GetError(
-  //       i, EigenvalueSolver::ErrorType::ABSOLUTE));  // could be computed inside the
-  //       nonlinear solver?
-  // }
-
-  // Below copied from NonlinearEigenvalueSolver::SetInitialGuess
-
-  /*
-  init_eigenvalues.resize(init_eig.size());
-  init_eigenvectors.resize(init_eig.size());
-
-  // If the number of initial guesses is greater than the number of requested modes
-  // de-prioritize the initial guesses that have larger errors.
-  std::vector<size_t> indices(init_eig.size());
-  std::iota(indices.begin(), indices.end(), 0);
-  if (init_eig.size() > nev)
-  {
-    double min_error = init_errors[0];
-    for (const auto error : init_errors)
-    {
-      min_error = std::min(min_error, error);
-    }
-    const double threshold = 100.0 * min_error;
-    std::sort(indices.begin(), indices.end(),
-              [&](const auto i, const auto j)
-              {
-                if (init_errors[i] < threshold && init_errors[j] > threshold)
-                {
-                  return true;
-                }
-                else if (init_errors[i] > threshold && init_errors[j] < threshold)
-                {
-                  return false;
-                }
-                else
-                {
-                  return init_eig[i].imag() < init_eig[j].imag();
-                }
-              });
-  }
-  for (int i = 0; i < init_eig.size(); i++)
-  {
-    init_eigenvalues[i] = init_eig[indices[i]];
-    init_eigenvectors[i] = init_V[indices[i]];
-  }
-*/
 }
 
 // Set the update frequency of the preconditioner.
@@ -361,6 +252,77 @@ void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOper
   y1.UseDevice(true);
 }
 
+void QuasiNewtonSolver::SetInitialGuess()
+{
+
+  MFEM_VERIFY(n > 0, "Must call SetOperators before using SetInitialguess for nonlinear "
+                     "eigenvalue solver!");
+  MFEM_VERIFY(nev > 0, "Must call SetNumModes before using SetInitialguess for nonlinear "
+                       "eigenvalue solver!");
+
+  // Get eigenmodes initial guesses from linear eigensolver
+  eigenvalues.resize(nev_linear);
+  eigenvectors.resize(nev_linear);
+  for (int i = 0; i < nev_linear; i++)
+  {
+    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(i);
+    linear_eigensolver_->GetEigenvector(i, x1);
+    eigenvectors[i] = x1;
+  }
+
+  // Compute errors.
+  RescaleEigenvectors(nev_linear);
+
+  // Initialize eigenpairs ordering.
+  perm = std::make_unique<int[]>(nev_linear);
+  std::iota(perm.get(), perm.get() + nev_linear, 0);
+
+  // Early return if nonlinear Newton won't be used.
+  if (!refine_nonlinear)
+    return;
+
+  // If the number of initial guesses is greater than the number of requested modes
+  // de-prioritize the initial guesses that have larger errors.
+  std::vector<size_t> indices(nev_linear);
+  std::iota(indices.begin(), indices.end(), 0);
+  if (nev_linear > nev)
+  {
+    double min_error = res.get()[0];
+    for (int i = 0; i < nev_linear; i++)
+    {
+      min_error = std::min(min_error, res.get()[i]);
+    }
+    const double threshold = 100.0 * min_error;
+    std::sort(indices.begin(), indices.end(),
+              [&](const auto i, const auto j)
+              {
+                if (res.get()[i] < threshold && res.get()[j] > threshold)
+                {
+                  return true;
+                }
+                else if (res.get()[i] > threshold && res.get()[j] < threshold)
+                {
+                  return false;
+                }
+                else
+                {
+                  return eigenvalues[i].imag() < eigenvalues[j].imag();
+                }
+              });
+  }
+  for (int i = 0; i < nev_linear; i++)
+  {
+    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(indices[i]);
+    linear_eigensolver_->GetEigenvector(indices[i], x1);
+    linalg::NormalizePhase(comm, x1);
+    eigenvectors[i] = x1;
+  }
+
+  // Get ordering of the eigenpairs.
+  std::sort(perm.get(), perm.get() + nev_linear, [&eig = this->eigenvalues](auto l, auto r)
+            { return eig[l].imag() < eig[r].imag(); });
+}
+
 namespace
 {
 // Multiply an (n x k) matrix (vector of size k of ComplexVectors of size n) by a vector of
@@ -399,6 +361,16 @@ int QuasiNewtonSolver::Solve()
   // store the extended solution: [v, v2] where v is a ComplexVector distributed across all
   // processes and v2 is an Eigen::VectorXcd stored redundantly on all processes.
 
+  // Set initial guess from linear eigensolver.
+  SetInitialGuess();
+
+  // Return early if not refining the eigenmodes with Newton.
+  if (!refine_nonlinear)
+  {
+    nev = eigenvalues.size();
+    return nev;
+  }
+
   // Palace ComplexVectors of size n.
   ComplexVector v, u, w, c, w0, z;
   v.SetSize(n);
@@ -421,11 +393,6 @@ int QuasiNewtonSolver::Solve()
   // Storage for eigenpairs.
   std::vector<ComplexVector> X;
   std::vector<std::complex<double>> eigs;
-
-  // Reset any previously computed eigenpairs.
-  eigenvalues.clear();
-  eigenvectors.clear();
-  eigenvectors.reserve(nev);
   X.reserve(nev);
 
   // Set defaults.
@@ -443,7 +410,7 @@ int QuasiNewtonSolver::Solve()
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dis(-1.0, 1.0);
 
-  const int num_init_guess = init_eigenvalues.size();
+  const int num_init_guess = eigenvalues.size();
   int k = 0, restart = 0, guess_idx = 0;
   while (k < nev)
   {
@@ -466,14 +433,13 @@ int QuasiNewtonSolver::Solve()
     std::complex<double> eig, eig_opInv;
     if (guess_idx < num_init_guess)
     {
-      eig = init_eigenvalues[guess_idx];
-      v = init_eigenvectors[guess_idx];
+      eig = eigenvalues[guess_idx];
+      v = eigenvectors[guess_idx];
     }
     else
     {
       eig = sigma;
-      linalg::SetRandom(GetComm(), v);
-      // linalg::SetSubVector(v, nd_dbc_tdofs.back(), 0.0); // fix this!!!
+      linalg::SetRandom(GetComm(), v);  // Use the average of eigenvectors???
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
@@ -729,6 +695,8 @@ int QuasiNewtonSolver::Solve()
   }
 
   // Recover the eigenvectors in the target range.
+  eigenvalues.clear();
+  eigenvectors.clear();
   for (int i = 0; i < nev; i++)
   {
     if (eigs[i].imag() > sigma.imag())
@@ -792,7 +760,7 @@ NewtonInterpolationOperator::NewtonInterpolationOperator(
     std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, int size)
   : funcA2(funcA2)
 {
-  rhs.SetSize(size);  // need to get size some other way...
+  rhs.SetSize(size);
   rhs.UseDevice(true);
 }
 
@@ -813,14 +781,10 @@ ScalarType elementarySymmetric(const std::vector<ScalarType> &points, int k, int
          points[n - 1] * elementarySymmetric(points, k - 1, n - 1);
 }
 
-void NewtonInterpolationOperator::Interpolate(int order,
-                                              const std::complex<double> sigma_min,
+void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_min,
                                               const std::complex<double> sigma_max)
 {
-  MFEM_VERIFY(order >= 0, "Interpolation order must be greater than or equal to 0!");
-
   // Reset operators and sample points each time Interpolate is called.
-  num_points = order + 1;
   ops.clear();
   ops.resize(num_points);
   points.clear();
@@ -866,21 +830,18 @@ void NewtonInterpolationOperator::Interpolate(int order,
   }
 }
 
-// std::unique_ptr<ComplexOperator>
-// NewtonInterpolationOperator::GetInterpolationOperator(int order)
-// {
-//   MFEM_VERIFY(order >= 0 && order < num_points,
-//               "Order must be greater than or equal to 0 and smaller than the number of "
-//               "interpolation points!");
-
-//   mfem::Array<std::unique_ptr<ComplexOperator>> sum_ops(num_points);
-//   mfem::Array<std::complex<double>> sum_coeffs(num_points);
-//   for (int j = 0; j < num_points; j++)
-//   {
-//     sum_c
-//     sum_ops[j] = ops[j][0];
-//   }
-// }
+std::unique_ptr<ComplexOperator>
+NewtonInterpolationOperator::GetInterpolationOperator(int order) const
+{
+  MFEM_VERIFY(order >= 0 && order < num_points,
+              "Order must be greater than or equal to 0 and smaller than the number of "
+              "interpolation points!");
+  Mpi::Print("coeffs: {}+{}i, {}+{}i, {}+{}i\n", coeffs[order][0].real(),
+             coeffs[order][0].imag(), coeffs[order][1].real(), coeffs[order][1].imag(),
+             coeffs[order][2].real(), coeffs[order][2].imag());
+  return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
+                             {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
+}
 
 void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
                                        ComplexVector &y) const
