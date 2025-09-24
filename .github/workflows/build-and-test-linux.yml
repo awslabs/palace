@@ -429,7 +429,9 @@ jobs:
 
           cd $(pwd)/palace-build/palace-build/test/unit
 
-          # Run tests
+          # Run Serial tests
+          ./unit-tests --skip-benchmarks
+          # Run Parallel tests
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/

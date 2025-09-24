@@ -440,7 +440,7 @@ public:
   }
 };
 
-TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
 {
   using vs = std::vector<std::size_t>;
   CHECK(_impl::table_expected_filling(0, 0, 5, 1) == vs{0, 0});
@@ -454,7 +454,7 @@ TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv]")
 
 // Could also use METHOD_AS_TEST_CASE with fixture. This resuses fixture class, *without*
 // inheriting from it, so friendship assignment works.
-TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture reload_fixture{"postoperatorcsv_restart/restart1.json"};
   SECTION("Driven solver, single excitation: no reload")
@@ -482,7 +482,7 @@ TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv]")
     reload_fixture.restart1_bad_col_alignment();
   }
 }
-TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart2.json"};
 

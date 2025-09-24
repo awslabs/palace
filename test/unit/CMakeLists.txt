@@ -22,12 +22,14 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
 target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
   ${CMAKE_SOURCE_DIR}/fem/libceed/operator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   if(PALACE_WITH_CUDA)

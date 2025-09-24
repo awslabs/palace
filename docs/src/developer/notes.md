@@ -40,7 +40,7 @@ requires the executables to be installed and findable by CMake on your system.
 
 ## Extending GPU code in *Palace*
 
-*Palace* supports [GPU parallelization](guide/parallelism.md), but not all the
+*Palace* supports [GPU parallelization](../guide/parallelism.md), but not all the
 files in *Palace* are compiled with a GPU-compatible compiler (e.g., `nvcc`).
 The reason for this is that such compilers might not support all the features
 *Palace* needs (e.g., support for `constexpr std::sqrt`), and also because they
@@ -49,8 +49,8 @@ device is defined by the `TARGET_SOURCES_DEVICE` CMake variable.
 
 ## JSON Schema for configuration files
 
-A JSON format [configuration file](config/config.md), for example named `config.json`, can
-be validated against the provided Schema using:
+A JSON format [configuration file](../config/config.md), for example named
+`config.json`, can be validated against the provided Schema using:
 
 ```bash
 ./scripts/validate_config config.json
@@ -120,37 +120,6 @@ Disk IO                         // < Disk read/write time for loading the mesh f
 -----------------------
 Total                           // < Total simulation time
 ```
-
-## Testing
-
-We use [Catch2](https://github.com/catchorg/Catch2) to perform unit testing of the
-[libCEED](https://libceed.org/en/latest/) integration in *Palace* against the legacy MFEM
-assembly routines. The unit tests source code is located in the
-[`test/unit/`](https://github.com/awslabs/palace/blob/main/test/unit/) directory, and can be
-built from within the *Palace* build directory using `make unit-tests`, or from the
-superbuild as `make palace-tests`. The unit tests can be accelerated using MPI and/or
-OpenMP parallelism (when configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are
-only testing the local operator assembly on each process. The 2D and 3D sample meshes in
-[`test/unit/mesh/`](https://github.com/awslabs/palace/blob/main/test/unit/mesh/) come from
-the [MFEM repository](https://github.com/mfem/mfem/tree/master/data).
-
-The unit test application also includes a small number of benchmarks to compare performance
-between MFEM's legacy assembly backend, MFEM's partial assembly backend, and the specified
-libCEED backend (specified with the `--backend` option, use `-h`/`--help` to list all
-command line options for the `unit-tests` executable). These can be run using, for
-example:
-
-```bash
-./unit-tests "[Benchmark]" --benchmark-samples 10
-```
-
-The unit tests are run automatically as part of the project's continuous integration (CI)
-workflows. Also run as part of the CI are regression tests based on the provided example
-applications in the [`examples/`](https://github.com/awslabs/palace/blob/main/examples/)
-directory. These are executed based on the code in
-[`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/).
-See [`README`](https://github.com/awslabs/palace/tree/main/test/examples/) in the test
-folder for more information about how to run the reproducibility tests.
 
 ## Changelog
 

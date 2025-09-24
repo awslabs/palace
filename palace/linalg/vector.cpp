@@ -684,6 +684,8 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
   }
 }
 
+// We implement LocalSum using Hypre instead of using MFEM's Sum because it is
+// more efficient on GPUs. TODO: Verify this
 double LocalSum(const Vector &x)
 {
   static hypre::HypreVector X;

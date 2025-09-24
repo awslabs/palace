@@ -17,7 +17,7 @@ using json = nlohmann::json;
 using namespace Catch;
 namespace fs = std::filesystem;
 
-TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
+TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 {
   std::vector<Eigen::Vector3d> vertices{
       {-0.19942181818181828, -0.5838274545454543, 0},
@@ -140,7 +140,7 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
   CHECK(box.planar);
 }
 
-TEST_CASE("TetToHex", "[geodata]")
+TEST_CASE("TetToHex", "[geodata][Serial]")
 {
   // Pull from the mfem externals data folder.
   auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
@@ -296,7 +296,7 @@ TEST_CASE("TetToHex", "[geodata]")
 #endif
 }
 
-TEST_CASE("PeriodicGmsh", "[geodata]")
+TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
   auto torus_path = fs::path(MFEM_DATA_PATH) / "periodic-torus-sector.msh";
   std::ifstream fi(torus_path.string());
