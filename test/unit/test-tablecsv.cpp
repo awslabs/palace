@@ -237,7 +237,7 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv][Serial]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
+TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {

@@ -52,7 +52,7 @@ This defines a new `Catch2` test case. The key components are:
 
   - Test name (`Vector Sum - Basic`): Must be unique across the test suite
   - Tags: `[myvector]` (arbitrary, used for filtering) and `[Serial]` (special tag, more on this later)
-  - `Approx()`: Handles floating-point comparison tolerances
+  - `WithinRel()`: Handles floating-point comparison tolerances
 
 To compile our test, we need to add it to the list of sources in the `CMakeLists.txt` in `test/unit`:
 
