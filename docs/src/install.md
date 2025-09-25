@@ -51,6 +51,13 @@ about Singularity/Apptainer, see the
 [Quick Start](https://apptainer.org/docs/user/main/quick_start.html) guide in the
 Singularity/Apptainer documentation.
 
+Singularity builds can also be performed for NVIDIA and AMD GPUs by setting the relevant
+`PALACE_WITH_CUDA` and `PALACE_WITH_HIP` variables during the build process, for example:
+
+```
+singularity build --build-arg PALACE_WITH_CUDA=ON palace.sif <SOURCE_DIR>/singularity/singularity.def
+```
+
 ## Build from source
 
 A build from source requires the following prerequisites installed on your system:
