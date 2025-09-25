@@ -1479,6 +1479,126 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
   }
 }
+void FarFieldPostData::SetUp(json &postpro)
+{
+  auto farfield = postpro.find("FarField");
+  if (farfield == postpro.end())
+  {
+    return;
+  }
+
+  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
+              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
+              "configuration file!");
+
+  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+
+  // Generate NSample point uniformly on a sphere, ensuring that the poles are
+  // always included.
+
+  auto nsample_json = farfield->find("NSample");
+  int nsample = 0;
+  if (nsample_json != farfield->end())
+  {
+    nsample = nsample_json->get<int>();
+    if (nsample > 0)
+    {
+      // Generate exactly nsample points uniformly distributed on a sphere.
+      int n_theta = std::max(2, (int)std::sqrt(nsample));
+
+      // Calculate points per level, accounting for poles.
+      std::vector<int> points_per_level(n_theta, 0);
+      int remaining = nsample;
+
+      // Assign 1 point to each pole (if we have multiple theta levels)
+      if (n_theta > 1)
+      {
+        points_per_level[0] = 1;            // North pole
+        points_per_level[n_theta - 1] = 1;  // South pole
+        remaining -= 2;
+      }
+
+      // Distribute remaining points among middle levels.
+      int middle_levels = std::max(1, n_theta - 2);
+      for (int i = (n_theta > 1 ? 1 : 0); i < (n_theta > 1 ? n_theta - 1 : n_theta); ++i)
+      {
+        points_per_level[i] = remaining / middle_levels;
+        if (remaining % middle_levels > i - (n_theta > 1 ? 1 : 0))
+        {
+          points_per_level[i]++;
+        }
+      }
+
+      // Generate points.
+      for (int i = 0; i < n_theta; ++i)
+      {
+        double theta = std::acos(1.0 - 2.0 * i / (n_theta - 1.0));
+
+        if (points_per_level[i] == 1 && (i == 0 || i == n_theta - 1))
+        {
+          // Pole point.
+          thetaphis.emplace_back(theta, 0.0);
+        }
+        else
+        {
+          // Regular ring.
+          for (int j = 0; j < points_per_level[i]; ++j)
+          {
+            double phi = 2.0 * M_PI * j / points_per_level[i];
+            thetaphis.emplace_back(theta, phi);
+          }
+        }
+      }
+    }
+  }
+
+  auto thetaphis_json = farfield->find("ThetaPhis");
+  if (thetaphis_json != farfield->end())
+  {
+    MFEM_VERIFY(thetaphis_json->is_array(),
+                "\"ThetaPhis\" should specify an array in the configuration file!");
+
+    // JSON does not support the notion of pair, so we read the theta and phis as vectors
+    // of vectors, and then cast them to vectors of pairs.
+    //
+    // Convert to radians in the process.
+    auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
+    for (const auto &vec : vec_of_vec)
+    {
+      thetaphis.emplace_back(std::make_pair(vec[0] * M_PI / 180, vec[1] * M_PI / 180));
+    }
+  }
+
+  // Remove duplicate entries with numerical tolerance.
+  constexpr double tol = 1e-6;
+  std::sort(thetaphis.begin(), thetaphis.end());
+  auto it = std::unique(
+      thetaphis.begin(), thetaphis.end(), [tol](const auto &a, const auto &b)
+      { return std::abs(a.first - b.first) < tol && std::abs(a.second - b.second) < tol; });
+  thetaphis.erase(it, thetaphis.end());
+
+  if (thetaphis.empty())
+  {
+    MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
+  }
+
+  // Cleanup
+  farfield->erase("Attributes");
+  farfield->erase("NSample");
+  farfield->erase("ThetaPhis");
+  MFEM_VERIFY(farfield->empty(),
+              "Found an unsupported configuration file keyword under \"FarField\"!\n"
+                  << farfield->dump(2));
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "Attributes: " << attributes << '\n';
+    std::cout << "NSample: " << nsample << '\n';
+    std::cout << "ThetaPhis: " << thetaphis << '\n';
+  }
+}
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1488,6 +1608,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
+  farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1498,6 +1619,10 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+
+  attributes.insert(attributes.end(), farfield.attributes.begin(),
+                    farfield.attributes.end());
+
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
@@ -1505,6 +1630,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Cleanup
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
+  postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));
