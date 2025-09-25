@@ -53,4 +53,24 @@ int InParallel()
 #endif
 }
 
+int ConfigureOmp()
+{
+#if defined(MFEM_USE_OPENMP)
+  int nt;
+  const char *env = std::getenv("OMP_NUM_THREADS");
+  if (env)
+  {
+    std::sscanf(env, "%d", &nt);
+  }
+  else
+  {
+    nt = 1;
+  }
+  utils::SetNumThreads(nt);
+  return nt;
+#else
+  return 0;
+#endif
+}
+
 }  // namespace palace::utils

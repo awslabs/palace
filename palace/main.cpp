@@ -18,6 +18,7 @@
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/device.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -48,50 +49,6 @@ static const char *GetPalaceCeedJitSourceDir()
   static const char *path = "";
 #endif
   return path;
-}
-
-static int ConfigureOmp()
-{
-#if defined(MFEM_USE_OPENMP)
-  int nt;
-  const char *env = std::getenv("OMP_NUM_THREADS");
-  if (env)
-  {
-    std::sscanf(env, "%d", &nt);
-  }
-  else
-  {
-    nt = 1;
-  }
-  utils::SetNumThreads(nt);
-  return nt;
-#else
-  return 0;
-#endif
-}
-
-static int GetDeviceCount()
-{
-#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  return mfem::Device::GetDeviceCount();
-#else
-  return 0;
-#endif
-}
-
-static int GetDeviceId(MPI_Comm comm, int ngpu)
-{
-  // Assign devices round-robin over MPI ranks if GPU support is enabled.
-#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  MPI_Comm node_comm;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      &node_comm);
-  int node_size = Mpi::Rank(node_comm);
-  MPI_Comm_free(&node_comm);
-  return node_size % ngpu;
-#else
-  return 0;
-#endif
 }
 
 static std::string ConfigureDevice(Device device)
@@ -269,8 +226,9 @@ int main(int argc, char *argv[])
 
   BlockTimer bt1(Timer::INIT);
   // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
-  mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
+  int omp_threads = utils::ConfigureOmp(), ngpu = utils::GetDeviceCount();
+  mfem::Device device(ConfigureDevice(iodata.solver.device),
+                      utils::GetDeviceId(world_comm, ngpu));
   ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
   device.SetGPUAwareMPI(true);

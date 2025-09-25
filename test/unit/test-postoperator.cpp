@@ -134,7 +134,7 @@ auto RandomMeasurement(int ndomain = 5)
   return cache;
 }
 
-TEST_CASE("PostOperator", "[idempotent]")
+TEST_CASE("PostOperator", "[idempotent][Serial]")
 {
 
   using namespace Catch;

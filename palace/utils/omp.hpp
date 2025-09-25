@@ -31,6 +31,9 @@ int GetThreadNum();
 // Return whether or not the current scope is inside a parallel OpenMP region.
 int InParallel();
 
+// Set and return the number of OpenMP threads depending on OMP_NUM_THREADS.
+int ConfigureOmp();
+
 }  // namespace palace::utils
 
 #endif  // PALACE_UTILS_OMP_HPP

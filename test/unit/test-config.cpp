@@ -15,7 +15,7 @@
 using json = nlohmann::json;
 using namespace palace;
 
-TEST_CASE("Config Boundary Ports", "[config]")
+TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
@@ -124,7 +124,7 @@ TEST_CASE("Config Boundary Ports", "[config]")
   }
 }
 
-TEST_CASE("Config Driven Solver", "[config]")
+TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
