@@ -26,6 +26,9 @@ env:
 
 jobs:
   build-and-test-spack:
+    needs: path-filter
+    if: ${{ needs.path-filter.outputs.singularity_only != 'true'
+      && needs.path-filter.outputs.docs_only != 'true' }}
     strategy:
       fail-fast: false # don't have one build stop others from finishing
       matrix:

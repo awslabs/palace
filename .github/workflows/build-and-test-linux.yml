@@ -17,6 +17,10 @@ concurrency:
 
 jobs:
   build-and-test-linux:
+    needs: path-filter
+    if: ${{ needs.path-filter.outputs.spack_only != 'true'
+      && needs.path-filter.outputs.singularity_only != 'true'
+      && needs.path-filter.outputs.docs_only != 'true' }}
     strategy:
       fail-fast: false
       matrix:
