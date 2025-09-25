@@ -14,8 +14,6 @@ namespace palace
 
 template <typename VecType>
 class DivFreeSolver;
-class SpaceOperator;
-class Interpolation;
 
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or
