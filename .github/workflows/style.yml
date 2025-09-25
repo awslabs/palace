@@ -8,6 +8,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,6 +43,55 @@ jobs:
             echo 'Commit is correctly formatted'
             exit 0
           fi
+
+  cpp-code-style:
+    name: Formatting Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+
+    - name: Run clang-format with suggestions
+      uses: jidicula/clang-format-action@v4.15.0
+      with:
+        clang-format-version: '20'
+        check-path: '.'
+        fallback-style: 'none'
+        exclude-regex: ''  # Add exclusion patterns if needed
+        report-only: true  # This ensures it doesn't fail the check but reports issues
+
+    - name: Suggest changes
+      if: failure()
+      run: |
+        git diff > clang-format-changes.patch
+        echo "#### Clang-format suggested changes" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`diff" >> $GITHUB_STEP_SUMMARY
+        cat clang-format-changes.patch >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Comment PR
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const diff = fs.readFileSync('clang-format-changes.patch', 'utf8');
+          const body = '### Clang-format suggestions:\n```diff\n' + diff + '\n```';
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+  julia-code-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: julia-actions/julia-format@v4
+        with:
+          version: '1'
 
   check-config:
     runs-on: ubuntu-latest

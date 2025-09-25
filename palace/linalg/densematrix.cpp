@@ -34,7 +34,7 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
                       << M(i, j) << " != " << M(j, i) << ")!");
     }
   }
-  mfem::DenseMatrix Mout(N, N);
+  mfem::DenseMatrix Mout(N,N);
   Mout = 0.0;
   if (N == 2)
   {

@@ -96,7 +96,7 @@ function generate_cpw_wave_mesh(;
 
     # Chip pattern
     dy = 0.0
-    g1 = kernel.addRectangle(0.0, dy, 0.0, length_μm, ground_width_μm)
+    g1 = kernel.addRectangle(0.0,dy,0.0,length_μm,ground_width_μm)
     dy += ground_width_μm
     n1 = kernel.addRectangle(0.0, dy, 0.0, length_μm, gap_width_μm)
     dy += gap_width_μm
