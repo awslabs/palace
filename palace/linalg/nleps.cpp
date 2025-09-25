@@ -853,9 +853,6 @@ NewtonInterpolationOperator::GetInterpolationOperator(int order) const
   MFEM_VERIFY(order >= 0 && order < num_points,
               "Order must be greater than or equal to 0 and smaller than the number of "
               "interpolation points!");
-  Mpi::Print("coeffs: {}+{}i, {}+{}i, {}+{}i\n", coeffs[order][0].real(),
-             coeffs[order][0].imag(), coeffs[order][1].real(), coeffs[order][1].imag(),
-             coeffs[order][2].real(), coeffs[order][2].imag());
   return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
                              {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
 }
