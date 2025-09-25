@@ -21,6 +21,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
@@ -68,7 +69,9 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_TEST_MESH_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/mesh\""
 )
 set_property(
-  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
+  SOURCE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
   APPEND PROPERTY COMPILE_DEFINITIONS "MFEM_DATA_PATH=\"${MFEM_DATA_PATH}\""
 )
 
