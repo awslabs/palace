@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #include <complex>
 #include <fmt/format.h>
 #include <catch2/catch_approx.hpp>

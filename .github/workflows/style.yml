@@ -74,3 +74,12 @@ jobs:
             grep -r "TEST_CASE(" test/unit | grep -v "\[Serial\]" | grep -v "\[Parallel\]" | grep -v "\[GPU\]"
           exit 1
           fi
+
+  check-license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: viperproject/check-license-header@v2
+        with:
+          config: .github/license-check/config.json
+          strict: false
