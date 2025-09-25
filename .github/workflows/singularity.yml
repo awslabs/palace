@@ -9,8 +9,6 @@ on:
       - main
     tags: '*'
   pull_request:
-    paths-ignore:
-      - '**.md'
   workflow_dispatch:
 
 concurrency:
