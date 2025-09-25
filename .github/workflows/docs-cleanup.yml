@@ -1,7 +1,7 @@
 name: Documentation Preview Cleanup
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   pull_request:
