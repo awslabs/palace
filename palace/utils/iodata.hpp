@@ -42,7 +42,7 @@ private:
   void CheckConfiguration();
 
 public:
-  IoData(const Units &units) : units(units) {}
+  IoData(const Units &units) : units(units), init(false) {}
 
   // Parse command line arguments and override options defaults.
   IoData(const char *filename, bool print);

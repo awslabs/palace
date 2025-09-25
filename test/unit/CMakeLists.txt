@@ -19,6 +19,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-farfield.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
@@ -66,6 +67,7 @@ set_property(
 # Add unit test mesh file path definition
 set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+         ${CMAKE_CURRENT_SOURCE_DIR}/test-farfield.cpp
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_TEST_MESH_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/mesh\""
 )
 set_property(

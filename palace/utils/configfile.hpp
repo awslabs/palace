@@ -603,6 +603,21 @@ public:
   void SetUp(json &postpro);
 };
 
+struct FarFieldPostData
+{
+public:
+  // List of boundary attributes to use for the surface integral.
+  std::vector<int> attributes = {};
+
+  // List of (theta, phi) where the wave-zone fields should be evaluated.
+  // Units are radians.
+  std::vector<std::pair<double, double>> thetaphis = {};
+
+  void SetUp(json &postpro);
+
+  bool empty() const { return thetaphis.empty(); };
+};
+
 struct BoundaryPostData
 {
 public:
@@ -612,6 +627,7 @@ public:
   // Boundary postprocessing objects.
   SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
+  FarFieldPostData farfield = {};
 
   void SetUp(json &boundaries);
 };
