@@ -41,7 +41,7 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace
+              - palace # we install this without a cache each time
             view: false
             config:
               install_tree:
@@ -77,9 +77,15 @@ jobs:
       - name: Concretize
         run: spack -e . concretize -f
 
-        # Relies on cache-hit
+        # Relies on cache-hit(s)
+      - name: Install Dependencies
+        run: spack -e . install --only-concrete --show-log-on-error --only dependencies
+      
+        # Explicitly not using cache to get latest develop
       - name: Install Palace
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error
+        run: spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
+        # If you want to use the branch-local source instead (should we always do this?)
+        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Build and deploy
         env:
@@ -94,3 +100,11 @@ jobs:
           name: docs
           path: docs/build/
           retention-days: 7
+        
+      # Push built binaries, even if the build fails
+      # NOTE: This might fail as external fork PRs can't push to GHCR.
+      - name: Push to GHCR cache
+        if: |
+          !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
