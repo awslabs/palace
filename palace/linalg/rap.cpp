@@ -964,7 +964,6 @@ template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[3],
                                                           const Operator *(&&)[3], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[4],
                                                           const Operator *(&&)[4], bool);
-
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[2], const ComplexOperator *(&&)[2], bool);
 template std::unique_ptr<ComplexParOperator>

@@ -1,0 +1,143 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/lumped_eigen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_lumped_0.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement":
+    {
+      "UniformLevels": 0
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Air
+        "Permeability": 1.0,
+          "Permittivity": 1.0,
+          "Conductivity": 1.0e-6,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // Sapphire
+        "Permeability": [0.99999975, 0.99999975, 0.99999979],
+        "Permittivity": [9.3, 9.3, 11.5],
+        "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
+        "MaterialAxes": [[0.8, 0.6, 0.0], [-0.6, 0.8, 0.0], [0.0, 0.0, 1.0]]
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2]
+        }
+      ],
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [13]  // Metal trace
+    },
+    "Absorbing":
+    {
+      "Attributes": [4],
+      "Order": 2
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 56.02,  // Ω, 2-element uniform
+        "Elements":
+        [
+          {
+            "Attributes": [5],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [9],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 2,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [6],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [10],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 3,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [7],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [11],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 4,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [8],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [12],
+            "Direction": "-Y"
+          }
+        ]
+      }
+    ],
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 1,
+      "Tol": 1e-6,
+      "Target": 16.0,
+      "Save": 1
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 1000,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

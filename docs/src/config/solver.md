@@ -107,10 +107,8 @@ types.
     "MaxSize": <int>,
     "N": <int>,
     "Save": <int>,
-    "Type": <int>,
-    "ContourTargetUpper": <float>,
-    "ContourAspectRatio": <float>,
-    "ContourNPoints": <int>
+    "Type": <string>,
+    "NonlinearType" : <string>,
 }
 ```
 
@@ -141,6 +139,13 @@ number of eigenmodes of the problem. The available options are:
   - `"Default"` :  Use the default eigensolver. Currently, this is the Krylov-Schur
     eigenvalue solver from `"SLEPc"`.
 
+`"NonlinearType" ["Hybrid"]` : Specifies the nonlinear eigenvalue solver to be used for nonlinear problems (e.g. frequency-dependent boundary conditions). The available options are:
+
+  - `"Hybrid"` : Hybrid algorithm where a (quadratic) polynomial approximation of the nonlinear problem is first solved and the eigenmodes are then refined with a quasi-Newton nonlinear eigensolver.
+  - `"SLP"` : SLEPc's Successive Linear Problem nonlinear eigensolver.
+
+`"TargetUpper" [3 * Target]` : Upper end of the frequency target range in which to search for eigenvalues, GHz. Only used in nonlinear problems. Using an inaccurate upper bound (significantly smaller or greater than the largest eigenvalue sought) can negatively affect the convergence of the nonlinear eigensolver.
+
 ### Advanced eigenmode solver options
 
   - `"PEPLinear" [true]`
@@ -148,6 +153,11 @@ number of eigenmodes of the problem. The available options are:
   - `"StartVector" [true]`
   - `"StartVectorConstant" [false]`
   - `"MassOrthogonal" [false]`
+  - `"RefineNonlinear" [true]`
+  - `"LinearTol" [1e-3]`
+  - `"PreconditionerLag" [10]`
+  - `"PreconditionerLagTol" [1e-4]`
+  - `"MaxRestart" [2]`
 
 ## `solver["Driven"]`
 

@@ -593,8 +593,7 @@ void SpaceOperator::AssemblePreconditioner(
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fpr(mat_op.MaxCeedAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddDampingCoefficients(a1.imag(), fr);
@@ -603,11 +602,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0.real(), fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
                                assemble_q_data);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
@@ -621,8 +620,7 @@ void SpaceOperator::AssemblePreconditioner(
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fpr(mat_op.MaxCeedAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0, dfr, fr);
   AddStiffnessBdrCoefficients(a0, fbr);
   AddDampingCoefficients(a1, fr);
@@ -631,11 +629,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0, fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
                                assemble_q_data);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);

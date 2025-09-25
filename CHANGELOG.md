@@ -20,6 +20,11 @@ The format of this changelog is based on
     into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
     and a single global Floquet wave vector can be specified in
     `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`.
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
+    conditions. Two nonlinear eigensolvers are now available and can be specified by setting the
+    `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"` (default) or `"SLP"`.
+    The nonlinear eigensolver will automatically be used if frequency-dependent boundary
+    conditions are used.
 
 ## [0.14.0] - 2025-08-20
 

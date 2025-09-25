@@ -74,6 +74,10 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "D
                                                 {EigenSolverBackend::SLEPC, "SLEPc"},
                                                 {EigenSolverBackend::ARPACK, "ARPACK"}})
 
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
+                                                  {NonlinearEigenSolver::SLP, "SLP"}})
+
 // Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                          {SurfaceFlux::MAGNETIC, "Magnetic"},
@@ -1932,6 +1936,24 @@ void EigenSolverData::SetUp(json &solver)
   init_v0 = eigenmode->value("StartVector", init_v0);
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
+  nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
+  refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
+  linear_tol = eigenmode->value("LinearTol", linear_tol);
+  target_upper = eigenmode->value("TargetUpper", target_upper);
+  preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
+  preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
+  max_restart = eigenmode->value("MaxRestart", max_restart);
+
+  target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
+  MFEM_VERIFY(target > 0.0, "config[\"Eigenmode\"][\"Target\"] must be strictly positive!");
+  MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
+                                     "greater than config[\"Eigenmode\"][\"Target\"]!");
+  MFEM_VERIFY(preconditioner_lag >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
+  MFEM_VERIFY(preconditioner_lag_tol >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLagTol\"] must be non-negative!");
+  MFEM_VERIFY(max_restart >= 0,
+              "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
 
   MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
 
@@ -1948,6 +1970,13 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("StartVector");
   eigenmode->erase("StartVectorConstant");
   eigenmode->erase("MassOrthogonal");
+  eigenmode->erase("NonlinearType");
+  eigenmode->erase("RefineNonlinear");
+  eigenmode->erase("LinearTol");
+  eigenmode->erase("TargetUpper");
+  eigenmode->erase("PreconditionerLag");
+  eigenmode->erase("PreconditionerLagTol");
+  eigenmode->erase("MaxRestart");
   MFEM_VERIFY(eigenmode->empty(),
               "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
                   << eigenmode->dump(2));
@@ -1967,6 +1996,13 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "StartVector: " << init_v0 << '\n';
     std::cout << "StartVectorConstant: " << init_v0_const << '\n';
     std::cout << "MassOrthogonal: " << mass_orthog << '\n';
+    std::cout << "NonlinearType: " << nonlinear_type << '\n';
+    std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
+    std::cout << "LinearTol: " << linear_tol << '\n';
+    std::cout << "TargetUpper: " << target_upper << '\n';
+    std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
+    std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
+    std::cout << "MaxRestart: " << max_restart << '\n';
   }
 }
 
