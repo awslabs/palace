@@ -20,7 +20,7 @@ using namespace std::complex_literals;
 using namespace Catch;
 namespace fs = std::filesystem;
 
-TEST_CASE("BuildParSumOperator", "[rap]")
+TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
 {
   // Verify that BuildParSumOperator can assemble collections of ParOperators.
   Units units(1.0, 1.0);

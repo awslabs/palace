@@ -336,4 +336,4 @@ TEST_CASE("Default IOData", "[iodata][Serial]")
   REQUIRE(mat_op.HasLossTangent() == false);
 }
 
-}  // namespace palaces construction of iodata)
+}  // namespace palace
