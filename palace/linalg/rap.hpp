@@ -137,7 +137,6 @@ private:
 
   // Diagonal policy for constrained true dofs.
   Operator::DiagonalPolicy diag_policy = Operator::DiagonalPolicy::DIAG_ZERO;
-  ;
 
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
