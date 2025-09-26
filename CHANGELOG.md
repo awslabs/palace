@@ -25,6 +25,8 @@ The format of this changelog is based on
     `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"` (default) or `"SLP"`.
     The nonlinear eigensolver will automatically be used if frequency-dependent boundary
     conditions are used.
+  - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
+    use in a non-amr simulation.
 
 ## [0.14.0] - 2025-08-20
 

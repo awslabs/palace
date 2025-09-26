@@ -20,7 +20,11 @@
 
 with
 
-`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended.
+`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended. If the provided
+mesh is nonconformal, it is assumed that it comes from a previous *Palace* solve using AMR,
+and all mesh preprocessing checks and modifications (for example
+[`model["Refinement"]["CrackInternalBoundaryElements"]`](#model%5B%22Refinement%22%5D)), are
+skipped .
 
 `"L0" [1.0e-6]` :  Unit, relative to m, for mesh vertex coordinates. For example, a value
 of `1.0e-6` implies the mesh coordinates are in μm.
