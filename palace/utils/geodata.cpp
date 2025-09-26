@@ -109,7 +109,22 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     }
     return false;
   }();
-  const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+
+  const bool use_mesh_partitioner = [&]()
+  {
+    // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
+    // might be reused for nonadaptive simulations.
+    BlockTimer bt(Timer::IO);
+    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+    if (Mpi::Root(comm))
+    {
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      use_mesh_partitioner &= smesh->Conforming();  // The initial mesh must be conformal
+    }
+    Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
+    return use_mesh_partitioner;
+  }();
+
   MPI_Comm node_comm;
   if (!use_mesh_partitioner)
   {
@@ -117,12 +132,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
                         &node_comm);
   }
 
-  // Only one process per node reads the serial mesh.
   {
     BlockTimer bt1(Timer::IO);
-    if ((use_mesh_partitioner && Mpi::Root(comm)) ||
-        (!use_mesh_partitioner && Mpi::Root(node_comm)))
+    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
+      // Only one process per node reads the serial mesh, if not using mesh partitioner.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
@@ -145,6 +159,9 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
                     refinement.nonconformal,
                 "If there are pyramid elements, AMR must be nonconformal!");
+    MFEM_VERIFY(
+        smesh->Conforming() || !use_amr || refinement.nonconformal,
+        "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
 
     // Clean up unused domain elements from the mesh.
     if (iodata.model.clean_unused_elements)
@@ -189,19 +206,28 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
     // Check the final mesh, throwing warnings if there are exterior boundaries with no
     // associated boundary condition.
-    auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-
-    // Add new boundary elements for material interfaces if not present (with new unique
-    // boundary attributes). Also duplicate internal boundary elements associated with
-    // cracks if desired.
-    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    if (smesh->Conforming())
     {
-      // Split all internal (non periodic) boundary elements for boundary attributes where
-      // BC are applied (not just postprocessing).
-      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+      auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
+
+      // Add new boundary elements for material interfaces if not present (with new unique
+      // boundary attributes). Also duplicate internal boundary elements associated with
+      // cracks if desired.
+      if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
       {
-        // May require multiple calls due to early exit/retry approach.
+        // Split all internal (non periodic) boundary elements for boundary attributes where
+        // BC are applied (not just postprocessing).
+        while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+        {
+          // May require multiple calls due to early exit/retry approach.
+        }
       }
+    }
+    else
+    {
+      Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
+                   "Skipping mesh modification preprocessing steps!\n\n",
+                   iodata.model.mesh);
     }
 
     // Finally, finalize the serial mesh. Mark tetrahedral meshes for refinement. There
