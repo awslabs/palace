@@ -3,15 +3,21 @@
 <!--- SPDX-License-Identifier: Apache-2.0 --->
 ```
 
+```@setup include_example
+function include_example_file(example_path, filename, max_lines = 4)
+    content = read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String)
+    lines = split(content, '\n')
+    println(join(lines[1:min(max_lines, length(lines))], '\n'))
+end
+```
+
 # Dipole Antenna and Radiation Fields
 
 !!! note
     
     The files for this example can be found in the
     [`examples/antenna/`](https://github.com/awslabs/palace/blob/main/examples/antenna)
-    directory of the *Palace* source code. The mesh was generated with
-    `outer_boundary_radius=2.5wavelength` instead of the default value of
-    `outer_boundary_radius=1.5wavelength`.
+    directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 86400.
 
 In this example, we study a half-wave dipole antenna and analyze its radiation
 characteristics. The dipole antenna is one of the most fundamental antenna
@@ -31,10 +37,9 @@ E(\theta) = \left|\frac{\cos\left(\frac{\pi}{2}\cos\theta\right)}{\sin\theta}\ri
 while the pattern is isotropic on the H-plane (xy-plane).
 
 We will model a dipole antenna with arm length ``L`` and finite radius ``a``,
-solve a driven problem at the resonant frequency ``\lambda = 4L``, and extract
-the radiation pattern ``P(\theta)`` both at finite observation distances
-(processing the ParaView output) and at infinite distance (with the [far-field
-extraction feature](../guide/farfield.md#Extracting-Fields-in-the-Radiation-Zone)).
+solve a driven problem at the resonant frequency ``\lambda = 4L`` and extract
+the radiation pattern ``P(\theta)`` with *Palace*'s [far-field extraction
+capabilities](../features/farfield.md#Extracting-Fields-in-the-Radiation-Zone)).
 
 ## Problem Setup
 
@@ -49,8 +54,8 @@ that connects the two arms of the antenna. This strip functions as a
 lumped port to excite the system.
 
 The surrounding medium is free space. In reality, electromagnetic waves would
-propagate freely to infinity. We model this by enclosing the antenna in a
-sphere of radius ``r_{max} = 2.5\lambda = 10\text{ m}`` centered at the origin and
+propagate freely to infinity. We model this by enclosing the antenna in a sphere
+of radius ``r_{max} = 1.5\lambda = 6\text{ m}`` centered at the origin and
 applying appropriate boundary conditions to simulate the infinite domain.
 
 The mesh is generated using [`Gmsh`](https://gmsh.info) and consists of
@@ -93,7 +98,7 @@ lies entirely in the xz-plane, and by setting `"Direction": "+Z"` and
 across the gap.
 
 We use the [far-field extraction
-feature](../guide/farfield.md#Extracting-Fields-in-the-Radiation-Zone) in
+feature](../features/farfield.md#Extracting-Fields-in-the-Radiation-Zone) in
 *Palace* to extract electric fields at infinity. To do so, we add a
 `"PostProcessing"` section under `"Boundaries"` with the same `Attributes` as
 the surface with `"Absorbing"` boundary conditions and we choose a positive
@@ -102,17 +107,17 @@ uniformly discretized with resolution of one degree on the equator (to preserve
 the uniform distribution, the resolution changes as one moves towards the
 poles).
 
-Finally, we enable `"SaveStep"` to ensure that field data is saved for ParaView
-output, which is necessary for extracting far-field radiation patterns during
-post-processing.
-
 !!! tip "ComplexCoarseSolve solver optimization"
     
     This simulation benefits from the `"ComplexCoarseSolve"` option. This
-    setting adds a complex component to the initial guess for the coarse solve step,
-    which would otherwise be purely real. For this particular problem, enabling this option
-    accelerates convergence by several factors. The trade-off is significantly increased
-    memory requirements, so, depending on the computational resources available, it may not be practical.
+    setting uses a block preconditioner of the form `[Arr Ari; Air Aii]` rather than
+    the default `[(Arr+Aii) 0; 0 (Arr+Aii)]`, where `A` is the system matrix with
+    real (`Arr`) and imaginary (`Aii`) diagonal blocks, and real-imaginary coupling
+    blocks (`Ari`, `Air`). While the resulting system is four times larger, it
+    preserves the coupling between real and imaginary parts which can be significant
+    for problems with strong imaginary components. For this particular problem, this
+    approach accelerates convergence by several factors, though at the cost of increased
+    memory usage.
 
 ## Analysis and Results
 
@@ -122,40 +127,22 @@ folder, which contains the electromagnetic fields that we will use to extract
 radiation patterns.
 
 First, let us look at the far-field output. The `postpro` folder contains a
-file, `farfield-E-7.49000000e-02.csv`, with the far-field electric fields for
-the frequency `7.49000000e-02` GHz. The
-first few lines of this file are:
+file, `farfield-rE.csv`, with the far-field electric fields for the all the
+target frequencies (in this case, only `7.49000000e-02` GHz). The first few
+lines of this file are:
 
-```csv
-      theta (deg.),                 phi (deg.),              r*Re{E_x} (V),              r*Im{E_x} (V),              r*Re{E_y} (V),              r*Im{E_y} (V),              r*Re{E_z} (V),              r*Im{E_z} (V)
-0.000000000000e+00,         0.000000000000e+00,        -1.398540472084e-04,        -1.080138203515e-03,        -7.561844979481e-04,        -5.471814765239e-04,        +0.000000000000e+00,        +0.000000000000e+00
-0.000000000000e+00,         1.406250000000e+00,        -1.398540472084e-04,        -1.080138203515e-03,        -7.561844979481e-04,        -5.471814765239e-04,        +0.000000000000e+00,        +0.000000000000e+00
-...
+```@example include_example
+include_example_file("antenna", "farfield-rE.csv") #hide
 ```
 
-The `plot_radiation_pattern.py` script extracts the E-plane (xz-plane) and
-H-plane patterns from this file and produces polar plots for the relative
-radiation pattern.
-
-Let us directly compare the result with extraction at finite radius. To do so,
-we read the ParaView files and sample the electric field onto spheres of
-predefined radius, producing CSV files with the components of electric field
-that follow the same format as `farfield-E-<freq>.csv`.
-
-The `extract_fields.py` script samples the computed fields on spheres of
-predefined radius. This script uses ParaView's Python console
-([`pvpython`](https://docs.paraview.org/en/latest/Tutorials/ClassroomTutorials/pythonAndBatchPvpythonAndPvbatch.html))
-and outputs the sampled field data to CSV files.
-
-To explore the transition between near-field and far-field, we sample at
-different radii: 40%, 60%, and 80% of ``r_{max}``. Once the CSVs are produced,
-we can call the `plot_radiation_pattern.py` with all the CSV files as in
+The `plot_farfield.jl` Julia script processes this file and produces plots polar
+for the E- and H- planes (xz/xy-planes) and in the 3D.
 
 ```bash
-plot_radiation_pattern.py farfield_r*.csv postpro/farfield-E*.csv
+julia --project plot_radiation_pattern.jl postpro/farfield-rE.csv
 ```
 
-The results are shown below.
+The results for the polar plot are shown below.
 
 ```@raw html
 <br/><p align="center">
@@ -164,36 +151,44 @@ The results are shown below.
 ```
 
 On the H-plane, we see the expected isotropic emission pattern for any of the
-extracted radii. On the E-plane, the results show that as we sample larger
-radii, we start seeing convergence towards the characteristic figure-eight
-pattern of a dipole antenna, with maximum radiation perpendicular to the antenna
-axis and nulls approximately along the antenna axis.
-
-The `plot_radiation_pattern.py` can be extended to visualize the radiation
-fields in 3D with Matplotlib or similar packages. Alternatively, the CSV file
-can be converted to a VTK file and visualized with
-[ParaView](https://www.paraview.org/). `farfield_csv2pvd.py` implements this
-feature. For this example, the resulting 3D radiation pattern is shown below.
-
-```@raw html
-<br/><p align="center">
-  <img src="../../assets/examples/antenna-4.png" width="100%" />
-</p><br/>
-```
+extracted radii. On the E-plane, we see agreement with the characteristic
+figure-eight pattern of a dipole antenna, with maximum radiation perpendicular
+to the antenna axis and nulls approximately along the antenna axis.
 
 !!! note "Do your results look different?"
     
     If you are trying to reproduce this plot, but find that your plots are not as nice
-    as the one above, you might have a missed a note at the top of this page. The example
-    mesh included in *Palace* extends only to ``r_{max} = 1.5\lambda}`` (to reduce the
-    computational resources required to run this example as a regression test). Re-generate
-    the mesh with
+    as the one above, you might have a missed a note at the top of this page: the example
+    was run with 64800 sampling points instead of the 360 that the JSON file specifies.
+    Change `NSample` to 64800 and run your simulation again.
+
+We can see the same pattern rendered in 3D as well
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-4.png" width="80%" />
+</p><br/>
+```
+
+This plot shows the 3D relative antenna pattern representing the normalized
+strength of the electric field as function of the distance from the origin. Once
+again, we see the expected donut shape, with maximal electric field strength on
+the equator, and minimum along the z axis.
+
+!!! note "Running the Julia script"
+    
+    The `plot_radiation_pattern.jl` requires a number of Julia packages (including
+    the plotting library). The simplest way to ensure that you have all the required
+    packages is to use the `Project.toml` included with the examples. To install this
+    enviroment, navigate to the `examples` folder and run
     
     ```bash
-    julia -e 'include("mesh/mesh.jl"); generate_antenna_mesh(; filename="antenna.msh", outer_boundary_radius=10)'
+    julia --project -e 'using Pkg; Pkg.instantiate();'
     ```
     
-    from the `antenna` folder.
+    All the subsequent times, just make sure to start Julia with `--project` from the `examples`
+    
+    folder or one of its subfolders.
 
 ## References
 

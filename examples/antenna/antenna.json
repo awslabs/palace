@@ -33,7 +33,7 @@
         "Postprocessing": {
             "FarField": {
                 "Attributes": [4],
-                "NSample": 64800,
+                "NSample": 100,
                 "ThetaPhis": [[35, 20]]
             }
         },

@@ -18,7 +18,7 @@
 using Gmsh: gmsh
 
 radius = 1.5
-mesh_size = 0.25  # Controls mesh resolution (smaller = finer mesh)
+mesh_size = 0.125  # Controls mesh resolution (smaller = finer mesh)
 filename = "two_hemispheres.msh"
 
 gmsh.initialize()

@@ -165,6 +165,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     return;
   }
+  BlockTimer bt0(Timer::IO_PARAVIEW);
   fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
   fs::path paraview_dir_b =
       post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
@@ -411,7 +412,7 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   {
     return;
   }
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::IO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -441,7 +442,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
     return;
   }
 
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::IO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
