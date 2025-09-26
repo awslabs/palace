@@ -98,6 +98,7 @@ fi
 TEST_DIRS=$(cat << EOF
 spheres
 rings
+antenna
 cylinder/cavity_pec
 cylinder/cavity_impedance
 cylinder/waveguide

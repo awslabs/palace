@@ -476,6 +476,45 @@ where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operator
 orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
 discretized by Nédélec and Raviart-Thomas elements, respectively.
 
+## Far-field extraction
+
+This feature is based upon Stratton-Chu's transformations in the limit for ``kr \gg 1`` (with ``k`` wave number and ``r`` observation distance). One can show
+that [6], in this limit,
+
+```math
+r \mathbf{E}_p(\mathbf{r}_0) = \frac{ik}{4\pi} \mathbf{r}_0 \times \int [\mathbf{n} \times \mathbf{E} - Z \mathbf{r}_0 \times (\mathbf{n} \times \mathbf{H})] \exp(ik\mathbf{r} \cdot \mathbf{r}_0) dS
+```
+
+where:
+
+  - ``E_p`` is the electric field at the observation point
+  - ``k`` is the wave number
+  - ``r₀`` is the unit vector from source to observation point, parameterized by ``(\theta, \phi)``
+  - ``n`` is the surface normal (to ``S``)
+  - ``E, H`` are the tangential fields on the surface
+  - ``Z`` is the impedance
+
+The integral is over the surface ``S``.
+
+Note, we obtain ``r \mathbf{E}_p`` because the electric field decays with
+``exp(ikr)/r``, so multiplying it by ``r`` ensures that the quantity is finite.
+Note also that the solution is defined up to a global phase factor.
+
+This equation relies on an analytic form for Green's function and is only valid
+in 3D and only for isotropic materials.
+
+From ``r \mathbf{E}_p``, one can obtain the magnetic field assuming that the
+waves are propagating in free space,
+
+```math
+r \mathbf{H}_p = \frac{r_0 \times r \mathbf{E}_p}{Z_0}\,,
+```
+
+with ``Z_0`` impedance of free space.
+
+With this, one can immediately compute the far-field relative radiation pattern
+as ``|r \mathbf{E}_p|``.
+
 ## References
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
@@ -488,3 +527,6 @@ frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
 waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).\
 [5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, _Comptes Rendus
 Mathematique_ 340 (2005) 697-702.
+[6] [COMSOL RF
+Manual](https://doc.comsol.com/6.2/doc/com.comsol.help.rf/RFModuleUsersGuide.pdf),
+Version 6.2, (2025) 88-90.

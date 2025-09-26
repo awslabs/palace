@@ -77,6 +77,16 @@ struct Measurement
     double quality_factor;        // 1 / (energy_participation * tan δ)
   };
 
+  struct FarFieldData
+  {
+    // Theta: polar angle (0 to pi radians).
+    // Phi: azimuthal angle (0 to 2pi radians).
+    std::vector<std::pair<double, double>> thetaphis;
+
+    // Components of the electric field.
+    std::vector<std::array<std::complex<double>, 3>> E_field;
+  };
+
   // Data for both lumped and wave port.
   struct PortPostData
   {
@@ -139,6 +149,7 @@ struct Measurement
 
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
+  FarFieldData farfield;
 
   // Dimensionalize and nondimensionalize a set of measurements
   static Measurement Dimensionalize(const Units &units,
@@ -257,6 +268,14 @@ protected:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
+  std::optional<TableWithCSVFile> farfield_E;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFarFieldE(const SurfacePostOperator &surf_post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Eigenmode
   std::optional<TableWithCSVFile> eig;

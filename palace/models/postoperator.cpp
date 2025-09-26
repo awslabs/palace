@@ -69,7 +69,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
+                 fem_op->GetNDSpace()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -164,6 +165,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     return;
   }
+  BlockTimer bt0(Timer::IO_PARAVIEW);
   fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
   fs::path paraview_dir_b =
       post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
@@ -410,7 +412,7 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   {
     return;
   }
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::IO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -440,7 +442,7 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
     return;
   }
 
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::IO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -823,6 +825,20 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   {
     measurement_cache.surface_flux_i.emplace_back(Measurement::FluxData{
         idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFarField() const
+{
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+
+    // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
+    measurement_cache.farfield.E_field =
+        surf_post_op.GetFarFieldrE(measurement_cache.farfield.thetaphis, E.get(), B.get(),
+                                   measurement_cache.freq.real());
   }
 }
 
