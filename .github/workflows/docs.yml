@@ -79,8 +79,8 @@ jobs:
 
         # Relies on cache-hit(s)
       - name: Install Dependencies
-        run: spack -e . install --only-concrete --show-log-on-error --only dependencies
-      
+        run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+
         # Explicitly not using cache to get latest develop
       - name: Install Palace
         run: spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
@@ -100,7 +100,7 @@ jobs:
           name: docs
           path: docs/build/
           retention-days: 7
-        
+
       # Push built binaries, even if the build fails
       # NOTE: This might fail as external fork PRs can't push to GHCR.
       - name: Push to GHCR cache
