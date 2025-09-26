@@ -40,7 +40,7 @@ TEST_CASE("Vector Sum - Basic", "[myvector][Serial]")
   Vector v(2);
   v(0) = 1.0;
   v(1) = 2.0;
-  
+
   double sum = linalg::Sum(Mpi::World(), v);
   REQUIRE_THAT(sum, Catch::Matchers::WithinRel(3.0));
 }
@@ -66,11 +66,11 @@ add_executable(unit-tests
 Then, build and run:
 
 ```bash
-# Build tests
+# Build tests in the build directory
 make palace-tests
 
 # Run this specific test
-test/unit/unit-tests [myvector]
+palace-build/test/unit/unit-tests "[myvector]"
 ```
 
 We should see that `All tests passed`.
