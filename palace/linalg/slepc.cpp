@@ -1582,7 +1582,7 @@ BV SlepcNEPSolverBase::GetBV() const
 
 ST SlepcNEPSolverBase::GetST() const
 {
-  ST st;
+  ST st = nullptr;
   // NEPGetST does not exist.
   return st;
 }

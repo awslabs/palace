@@ -41,7 +41,7 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace
+              - palace # we install this without a cache each time
             view: false
             config:
               install_tree:
@@ -68,18 +68,47 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-      - name: Configure Binary Mirror Keys
+      - name: Configure External Packages
+        run: |
+          # These cause build issues if built as externals
+          #   - python : often distributed python isn't feature complete / not all dependencies get detected
+          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
+          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
+          spack -e . external find --all \
+            --exclude openssl \
+            --exclude openssh \
+            --exclude python \
+            --exclude ncurses \
+            --exclude bzip2 \
+            --exclude xz \
+            --exclude curl
+
+      - name: Configure Compilers for Spack
+        run: spack -e . compiler find && spack -e . compiler list
+
+      - name: Configure Binary Mirror Keys for Spack
         run: spack -e . buildcache keys --install --trust
 
       - name: Bootstrap Spack
         run: spack  -e . bootstrap now
 
-      - name: Concretize
-        run: spack -e . concretize -f
+      - name: Concretize Spack
+        run: |
+          # Using `spack develop` in order to have an in-source build
+          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . concretize -f
 
-        # Relies on cache-hit
-      - name: Install Palace
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error
+        # Relies on cache-hit(s)
+      - name: Build Dependencies
+        run: |
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+
+        # Explicitly not using cache to get latest develop
+      - name: Build Palace
+        run: |
+          spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
+        # If you want to use the branch-local source instead (should we always do this?)
+        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Build and deploy
         env:
@@ -94,3 +123,11 @@ jobs:
           name: docs
           path: docs/build/
           retention-days: 7
+
+      # Push built binaries, even if the build fails
+      # NOTE: This might fail as external fork PRs can't push to GHCR.
+      - name: Push to GHCR cache
+        if: |
+          !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
