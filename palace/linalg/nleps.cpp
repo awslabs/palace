@@ -153,8 +153,9 @@ void NonLinearEigenvalueSolver::RescaleEigenvectors(int num_eig)
 QuasiNewtonSolver::QuasiNewtonSolver(MPI_Comm comm,
                                      std::unique_ptr<EigenvalueSolver> linear_eigensolver,
                                      int num_conv, int print, bool refine)
-  : linear_eigensolver_(std::move(linear_eigensolver)), nev_linear(num_conv),
-    refine_nonlinear(refine), NonLinearEigenvalueSolver(comm, print)
+  : NonLinearEigenvalueSolver(comm, print),
+    linear_eigensolver_(std::move(linear_eigensolver)), nev_linear(num_conv),
+    refine_nonlinear(refine)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
