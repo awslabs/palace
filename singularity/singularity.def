@@ -5,6 +5,12 @@ From: rockylinux:9
     This container contains Palace compiled with all dependencies.
     `singularity run palace.sif <ARGS...>` is equivalent to `palace <ARGS...>`.
 
+
+%arguments
+   PALACE_WITH_CUDA=OFF
+   PALACE_WITH_HIP=OFF
+   PALACE_WITH_GPU_AWARE_MPI=OFF
+
 %labels
     org.opencontainers.image.title Palace
     org.opencontainers.image.source https://github.com/awslabs/palace
@@ -38,6 +44,23 @@ From: rockylinux:9
     dnf groupinstall -y "Development Tools"
     dnf install -y curl-minimal gcc-gfortran git libunwind-devel openblas-devel \
                    pkg-config python3 wget zlib
+    if [[ "{{ PALACE_WITH_CUDA }}" == "ON" ]]; then
+        # From https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=Rocky&target_version=9&target_type=rpm_network
+        dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+        dnf clean all
+        dnf -y install cuda-toolkit-13-0
+    elif [[ "{{ PALACE_WITH_HIP }}" == "ON" ]]; then
+        # From https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html
+        dnf install https://repo.radeon.com/amdgpu-install/7.0.1/el/9.6/amdgpu-install-7.0.1.70001-1.el9.noarch.rpm
+        dnf clean all
+        wget https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+        rpm -ivh epel-release-latest-9.noarch.rpm
+        dnf install dnf-plugin-config-manager
+        crb enable
+        dnf install python3-setuptools python3-wheel
+        usermod -a -G render,video $LOGNAME # Add the current user to the render and video groups
+        dnf install rocm
+    fi
 
     # Install CMake (STRUMPACK requires >= 3.21)
     CMAKE_VERSION=3.31.0
@@ -83,8 +106,9 @@ From: rockylinux:9
         -DBUILD_SHARED_LIBS:BOOL=ON \
         -DPALACE_WITH_64BIT_INT:BOOL=OFF \
         -DPALACE_WITH_OPENMP:BOOL=ON \
-        -DPALACE_WITH_CUDA:BOOL=OFF \
-        -DPALACE_WITH_HIP:BOOL=OFF \
+        -DPALACE_WITH_CUDA:BOOL="{{ PALACE_WITH_CUDA }}" \
+        -DPALACE_WITH_HIP:BOOL="{{ PALACE_WITH_HIP }}" \
+        -DPALACE_WITH_GPU_AWARE_MPI:BOOL="{{ PALACE_WITH_GPU_AWARE_MPI }}" \
         -DPALACE_WITH_SUPERLU:BOOL=ON \
         -DPALACE_WITH_STRUMPACK:BOOL=ON \
         -DPALACE_WITH_MUMPS:BOOL=ON \
