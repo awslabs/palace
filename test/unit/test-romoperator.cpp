@@ -11,7 +11,7 @@
 
 using namespace palace;
 
-TEST_CASE("MinimalRationalInterpolation", "[romoperator]")
+TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
 
