@@ -12,7 +12,6 @@
 
 namespace palace
 {
-using namespace Catch;
 
 TEST_CASE("Vector Sum - Real", "[vector][Serial][Parallel][GPU]")
 {
