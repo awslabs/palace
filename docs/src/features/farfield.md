@@ -43,9 +43,9 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
 A typical setup consists of starting from the system under consideration and
 enclosing the system inside an outer boundary (typically a sphere or a box), if
 it is not already. Then, we set `"Absorbing" ` boundary conditions on this
-surface and choose it and as the surface for the integration. For best accuracy,
-it is a good idea to make sure that this outer boundary is meshed finely enough
-to resolve the expected wavelength.
+surface and choose it as the surface for the integration. For best accuracy, it
+is a good idea to make sure that this outer boundary is meshed finely enough to
+resolve the expected wavelength.
 
 Turning on far-field extraction requires activating the feature in the
 configuration JSON file. To do so, we look at the `"FarField"` section under

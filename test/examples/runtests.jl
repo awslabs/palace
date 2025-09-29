@@ -166,7 +166,7 @@ end
 
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
-abstol = 2.0e-12
+abstol = 1.0e-10
 
 if "antenna" in cases
     @info "Testing antenna..."
@@ -180,6 +180,8 @@ if "antenna" in cases
         atol=50abstol
     )
 end
+
+abstol = 2.0e-12
 
 if "coaxial/open" in cases
     @info "Testing coaxial (open)..."

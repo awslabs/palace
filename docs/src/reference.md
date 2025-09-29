@@ -478,7 +478,7 @@ discretized by Nédélec and Raviart-Thomas elements, respectively.
 
 ## Far-field extraction
 
-This feature is based upon Stratton-Chu's transformations in the limit for ``kr \gg 1`` (with ``k`` wave number and ``r`` observation distance). One can show
+This feature is based upon Stratton-Chu's transformations in the limit of ``kr \gg 1`` (with ``k`` wave number and ``r`` observation distance). One can show
 that [6], in this limit,
 
 ```math

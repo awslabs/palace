@@ -110,10 +110,9 @@ poles).
 !!! tip "ComplexCoarseSolve solver optimization"
     
     This simulation benefits from the `"ComplexCoarseSolve"` option. This
-    setting uses a block preconditioner of the form `[Arr Ari; Air Aii]` rather than
-    the default `[(Arr+Aii) 0; 0 (Arr+Aii)]`, where `A` is the system matrix with
-    real (`Arr`) and imaginary (`Aii`) diagonal blocks, and real-imaginary coupling
-    blocks (`Ari`, `Air`). While the resulting system is four times larger, it
+    setting uses a complex preconditioner of the form `P = [Ar, -Ai; Ai, Ar]` rather than
+    the default `P = Ar + Ai`, where `A` is the true system matrix with
+    real and imaginary  parts `Ar` and `Ai`. While the resulting system is four times larger, it
     preserves the coupling between real and imaginary parts which can be significant
     for problems with strong imaginary components. For this particular problem, this
     approach accelerates convergence by several factors, though at the cost of increased
@@ -159,7 +158,7 @@ to the antenna axis and nulls approximately along the antenna axis.
     
     If you are trying to reproduce this plot, but find that your plots are not as nice
     as the one above, you might have a missed a note at the top of this page: the example
-    was run with 64800 sampling points instead of the 360 that the JSON file specifies.
+    was run with 64800 sampling points instead of the 100 that the JSON file specifies.
     Change `NSample` to 64800 and run your simulation again.
 
 We can see the same pattern rendered in 3D as well
