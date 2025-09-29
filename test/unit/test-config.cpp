@@ -6,11 +6,11 @@
 #include <sstream>
 #include <string>
 #include <fmt/format.h>
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -133,8 +133,6 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
-  using namespace Catch::Matchers;
-
   constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
@@ -144,7 +142,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
       config::DrivenSolverData driven_solver;
       REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_base_uniform_sample")));
 
-      CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+      for (size_t i = 0; i < sample_f.size(); ++i)
+      {
+        CHECK_THAT(driven_solver.sample_f[i],
+                   Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      }
       CHECK(driven_solver.save_indices == save_indices);
       CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
     }
@@ -153,7 +155,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
       config::DrivenSolverData driven_solver;
       REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
 
-      CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+      for (size_t i = 0; i < sample_f.size(); ++i)
+      {
+        CHECK_THAT(driven_solver.sample_f[i],
+                   Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      }
       CHECK(driven_solver.save_indices == save_indices);
       CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
     }
@@ -166,7 +172,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
     auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
 
-    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(driven_solver.sample_f[i],
+                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+    }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
@@ -179,7 +189,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     auto save_indices =
         std::vector<size_t>{0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
 
-    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(driven_solver.sample_f[i],
+                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+    }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
@@ -193,7 +207,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     auto save_indices = std::vector<size_t>{0, 2, 3, 4, 6, 7, 9, 11};
     auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 2, 4, 7};
 
-    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(driven_solver.sample_f[i],
+                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+    }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
   }
@@ -207,7 +225,11 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     auto save_indices = std::vector<size_t>{0, 1, 3, 4, 5, 7};
     auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 1, 4, 5};
 
-    CHECK_THAT(driven_solver.sample_f, Approx(sample_f).margin(delta_eps));
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(driven_solver.sample_f[i],
+                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+    }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
   }
