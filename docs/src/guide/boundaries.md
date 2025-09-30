@@ -115,8 +115,6 @@ incorporating periodicity as part of the meshing process.
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
-    
-    Wave ports are not currently compatible with nonconformal mesh refinement.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.
