@@ -7,7 +7,7 @@ From: rockylinux:9
 
 
 %arguments
-   PALACE_WITH_CUDA=OFF
+   PALACE_WITH_CUDA=ON
    PALACE_WITH_HIP=OFF
    PALACE_WITH_GPU_AWARE_MPI=OFF
 
@@ -49,6 +49,22 @@ From: rockylinux:9
         dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
         dnf clean all
         dnf -y install cuda-toolkit-13-0
+        
+        # Set up CUDA environment - Rocky Linux CUDA packages install to /usr/local/cuda
+        if [[ -d /usr/local/cuda ]]; then
+            export CUDA_HOME=/usr/local/cuda
+        elif [[ -d /usr/local/cuda-13.0 ]]; then
+            export CUDA_HOME=/usr/local/cuda-13.0
+        else
+            # Find CUDA installation
+            CUDA_HOME=$(find /usr/local -maxdepth 1 -name "cuda*" -type d | head -1)
+            export CUDA_HOME
+        fi
+        
+        if [[ -n "$CUDA_HOME" ]]; then
+            export PATH=$PATH:$CUDA_HOME/bin
+            export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDA_HOME/lib64
+        fi
     elif [[ "{{ PALACE_WITH_HIP }}" == "ON" ]]; then
         # From https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html
         dnf install https://repo.radeon.com/amdgpu-install/7.0.1/el/9.6/amdgpu-install-7.0.1.70001-1.el9.noarch.rpm
@@ -89,33 +105,74 @@ From: rockylinux:9
     # Show compiler information
     mpicc -v
     mpif90 -v
+    
+    # Show CUDA information if CUDA is enabled
+    if [[ "{{ PALACE_WITH_CUDA }}" == "ON" ]]; then
+        echo "CUDA installation check:"
+        ls -la /usr/local/cuda* 2>/dev/null || echo "No /usr/local/cuda* found"
+        find /usr -name "nvcc" 2>/dev/null || echo "nvcc not found in /usr"
+        which nvcc 2>/dev/null && nvcc --version || echo "nvcc not in PATH or not working"
+        echo "CUDA_HOME: $CUDA_HOME"
+        echo "PATH: $PATH"
+    fi
 
     # Build and install Palace
     if [[ -z "$(ls -A /opt/palace-src)" ]]; then
         git clone https://github.com/awslabs/palace.git /opt/palace-src
     fi
     mkdir /opt/palace-build && cd /opt/palace-build
-    cmake /opt/palace-src \
-        -DCMAKE_INSTALL_PREFIX=/opt/palace \
-        -DCMAKE_CXX_COMPILER=g++ \
-        -DCMAKE_CXX_FLAGS="$OPT_FLAGS" \
-        -DCMAKE_C_COMPILER=gcc \
-        -DCMAKE_C_FLAGS="$OPT_FLAGS" \
-        -DCMAKE_Fortran_COMPILER=gfortran \
-        -DCMAKE_Fortran_FLAGS="$OPT_FLAGS" \
-        -DBUILD_SHARED_LIBS:BOOL=ON \
-        -DPALACE_WITH_64BIT_INT:BOOL=OFF \
-        -DPALACE_WITH_OPENMP:BOOL=ON \
-        -DPALACE_WITH_CUDA:BOOL="{{ PALACE_WITH_CUDA }}" \
-        -DPALACE_WITH_HIP:BOOL="{{ PALACE_WITH_HIP }}" \
-        -DPALACE_WITH_GPU_AWARE_MPI:BOOL="{{ PALACE_WITH_GPU_AWARE_MPI }}" \
-        -DPALACE_WITH_SUPERLU:BOOL=ON \
-        -DPALACE_WITH_STRUMPACK:BOOL=ON \
-        -DPALACE_WITH_MUMPS:BOOL=ON \
-        -DPALACE_WITH_SLEPC:BOOL=ON \
-        -DPALACE_WITH_ARPACK:BOOL=ON \
-        -DPALACE_WITH_LIBXSMM:BOOL=ON \
-        -DPALACE_WITH_MAGMA:BOOL=ON \
+    
+    # Set up CMake command with base options
+    CMAKE_ARGS=(
+        -DCMAKE_INSTALL_PREFIX=/opt/palace
+        -DCMAKE_CXX_COMPILER=g++
+        -DCMAKE_CXX_FLAGS="$OPT_FLAGS"
+        -DCMAKE_C_COMPILER=gcc
+        -DCMAKE_C_FLAGS="$OPT_FLAGS"
+        -DCMAKE_Fortran_COMPILER=gfortran
+        -DCMAKE_Fortran_FLAGS="$OPT_FLAGS"
+        -DBUILD_SHARED_LIBS:BOOL=ON
+        -DPALACE_WITH_64BIT_INT:BOOL=OFF
+        -DPALACE_WITH_OPENMP:BOOL=ON
+        -DPALACE_WITH_CUDA:BOOL="{{ PALACE_WITH_CUDA }}"
+        -DPALACE_WITH_HIP:BOOL="{{ PALACE_WITH_HIP }}"
+        -DPALACE_WITH_GPU_AWARE_MPI:BOOL="{{ PALACE_WITH_GPU_AWARE_MPI }}"
+        -DPALACE_WITH_SUPERLU:BOOL=ON
+        -DPALACE_WITH_STRUMPACK:BOOL=ON
+        -DPALACE_WITH_MUMPS:BOOL=ON
+        -DPALACE_WITH_SLEPC:BOOL=ON
+        -DPALACE_WITH_ARPACK:BOOL=ON
+        -DPALACE_WITH_LIBXSMM:BOOL=ON
+        -DPALACE_WITH_MAGMA:BOOL=ON
         -DPALACE_WITH_GSLIB:BOOL=ON
+    )
+    
+    # Add CUDA-specific options if CUDA is enabled
+    if [[ "{{ PALACE_WITH_CUDA }}" == "ON" ]]; then
+        # Find CUDA installation and set compiler
+        if [[ -d /usr/local/cuda ]]; then
+            CUDA_HOME=/usr/local/cuda
+        elif [[ -d /usr/local/cuda-13.0 ]]; then
+            CUDA_HOME=/usr/local/cuda-13.0
+        else
+            CUDA_HOME=$(find /usr/local -maxdepth 1 -name "cuda*" -type d | head -1)
+        fi
+        
+        if [[ -n "$CUDA_HOME" && -f "$CUDA_HOME/bin/nvcc" ]]; then
+            CMAKE_ARGS+=(-DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc")
+            export CUDACXX="$CUDA_HOME/bin/nvcc"
+            export PATH=$PATH:$CUDA_HOME/bin
+            export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDA_HOME/lib64
+            echo "CUDA compiler found at: $CUDA_HOME/bin/nvcc"
+        else
+            echo "Warning: CUDA compiler not found, checking system PATH"
+            if command -v nvcc >/dev/null 2>&1; then
+                CMAKE_ARGS+=(-DCMAKE_CUDA_COMPILER="$(which nvcc)")
+                export CUDACXX="$(which nvcc)"
+            fi
+        fi
+    fi
+    
+    cmake /opt/palace-src "${CMAKE_ARGS[@]}"
     make -j"$(nproc)"
     cd .. && rm -rf palace-build
