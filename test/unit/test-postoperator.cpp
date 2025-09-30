@@ -3,10 +3,10 @@
 
 #include <complex>
 #include <fmt/format.h>
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "models/postoperator.hpp"
 
@@ -139,17 +139,18 @@ auto RandomMeasurement(int ndomain = 5)
 
 TEST_CASE("PostOperator", "[idempotent][Serial]")
 {
-
-  using namespace Catch;
-
   auto cache = RandomMeasurement();
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
   auto dim_cache = Measurement::Dimensionalize(units, cache);
   auto non_dim_cache = Measurement::Nondimensionalize(units, dim_cache);
-  CHECK(cache.domain_E_field_energy_all == Approx(non_dim_cache.domain_E_field_energy_all));
-  CHECK(cache.domain_E_field_energy_all != Approx(dim_cache.domain_E_field_energy_all));
-  CHECK(cache.domain_H_field_energy_all == Approx(non_dim_cache.domain_H_field_energy_all));
-  CHECK(cache.domain_H_field_energy_all != Approx(dim_cache.domain_H_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_all,
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_all,
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all));
+  CHECK_THAT(cache.domain_H_field_energy_all,
+             Catch::Matchers::WithinRel(non_dim_cache.domain_H_field_energy_all));
+  CHECK_THAT(cache.domain_H_field_energy_all,
+             !Catch::Matchers::WithinRel(dim_cache.domain_H_field_energy_all));
 
   for (std::size_t i = 0; i < cache.domain_E_field_energy_i.size(); i++)
   {
@@ -157,92 +158,102 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
       const auto &c = cache.domain_E_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK(c.energy == Approx(ndc.energy));
-      CHECK(c.participation_ratio == Approx(ndc.participation_ratio));
+      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
+      CHECK_THAT(c.participation_ratio,
+                 Catch::Matchers::WithinRel(ndc.participation_ratio));
 
       const auto &dc = dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK(c.energy != Approx(dc.energy));
-      CHECK(c.participation_ratio == Approx(dc.participation_ratio));
+      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
+      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
     }
     {
       const auto &c = cache.domain_H_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK(c.energy == Approx(ndc.energy));
-      CHECK(c.participation_ratio == Approx(ndc.participation_ratio));
+      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
+      CHECK_THAT(c.participation_ratio,
+                 Catch::Matchers::WithinRel(ndc.participation_ratio));
 
       const auto &dc = dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK(c.energy != Approx(dc.energy));
-      CHECK(c.participation_ratio == Approx(dc.participation_ratio));
+      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
+      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
     }
   }
   auto check_port_data = [&](const auto &c, const auto &dc, const auto &ndc)
   {
     CAPTURE(c, dc, ndc);
     // Nondimensional
-    CHECK(std::abs(c.P) == Approx(std::abs(ndc.P)));
-    CHECK(std::arg(c.P) == Approx(std::arg(ndc.P)));
-    CHECK(std::abs(c.S) == Approx(std::abs(ndc.S)));
-    CHECK(std::arg(c.S) == Approx(std::arg(ndc.S)));
-    CHECK(std::abs(c.V) == Approx(std::abs(ndc.V)));
-    CHECK(std::arg(c.V) == Approx(std::arg(ndc.V)));
-    CHECK(std::abs(c.I) == Approx(std::abs(ndc.I)));
-    CHECK(std::arg(c.I) == Approx(std::arg(ndc.I)));
+    CHECK_THAT(std::abs(c.P), Catch::Matchers::WithinRel(std::abs(ndc.P)));
+    CHECK_THAT(std::arg(c.P), Catch::Matchers::WithinRel(std::arg(ndc.P)));
+    CHECK_THAT(std::abs(c.S), Catch::Matchers::WithinRel(std::abs(ndc.S)));
+    CHECK_THAT(std::arg(c.S), Catch::Matchers::WithinRel(std::arg(ndc.S)));
+    CHECK_THAT(std::abs(c.V), Catch::Matchers::WithinRel(std::abs(ndc.V)));
+    CHECK_THAT(std::arg(c.V), Catch::Matchers::WithinRel(std::arg(ndc.V)));
+    CHECK_THAT(std::abs(c.I), Catch::Matchers::WithinRel(std::abs(ndc.I)));
+    CHECK_THAT(std::arg(c.I), Catch::Matchers::WithinRel(std::arg(ndc.I)));
     for (auto i : {0, 1, 2})
     {
-      CHECK(std::abs(c.I_RLC[i]) == Approx(std::abs(ndc.I_RLC[i])));
-      CHECK(std::arg(c.I_RLC[i]) == Approx(std::arg(ndc.I_RLC[i])));
+      CHECK_THAT(std::abs(c.I_RLC[i]), Catch::Matchers::WithinRel(std::abs(ndc.I_RLC[i])));
+      CHECK_THAT(std::arg(c.I_RLC[i]), Catch::Matchers::WithinRel(std::arg(ndc.I_RLC[i])));
     }
     auto sum_cI = std::accumulate(c.I_RLC.begin(), c.I_RLC.end(), std::complex{0.0, 0.0});
-    CHECK(std::abs(c.I) == Approx(std::abs(sum_cI)));
-    CHECK(std::arg(c.I) == Approx(std::arg(sum_cI)));
+    CHECK_THAT(std::abs(c.I), Catch::Matchers::WithinRel(std::abs(sum_cI)));
+    CHECK_THAT(std::arg(c.I), Catch::Matchers::WithinRel(std::arg(sum_cI)));
     auto sum_ndcI =
         std::accumulate(ndc.I_RLC.begin(), ndc.I_RLC.end(), std::complex{0.0, 0.0});
-    CHECK(std::abs(ndc.I) == Approx(std::abs(sum_ndcI)));
-    CHECK(std::arg(ndc.I) == Approx(std::arg(sum_ndcI)));
+    CHECK_THAT(std::abs(ndc.I), Catch::Matchers::WithinRel(std::abs(sum_ndcI)));
+    CHECK_THAT(std::arg(ndc.I), Catch::Matchers::WithinRel(std::arg(sum_ndcI)));
 
-    CHECK(c.inductor_energy == Approx(ndc.inductor_energy));
-    CHECK(c.capacitor_energy == Approx(ndc.capacitor_energy));
-    CHECK(c.mode_port_kappa == Approx(ndc.mode_port_kappa));
-    CHECK(c.inductive_energy_participation == Approx(ndc.inductive_energy_participation));
+    CHECK_THAT(c.inductor_energy, Catch::Matchers::WithinRel(ndc.inductor_energy));
+    CHECK_THAT(c.capacitor_energy, Catch::Matchers::WithinRel(ndc.capacitor_energy));
+    CHECK_THAT(c.mode_port_kappa, Catch::Matchers::WithinRel(ndc.mode_port_kappa));
+    CHECK_THAT(c.inductive_energy_participation,
+               Catch::Matchers::WithinRel(ndc.inductive_energy_participation));
 
     // Dimensional
-    REQUIRE(units.GetScaleFactor<Units::ValueType::POWER>() == Approx(1.0));
-    CHECK(std::abs(c.P) == Approx(std::abs(dc.P)));  // Power always unit normalized
-    CHECK(std::arg(c.P) == Approx(std::arg(dc.P)));  // Phase unchanged by normalization
-    CHECK(std::abs(c.S) == Approx(std::abs(dc.S)));  // Scattering always non-dim
-    CHECK(std::arg(c.S) == Approx(std::arg(dc.S)));  // Phase unchanged by normalization
+    REQUIRE_THAT(units.GetScaleFactor<Units::ValueType::POWER>(),
+                 Catch::Matchers::WithinRel(1.0));
+    CHECK_THAT(std::abs(c.P),
+               Catch::Matchers::WithinRel(std::abs(dc.P)));  // Power always unit normalized
+    CHECK_THAT(std::arg(c.P), Catch::Matchers::WithinRel(
+                                  std::arg(dc.P)));  // Phase unchanged by normalization
+    CHECK_THAT(std::abs(c.S),
+               Catch::Matchers::WithinRel(std::abs(dc.S)));  // Scattering always non-dim
+    CHECK_THAT(std::arg(c.S), Catch::Matchers::WithinRel(
+                                  std::arg(dc.S)));  // Phase unchanged by normalization
     if (std::abs(c.V) > 0)                           // lumped
     {
-      CHECK(std::abs(c.V) != Approx(std::abs(dc.V)));
-      CHECK(std::arg(c.V) == Approx(std::arg(dc.V)));
-      CHECK(std::abs(c.I) != Approx(std::abs(dc.I)));
-      CHECK(std::arg(c.I) == Approx(std::arg(dc.I)));
+      CHECK_THAT(std::abs(c.V), !Catch::Matchers::WithinRel(std::abs(dc.V)));
+      CHECK_THAT(std::arg(c.V), Catch::Matchers::WithinRel(std::arg(dc.V)));
+      CHECK_THAT(std::abs(c.I), !Catch::Matchers::WithinRel(std::abs(dc.I)));
+      CHECK_THAT(std::arg(c.I), Catch::Matchers::WithinRel(std::arg(dc.I)));
       for (auto i : {0, 1, 2})
       {
-        CHECK(std::abs(c.I_RLC[i]) != Approx(std::abs(dc.I_RLC[i])));
-        CHECK(std::arg(c.I_RLC[i]) == Approx(std::arg(dc.I_RLC[i])));
+        CHECK_THAT(std::abs(c.I_RLC[i]),
+                   !Catch::Matchers::WithinRel(std::abs(dc.I_RLC[i])));
+        CHECK_THAT(std::arg(c.I_RLC[i]), Catch::Matchers::WithinRel(std::arg(dc.I_RLC[i])));
       }
       auto sum_dcI =
           std::accumulate(dc.I_RLC.begin(), dc.I_RLC.end(), std::complex{0.0, 0.0});
-      CHECK(std::abs(dc.I) == Approx(std::abs(sum_dcI)));
-      CHECK(std::arg(dc.I) == Approx(std::arg(sum_dcI)));
+      CHECK_THAT(std::abs(dc.I), Catch::Matchers::WithinRel(std::abs(sum_dcI)));
+      CHECK_THAT(std::arg(dc.I), Catch::Matchers::WithinRel(std::arg(sum_dcI)));
 
       // Power voltage current relations are stable through unit conversion
       auto ndcP = ndc.V * std::conj(ndc.I);
-      CHECK(std::abs(ndc.P) == Approx(std::abs(ndcP)));
-      CHECK(std::arg(ndc.P) == Approx(std::arg(ndcP)));
+      CHECK_THAT(std::abs(ndc.P), Catch::Matchers::WithinRel(std::abs(ndcP)));
+      CHECK_THAT(std::arg(ndc.P), Catch::Matchers::WithinRel(std::arg(ndcP)));
 
       auto dcP = dc.V * std::conj(dc.I);
-      CHECK(std::abs(dc.P) == Approx(std::abs(dcP)));
-      CHECK(std::arg(dc.P) == Approx(std::arg(dcP)));
+      CHECK_THAT(std::abs(dc.P), Catch::Matchers::WithinRel(std::abs(dcP)));
+      CHECK_THAT(std::arg(dc.P), Catch::Matchers::WithinRel(std::arg(dcP)));
 
-      CHECK(c.inductor_energy != Approx(dc.inductor_energy));
-      CHECK(c.capacitor_energy != Approx(dc.capacitor_energy));
-      CHECK(c.mode_port_kappa != Approx(dc.mode_port_kappa));
-      CHECK(c.inductive_energy_participation == Approx(dc.inductive_energy_participation));
+      CHECK_THAT(c.inductor_energy, !Catch::Matchers::WithinRel(dc.inductor_energy));
+      CHECK_THAT(c.capacitor_energy, !Catch::Matchers::WithinRel(dc.capacitor_energy));
+      CHECK_THAT(c.mode_port_kappa, !Catch::Matchers::WithinRel(dc.mode_port_kappa));
+      CHECK_THAT(c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(dc.inductive_energy_participation));
     }
   };
   for (const auto &[k, v] : cache.lumped_port_vi)
@@ -260,28 +271,28 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   {
     const auto &cE = cache.probe_E_field[i];
     const auto &ndcE = non_dim_cache.probe_E_field[i];
-    CHECK(std::abs(cE) == Approx(std::abs(ndcE)));
-    CHECK(std::arg(cE) == Approx(std::arg(ndcE)));
+    CHECK_THAT(std::abs(cE), Catch::Matchers::WithinRel(std::abs(ndcE)));
+    CHECK_THAT(std::arg(cE), Catch::Matchers::WithinRel(std::arg(ndcE)));
 
     const auto &dcE = dim_cache.probe_E_field[i];
-    CHECK(std::abs(cE) != Approx(std::abs(dcE)));
-    CHECK(std::arg(cE) == Approx(std::arg(dcE)));
+    CHECK_THAT(std::abs(cE), !Catch::Matchers::WithinRel(std::abs(dcE)));
+    CHECK_THAT(std::arg(cE), Catch::Matchers::WithinRel(std::arg(dcE)));
 
     const auto &cB = cache.probe_B_field[i];
     const auto &ndcB = non_dim_cache.probe_B_field[i];
-    CHECK(std::abs(cB) == Approx(std::abs(ndcB)));
-    CHECK(std::arg(cB) == Approx(std::arg(ndcB)));
+    CHECK_THAT(std::abs(cB), Catch::Matchers::WithinRel(std::abs(ndcB)));
+    CHECK_THAT(std::arg(cB), Catch::Matchers::WithinRel(std::arg(ndcB)));
 
     const auto &dcB = dim_cache.probe_B_field[i];
-    CHECK(std::abs(cB) != Approx(std::abs(dcB)));
-    CHECK(std::arg(cB) == Approx(std::arg(dcB)));
+    CHECK_THAT(std::abs(cB), !Catch::Matchers::WithinRel(std::abs(dcB)));
+    CHECK_THAT(std::arg(cB), Catch::Matchers::WithinRel(std::arg(dcB)));
 
     // Compute Poynting vector H x E^ᴴ, W/m^2
     auto cP = cE * std::conj(cB);
     auto dcP = dcE * std::conj(dcB) / electromagnetics::mu0_;
     auto l_c = units.GetScaleFactor<Units::ValueType::LENGTH>();
-    CHECK(std::abs(cP) == Approx(std::abs(dcP) * l_c * l_c));
-    CHECK(std::arg(cP) == Approx(std::arg(dcP)));
+    CHECK_THAT(std::abs(cP), Catch::Matchers::WithinRel(std::abs(dcP) * l_c * l_c));
+    CHECK_THAT(std::arg(cP), Catch::Matchers::WithinRel(std::arg(dcP)));
   }
 
   for (std::size_t i = 0; i < cache.surface_flux_i.size(); i++)
@@ -290,14 +301,21 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     auto &ndc = non_dim_cache.surface_flux_i[i];
     CHECK(c.idx == ndc.idx);
     CHECK(c.type == ndc.type);
-    CHECK(std::abs(c.Phi) == Approx(std::abs(ndc.Phi)));
-    CHECK(std::arg(c.Phi) == Approx(std::arg(ndc.Phi)));
+    CHECK_THAT(std::abs(c.Phi), Catch::Matchers::WithinRel(std::abs(ndc.Phi)));
+    CHECK_THAT(std::arg(c.Phi), Catch::Matchers::WithinRel(std::arg(ndc.Phi)));
 
     auto &dc = dim_cache.surface_flux_i[i];
     CHECK(c.idx == dc.idx);
     CHECK(c.type == dc.type);
-    CHECK((std::abs(c.Phi) != Approx(std::abs(dc.Phi))) ^ (c.type == SurfaceFlux::POWER));
-    CHECK(std::arg(c.Phi) == Approx(std::arg(dc.Phi)));
+    if (c.type == SurfaceFlux::POWER)
+    {
+      CHECK_THAT(std::abs(c.Phi), Catch::Matchers::WithinRel(std::abs(dc.Phi)));
+    }
+    else
+    {
+      CHECK_THAT(std::abs(c.Phi), !Catch::Matchers::WithinRel(std::abs(dc.Phi)));
+    }
+    CHECK_THAT(std::arg(c.Phi), Catch::Matchers::WithinRel(std::arg(dc.Phi)));
   }
 
   for (std::size_t i = 0; i < cache.interface_eps_i.size(); i++)
@@ -305,16 +323,17 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     auto &c = cache.interface_eps_i[i];
     auto &ndc = non_dim_cache.interface_eps_i[i];
     CHECK(c.idx == ndc.idx);
-    CHECK(c.energy == Approx(ndc.energy));
-    CHECK(c.tandelta == Approx(ndc.tandelta));
-    CHECK(c.energy_participation == Approx(ndc.energy_participation));
-    CHECK(c.quality_factor == Approx(ndc.quality_factor));
+    CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
+    CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(ndc.tandelta));
+    CHECK_THAT(c.energy_participation,
+               Catch::Matchers::WithinRel(ndc.energy_participation));
+    CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(ndc.quality_factor));
 
     auto &dc = dim_cache.interface_eps_i[i];
     CHECK(c.idx == dc.idx);
-    CHECK(c.energy != Approx(dc.energy));
-    CHECK(c.tandelta == Approx(dc.tandelta));
-    CHECK(c.energy_participation == Approx(dc.energy_participation));
-    CHECK(c.quality_factor == Approx(dc.quality_factor));
+    CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
+    CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(dc.tandelta));
+    CHECK_THAT(c.energy_participation, Catch::Matchers::WithinRel(dc.energy_participation));
+    CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(dc.quality_factor));
   }
 }
