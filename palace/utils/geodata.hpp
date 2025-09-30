@@ -253,9 +253,9 @@ void MatchBoundaryEdges(
 
 // Helper function for computing edge orientations on submesh boundaries.
 void ComputeSubmeshBoundaryEdgeOrientations(
-    const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
-    const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,
-    std::unordered_map<int, double> &edge_oriented_lengths, int order);
+  const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
+  const mfem::Vector &loop_normal, std::unordered_map<int, double> &edge_oriented_lengths, 
+  int order);
 
 }  // namespace mesh
 

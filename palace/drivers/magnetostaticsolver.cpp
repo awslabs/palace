@@ -123,8 +123,14 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
+      
+      // Create flux direction vector from data
+      mfem::Vector flux_direction(const_cast<double*>(data.direction.data()), 
+                                  static_cast<int>(data.direction.size()));
+      // Use enhanced coefficient-based verification
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
-                             curlcurl_op.GetMesh(), curlcurl_op.GetComm());
+                             curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
+                             flux_direction, curlcurl_op.GetComm());
     }
 
     // Energy calculation and error estimation.

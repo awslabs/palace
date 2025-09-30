@@ -1,22 +1,54 @@
-using Gmsh
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 
-function create_circular_hole_mesh(filename="circular_hole.msh")
+using Gmsh: gmsh
+
+"""
+    generate_circular_hole_mesh(;
+        filename::AbstractString = "circular_hole.msh",
+        L_outer::Real = 15.0,
+        R::Real = 3.0,
+        r::Real = 1.0,
+        mesh_size_coarse::Real = 2.0,
+        mesh_size_medium::Real = 0.4,
+        mesh_size_fine::Real = 0.2,
+        verbose::Integer = 5,
+        gui::Bool = false
+    )
+
+Generate a mesh for a circular disk with a central hole example using Gmsh
+
+# Arguments
+
+  - filename - the filename to use for the generated mesh
+  - L_outer - outer computational box size
+  - R - radius of the circular disk
+  - r - radius of the central circular hole
+  - mesh_size_coarse - mesh size for box surfaces (coarse regions)
+  - mesh_size_medium - mesh size for disk regions
+  - mesh_size_fine - mesh size for hole regions (fine regions)
+  - verbose - flag to dictate the level of print to REPL, passed to Gmsh
+  - gui - whether to launch the Gmsh GUI on mesh generation
+"""
+function generate_circular_hole_mesh(;
+    filename::AbstractString = "circular_hole.msh",
+    L_outer::Real = 15.0,
+    R::Real = 3.0,
+    r::Real = 1.0,
+    mesh_size_coarse::Real = 2.0,
+    mesh_size_medium::Real = 0.4,
+    mesh_size_fine::Real = 0.2,
+    verbose::Integer = 5,
+    gui::Bool = false
+)
+
     # Initialize Gmsh
     gmsh.initialize()
+    gmsh.option.setNumber("General.Verbosity", verbose)
     gmsh.model.add("circular_hole")
 
     # Set MSH file format version to 2.2
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-
-    # Geometry parameters
-    L_outer = 15.0
-    R = 3.0
-    r = 1.0
-
-    # Mesh sizes
-    mesh_size_coarse = 2.0
-    mesh_size_medium = 0.4
-    mesh_size_fine = 0.2
 
     # Center point
     cx, cy, cz = 0.5, 0.5, 0.5
@@ -219,15 +251,25 @@ function create_circular_hole_mesh(filename="circular_hole.msh")
     gmsh.model.addPhysicalGroup(2, [hole_surface], 9, "hole_surface")
 
     # Generate mesh
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.option.setNumber("Mesh.Algorithm", 6)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
     gmsh.model.mesh.removeDuplicateNodes()
     gmsh.model.mesh.generate(3)
     gmsh.write(filename)
-    gmsh.finalize()
 
-    return filename
+    # Print physical group information
+    println("Generated mesh: ", filename)
+    println("Domain: 1 (domain)")
+    println("Box boundaries: 2-7")
+    println("Disk surface: 8")
+    println("Hole surface: 9")
+    println()
+
+    # Optionally launch GUI
+    if gui
+        gmsh.fltk.run()
+    end
+
+    return gmsh.finalize()
 end
-
-# Create the mesh
-create_circular_hole_mesh("circular_hole.msh")

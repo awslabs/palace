@@ -3189,9 +3189,9 @@ void MatchBoundaryEdges(
 }
 
 void ComputeSubmeshBoundaryEdgeOrientations(
-    const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
-    const mfem::Vector &loop_normal, std::unordered_map<int, int> &edge_orientations,
-    std::unordered_map<int, double> &edge_oriented_lengths, int order)
+  const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
+  const mfem::Vector &loop_normal, std::unordered_map<int, double> &edge_oriented_lengths, 
+  int order)
 {
   // This function computes the orientations and oriented lengths of boundary edges in a 
   // submesh. The orientation is determined by comparing the cross product of 
@@ -3208,10 +3208,8 @@ void ComputeSubmeshBoundaryEdgeOrientations(
   // - loop_normal: Reference normal vector for consistent orientation
   // - order: Quadrature order for accurate integration of curved edges
   // Output:
-  // - edge_orientations: Map from edge ID to orientation (+1 or -1)
   // - edge_oriented_lengths: Map from edge ID to signed edge length
 
-  edge_orientations.clear();
   edge_oriented_lengths.clear();
 
   mfem::Array<int> elem_edges, orientations;
@@ -3334,8 +3332,7 @@ void ComputeSubmeshBoundaryEdgeOrientations(
                          cross_product[1] * loop_normal[1] +
                          cross_product[2] * loop_normal[2];
 
-    int orientation = (dot_product > 0) ? 1 : -1;
-    edge_orientations[submesh_edge] = orientation;
+    int orientation = (dot_product > 0) ? -1 : 1;
     edge_oriented_lengths[submesh_edge] = orientation * edge_length;
   }
 }
