@@ -20,6 +20,7 @@ namespace palace
 {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+using namespace Catch::Matchers;
 
 TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 {
@@ -126,21 +127,21 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
   auto length_x = (max_x - min_x) * invsqrt2;
   auto length_y = (max_y - min_y) * invsqrt2;
 
-  CHECK_THAT(length_x, Catch::Matchers::WithinAbs(length_y, 1e-6));
+  CHECK_THAT(length_x, WithinAbs(length_y, 1e-6));
 
   auto length = (length_x + length_y) / 2;
   auto lengths = box.Lengths();
-  CHECK_THAT(lengths[0], Catch::Matchers::WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[1], Catch::Matchers::WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[2], Catch::Matchers::WithinRel(0.0));
+  CHECK_THAT(lengths[0], WithinAbs(length, 1e-6));
+  CHECK_THAT(lengths[1], WithinAbs(length, 1e-6));
+  CHECK_THAT(lengths[2], WithinRel(0.0));
 
   auto normals = box.Normals();
-  CHECK_THAT(normals[0][0], Catch::Matchers::WithinAbs(ax0[0], 1e-4));
-  CHECK_THAT(normals[0][1], Catch::Matchers::WithinAbs(ax0[1], 1e-4));
-  CHECK_THAT(normals[0][2], Catch::Matchers::WithinAbs(ax0[2], 1e-4));
-  CHECK_THAT(normals[1][0], Catch::Matchers::WithinAbs(ax1[0], 1e-4));
-  CHECK_THAT(normals[1][1], Catch::Matchers::WithinAbs(ax1[1], 1e-4));
-  CHECK_THAT(normals[1][2], Catch::Matchers::WithinAbs(ax1[2], 1e-4));
+  CHECK_THAT(normals[0][0], WithinAbs(ax0[0], 1e-4));
+  CHECK_THAT(normals[0][1], WithinAbs(ax0[1], 1e-4));
+  CHECK_THAT(normals[0][2], WithinAbs(ax0[2], 1e-4));
+  CHECK_THAT(normals[1][0], WithinAbs(ax1[0], 1e-4));
+  CHECK_THAT(normals[1][1], WithinAbs(ax1[1], 1e-4));
+  CHECK_THAT(normals[1][2], WithinAbs(ax1[2], 1e-4));
   CHECK(box.planar);
 }
 
@@ -187,7 +188,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
       {
         // margin(1e-12) for comparing zeros.
         CHECK_THAT((*four_hex.GetNodes())(j + 3 * i),
-                   Catch::Matchers::WithinAbs(global_dof_vals[i][j], 1e-12));
+                   WithinAbs(global_dof_vals[i][j], 1e-12));
       }
 
     mfem::Vector vdof_vals, col;
@@ -206,8 +207,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
         {
           CAPTURE(i, j, global_dof_vals[verts[j]][i], col(j));
           // margin(1e-12) for comparing zeros.
-          CHECK_THAT(col(j),
-                     Catch::Matchers::WithinAbs(global_dof_vals[verts[j]][i], 1e-12));
+          CHECK_THAT(col(j), WithinAbs(global_dof_vals[verts[j]][i], 1e-12));
         }
       }
     };
@@ -295,7 +295,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
                              hex_FESpace->GetOrdering());
     for (int i = 0; i < tet_vals.Size(); i++)
     {
-      CHECK_THAT(tet_vals(i), Catch::Matchers::WithinAbs(hex_vals(i), 1e-9));
+      CHECK_THAT(tet_vals(i), WithinAbs(hex_vals(i), 1e-9));
     }
   }
 #endif

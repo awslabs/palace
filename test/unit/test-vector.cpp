@@ -12,6 +12,7 @@
 
 namespace palace
 {
+using namespace Catch::Matchers;
 
 TEST_CASE("Vector Sum - Real", "[vector][Serial][Parallel][GPU]")
 {
@@ -35,7 +36,7 @@ TEST_CASE("Vector Sum - Real", "[vector][Serial][Parallel][GPU]")
   // * size sum(rank) from 0 to size-1 = size * (size-1) / 2.
   double expected = 9.0 * size * (size - 1) / 2.0 + 6.0 * size;
 
-  REQUIRE_THAT(sum, Catch::Matchers::WithinRel(expected));
+  REQUIRE_THAT(sum, WithinRel(expected));
 }
 
 TEST_CASE("Vector Sum - Real - Asymmetric Sizes", "[vector][Parallel][GPU]")
@@ -69,7 +70,7 @@ TEST_CASE("Vector Sum - Real - Asymmetric Sizes", "[vector][Parallel][GPU]")
       expected += (r + 1) * 10 + i;
   }
 
-  REQUIRE_THAT(sum, Catch::Matchers::WithinRel(expected));
+  REQUIRE_THAT(sum, WithinRel(expected));
 }
 
 TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
@@ -104,8 +105,8 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   double index_sum = cv.Size() * (cv.Size() - 1) / 2.0;
   double expected_imag = cv.Size() * rank_sum + size * index_sum;
 
-  REQUIRE_THAT(sum.real(), Catch::Matchers::WithinRel(expected_real));
-  REQUIRE_THAT(sum.imag(), Catch::Matchers::WithinRel(expected_imag));
+  REQUIRE_THAT(sum.real(), WithinRel(expected_real));
+  REQUIRE_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
@@ -124,11 +125,11 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, on_dev);
 
-  REQUIRE_THAT(cv.Real()[0], Catch::Matchers::WithinRel(1.0 * rank));
-  REQUIRE_THAT(cv.Real()[1], Catch::Matchers::WithinRel(2.0 * rank));
+  REQUIRE_THAT(cv.Real()[0], WithinRel(1.0 * rank));
+  REQUIRE_THAT(cv.Real()[1], WithinRel(2.0 * rank));
 
-  REQUIRE_THAT(cv.Imag()[0], Catch::Matchers::WithinRel(10.0 * rank));
-  REQUIRE_THAT(cv.Imag()[1], Catch::Matchers::WithinRel(20.0 * rank));
+  REQUIRE_THAT(cv.Imag()[0], WithinRel(10.0 * rank));
+  REQUIRE_THAT(cv.Imag()[1], WithinRel(20.0 * rank));
 }
 
 }  // namespace palace
