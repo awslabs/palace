@@ -187,11 +187,7 @@ public:
     MFEM_ASSERT(Size() == N, "Size of StaticVector changed. This indicates a possible bug.")
   }
 
-  // Bring some of the base class operators in scope.
-  using Vector::operator=;
-  using Vector::operator*;
-  using Vector::operator();
-  using Vector::operator[];
+  using Vector::operator=;  // Extend the implicitly defined assignment operators
 };
 
 namespace linalg

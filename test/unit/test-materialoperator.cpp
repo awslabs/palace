@@ -18,7 +18,7 @@ TEST_CASE("MaterialOperator IsIsotropic", "[materialoperator][Serial]")
   Units units(1.0, 1.0);
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(
-      std::string(PALACE_TEST_MESH_DIR "/gmsh/sphere.msh"), 1, 1);
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
   auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
   Mesh palace_mesh(std::move(par_mesh));
 
@@ -79,6 +79,137 @@ TEST_CASE("MaterialOperator IsIsotropic", "[materialoperator][Serial]")
       material.sigma.s[2] = 2e6;
       MaterialOperator mat_op(iodata, palace_mesh);
       REQUIRE(mat_op.IsIsotropic(1) == false);
+    }
+  }
+}
+
+TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
+{
+  SECTION("IsOrthonormal")
+  {
+    config::SymmetricMatrixData<3> data(1.0);
+
+    SECTION("Orthonormal vectors")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 2.0, 3.0};
+      REQUIRE(internal::mat::IsOrthonormal(data));
+    }
+
+    SECTION("Non-normalized vectors")
+    {
+      data.v[0] = {2.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 1.0, 1.0};
+      REQUIRE(!internal::mat::IsOrthonormal(data));
+    }
+
+    SECTION("Non-orthogonal vectors")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.5, 0.866, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 1.0, 1.0};
+      REQUIRE(!internal::mat::IsOrthonormal(data));
+    }
+  }
+
+  SECTION("IsValid")
+  {
+    config::SymmetricMatrixData<3> data(1.0);
+
+    SECTION("Valid orthonormal matrix with positive eigenvalues")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 1.0, 1.0};
+      REQUIRE(internal::mat::IsValid(data));
+    }
+
+    SECTION("Valid orthonormal matrix with different positive eigenvalues")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {2.0, 3.0, 4.0};
+      REQUIRE(internal::mat::IsValid(data));
+    }
+
+    SECTION("Invalid - zero eigenvalue")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 0.0, 1.0};
+      REQUIRE(!internal::mat::IsValid(data));
+    }
+  }
+
+  SECTION("IsIdentity")
+  {
+    config::SymmetricMatrixData<3> data(1.0);
+
+    SECTION("Identity matrix")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 1.0, 1.0};
+      REQUIRE(internal::mat::IsIdentity(data));
+    }
+
+    SECTION("Non-identity - different eigenvalues")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {2.0, 1.0, 1.0};
+      REQUIRE(!internal::mat::IsIdentity(data));
+    }
+
+    SECTION("Identity but rotated basis")
+    {
+      data.v[0] = {0.0, 1.0, 0.0};
+      data.v[1] = {1.0, 0.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 1.0, 1.0};
+      REQUIRE(internal::mat::IsIdentity(data));
+    }
+  }
+
+  SECTION("IsIsotropic")
+  {
+    config::SymmetricMatrixData<3> data(1.0);
+
+    SECTION("Isotropic material - all eigenvalues equal")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {2.5, 2.5, 2.5};
+      REQUIRE(internal::mat::IsIsotropic(data));
+    }
+
+    SECTION("Anisotropic material - different eigenvalues")
+    {
+      data.v[0] = {1.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {1.0, 2.0, 1.0};
+      REQUIRE(!internal::mat::IsIsotropic(data));
+    }
+
+    SECTION("Invalid - non-orthonormal but equal eigenvalues")
+    {
+      data.v[0] = {2.0, 0.0, 0.0};
+      data.v[1] = {0.0, 1.0, 0.0};
+      data.v[2] = {0.0, 0.0, 1.0};
+      data.s = {2.0, 2.0, 2.0};
+      REQUIRE(!internal::mat::IsIsotropic(data));
     }
   }
 }

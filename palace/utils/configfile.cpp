@@ -1494,8 +1494,12 @@ void FarFieldPostData::SetUp(json &postpro)
   attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 
-  // Generate NSample point uniformly on a sphere, ensuring that the poles are
-  // always included.
+  // Generate NSample points with the following properties:
+  // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
+  // - The poles, the equator, and the XZ plane are always included.
+  // - The points are almost uniformly on a sphere, with a small bias due to satisfying the
+  //   previous condition.
+  // - The points are on rings of constant theta.
 
   auto nsample_json = farfield->find("NSample");
   int nsample = 0;
@@ -1504,52 +1508,72 @@ void FarFieldPostData::SetUp(json &postpro)
     nsample = nsample_json->get<int>();
     if (nsample > 0)
     {
-      // Generate exactly nsample points uniformly distributed on a sphere.
-      int n_theta = std::max(2, (int)std::sqrt(nsample));
+      // Always include poles.
+      thetaphis.emplace_back(0.0, 0.0);   // North pole.
+      thetaphis.emplace_back(M_PI, 0.0);  // South pole.
 
-      // Calculate points per level, accounting for poles.
-      std::vector<int> points_per_level(n_theta, 0);
-      int remaining = nsample;
-
-      // Assign 1 point to each pole (if we have multiple theta levels)
-      if (n_theta > 1)
+      if (nsample > 2)
       {
-        points_per_level[0] = 1;            // North pole
-        points_per_level[n_theta - 1] = 1;  // South pole
-        remaining -= 2;
-      }
+        int remaining = nsample - 2;
 
-      // Distribute remaining points among middle levels.
-      int middle_levels = std::max(1, n_theta - 2);
-      for (int i = (n_theta > 1 ? 1 : 0); i < (n_theta > 1 ? n_theta - 1 : n_theta); ++i)
-      {
-        points_per_level[i] = remaining / middle_levels;
-        if (remaining % middle_levels > i - (n_theta > 1 ? 1 : 0))
+        // Distribute all remaining points across rings with number weighted by the
+        // local circumference.
+        int n_theta = std::max(1, static_cast<int>(std::sqrt(remaining)));
+        n_theta = std::min(n_theta, remaining);  // Can't have more rings than points.
+
+        std::vector<int> points_per_level(n_theta);
+        std::vector<double> sin_theta_values(n_theta);
+        double total_sin_theta = 0.0;
+
+        // Calculate sin(theta) for each ring and total (sin(theta) is proportional to the
+        // circumference).
+        for (int i = 0; i < n_theta; ++i)
         {
-          points_per_level[i]++;
+          double theta = std::acos(1.0 - 2.0 * (i + 1) / (n_theta + 1.0));
+          sin_theta_values[i] = std::sin(theta);
+          total_sin_theta += sin_theta_values[i];
         }
-      }
 
-      // Generate points.
-      for (int i = 0; i < n_theta; ++i)
-      {
-        double theta = std::acos(1.0 - 2.0 * i / (n_theta - 1.0));
-
-        if (points_per_level[i] == 1 && (i == 0 || i == n_theta - 1))
+        // Distribute points proportional to sin(theta).
+        int assigned_points = 0;
+        for (int i = 0; i < n_theta - 1; ++i)
         {
-          // Pole point.
-          thetaphis.emplace_back(theta, 0.0);
+          points_per_level[i] =
+              static_cast<int>(remaining * sin_theta_values[i] / total_sin_theta + 0.5);
+          assigned_points += points_per_level[i];
         }
-        else
+        // Assign remaining points to last ring to ensure exact total.
+        points_per_level[n_theta - 1] = remaining - assigned_points;
+
+        for (int i = 1; i <= n_theta; ++i)
         {
-          // Regular ring.
-          for (int j = 0; j < points_per_level[i]; ++j)
+          // Ensure equator and XZ plane inclusion.
+          bool is_equator = (i == (n_theta + 1) / 2);
+          double theta = is_equator ? M_PI / 2 : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
+          int points_in_level = points_per_level[i - 1];
+
+          for (int j = 0; j < points_in_level; ++j)
           {
-            double phi = 2.0 * M_PI * j / points_per_level[i];
+            double phi = 2.0 * M_PI * j / points_in_level;
+
+            // Force XZ plane points (phi = 0 or π).
+            if (j == 0)
+            {
+              phi = 0.0;
+            }
+            else if (j == points_in_level / 2)
+            {
+              phi = M_PI;
+            }
+
             thetaphis.emplace_back(theta, phi);
           }
         }
       }
+
+      if (nsample > 2)
+        MFEM_ASSERT(thetaphis.size() == nsample,
+                    "Sampled number of points is not NSample!");
     }
   }
 
@@ -1573,9 +1597,34 @@ void FarFieldPostData::SetUp(json &postpro)
   // Remove duplicate entries with numerical tolerance.
   constexpr double tol = 1e-6;
   std::sort(thetaphis.begin(), thetaphis.end());
-  auto it = std::unique(
-      thetaphis.begin(), thetaphis.end(), [tol](const auto &a, const auto &b)
-      { return std::abs(a.first - b.first) < tol && std::abs(a.second - b.second) < tol; });
+  auto it = std::unique(thetaphis.begin(), thetaphis.end(),
+                        [tol](const auto &a, const auto &b)
+                        {
+                          // At poles (theta ≈ 0 or π), phi is irrelevant.
+                          if ((std::abs(a.first) < tol || std::abs(a.first - M_PI) < tol) &&
+                              (std::abs(b.first) < tol || std::abs(b.first - M_PI) < tol))
+                          {
+                            return std::abs(a.first - b.first) < tol;
+                          }
+
+                          // Check direct match.
+                          if (std::abs(a.first - b.first) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - b.second);
+                            return phi_diff < tol || std::abs(phi_diff - 2.0 * M_PI) < tol;
+                          }
+
+                          // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
+                          if (std::abs(a.first - (M_PI - b.first)) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - (b.second + M_PI));
+                            if (phi_diff > M_PI)
+                              phi_diff = 2.0 * M_PI - phi_diff;
+                            return phi_diff < tol;
+                          }
+
+                          return false;
+                        });
   thetaphis.erase(it, thetaphis.end());
 
   if (thetaphis.empty())

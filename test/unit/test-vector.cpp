@@ -36,7 +36,7 @@ TEST_CASE("Vector Sum - Real", "[vector][Serial][Parallel][GPU]")
   // * size sum(rank) from 0 to size-1 = size * (size-1) / 2.
   double expected = 9.0 * size * (size - 1) / 2.0 + 6.0 * size;
 
-  REQUIRE_THAT(sum, WithinRel(expected));
+  CHECK_THAT(sum, WithinRel(expected));
 }
 
 TEST_CASE("Vector Sum - Real - Asymmetric Sizes", "[vector][Parallel][GPU]")
@@ -70,7 +70,7 @@ TEST_CASE("Vector Sum - Real - Asymmetric Sizes", "[vector][Parallel][GPU]")
       expected += (r + 1) * 10 + i;
   }
 
-  REQUIRE_THAT(sum, WithinRel(expected));
+  CHECK_THAT(sum, WithinRel(expected));
 }
 
 TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
@@ -105,8 +105,8 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   double index_sum = cv.Size() * (cv.Size() - 1) / 2.0;
   double expected_imag = cv.Size() * rank_sum + size * index_sum;
 
-  REQUIRE_THAT(sum.real(), WithinRel(expected_real));
-  REQUIRE_THAT(sum.imag(), WithinRel(expected_imag));
+  CHECK_THAT(sum.real(), WithinRel(expected_real));
+  CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
@@ -125,18 +125,18 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, on_dev);
 
-  REQUIRE_THAT(cv.Real()[0], WithinRel(1.0 * rank));
-  REQUIRE_THAT(cv.Real()[1], WithinRel(2.0 * rank));
+  CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank));
+  CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank));
 
-  REQUIRE_THAT(cv.Imag()[0], WithinRel(10.0 * rank));
-  REQUIRE_THAT(cv.Imag()[1], WithinRel(20.0 * rank));
+  CHECK_THAT(cv.Imag()[0], WithinRel(10.0 * rank));
+  CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank));
 }
 
 TEST_CASE("StaticVectorConstruction", "[Vector][Serial]")
 {
   StaticVector<3> vec;
-  REQUIRE(vec.Size() == 3);
-  REQUIRE(vec.GetData() != nullptr);
+  CHECK(vec.Size() == 3);
+  CHECK(vec.GetData() != nullptr);
 }
 
 TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
@@ -146,9 +146,9 @@ TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
   vec[1] = 2.0;
   vec[2] = 3.0;
 
-  REQUIRE_THAT(vec[0], WithinRel(1.0));
-  REQUIRE_THAT(vec[1], WithinRel(2.0));
-  REQUIRE_THAT(vec[2], WithinRel(3.0));
+  CHECK_THAT(vec[0], WithinRel(1.0));
+  CHECK_THAT(vec[1], WithinRel(2.0));
+  CHECK_THAT(vec[2], WithinRel(3.0));
 }
 
 TEST_CASE("StaticVectorInterface", "[Vector][Serial]")
@@ -158,10 +158,10 @@ TEST_CASE("StaticVectorInterface", "[Vector][Serial]")
   StaticVector<4> vec;
   vec = 5.0;  // Set all elements
 
-  REQUIRE_THAT(vec[0], WithinRel(5.0));
-  REQUIRE_THAT(vec[1], WithinRel(5.0));
-  REQUIRE_THAT(vec[2], WithinRel(5.0));
-  REQUIRE_THAT(vec[3], WithinRel(5.0));
+  CHECK_THAT(vec[0], WithinRel(5.0));
+  CHECK_THAT(vec[1], WithinRel(5.0));
+  CHECK_THAT(vec[2], WithinRel(5.0));
+  CHECK_THAT(vec[3], WithinRel(5.0));
 }
 
 TEST_CASE("StaticVectorSizes", "[Vector][Serial]")
@@ -170,9 +170,9 @@ TEST_CASE("StaticVectorSizes", "[Vector][Serial]")
   StaticVector<10> vec10;
   StaticVector<100> vec100;
 
-  REQUIRE(vec1.Size() == 1);
-  REQUIRE(vec10.Size() == 10);
-  REQUIRE(vec100.Size() == 100);
+  CHECK(vec1.Size() == 1);
+  CHECK(vec10.Size() == 10);
+  CHECK(vec100.Size() == 100);
 }
 
 TEST_CASE("StaticVectorPolymorphism", "[Vector][Serial]")
@@ -184,10 +184,10 @@ TEST_CASE("StaticVectorPolymorphism", "[Vector][Serial]")
   vec_ref[1] = -3.14;
   vec_ref[2] = 0.0;
 
-  REQUIRE_THAT(static_vec[0], WithinRel(42.0));
-  REQUIRE_THAT(static_vec[1], WithinRel(-3.14));
-  REQUIRE_THAT(static_vec[2], WithinRel(0.0));
-  REQUIRE(vec_ref.Size() == 3);
+  CHECK_THAT(static_vec[0], WithinRel(42.0));
+  CHECK_THAT(static_vec[1], WithinRel(-3.14));
+  CHECK_THAT(static_vec[2], WithinRel(0.0));
+  CHECK(vec_ref.Size() == 3);
 }
 
 TEST_CASE("StaticVectorOperations", "[Vector][Serial]")
@@ -203,11 +203,11 @@ TEST_CASE("StaticVectorOperations", "[Vector][Serial]")
 
   // Test dot product
   double dot = vec1 * vec2;
-  REQUIRE_THAT(dot, WithinRel(32.0));  // 1*4 + 2*5 + 3*6 = 32
+  CHECK_THAT(dot, WithinRel(32.0));  // 1*4 + 2*5 + 3*6 = 32
 
   // Test norm
   double norm1 = vec1.Norml2();
-  REQUIRE_THAT(norm1, WithinRel(std::sqrt(14.0)));  // sqrt(1^2 + 2^2 + 3^2)
+  CHECK_THAT(norm1, WithinRel(std::sqrt(14.0)));  // sqrt(1^2 + 2^2 + 3^2)
 }
 
 TEST_CASE("StaticVector", "[Vector][Serial]")
@@ -219,10 +219,10 @@ TEST_CASE("StaticVector", "[Vector][Serial]")
     vec(1) = 2.0;
     vec(2) = 3.0;
 
-    REQUIRE_THAT(vec(0), WithinRel(1.0));
-    REQUIRE_THAT(vec(1), WithinRel(2.0));
-    REQUIRE_THAT(vec(2), WithinRel(3.0));
-    REQUIRE(vec.Size() == 3);
+    CHECK_THAT(vec(0), WithinRel(1.0));
+    CHECK_THAT(vec(1), WithinRel(2.0));
+    CHECK_THAT(vec(2), WithinRel(3.0));
+    CHECK(vec.Size() == 3);
   }
 }
 
@@ -240,9 +240,9 @@ TEST_CASE("Cross3 function", "[Vector][Serial]")
 
     palace::linalg::Cross3(A, B, C);
 
-    REQUIRE_THAT(C(0), WithinRel(0.0));
-    REQUIRE_THAT(C(1), WithinRel(0.0));
-    REQUIRE_THAT(C(2), WithinRel(1.0));
+    CHECK_THAT(C(0), WithinRel(0.0));
+    CHECK_THAT(C(1), WithinRel(0.0));
+    CHECK_THAT(C(2), WithinRel(1.0));
   }
 
   SECTION("MFEM Vector general cross product")
@@ -258,9 +258,9 @@ TEST_CASE("Cross3 function", "[Vector][Serial]")
     palace::linalg::Cross3(A, B, C);
 
     // Expected: A × B = (3*7 - 4*6, 4*5 - 2*7, 2*6 - 3*5) = (-3, 6, -3)
-    REQUIRE_THAT(C(0), WithinRel(-3.0));
-    REQUIRE_THAT(C(1), WithinRel(6.0));
-    REQUIRE_THAT(C(2), WithinRel(-3.0));
+    CHECK_THAT(C(0), WithinRel(-3.0));
+    CHECK_THAT(C(1), WithinRel(6.0));
+    CHECK_THAT(C(2), WithinRel(-3.0));
   }
 
   SECTION("MFEM Vector with add=true")
@@ -278,9 +278,9 @@ TEST_CASE("Cross3 function", "[Vector][Serial]")
 
     palace::linalg::Cross3(A, B, C, true);
 
-    REQUIRE_THAT(C(0), WithinRel(1.0));  // 1.0 + 0.0
-    REQUIRE_THAT(C(1), WithinRel(2.0));  // 2.0 + 0.0
-    REQUIRE_THAT(C(2), WithinRel(4.0));  // 3.0 + 1.0
+    CHECK_THAT(C(0), WithinRel(1.0));  // 1.0 + 0.0
+    CHECK_THAT(C(1), WithinRel(2.0));  // 2.0 + 0.0
+    CHECK_THAT(C(2), WithinRel(4.0));  // 3.0 + 1.0
   }
 
   SECTION("std::vector cross product")
@@ -292,9 +292,9 @@ TEST_CASE("Cross3 function", "[Vector][Serial]")
     palace::linalg::Cross3(A, B, C);
 
     // Expected: A × B = (2*6 - 3*5, 3*4 - 1*6, 1*5 - 2*4) = (-3, 6, -3)
-    REQUIRE_THAT(C[0], WithinRel(-3.0));
-    REQUIRE_THAT(C[1], WithinRel(6.0));
-    REQUIRE_THAT(C[2], WithinRel(-3.0));
+    CHECK_THAT(C[0], WithinRel(-3.0));
+    CHECK_THAT(C[1], WithinRel(6.0));
+    CHECK_THAT(C[2], WithinRel(-3.0));
   }
 
   SECTION("std::array cross product")
@@ -306,9 +306,9 @@ TEST_CASE("Cross3 function", "[Vector][Serial]")
     palace::linalg::Cross3(A, B, C);
 
     // Expected: A × B = (0*0 - 1*0, 1*1 - 0*0, 0*0 - 0*1) = (0, 1, 0)
-    REQUIRE_THAT(C[0], WithinRel(0.0));
-    REQUIRE_THAT(C[1], WithinRel(1.0));
-    REQUIRE_THAT(C[2], WithinRel(0.0));
+    CHECK_THAT(C[0], WithinRel(0.0));
+    CHECK_THAT(C[1], WithinRel(1.0));
+    CHECK_THAT(C[2], WithinRel(0.0));
   }
 }
 
@@ -324,10 +324,10 @@ TEST_CASE("Sqrt function", "[Vector][Serial]")
 
     palace::linalg::Sqrt(vec);
 
-    REQUIRE_THAT(vec(0), WithinRel(2.0));
-    REQUIRE_THAT(vec(1), WithinRel(3.0));
-    REQUIRE_THAT(vec(2), WithinRel(4.0));
-    REQUIRE_THAT(vec(3), WithinRel(5.0));
+    CHECK_THAT(vec(0), WithinRel(2.0));
+    CHECK_THAT(vec(1), WithinRel(3.0));
+    CHECK_THAT(vec(2), WithinRel(4.0));
+    CHECK_THAT(vec(3), WithinRel(5.0));
   }
 
   SECTION("Square root with scaling")
@@ -339,9 +339,9 @@ TEST_CASE("Sqrt function", "[Vector][Serial]")
 
     palace::linalg::Sqrt(vec, 4.0);  // sqrt(4 * x)
 
-    REQUIRE_THAT(vec(0), WithinRel(2.0));  // sqrt(4 * 1) = 2
-    REQUIRE_THAT(vec(1), WithinRel(4.0));  // sqrt(4 * 4) = 4
-    REQUIRE_THAT(vec(2), WithinRel(6.0));  // sqrt(4 * 9) = 6
+    CHECK_THAT(vec(0), WithinRel(2.0));  // sqrt(4 * 1) = 2
+    CHECK_THAT(vec(1), WithinRel(4.0));  // sqrt(4 * 4) = 4
+    CHECK_THAT(vec(2), WithinRel(6.0));  // sqrt(4 * 9) = 6
   }
 }
 }  // namespace palace

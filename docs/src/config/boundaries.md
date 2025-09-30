@@ -645,7 +645,7 @@ interface.
 boundary. See also [this page](../reference.md#Bulk-and-interface-dielectric-loss).
 Available options are:
 
-  - `"Default"` :  Use the full electric field evaulated at the boundary to compute the
+  - `"Default"` :  Use the full electric field evaluated at the boundary to compute the
     energy participation ratio (EPR) of this dielectric interface and estimate loss.
   - `"MA"` :  Use the boundary conditions assuming a metal-air interface to compute the EPR
     of this dielectric interface.
@@ -678,7 +678,9 @@ be the interface layer permittivity for the specific `"Type"` of interface speci
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes to be used to compute the far fields. It has to be an external boundary.
+`"Attributes" [None]` : Integer array of mesh boundary attributes to be used to
+compute the far fields. It has to be an external boundary and enclose the
+system.
 
 `"NSample" [0]` : Number of uniformly-spaced points to use to discretize the
 far-field sphere.

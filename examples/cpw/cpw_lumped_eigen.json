@@ -118,6 +118,13 @@
         ]
       }
     ],
+        "Postprocessing": {
+            "FarField": {
+                "Attributes": [4],
+                "NSample": 100,
+                "ThetaPhis": [[35, 20]]
+            }
+        },
   },
   "Solver":
   {
@@ -134,7 +141,7 @@
     {
       "Type": "Default",
       "KSPType": "GMRES",
-      "Tol": 1.0e-8,
+      "Tol": 1.0e-10,
       "MaxIts": 1000,
       "MGMaxLevels": 1,
       "ComplexCoarseSolve": true

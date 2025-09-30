@@ -123,7 +123,7 @@ public:
     mfem::Vector normal(normal_data, vdim);
     GetNormal(T, normal, ori);
     V.SetSize(vdim);
-    palace::linalg::Cross3(normal, VU, V);
+    linalg::Cross3(normal, VU, V);
   }
 };
 

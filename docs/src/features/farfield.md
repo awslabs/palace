@@ -5,9 +5,10 @@
 
 # Extracting Fields in the Radiation Zone
 
-When run in the [`Driven` mode](../guide/problem.md), *Palace* can extrapolate fields
-from the near-field region (being simulated) to the far-field zone. This
-capability can be used to study the radiative properties of a system.
+When run in the [`Driven` or `Eigenmode` modes](../guide/problem.md), *Palace*
+can extrapolate fields from the near-field region (being simulated) to the
+far-field zone. This capability can be used to study the radiative properties of
+a system.
 
 The mathematical details on how this is accomplished are available in the
 [reference](../reference.md#Far-field-extraction). The key points are as
@@ -51,7 +52,7 @@ Turning on far-field extraction requires activating the feature in the
 configuration JSON file. To do so, we look at the `"FarField"` section under
 `"Postprocessing"` in `"Boundaries"`. Here, we need to specify the identifier of
 the integration surface in `"Attributes"` and specify how we want to sample the
-sphere at infinity. As in many other part of *Palace*, `"Attributes"` expects a
+sphere at infinity. As in many other parts of *Palace*, `"Attributes"` expects a
 vector, as it can happen the boundary is split in multiple pieces.
 
 Once we define the surface of integration, we need to specify where we want to
@@ -104,7 +105,7 @@ To obtain the magnetic fields, you can assume that propagation occurs in free
 space, so that
 
 ```math
-r \mathbf{H}_p(\mathbf{r}_0) = \frac{\mathbf{r}_0 \times r \mathbf{E}_p(\mathbf{r}_0)}{Z_0}\
+r \mathbf{H}_p(\mathbf{r}_0) = \frac{\mathbf{r}_0 \times r \mathbf{E}_p(\mathbf{r}_0)}{Z_0}
 ```
 
 with ``Z_0`` impedance of free space.

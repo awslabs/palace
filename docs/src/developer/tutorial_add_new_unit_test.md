@@ -161,6 +161,6 @@ TEST_CASE("MyTest Vector Sum - Different Lenghts", "[myvector][Parallel]")
 }
 ```
 
-This test is because it checks that `Sum` is not implemented making assumptions
-on the length of the vector. This test is also meaningless when run with less
-than 2 MPI processes, so we removed the `[Serial]` tag.
+This test is useful because it checks that `Sum` is not implemented making
+assumptions on the length of the vector. This test is also meaningless when run
+with less than 2 MPI processes, so we removed the `[Serial]` tag.

@@ -46,9 +46,8 @@ public:
     REBALANCE,            // Rebalancing
     POSTPRO,              // Solution postprocessing
     POSTPRO_FARFIELD,     // Computing far-fields
+    POSTPRO_PARAVIEW,     // Paraview calculations and I/O
     IO,                   // Disk I/O
-    IO_PARAVIEW,          // Disk I/O paraview
-    IO_FARFIELD,          // Disk I/O far-fields
     TOTAL,
     NUM_TIMINGS
   };
@@ -75,9 +74,8 @@ public:
       "  Rebalancing",
       "Postprocessing",
       "  Far Fields",
-      "Disk IO",
       "  Paraview",
-      "  Far Fields",
+      "Disk IO",
       "Total"};
   // clang-format on
 

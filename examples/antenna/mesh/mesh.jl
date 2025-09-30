@@ -78,20 +78,22 @@ zmax(x::Tuple) = gmsh.model.occ.get_bounding_box(x...)[6]
 
 """
     generate_antenna_mesh(;
-        filename::AbstractString,
-        arm_length::Real = 1.0,
-        arm_radius::Real = arm_length/20,
-        gap_size::Real = arm_length/100,
-        outer_boundary_radius::Real = 1.5arm_length,
-        verbose::Integer = 5,
-        gui::Bool = false
-    )
+                          filename::AbstractString,
+                          wavelength::Real=4.0,
+                          arm_length::Real=wavelength/4,
+                          arm_radius::Real=arm_length/20,
+                          gap_size::Real=arm_length/100,
+                          outer_boundary_radius::Real=1.5wavelength,
+                          verbose::Integer=5,
+                          gui::Bool=false
+                         )
 
 Generate a mesh for a dipole antenna using Gmsh.
 
 # Arguments
 
   - filename - output mesh filename
+  - wavelength - wavelength of the resulting electromagnetic wave
   - arm_length - length of each antenna arm
   - arm_radius - radius of the cylindrical antenna arms
   - gap_size - size of the gap between the two arms (port region)
@@ -131,8 +133,8 @@ function generate_antenna_mesh(;
     gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Create a new model. The name dipole is not important. If a model was already added,
-    # remove it first (this is useful when interactively the body of this function in the
-    # REPL).
+    # remove it first (this is useful when interactively evaluating the body of this
+    # function in the REPL).
     if "dipole" in gmsh.model.list()
         gmsh.model.setCurrent("dipole")
         gmsh.model.remove()

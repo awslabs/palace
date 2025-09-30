@@ -15,22 +15,27 @@ namespace palace
 // The Stratton-Chu transformations to compute far-field electric field rE_∞(r̂)
 // at multiple observation directions r₀ (specified by a vector of (θ, ϕ)s) are:
 //
-// r E_∞(r₀) = (ik/4π) r₀ × ∫_S [n̂ × E - Z r₀ × (n̂ × H)] e^{ikr₀·r'} dS  ≈ r₀ × Σ (Iᵣ + iIᵢ)
+// r E_∞(r₀) = (ik/4π) r₀ × ∫_S [n̂ × E - Z r₀ × (n̂ × H)] e^{ikr₀·r'} dS  ≈ r₀ × Σ (Iᵣ +
+// iIᵢ).
 //
 // where:
-//   - S is the boundary surface with outward normal n̂
-//   - E, H are the electric and magnetic fields on the surface
-//   - k = ω/c is the wavenumber
-//   - Z is the impedance
-//   - r₀ = (sin θ cos φ, sin θ sin φ, cos θ) are observation directions
-//   - r' are source points on the surface
+//   - S is the boundary surface with outward normal n̂.
+//   - E, H are the electric and magnetic fields on the surface.
+//   - k = ω/c is the wavenumber.
+//   - Z is the impedance.
+//   - r₀ = (sin θ cos φ, sin θ sin φ, cos θ) are observation directions.
+//   - r' are source points on the surface.
 //
 // This function computes Iᵣ and Iᵢ for all the input observation points.
 //
+// This equation was obtained starting from Stratton-Chu's transformations, assuming an
+// analytic expression for Green's function (G(r, r0) = exp(-ik|r - r₀|) / (4π|r - r₀|)),
+// and expanding for r that goes to infinity.
+//
 // Note:
-// - This equation is only valid in three dimensional space
-// - This equation is only valid when all the materials have scalar μ and ε
-// - The implementation assumes S is an external boundary
+// - This equation is only valid in three dimensional space.
+// - This equation is only valid when all the materials have scalar μ and ε.
+// - The implementation assumes S is an external boundary.
 //
 // Note also:
 //
@@ -38,11 +43,10 @@ namespace palace
 // reason for this is so that we can ensure that memory layout is simple (and
 // contiguous), ensuring that we can perform one single MPI reduction for all
 // the points in integrand_*.
-//
-// From COMSOL RF Manual, Version 6.2, page 88.
 void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction &B,
-                                      const MaterialOperator &mat_op, double omega,
-                                      const std::vector<StaticVector<3>> &r_naughts,
+                                      const MaterialOperator &mat_op, double omega_re,
+                                      double omega_im,
+                                      std::vector<std::array<double, 3>> &r_naughts,
                                       mfem::ElementTransformation &T,
                                       const mfem::IntegrationRule &ir,
                                       std::vector<std::array<double, 3>> &integrand_r,
@@ -92,9 +96,13 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
 
     // We assume that the material is isotropic, so the wave speed is a scalar.
     double wave_speed = mat_op.GetLightSpeedMax(FET.Elem1->Attribute);
-    double k = omega / wave_speed;
+    double k_re = omega_re / wave_speed;
+    double k_im = omega_im / wave_speed;
     double quadrature_weight = ip.weight * T.Weight();
-    double prefactor = quadrature_weight * k / (4 * M_PI);
+
+    // Complex prefactor: (ik/4π) = (i(k_re + ik_im)/4π) = (ik_re - k_im)/4π.
+    double prefactor_re = -quadrature_weight * k_im / (4 * M_PI);
+    double prefactor_im = quadrature_weight * k_re / (4 * M_PI);
 
     // Z * H = c0 * B.
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);
@@ -112,14 +120,24 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
     // This is a hot loop. Manually unrolling and avoiding Vectors significantly
     // increases performance.
     PalacePragmaOmp(parallel for schedule(static))
-    for (int i = 0; i < r_naughts.size(); i++)
+    for (size_t i = 0; i < r_naughts.size(); i++)
     {
       const auto &r = r_naughts[i];
 
-      double r0 = r(0), r1 = r(1), r2 = r(2);
-      double phase = k * (r0 * r_phys(0) + r1 * r_phys(1) + r2 * r_phys(2));
-      double w_imag = prefactor * std::cos(phase);
-      double w_real = -prefactor * std::sin(phase);
+      double r0 = r[0], r1 = r[1], r2 = r[2];
+      double dot_product = r0 * r_phys(0) + r1 * r_phys(1) + r2 * r_phys(2);
+
+      // Complex phase: exp(i*k*r₀·r') = exp(i*(k_re + ik_im)*dot_product)
+      //                               = exp(i*k_re*dot_product - k_im*dot_product)
+      //                               = exp(-k_im*dot_product) * exp(i*k_re*dot_product).
+      double amplitude = std::exp(-k_im * dot_product);
+      double phase_re = k_re * dot_product;
+      double cos_phase = std::cos(phase_re);
+      double sin_phase = std::sin(phase_re);
+
+      // Complex weight: prefactor * exp(i*k*r₀·r').
+      double w_real = amplitude * (prefactor_re * cos_phase - prefactor_im * sin_phase);
+      double w_imag = amplitude * (prefactor_re * sin_phase + prefactor_im * cos_phase);
 
       // r₀ × (n̂ × ZH).
       double cr0 = r1 * n_cross_ZHr(2) - r2 * n_cross_ZHr(1);

@@ -13,8 +13,9 @@
 namespace palace
 {
 void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction &B,
-                                      const MaterialOperator &mat_op, double omega,
-                                      const std::vector<StaticVector<3>> &r_naughts,
+                                      const MaterialOperator &mat_op, double omega_re,
+                                      double omega_im,
+                                      std::vector<std::array<double, 3>> &r_naughts,
                                       mfem::ElementTransformation &T,
                                       const mfem::IntegrationRule &ir,
                                       std::vector<std::array<double, 3>> &integrand_r,

@@ -243,8 +243,9 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
 
   // FarField postprocessing.
   MFEM_VERIFY(iodata.boundaries.postpro.farfield.empty() ||
-                  iodata.problem.type == ProblemType::DRIVEN,
-              "Far-field extraction is only available for driven problems!");
+                  iodata.problem.type == ProblemType::DRIVEN ||
+                  iodata.problem.type == ProblemType::EIGENMODE,
+              "Far-field extraction is only available for driven and eigenmode problems!");
 
   // Check that we don't have anisotropic materials.
   if (!iodata.boundaries.postpro.farfield.thetaphis.empty())
@@ -355,22 +356,21 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
-    const GridFunction *B, double omega) const
+    const GridFunction *B, double omega_re, double omega_im) const
 {
   if (theta_phi_pairs.empty())
     return {};
   BlockTimer bt0(Timer::POSTPRO_FARFIELD);
 
   // Compute target unit vectors from the given theta and phis.
-  std::vector<StaticVector<3>> r_naughts;
+  std::vector<std::array<double, 3>> r_naughts;
+  r_naughts.reserve(theta_phi_pairs.size());
+
   r_naughts.reserve(theta_phi_pairs.size());
   for (const auto &[theta, phi] : theta_phi_pairs)
   {
-    r_naughts.emplace_back();
-    auto &r_naught = r_naughts.back();
-    r_naught(0) = std::sin(theta) * std::cos(phi);
-    r_naught(1) = std::sin(theta) * std::sin(phi);
-    r_naught(2) = std::cos(theta);
+    r_naughts.emplace_back(std::array<double, 3>{
+        std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)});
   }
 
   const auto &mesh = *nd_fespace.GetParMesh();
@@ -394,8 +394,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(*E, *B, mat_op, omega, r_naughts, *T, *ir, integrals_r,
-                                     integrals_i);
+    AddStrattonChuIntegrandAtElement(*E, *B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
+                                     integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();

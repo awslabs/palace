@@ -149,7 +149,7 @@ auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
 }
 
 template <ProblemType solver_t>
-bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
+bool PostOperator<solver_t>::WriteParaviewFields(std::size_t step)
 {
   return (paraview_delta_post > 0 && step % paraview_delta_post == 0) ||
          (paraview_n_post > 0 && step < paraview_n_post) ||
@@ -161,11 +161,11 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
     const fs::path &sub_folder_name)
 {
-  if (!write_paraview_fields())
+  if (!WriteParaviewFields())
   {
     return;
   }
-  BlockTimer bt0(Timer::IO_PARAVIEW);
+  BlockTimer bt0(Timer::POSTPRO_PARAVIEW);
   fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
   fs::path paraview_dir_b =
       post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
@@ -408,11 +408,11 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteFields(double time, int step)
 {
-  if (!write_paraview_fields())
+  if (!WriteParaviewFields())
   {
     return;
   }
-  BlockTimer bt(Timer::IO_PARAVIEW);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -437,12 +437,12 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
 {
-  if (!write_paraview_fields())
+  if (!WriteParaviewFields())
   {
     return;
   }
 
-  BlockTimer bt(Timer::IO_PARAVIEW);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -831,14 +831,14 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
 template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFarField() const
 {
-  if constexpr (solver_t == ProblemType::DRIVEN)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
     measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
-    measurement_cache.farfield.E_field =
-        surf_post_op.GetFarFieldrE(measurement_cache.farfield.thetaphis, E.get(), B.get(),
-                                   measurement_cache.freq.real());
+    measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
+        measurement_cache.farfield.thetaphis, E.get(), B.get(),
+        measurement_cache.freq.real(), measurement_cache.freq.imag());
   }
 }
 
@@ -925,7 +925,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 
   omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
-  if (write_paraview_fields(step))
+  if (WriteParaviewFields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(paraview_save_indices.begin(),
@@ -980,7 +980,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (WriteParaviewFields(step))
   {
     WriteFields(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk\n", print_idx);
@@ -1004,7 +1004,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (WriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
@@ -1028,7 +1028,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (WriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteFields(step, idx);
@@ -1056,7 +1056,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   // method.
   time = units.Dimensionalize<Units::ValueType::TIME>(time);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, time, step);
-  if (write_paraview_fields(step))
+  if (WriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteFields(double(step) / paraview_delta_post, time);
@@ -1072,7 +1072,7 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   BlockTimer bt0(Timer::POSTPRO);
   auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
   post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
-  if (write_paraview_fields())
+  if (WriteParaviewFields())
   {
     WriteFieldsFinal(&indicator);
   }

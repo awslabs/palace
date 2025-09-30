@@ -223,7 +223,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
     eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
 
-  measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;
+  measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.farfield.E_field);
 
@@ -602,13 +602,12 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
 template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
 {
   if (!(surf_post_op.farfield.size() > 0))
   {
     return;
   }
-  BlockTimer bt0(Timer::IO_FARFIELD);
   using fmt::format;
 
   farfield_E = TableWithCSVFile(post_dir / "farfield-rE.csv");
@@ -620,10 +619,19 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
   int nr_expected_measurement_rows = surf_post_op.farfield.size();
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  if (U == ProblemType::EIGENMODE)
+  {
+    t.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+    t.insert("f_re", "f_re (GHz)");
+    t.insert("f_im", "f_im (GHz)");
+  }
+  else
+  {
+    t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  }
   t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
   t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
-  for (size_t i_dim = 0; i_dim < v_dim; i_dim++)
+  for (int i_dim = 0; i_dim < v_dim; i_dim++)
   {
     t.insert(format("rE{}_re", i_dim), format("r*Re{{E_{}}} (V)", DimLabel(i_dim)));
     t.insert(format("rE{}_im", i_dim), format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
@@ -635,18 +643,26 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
 template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_post_op)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
 {
   if (!farfield_E)
   {
     return;
   }
-  BlockTimer bt0(Timer::IO_FARFIELD);
   using fmt::format;
   int v_dim = surf_post_op.GetVDim();
   for (size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
   {
-    farfield_E->table["idx"] << row_idx_v;
+    if (U == ProblemType::EIGENMODE)
+    {
+      farfield_E->table["idx"] << row_idx_v;
+      farfield_E->table["f_re"] << measurement_cache.freq.real();
+      farfield_E->table["f_im"] << measurement_cache.freq.imag();
+    }
+    else
+    {
+      farfield_E->table["idx"] << row_idx_v;
+    }
     const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
     const auto &E_field = measurement_cache.farfield.E_field[i];
 
@@ -1236,6 +1252,9 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS(*post_op.fem_op);
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
     InitializeFarFieldE(post_op.surf_post_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
@@ -1282,6 +1301,9 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
+  }
+  if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
+  {
     PrintFarFieldE(post_op.surf_post_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)

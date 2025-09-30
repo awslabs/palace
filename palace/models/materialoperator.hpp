@@ -6,6 +6,7 @@
 
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -32,8 +33,9 @@ private:
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
-  // Are material isotropic? True when all the material properties are effectively
-  // scalar-valued (ie, true scalars or vectors with identical entries).
+  // Are materials isotropic? True when all the material properties are effectively
+  // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
+  // material is isotropic, the intersection is true when all are isotropic.
   mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
@@ -169,5 +171,22 @@ public:
 };
 
 }  // namespace palace
+
+namespace palace::internal::mat
+{
+
+template <std::size_t N>
+bool IsOrthonormal(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsValid(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsIsotropic(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsIdentity(const config::SymmetricMatrixData<N> &data);
+
+}  // namespace palace::internal::mat
 
 #endif  // PALACE_MODELS_MATERIAL_OPERATOR_HPP

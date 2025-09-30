@@ -253,8 +253,8 @@ TEST_CASE("FarField", "[config][Serial]")
 
     data.SetUp(postpro);
 
-    REQUIRE(data.attributes.empty());
-    REQUIRE(data.thetaphis.empty());
+    CHECK(data.attributes.empty());
+    CHECK(data.thetaphis.empty());
   }
 
   SECTION("Basic setup with attributes only")
@@ -265,19 +265,8 @@ TEST_CASE("FarField", "[config][Serial]")
 
     data.SetUp(postpro);
 
-    REQUIRE(data.attributes == std::vector<int>{1, 3, 5});
-    REQUIRE(data.thetaphis.empty());
-  }
-
-  SECTION("NSample generation")
-  {
-    json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 9}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
-
-    REQUIRE(data.attributes == std::vector<int>{1});
-    REQUIRE(data.thetaphis.size() == 9);
+    CHECK(data.attributes == std::vector<int>{1, 3, 5});
+    CHECK(data.thetaphis.empty());
   }
 
   SECTION("ThetaPhis conversion to radians")
@@ -288,11 +277,11 @@ TEST_CASE("FarField", "[config][Serial]")
 
     data.SetUp(postpro);
 
-    REQUIRE(data.thetaphis.size() == 2);
-    REQUIRE(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
-    REQUIRE(data.thetaphis[0].second == Catch::Approx(0.0).margin(delta_eps));
-    REQUIRE(data.thetaphis[1].first == Catch::Approx(M_PI / 2).margin(delta_eps));
-    REQUIRE(data.thetaphis[1].second == Catch::Approx(M_PI).margin(delta_eps));
+    CHECK(data.thetaphis.size() == 2);
+    CHECK(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
+    CHECK(data.thetaphis[0].second == Catch::Approx(0.0).margin(delta_eps));
+    CHECK(data.thetaphis[1].first == Catch::Approx(M_PI / 2).margin(delta_eps));
+    CHECK(data.thetaphis[1].second == Catch::Approx(M_PI).margin(delta_eps));
   }
 
   SECTION("Duplicate removal")
@@ -305,7 +294,43 @@ TEST_CASE("FarField", "[config][Serial]")
 
     data.SetUp(postpro);
 
-    REQUIRE(data.thetaphis.size() == 2);
+    CHECK(data.thetaphis.size() == 2);
+  }
+
+  SECTION("Spherical coordinate duplicate removal")
+  {
+    // Test pole singularity: (0°, any φ) should be treated as same point.
+    {
+      json postpro = {
+          {"FarField",
+           {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}}}};
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+      CHECK(data.thetaphis.size() == 1);  // All should collapse to one pole.
+    }
+
+    // Test phi periodicity: φ and φ+360° are same point.
+    {
+      json postpro = {
+          {"FarField",
+           {{"Attributes", {1}},
+            {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}}}};  // 390° = 30° + 360°
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+      CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
+    }
+
+    // Test theta reflection: (θ, φ) ≡ (180°-θ, φ+180°).
+    {
+      json postpro = {
+          {"FarField",
+           {{"Attributes", {1}},
+            {"ThetaPhis",
+             {{60.0, 45.0}, {120.0, 225.0}}}}}};  // 120° = 180°-60°, 225° = 45°+180°
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+      CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
+    }
   }
 
   SECTION("Combined NSample and ThetaPhis")
@@ -317,6 +342,80 @@ TEST_CASE("FarField", "[config][Serial]")
 
     data.SetUp(postpro);
 
-    REQUIRE(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis
+    CHECK(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis.
+  }
+
+  SECTION("NSample sphere sampling")
+  {
+    for (int nsample : {2, 6, 10, 15, 20, 25, 64800})
+    {
+      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", nsample}}}};
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+
+      // Exact point count.
+      CHECK(data.thetaphis.size() == nsample);
+
+      // Poles always included.
+      bool has_north_pole = false, has_south_pole = false;
+      for (const auto &point : data.thetaphis)
+      {
+        if (std::abs(point.first) < delta_eps)
+          has_north_pole = true;
+        if (std::abs(point.first - M_PI) < delta_eps)
+          has_south_pole = true;
+      }
+      CHECK(has_north_pole);
+      CHECK(has_south_pole);
+
+      if (nsample == 2)
+        continue;
+
+      int n_theta = std::max(1, static_cast<int>(std::sqrt(nsample - 2)));
+
+      // XZ plane inclusion (excluding poles).
+      int xz_plane_count = 0;
+      for (const auto &point : data.thetaphis)
+      {
+        if ((std::abs(point.second) < delta_eps ||
+             std::abs(point.second - M_PI) < delta_eps) &&
+            std::abs(point.first) > delta_eps && std::abs(point.first - M_PI) > delta_eps)
+        {
+          xz_plane_count++;
+        }
+      }
+      // Each ring contributes two points.
+      CHECK(xz_plane_count >= 2 * n_theta);
+
+      // Equator inclusion.
+      int equator_count = 0;
+      for (const auto &point : data.thetaphis)
+      {
+        if (std::abs(point.first - M_PI / 2.0) < delta_eps)
+        {
+          equator_count++;
+        }
+      }
+      CHECK(equator_count >= std::max(1, (nsample - 2) / (2 * n_theta)));
+    }
+  }
+
+  SECTION("NSample edge cases")
+  {
+    // NSample = 0 produces no points.
+    {
+      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 0}}}};
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+      CHECK(data.thetaphis.empty());
+    }
+
+    // NSample = 1 produces two points (the poles).
+    {
+      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 1}}}};
+      config::FarFieldPostData data;
+      data.SetUp(postpro);
+      CHECK(data.thetaphis.size() == 2);
+    }
   }
 }

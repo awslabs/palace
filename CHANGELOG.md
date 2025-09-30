@@ -42,7 +42,7 @@ The format of this changelog is based on
     423](https://github.com/awslabs/palace/issues/423), [Issue
     437](https://github.com/awslabs/palace/issues/437)
   - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
-    were failing. [Issue 447](https://github.com/awslabs/palace/issues/447). 
+    were failing. [Issue 447](https://github.com/awslabs/palace/issues/447).
   - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
     use in a non-amr simulation. [Issue 444](https://github.com/awslabs/palace/issues/444).
   - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect results for

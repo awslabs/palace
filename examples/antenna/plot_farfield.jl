@@ -138,13 +138,13 @@ function generate_theoretical_dipole()
 end
 
 """
-    polar_plots(freq_data, freq, filename = "farfield_polar.png")
+    polar_plots(data, label, filename = "farfield_polar.png")
 
 Plot the polar radiation patterns and the expected half-dipole pattern.
 """
-function polar_plots(freq_data, freq, filename="farfield_polar.png")
-    e_angles, e_mag = extract_eplane(freq_data)
-    h_angles, h_mag = extract_hplane(freq_data)
+function polar_plots(data, label, filename="farfield_polar.png")
+    e_angles, e_mag = extract_eplane(data)
+    h_angles, h_mag = extract_hplane(data)
 
     theo_angles, theo_eplane, _, theo_hplane = generate_theoretical_dipole()
     theo_e_db = compute_db(theo_eplane)
@@ -158,7 +158,7 @@ function polar_plots(freq_data, freq, filename="farfield_polar.png")
         # E-plane plot
         ax1 = Makie.PolarAxis(
             fig[1, 1],
-            title="E-plane (f = $(freq) GHz)",
+            title="E-plane ($label)",
             rticks=-25:5:2,
             radius_at_origin=-25,
             rlimits=(-25, 2),
@@ -186,7 +186,7 @@ function polar_plots(freq_data, freq, filename="farfield_polar.png")
         # H-plane plot
         ax2 = Makie.PolarAxis(
             fig[1, 2],
-            title="H-plane (f = $(freq) GHz)",
+            title="H-plane ($label)",
             rticks=-25:5:2,
             radius_at_origin=-25,
             rlimits=(-25, 2),
@@ -213,30 +213,26 @@ function polar_plots(freq_data, freq, filename="farfield_polar.png")
 end
 
 """
-    three_d_plot(freq_data, freq, filename = "farfield_3d.png")
+    three_d_plot(data, label, filename = "farfield_3d.png")
 
 Plot a 3D representation of the strength of the electric field.
 
 The plot represents the normalized magnitude of electric field with a mesh where
 the radial distance is proportional to the magnitude itself.
 """
-function three_d_plot(freq_data, freq, filename="farfield_3d.png")
-    E_mag = compute_field_magnitude(freq_data)
+function three_d_plot(data, label, filename="farfield_3d.png")
+    E_mag = compute_field_magnitude(data)
     E_mag ./= maximum(E_mag)
 
-    theta_rad = deg2rad.(freq_data[:, "theta"])
-    phi_rad = deg2rad.(freq_data[:, "phi"])
+    theta_rad = deg2rad.(data[:, "theta"])
+    phi_rad = deg2rad.(data[:, "phi"])
 
     x = E_mag .* sin.(theta_rad) .* cos.(phi_rad)
     y = E_mag .* sin.(theta_rad) .* sin.(phi_rad)
     z = E_mag .* cos.(theta_rad)
 
     fig3d = Makie.Figure(size=(600, 450))
-    ax = Makie.Axis3(
-        fig3d[1, 1],
-        title="Relative E-field magnitude (f = $(freq) GHz)",
-        aspect=:data
-    )
+    ax = Makie.Axis3(fig3d[1, 1], title="Relative E-field magnitude ($label)", aspect=:data)
     Makie.mesh!(ax, x, y, z, color=E_mag)
     Makie.save(filename, fig3d)
     return println("Saved $filename")
@@ -259,13 +255,21 @@ function main()
     # Remove spaces and units from column names.
     rename!(df, [name => strip(replace(name, r"\s*\([^)]*\)" => "")) for name in names(df)])
 
-    # Process the first frequency we find.
-    freq = first(df[:, "f"])
-    println("Processing frequency: $(freq) GHz")
-    freq_data = filter(row -> row["f"] == freq, df)
+    # Process the first frequency/mode we find.
+    if "m" in names(df)         # Eigenmode
+        mode = df[:, "m"]
+        println("Processing mode: $mode")
+        label = "m = $mode"
+        data = filter(row -> row["m"] == mode, df)
+    else
+        freq = first(df[:, "f"])
+        println("Processing frequency: $(freq) GHz")
+        label = "freq = $freq GHz"
+        data = filter(row -> row["f"] == freq, df)
+    end
 
-    polar_plots(freq_data, freq)
-    three_d_plot(freq_data, freq)
+    polar_plots(data, label)
+    three_d_plot(data, label)
     return nothing
 end
 

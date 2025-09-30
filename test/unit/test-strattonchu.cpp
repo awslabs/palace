@@ -41,15 +41,10 @@ namespace palace
 {
 using namespace Catch;
 using namespace electromagnetics;
+using namespace Catch::Matchers;
 
 namespace
 {
-
-// Test constants.
-constexpr double ATOL = 1e-4;
-constexpr double RTOL = 5e-6;
-constexpr int NUM_THETA = 32;
-constexpr int NUM_PHI = 32;
 
 // Compute the Cartesian components electric field of a time-harmonic dipole
 // aligned on the z axis. The returned field is non-dimensionalized according to
@@ -74,10 +69,10 @@ std::array<std::complex<double>, 3> ComputeDipoleENonDim(const mfem::Vector &x_n
 
   double factor = p0 / (4.0 * M_PI * epsilon0_ * r * r * r);
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_ikr = std::exp(jkr);
+  std::complex<double> exp_jkr = std::exp(jkr);
 
-  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 - jkr) * exp_ikr;
-  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 - jkr - kr * kr) * exp_ikr;
+  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 - jkr) * exp_jkr;
+  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 - jkr - kr * kr) * exp_jkr;
 
   Er = units.Nondimensionalize<Units::ValueType::FIELD_E>(Er);
   Etheta = units.Nondimensionalize<Units::ValueType::FIELD_E>(Etheta);
@@ -101,15 +96,15 @@ std::array<std::complex<double>, 3> ComputeDipoleBNonDim(const mfem::Vector &x_n
 
   double r = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
 
-  double omega = 2 * M_PI * freq_Hz;
-  double k = omega / c0_;
+  double omega_rad_per_sec = 2 * M_PI * freq_Hz;
+  double k = omega_rad_per_sec / c0_;
   double kr = k * r;
 
   // The magnetic field has only φ component for z-directed dipole.
-  std::complex<double> factor(0, omega * mu0_ * p0 / (4.0 * M_PI * r * r));
+  std::complex<double> factor(0, omega_rad_per_sec * mu0_ * p0 / (4.0 * M_PI * r * r));
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_ikr = std::exp(jkr);
-  std::complex<double> Bphi = factor * std::sin(theta) * (1.0 - jkr) * exp_ikr;
+  std::complex<double> exp_jkr = std::exp(jkr);
+  std::complex<double> Bphi = factor * std::sin(theta) * (1.0 - jkr) * exp_jkr;
 
   Bphi = units.Nondimensionalize<Units::ValueType::FIELD_B>(Bphi);
 
@@ -135,15 +130,19 @@ std::array<std::complex<double>, 3> ComputeAnalyticalFarFieldrE(double theta, do
 // Generate uniformly distributed test points on unit sphere.
 std::vector<std::pair<double, double>> GenerateSphericalTestPoints()
 {
-  std::vector<std::pair<double, double>> thetaphis;
-  thetaphis.reserve(NUM_THETA * NUM_PHI);
+  // Test constants.
+  constexpr int num_theta = 32;
+  constexpr int num_phi = 32;
 
-  for (int i = 0; i < NUM_THETA; ++i)
+  std::vector<std::pair<double, double>> thetaphis;
+  thetaphis.reserve(num_theta * num_phi);
+
+  for (int i = 0; i < num_theta; ++i)
   {
-    double theta = acos(1.0 - 2.0 * i / (NUM_THETA - 1.0));
-    for (int j = 0; j < NUM_PHI; ++j)
+    double theta = acos(1.0 - 2.0 * i / (num_theta - 1.0));
+    for (int j = 0; j < num_phi; ++j)
     {
-      double phi = 2.0 * M_PI * j / NUM_PHI;
+      double phi = 2.0 * M_PI * j / num_phi;
       thetaphis.emplace_back(theta, phi);
     }
   }
@@ -153,9 +152,13 @@ std::vector<std::pair<double, double>> GenerateSphericalTestPoints()
 // Compare the implementation in SurfacePostOperator with the analytic
 // expectation in ComputeAnalyticalFarFieldrE. Note, the agreement has to be up
 // to a phase, so we compare the magnitudes along each direction.
-void runFarFieldTest(double freq_Hz, const std::string mesh_path,
+void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
                      const std::vector<int> &attributes)
 {
+  // Test constants.
+  constexpr double atol = 1e-4;
+  constexpr double rtol = 5e-6;
+
   constexpr double p0 = 1e-9;  // Dipole moment [C⋅m]
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
@@ -172,7 +175,6 @@ void runFarFieldTest(double freq_Hz, const std::string mesh_path,
   auto comm = Mpi::World();
 
   // Read parallel mesh.
-  auto serial_mesh = std::make_unique<mfem::Mesh>(mesh_path, 1, 1);
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   iodata.NondimensionalizeInputs(*par_mesh);
@@ -235,8 +237,11 @@ void runFarFieldTest(double freq_Hz, const std::string mesh_path,
 
   auto thetaphis = GenerateSphericalTestPoints();
   // NOTE: units.Nondimensionalize<Units::ValueType::FREQUENCY> adds a factor of 2pi!
-  double omega = units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
-  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, &E_field, &B_field, omega);
+  double omega_rad_per_time =
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+  constexpr double omega_im = 0.0;
+  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, &E_field, &B_field,
+                                                omega_rad_per_time, omega_im);
 
   // Validate computed far-field against analytical solution
   for (size_t i = 0; i < thetaphis.size(); i++)
@@ -247,17 +252,19 @@ void runFarFieldTest(double freq_Hz, const std::string mesh_path,
 
     for (size_t j = 0; j < dim; j++)
     {
-      // The agreement has to be up to a phase, so we compare the absolute
-      // values.
-      REQUIRE_THAT(std::abs(E_phys[j]),
-                   Catch::Matchers::WithinRel(std::abs(rE_far[j]), RTOL) ||
-                       Catch::Matchers::WithinAbs(0.0, ATOL));
+      // The agreement has to be up to a phase, so we compare the absolute values.
+      CHECK_THAT(std::abs(E_phys[j]),
+                 WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
     }
   }
 }
 
 TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
 {
+  // Test constants.
+  constexpr double atol = 1e-4;
+  constexpr double rtol = 1e-7;
+
   // Check that the ComputeAnalyticalFarFieldrE is the limit ComputeDipoleENonDim
   // by evaluating some points with large radii. The agreement has to be up to a
   // phase, so we check the absolute value.
@@ -289,22 +296,40 @@ TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
     for (int i = 0; i < 3; i++)
     {
       std::complex<double> rE_near = r * E_near[i];
-      REQUIRE_THAT(std::abs(rE_far[i]),
-                   Catch::Matchers::WithinRel(std::abs(rE_near), ATOL) ||
-                       Catch::Matchers::WithinAbs(0.0, RTOL));
+      CHECK_THAT(std::abs(rE_far[i]),
+                 WithinRel(std::abs(rE_near), atol) || WithinAbs(0.0, rtol));
     }
   }
 }
 
 TEST_CASE("PostOperator", "[strattonchu][Serial]")
 {
-  std::string mesh_name = GENERATE("sphere.msh", "cube.msh", "two_hemispheres.msh");
-  std::string mesh_path = std::string(PALACE_TEST_MESH_DIR "/gmsh/") + mesh_name;
-  double freq_Hz = GENERATE(35e6, 50e6);
-  std::vector<int> attributes =
-      (mesh_name == "two_hemispheres.msh") ? std::vector<int>{2, 3} : std::vector<int>{2};
+  // This test checks that the Stratton-Chu code using a non-trivial mesh:
+  // 1. The outer boundary has multiple attributes.
+  // 2. The mesh is offset with respect to the source.
+  // 2. The outer boundary is not a sphere.
 
-  runFarFieldTest(freq_Hz, mesh_path, attributes);
+  double freq_Hz = GENERATE(35e6, 50e6);
+  std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
+  ;
+
+  // Make mesh for a cube [0, 1] x [0, 1] x [0, 1].
+  int resolution = 20;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+
+  // Offset the cube a little bit.
+  serial_mesh->Transform(
+      [](const mfem::Vector &x, mfem::Vector &p)
+      {
+        p = x;
+        p(0) -= 0.25;
+        p(1) -= 0.25;
+        p(2) -= 0.25;
+      });
+
+  runFarFieldTest(freq_Hz, std::move(serial_mesh), attributes);
 }
 
 TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu][Serial]")
@@ -314,15 +339,15 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
 
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
-  material.mu_r.s[0] = 2;  // Make it anistropic.
+  material.mu_r.s[0] = 2;  // Make it anisotropic.
 
-  iodata.boundaries.postpro.farfield.attributes = {2};
+  iodata.boundaries.postpro.farfield.attributes = {1};
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
 
   auto comm = Mpi::World();
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      std::string(PALACE_TEST_MESH_DIR "/gmsh/sphere.msh"), 1, 1);
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
 

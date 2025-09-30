@@ -117,10 +117,9 @@ Postprocessing                  // < Time spent in postprocessing once the field
                                 //   has been computed
   Far Fields                    // < Time spent computing surface integrals to extrapolate
                                 //   near fields to far fields
+  Paraview                      // < Processing and writing fields for visualization
 Disk IO                         // < Disk read/write time for loading the mesh file and
                                 //   writing CSV fields
-  Paraview                      // < Disk read/write time writing fields for visualization
-  Far Fields                    // < Disk read/write time writing farfield-rE.csv
 -----------------------
 Total                           // < Total simulation time
 ```
