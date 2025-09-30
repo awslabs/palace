@@ -133,6 +133,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
+  using namespace Catch::Matchers;
+
   constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
@@ -144,8 +146,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
       for (size_t i = 0; i < sample_f.size(); ++i)
       {
-        CHECK_THAT(driven_solver.sample_f[i],
-                   Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+        CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
       CHECK(driven_solver.save_indices == save_indices);
       CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
@@ -157,8 +158,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
       for (size_t i = 0; i < sample_f.size(); ++i)
       {
-        CHECK_THAT(driven_solver.sample_f[i],
-                   Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+        CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
       CHECK(driven_solver.save_indices == save_indices);
       CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
@@ -174,8 +174,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     for (size_t i = 0; i < sample_f.size(); ++i)
     {
-      CHECK_THAT(driven_solver.sample_f[i],
-                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
@@ -191,8 +190,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     for (size_t i = 0; i < sample_f.size(); ++i)
     {
-      CHECK_THAT(driven_solver.sample_f[i],
-                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
@@ -209,8 +207,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     for (size_t i = 0; i < sample_f.size(); ++i)
     {
-      CHECK_THAT(driven_solver.sample_f[i],
-                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
@@ -227,8 +224,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     for (size_t i = 0; i < sample_f.size(); ++i)
     {
-      CHECK_THAT(driven_solver.sample_f[i],
-                 Catch::Matchers::WithinAbs(sample_f[i], delta_eps));
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
