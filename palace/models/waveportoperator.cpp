@@ -19,6 +19,8 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/filesystem.hpp" //test for gf export
+#include "utils/units.hpp" //test for gf export
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -908,6 +910,28 @@ void WavePortData::Initialize(double omega)
     port_E0n->Imag().SetFromTrueDofs(e0ni);
   }
 
+  // Test exporting waveport mode gridfunction?
+  //
+  const std::size_t pad_digits_default = 6;
+  std::string output_dir = "test_waveport";
+  const int local_rank = port_mesh->Get().GetMyRank();
+  std::cout << "local_rank: " << local_rank << " port_comm != MPI_COMM_NULL: " << (port_comm != MPI_COMM_NULL) << "\n";
+  fs::create_directories(output_dir);
+  fs::path et_real_filename =
+    fs::path(output_dir) / fmt::format("Et_real_{:0{}d}.gf.{:0{}d}", mode_idx, // should not be mode_idx!!????
+                                               pad_digits_default, local_rank,
+                                               pad_digits_default);
+
+  std::ofstream et_real_file(et_real_filename);
+
+  port_E0t->Real().Save(et_real_file);
+  fs::path mesh_filename = fs::path(output_dir) / "mesh";
+  //Units units()
+  //auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
+  //mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  port_mesh->Get().Save(mesh_filename);
+  //mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+
   // Configure the linear forms for computing S-parameters (projection of the field onto the
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
   // |E x H⋆| ⋅ n, integrated over the port surface (+n is the direction of propagation).
@@ -1026,7 +1050,9 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E and B fields in port S-parameter "
               "calculation!");
+  Mpi::Print("GetSParameter E.Real() min/max: {}, {}\n", E.Real().Min(), E.Real().Max());
   port_nd_transfer->Transfer(E.Real(), port_E->Real());
+  Mpi::Print("GetSParameter port_E->Real() min/max: {}, {}\n", port_E->Real().Min(), port_E->Real().Max());
   port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
   std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
