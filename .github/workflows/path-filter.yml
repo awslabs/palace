@@ -95,7 +95,7 @@ jobs:
         include:
             # List of configuration that must be kept in sync with spack.yml
           - config: "gcc, none, openblas, develop, openmpi"
-    name: spack (${{ matrix.config }})
+    name: build-and-test-spack (${{ matrix.config }})
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping spack build (${{ matrix.config }}) as only Singularity or docs files changed"
@@ -105,12 +105,7 @@ jobs:
     if: |
       ${{ needs.path-filter.outputs.spack_only == 'true'
       || needs.path-filter.outputs.docs_only == 'true' }}
-    strategy:
-      matrix:
-        include:
-          # List of configuration that must be kept in sync with spack.yml
-          - config: "gcc, none, openblas, develop, openmpi"
-    name: spack (${{ matrix.config }})
+    name: build-and-test-singularity
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping singularity build as only Spack or docs files changed"
