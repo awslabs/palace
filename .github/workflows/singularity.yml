@@ -9,8 +9,6 @@ on:
       - main
     tags: '*'
   pull_request:
-    paths-ignore:
-      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -23,8 +21,11 @@ env:
 jobs:
   build-and-test-singularity:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only != 'true'
-      && needs.path-filter.outputs.docs_only != 'true' }}
+    if: |
+      ${{ needs.path-filter.outputs.source_changed == 'true'
+      || needs.path-filter.outputs.examples_changed == 'true'
+      || needs.path-filter.outputs.tests_changed == 'true'
+      || needs.path-filter.outputs.singularity_changed == 'true' }}
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
