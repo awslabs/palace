@@ -27,8 +27,8 @@ jobs:
   build-and-test-singularity:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.code_changed == 'false'
-       || needs.path-filter.outputs.singularity_changed == 'false' }}
+      needs.path-filter.outputs.code_changed == 'false' ||
+      needs.path-filter.outputs.singularity_changed == 'false'
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
