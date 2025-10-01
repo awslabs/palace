@@ -80,7 +80,7 @@ jobs:
           - config: "clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
           - config: "clang, mpich, openblas, static, int64, serial, arpack, superlu"
     name: build-and-test-macos (${{ matrix.config }})
-    runs-on: macos-latest-xlarge
+    runs-on: macos-latest
     steps:
       - run: echo "Skipping macos build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
 
@@ -93,7 +93,7 @@ jobs:
           # List of configuration that must be kept in sync with spack.yml
         - config: "gcc, none, openblas, develop, openmpi"
     name: spack (${{ matrix.config }})
-    runs-on: palace_ubuntu-latest_16-core
+    runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping spack build (${{ matrix.config }}) as only Singularity or docs files changed"
 
@@ -106,6 +106,6 @@ jobs:
           # List of configuration that must be kept in sync with spack.yml
           - config: "gcc, none, openblas, develop, openmpi"
     name: spack (${{ matrix.config }})
-    runs-on: palace_ubuntu-latest_16-core
+    runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping singularity build as only Spack or docs files changed"
