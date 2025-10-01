@@ -89,9 +89,9 @@ jobs:
     if: ${{ needs.path-filter.outputs.singularity_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
-      include:
-          # List of configuration that must be kept in sync with spack.yml
-        - config: "gcc, none, openblas, develop, openmpi"
+        include:
+            # List of configuration that must be kept in sync with spack.yml
+          - config: "gcc, none, openblas, develop, openmpi"
     name: spack (${{ matrix.config }})
     runs-on: ubuntu-latest
     steps:
