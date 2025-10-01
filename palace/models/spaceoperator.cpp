@@ -812,7 +812,7 @@ void SpaceOperator::AddImagPeriodicCoefficients(double coeff,
   // Floquet periodicity contributions.
   if (mat_op.HasWaveVector())
   {
-    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), -coeff);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), coeff);
   }
 }
 
