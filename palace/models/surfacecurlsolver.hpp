@@ -6,6 +6,7 @@
 
 #include <memory>
 #include "linalg/vector.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -15,32 +16,33 @@ class Mesh;
 class FiniteElementSpace;
 class MaterialOperator;
 
-// Forward declaration
+// Forward declarations
 class SurfaceFluxData;
+class CurlCurlOperator;
+template <ProblemType T>
+class PostOperator;
 
 // Solve 2D surface curl problem for flux loop initial condition
-Vector SolveSurfaceCurlProblem(const SurfaceFluxData &data,
-                               const IoData &iodata, const Mesh &mesh,
-                               const FiniteElementSpace &nd_fespace,
-                               int flux_loop_idx);
+Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
+                               const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+                               int flux_loop_idx,
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
 
-// Overload with pre-allocated result vector
-void SolveSurfaceCurlProblem(const SurfaceFluxData &data, const IoData &iodata,
+void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
                              const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                             int flux_loop_idx, Vector &result);
+                             int flux_loop_idx,
+                             PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+                             Vector &result);
 
-// Verify flux through holes using computed magnetic field B
 void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
                             const std::vector<int> &hole_attributes,
-                            const std::vector<double> &target_fluxes, 
-                            const Mesh &mesh,
+                            const std::vector<double> &target_fluxes, const Mesh &mesh,
                             const MaterialOperator &mat_op,
-                            const mfem::Vector &flux_direction,
-                            MPI_Comm comm);
+                            const mfem::Vector &flux_direction, MPI_Comm comm);
 
 // Verify flux through all holes in a multi flux setting
 void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
-                               int current_flux_loop_idx, const Mesh &mesh, 
+                               int current_flux_loop_idx, const Mesh &mesh,
                                const MaterialOperator &mat_op, MPI_Comm comm);
 
 }  // namespace palace

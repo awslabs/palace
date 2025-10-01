@@ -76,7 +76,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                (n_step > 1) ? "boundaries" : "boundary");
   }
   auto t0 = Timer::Now();
-  
+
   // Pre-allocate boundary values vector for flux loop optimization
   Vector boundary_values;
 
@@ -106,7 +106,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Mpi::Print("\nIt {:d}/{:d}: FluxLoop Index = {:d} (elapsed time = {:.2e} s)\n",
                  step + 1, n_step, idx, Timer::Duration(Timer::Now() - t0).count());
 
-      curlcurl_op.GetFluxExcitationVector(idx, RHS, &boundary_values);
+      curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
       Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
     }
@@ -123,11 +123,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           *std::next(curlcurl_op.GetSurfaceFluxOp().begin(), flux_idx);
       auto &B_gf = post_op.GetBGridFunction().Real();
       B_gf.SetFromTrueDofs(B);
-      
+
       // Create flux direction vector from data
-      mfem::Vector flux_direction(const_cast<double*>(data.direction.data()), 
+      mfem::Vector flux_direction(const_cast<double *>(data.direction.data()),
                                   static_cast<int>(data.direction.size()));
-      // Use enhanced coefficient-based verification
+      // Verify that the flux is correctly computed
       VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
                              curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
                              flux_direction, curlcurl_op.GetComm());
@@ -204,7 +204,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   {
     // Mixed current-flux case: use constraint system M×R = I
     mfem::DenseMatrix R(n);
-    
+
     // Diagonal terms from energy
     for (int i = 0; i < n; i++)
     {
@@ -261,7 +261,7 @@ void MagnetostaticSolver::PostprocessTerminals(
         idx++;
       }
     }
-    
+
     // Compute Minv = R
     Minv = R;
   }
@@ -381,7 +381,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     for (const auto &[idx, data] : surf_flux_op)
     {
       terminal_Phi.table["i"] << double(idx);
-      terminal_Phi.table["Phiinc"] << Phi_inc[i]; // in flux quantum units
+      terminal_Phi.table["Phiinc"] << Phi_inc[i];  // in flux quantum units
       i++;
     }
     terminal_Phi.WriteFullTableTrunc();

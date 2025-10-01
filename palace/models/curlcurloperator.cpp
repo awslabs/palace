@@ -235,12 +235,17 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
-void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS)
+template <ProblemType T>
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
+                                               PostOperator<T> &post_op)
 {
-  GetFluxExcitationVector(idx, RHS, nullptr);
+  GetFluxExcitationVector(idx, RHS, post_op, nullptr);
 }
 
-void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values)
+template <ProblemType T>
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
+                                               PostOperator<T> &post_op,
+                                               Vector *boundary_values)
 {
   // Assemble the surface flux excitation for this specific flux loop
   // by solving the 2D surface curl problem on the metallic surface
@@ -248,12 +253,12 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS, Vector *bou
   Vector flux_solution;
   if (boundary_values)
   {
-    SolveSurfaceCurlProblem(idx, *boundary_values);
+    SolveSurfaceCurlProblem(idx, post_op, *boundary_values);
     flux_solution = *boundary_values;  // Use the pre-allocated result
   }
   else
   {
-    flux_solution = SolveSurfaceCurlProblem(idx);
+    flux_solution = SolveSurfaceCurlProblem(idx, post_op);
   }
 
   RHS.SetSize(GetNDSpace().GetTrueVSize());
@@ -286,22 +291,43 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS, Vector *bou
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), flux_solution);
 }
 
-Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
+template <ProblemType T>
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
+                                                 PostOperator<T> &post_op) const
 {
   // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
-  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(),
+                                              post_op);
 }
 
-void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const
+template <ProblemType T>
+void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
+                                               Vector &result) const
 {
   // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
-  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), result);
+  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
+                                       result);
 }
+
+// Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
+template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
+    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
+
+template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
+    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    Vector *boundary_values);
+
+template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
+
+template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    Vector &result) const;
 
 }  // namespace palace

@@ -58,20 +58,22 @@ const SurfaceFluxData &SurfaceFluxOperator::GetSource(int idx) const
   return it->second;
 }
 
-palace::Vector
-SurfaceFluxOperator::SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
-                                             const FiniteElementSpace &nd_fespace) const
+palace::Vector SurfaceFluxOperator::SolveSurfaceCurlProblem(
+    int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const
 {
   const auto &data = GetSource(idx);
-  return palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx);
+  return palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx,
+                                         post_op);
 }
 
-void SurfaceFluxOperator::SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
-                                                  const FiniteElementSpace &nd_fespace,
-                                                  Vector &result) const
+void SurfaceFluxOperator::SolveSurfaceCurlProblem(
+    int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result) const
 {
   const auto &data = GetSource(idx);
-  palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx, result);
+  palace::SolveSurfaceCurlProblem(data, *solver_config_, mesh, nd_fespace, idx, post_op,
+                                  result);
 }
 
 }  // namespace palace

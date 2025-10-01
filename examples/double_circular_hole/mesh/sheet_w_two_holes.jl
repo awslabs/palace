@@ -35,17 +35,17 @@ Generate a mesh for a rectangular sheet with two circular holes using Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_sheet_with_two_holes_mesh(;
-    filename::AbstractString = "sheet_w_two_holes2.msh",
-    L_outer::Real = 20.0,
-    rect_width::Real = 12.0,
-    rect_height::Real = 6.0,
-    hole_radius::Real = 1.0,
-    hole_separation::Real = 5.0,
-    mesh_size_coarse::Real = 2.0,
-    mesh_size_medium::Real = 0.4,
-    mesh_size_fine::Real = 0.2,
-    verbose::Integer = 5,
-    gui::Bool = false
+    filename::AbstractString="sheet_w_two_holes2.msh",
+    L_outer::Real=20.0,
+    rect_width::Real=12.0,
+    rect_height::Real=6.0,
+    hole_radius::Real=1.0,
+    hole_separation::Real=5.0,
+    mesh_size_coarse::Real=2.0,
+    mesh_size_medium::Real=0.4,
+    mesh_size_fine::Real=0.2,
+    verbose::Integer=5,
+    gui::Bool=false
 )
 
     # Initialize Gmsh
@@ -71,34 +71,94 @@ function generate_sheet_with_two_holes_mesh(;
     d = hole_separation
 
     # Define the points (vertices of the outer cube)
-    p1 = gmsh.model.geo.addPoint(cx-L_outer/2, cy-L_outer/2, cz-L_outer/2, mesh_size_coarse)
-    p2 = gmsh.model.geo.addPoint(cx+L_outer/2, cy-L_outer/2, cz-L_outer/2, mesh_size_coarse)
-    p3 = gmsh.model.geo.addPoint(cx+L_outer/2, cy+L_outer/2, cz-L_outer/2, mesh_size_coarse)
-    p4 = gmsh.model.geo.addPoint(cx-L_outer/2, cy+L_outer/2, cz-L_outer/2, mesh_size_coarse)
-    p5 = gmsh.model.geo.addPoint(cx-L_outer/2, cy-L_outer/2, cz+L_outer/2, mesh_size_coarse)
-    p6 = gmsh.model.geo.addPoint(cx+L_outer/2, cy-L_outer/2, cz+L_outer/2, mesh_size_coarse)
-    p7 = gmsh.model.geo.addPoint(cx+L_outer/2, cy+L_outer/2, cz+L_outer/2, mesh_size_coarse)
-    p8 = gmsh.model.geo.addPoint(cx-L_outer/2, cy+L_outer/2, cz+L_outer/2, mesh_size_coarse)
+    p1 = gmsh.model.geo.addPoint(
+        cx - L_outer / 2,
+        cy - L_outer / 2,
+        cz - L_outer / 2,
+        mesh_size_coarse
+    )
+    p2 = gmsh.model.geo.addPoint(
+        cx + L_outer / 2,
+        cy - L_outer / 2,
+        cz - L_outer / 2,
+        mesh_size_coarse
+    )
+    p3 = gmsh.model.geo.addPoint(
+        cx + L_outer / 2,
+        cy + L_outer / 2,
+        cz - L_outer / 2,
+        mesh_size_coarse
+    )
+    p4 = gmsh.model.geo.addPoint(
+        cx - L_outer / 2,
+        cy + L_outer / 2,
+        cz - L_outer / 2,
+        mesh_size_coarse
+    )
+    p5 = gmsh.model.geo.addPoint(
+        cx - L_outer / 2,
+        cy - L_outer / 2,
+        cz + L_outer / 2,
+        mesh_size_coarse
+    )
+    p6 = gmsh.model.geo.addPoint(
+        cx + L_outer / 2,
+        cy - L_outer / 2,
+        cz + L_outer / 2,
+        mesh_size_coarse
+    )
+    p7 = gmsh.model.geo.addPoint(
+        cx + L_outer / 2,
+        cy + L_outer / 2,
+        cz + L_outer / 2,
+        mesh_size_coarse
+    )
+    p8 = gmsh.model.geo.addPoint(
+        cx - L_outer / 2,
+        cy + L_outer / 2,
+        cz + L_outer / 2,
+        mesh_size_coarse
+    )
 
     # Rectangle corners
-    p9 = gmsh.model.geo.addPoint(cx-rect_width/2, cy-rect_height/2, cz, mesh_size_medium)  # Bottom left
-    p10 = gmsh.model.geo.addPoint(cx+rect_width/2, cy-rect_height/2, cz, mesh_size_medium) # Bottom right
-    p11 = gmsh.model.geo.addPoint(cx+rect_width/2, cy+rect_height/2, cz, mesh_size_medium) # Top right
-    p12 = gmsh.model.geo.addPoint(cx-rect_width/2, cy+rect_height/2, cz, mesh_size_medium) # Top left
+    p9 = gmsh.model.geo.addPoint(
+        cx - rect_width / 2,
+        cy - rect_height / 2,
+        cz,
+        mesh_size_medium
+    )  # Bottom left
+    p10 = gmsh.model.geo.addPoint(
+        cx + rect_width / 2,
+        cy - rect_height / 2,
+        cz,
+        mesh_size_medium
+    ) # Bottom right
+    p11 = gmsh.model.geo.addPoint(
+        cx + rect_width / 2,
+        cy + rect_height / 2,
+        cz,
+        mesh_size_medium
+    ) # Top right
+    p12 = gmsh.model.geo.addPoint(
+        cx - rect_width / 2,
+        cy + rect_height / 2,
+        cz,
+        mesh_size_medium
+    ) # Top left
 
     # Left hole center and points
-    p13 = gmsh.model.geo.addPoint(cx-d/2, cy, cz, mesh_size_fine) # Left hole center
-    p14 = gmsh.model.geo.addPoint(cx-d/2+r, cy, cz, mesh_size_fine) # Right point of left hole
-    p15 = gmsh.model.geo.addPoint(cx-d/2, cy+r, cz, mesh_size_fine) # Top point of left hole
-    p16 = gmsh.model.geo.addPoint(cx-d/2-r, cy, cz, mesh_size_fine) # Left point of left hole
-    p17 = gmsh.model.geo.addPoint(cx-d/2, cy-r, cz, mesh_size_fine) # Bottom point of left hole
+    p13 = gmsh.model.geo.addPoint(cx - d / 2, cy, cz, mesh_size_fine) # Left hole center
+    p14 = gmsh.model.geo.addPoint(cx - d / 2 + r, cy, cz, mesh_size_fine) # Right point of left hole
+    p15 = gmsh.model.geo.addPoint(cx - d / 2, cy + r, cz, mesh_size_fine) # Top point of left hole
+    p16 = gmsh.model.geo.addPoint(cx - d / 2 - r, cy, cz, mesh_size_fine) # Left point of left hole
+    p17 = gmsh.model.geo.addPoint(cx - d / 2, cy - r, cz, mesh_size_fine) # Bottom point of left hole
 
     # Right hole center and points
-    p18 = gmsh.model.geo.addPoint(cx+d/2, cy, cz, mesh_size_fine) # Right hole center
-    p19 = gmsh.model.geo.addPoint(cx+d/2+r, cy, cz, mesh_size_fine) # Right point of right hole
-    p20 = gmsh.model.geo.addPoint(cx+d/2, cy+r, cz, mesh_size_fine) # Top point of right hole
-    p21 = gmsh.model.geo.addPoint(cx+d/2-r, cy, cz, mesh_size_fine) # Left point of right hole
-    p22 = gmsh.model.geo.addPoint(cx+d/2, cy-r, cz, mesh_size_fine) # Bottom point of right hole
+    p18 = gmsh.model.geo.addPoint(cx + d / 2, cy, cz, mesh_size_fine) # Right hole center
+    p19 = gmsh.model.geo.addPoint(cx + d / 2 + r, cy, cz, mesh_size_fine) # Right point of right hole
+    p20 = gmsh.model.geo.addPoint(cx + d / 2, cy + r, cz, mesh_size_fine) # Top point of right hole
+    p21 = gmsh.model.geo.addPoint(cx + d / 2 - r, cy, cz, mesh_size_fine) # Left point of right hole
+    p22 = gmsh.model.geo.addPoint(cx + d / 2, cy - r, cz, mesh_size_fine) # Bottom point of right hole
 
     # Define the lines (edges of the outer cube)
     l1 = gmsh.model.geo.addLine(p1, p2)

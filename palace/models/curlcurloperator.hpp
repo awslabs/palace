@@ -21,6 +21,8 @@ namespace palace
 
 class IoData;
 class Mesh;
+template <ProblemType T>
+class PostOperator;
 
 //
 // A class handling discretization of curl-curl problems for magnetostatics.
@@ -102,12 +104,20 @@ public:
   void GetCurrentExcitationVector(int idx, Vector &RHS);
 
   // Assemble flux loop excitation vector for specified flux loop index
-  void GetFluxExcitationVector(int idx, Vector &RHS);
-  void GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values);
+  template <ProblemType T>
+  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op);
+
+  template <ProblemType T>
+  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op,
+                               Vector *boundary_values);
 
   // Solve 2D surface curl problem for flux loop boundary conditions
-  Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
-  void SolveSurfaceCurlProblem(int flux_loop_idx, Vector &result) const;
+  template <ProblemType T>
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op) const;
+
+  template <ProblemType T>
+  void SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
+                               Vector &result) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }

@@ -31,15 +31,15 @@ Generate a mesh for a circular disk with a central hole example using Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_circular_hole_mesh(;
-    filename::AbstractString = "circular_hole.msh",
-    L_outer::Real = 15.0,
-    R::Real = 3.0,
-    r::Real = 1.0,
-    mesh_size_coarse::Real = 2.0,
-    mesh_size_medium::Real = 0.4,
-    mesh_size_fine::Real = 0.2,
-    verbose::Integer = 5,
-    gui::Bool = false
+    filename::AbstractString="circular_hole.msh",
+    L_outer::Real=15.0,
+    R::Real=3.0,
+    r::Real=1.0,
+    mesh_size_coarse::Real=2.0,
+    mesh_size_medium::Real=0.4,
+    mesh_size_fine::Real=0.2,
+    verbose::Integer=5,
+    gui::Bool=false
 )
 
     # Initialize Gmsh
@@ -56,51 +56,51 @@ function generate_circular_hole_mesh(;
     # Create cube vertices
     cube_pts = [
         gmsh.model.geo.addPoint(
-            cx - L_outer/2,
-            cy - L_outer/2,
-            cz - L_outer/2,
+            cx - L_outer / 2,
+            cy - L_outer / 2,
+            cz - L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx + L_outer/2,
-            cy - L_outer/2,
-            cz - L_outer/2,
+            cx + L_outer / 2,
+            cy - L_outer / 2,
+            cz - L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx + L_outer/2,
-            cy + L_outer/2,
-            cz - L_outer/2,
+            cx + L_outer / 2,
+            cy + L_outer / 2,
+            cz - L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx - L_outer/2,
-            cy + L_outer/2,
-            cz - L_outer/2,
+            cx - L_outer / 2,
+            cy + L_outer / 2,
+            cz - L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx - L_outer/2,
-            cy - L_outer/2,
-            cz + L_outer/2,
+            cx - L_outer / 2,
+            cy - L_outer / 2,
+            cz + L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx + L_outer/2,
-            cy - L_outer/2,
-            cz + L_outer/2,
+            cx + L_outer / 2,
+            cy - L_outer / 2,
+            cz + L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx + L_outer/2,
-            cy + L_outer/2,
-            cz + L_outer/2,
+            cx + L_outer / 2,
+            cy + L_outer / 2,
+            cz + L_outer / 2,
             mesh_size_coarse
         ),
         gmsh.model.geo.addPoint(
-            cx - L_outer/2,
-            cy + L_outer/2,
-            cz + L_outer/2,
+            cx - L_outer / 2,
+            cy + L_outer / 2,
+            cz + L_outer / 2,
             mesh_size_coarse
         )
     ]

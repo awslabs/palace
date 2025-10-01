@@ -164,7 +164,11 @@ private:
 
 public:
   // Orientation modes
-  enum class OrientationMode { CENTER_BASED, DIRECTION_BASED };
+  enum class OrientationMode
+  {
+    CENTER_BASED,
+    DIRECTION_BASED
+  };
 
   // Constructor with center-based orientation
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
@@ -185,7 +189,7 @@ public:
                             const mfem::Vector &reference_direction, OrientationMode mode)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
                                                         : *B->ParFESpace()->GetParMesh()),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction), 
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction),
       ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
