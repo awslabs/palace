@@ -15,13 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-
   build-and-test-macos:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'true'
-      || needs.path-filter.outputs.examples_changed == 'true'
-      || needs.path-filter.outputs.tests_changed == 'true' }}
+      ${{ needs.path-filter.outputs.code_changed == 'true'
+      || needs.path-filter.outputs.macos_workflow_changed == 'true'  }}
     strategy:
       matrix:
         config:
