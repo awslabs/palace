@@ -27,6 +27,8 @@ The format of this changelog is based on
     conditions are used.
   - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
     use in a non-amr simulation.
+  - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect
+    results for some lumped port boundary conditions.
 
 ## [0.14.0] - 2025-08-20
 
