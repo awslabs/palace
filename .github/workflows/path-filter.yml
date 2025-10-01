@@ -38,8 +38,8 @@ jobs:
     needs: path-filter
     if: |
       ${{ needs.path-filter.outputs.spack_only == 'true'
-      || needs.path-filter.outputs.singularity_only == 'true'
-      || needs.path-filter.outputs.docs_only == 'true' }}
+        || needs.path-filter.outputs.singularity_only == 'true'
+        || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
         include:
@@ -67,9 +67,10 @@ jobs:
       - run: echo "Skipping linux build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
   build-and-test-macos:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only == 'true'
-      || needs.path-filter.outputs.singularity_only == 'true'
-      || needs.path-filter.outputs.docs_only == 'true' }}
+    if: |
+      ${{ needs.path-filter.outputs.spack_only == 'true'
+        || needs.path-filter.outputs.singularity_only == 'true'
+        || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
         include:
@@ -86,7 +87,9 @@ jobs:
 
   build-and-test-spack:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.singularity_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
+    if: |
+      ${{ needs.path-filter.outputs.singularity_only == 'true'
+        || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
         include:
@@ -99,7 +102,9 @@ jobs:
 
   build-and-test-singularity:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.spack_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
+    if: |
+      ${{ needs.path-filter.outputs.spack_only == 'true'
+      || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
         include:
