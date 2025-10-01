@@ -22,24 +22,27 @@ jobs:
         id: filter
         with:
           filters: |
-            spack_only:
-              - 'spack_repo/local/**'
-              - '!**/*'
-            singularity_only:
-              - 'singularity/local/**'
-              - '!**/*'
-            docs_only:
-              - '**/*.md'
-              - 'docs/**'
-              - '!**/*'
+            source_changed:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+            examples_changed:
+              - 'examples/**'
+              - 'test/examples/**'
+            tests_changed:
+              - 'test/unit/**'
+            spack_changed:
+              - 'spack_repo/**'
+            singularity_changed:
+              - 'singularity/**'
 
   # Dummy jobs that succeed when only spack, singularity or docs files change
   build-and-test-linux:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.spack_only == 'true'
-        || needs.path-filter.outputs.singularity_only == 'true'
-        || needs.path-filter.outputs.docs_only == 'true' }}
+      ${{ needs.path-filter.outputs.source_changed == 'false'
+        && needs.path-filter.outputs.examples_changed == 'false'
+        && needs.path-filter.outputs.tests_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -64,13 +67,13 @@ jobs:
     name: build-and-test-linux (${{ matrix.config }})
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Skipping linux build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
+      - run: echo "Skipping linux build (${{ matrix.config }}) because there were no relevant changes!"
   build-and-test-macos:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.spack_only == 'true'
-        || needs.path-filter.outputs.singularity_only == 'true'
-        || needs.path-filter.outputs.docs_only == 'true' }}
+      ${{ needs.path-filter.outputs.source_changed == 'false'
+        && needs.path-filter.outputs.examples_changed == 'false'
+        && needs.path-filter.outputs.tests_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -83,13 +86,15 @@ jobs:
     name: build-and-test-macos (${{ matrix.config }})
     runs-on: macos-latest
     steps:
-      - run: echo "Skipping macos build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
+      - run: echo "Skipping macos build (${{ matrix.config }}) because there were no relevant changes!"
 
   build-and-test-spack:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.singularity_only == 'true'
-        || needs.path-filter.outputs.docs_only == 'true' }}
+      ${{ needs.path-filter.outputs.source_changed == 'false'
+        && needs.path-filter.outputs.examples_changed == 'false'
+        && needs.path-filter.outputs.tests_changed == 'false'
+        && needs.path-filter.outputs.spack_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -98,14 +103,16 @@ jobs:
     name: build-and-test-spack (${{ matrix.config }})
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Skipping spack build (${{ matrix.config }}) as only Singularity or docs files changed"
+      - run: echo "Skipping spack build (${{ matrix.config }}) because there were no relevant changes!"
 
   build-and-test-singularity:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.spack_only == 'true'
-      || needs.path-filter.outputs.docs_only == 'true' }}
+      ${{ needs.path-filter.outputs.source_changed == 'false'
+        && needs.path-filter.outputs.examples_changed == 'false'
+        && needs.path-filter.outputs.tests_changed == 'false'
+        && needs.path-filter.outputs.singularity_changed == 'false'}}
     name: build-and-test-singularity
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Skipping singularity build as only Spack or docs files changed"
+      - run: echo "Skipping singularity build because there were no relevant changes!"
