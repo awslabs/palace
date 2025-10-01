@@ -15,6 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Checking for relevant changes!"
+
   build-and-test-linux:
     needs: path-filter
     if: |

@@ -19,6 +19,11 @@ env:
   CONTAINER_NAME: palace.sif
 
 jobs:
+  check-run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Checking for relevant changes!"
+
   build-and-test-singularity:
     needs: path-filter
     if: |
