@@ -15,16 +15,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-run:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
     runs-on: macos-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
     steps:
-      - run: echo "Checking for relevant changes!"
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - '.github/workflows/build-and-test-macos.yml'
 
   build-and-test-macos:
-    needs: path-filter
-    if: |
-      needs.path-filter.outputs.code_changed == 'true' ||
-      needs.path-filter.outputs.macos_workflow_changed == 'true'
+    needs: filter
     strategy:
       fail-fast: false
       matrix:
@@ -114,37 +125,39 @@ jobs:
     runs-on: macos-latest-xlarge
     steps:
       - uses: actions/checkout@v4
+        if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
 
       - uses: julia-actions/setup-julia@v2
+        if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
 
       - name: Configure Open MPI
-        if: matrix.mpi == 'openmpi'
+        if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
         run: |
           brew install openmpi
 
       - name: Configure MPICH
-        if: matrix.mpi == 'mpich'
+        if: needs.filter.outputs.test == 'true' && matrix.mpi == 'mpich'
         run: |
           brew install mpich
 
       - name: Install math libraries (OpenBLAS)
-        if: matrix.math-libs == 'openblas'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'openblas'
         run: |
           brew install openblas
 
       - name: Install OpenMP
-        if: matrix.with-openmp == 'openmp'
+        if: needs.filter.outputs.test == 'true' && matrix.with-openmp == 'openmp'
         run: |
           brew install libomp
           echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/opt/libomp/lib:$LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
-        if: matrix.math-libs == 'armpl'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'armpl'
         run: |
           wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_macOS.tgz
           tar -zxvf arm-performance-libraries*.tgz && rm arm-performance-libraries*.tgz
@@ -159,11 +172,13 @@ jobs:
         # FindMPI that prevents it from finding MPI when compiling with GNU
         # compilers.
       - name: Setup cmake
+        if: needs.filter.outputs.test == 'true'
         uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: '3.31.8'
 
       - name: Build Palace
+        if: needs.filter.outputs.test == 'true'
         env:
           CMAKE_BUILD_TYPE: Release
           NUM_PROC_BUILD_MAX: '32'
@@ -216,6 +231,7 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
+        if: needs.filter.outputs.test == 'true'
         timeout-minutes: 5
         env:
           NUM_PROC_TEST_MAX: '2'
@@ -235,6 +251,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
+        if: needs.filter.outputs.test == 'true'
         timeout-minutes: 40
         env:
           NUM_PROC_TEST_MAX: '8'
