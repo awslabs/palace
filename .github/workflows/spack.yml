@@ -23,6 +23,11 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  check-run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Checking for relevant changes!"
+
   build-and-test-spack:
     needs: path-filter
     if: |
