@@ -26,10 +26,8 @@ jobs:
   build-and-test-spack:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'true'
-      || needs.path-filter.outputs.examples_changed == 'true'
-      || needs.path-filter.outputs.tests_changed == 'true'
-      || needs.path-filter.outputs.spack_changed == 'true' }}
+      ${{ needs.path-filter.outputs.code_changed == 'false'
+       || needs.path-filter.outputs.spack_changed == 'false' }}
     strategy:
       fail-fast: false # don't have one build stop others from finishing
       matrix:
