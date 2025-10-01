@@ -15,8 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
   filter:
-    uses: ./.github/workflows/path-filter.yml
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - '.github/workflows/build-and-test-linux.yml'
 
   build-and-test-linux:
     needs: filter
@@ -211,18 +227,15 @@ jobs:
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
       - uses: actions/checkout@v4
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
-      - name: Skip
-        if: needs.filter.outputs.linux_test == 'false'
-        run: echo "Skipping because there were no relevant changes!"
       - name: Update package lists
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         run: |
           sudo apt-get update
       - name: Configure GNU compilers
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         run: |
           # Find latest gnu compiler versions
           LATEST_GFORTRAN=$(apt-cache search '^gfortran-[0-9]+$' | sort -V | tail -n1 | cut -d' ' -f1)
@@ -241,16 +254,16 @@ jobs:
           gcc --version
           g++ --version
       - name: Configure Open MPI
-        if: needs.filter.outputs.linux_test == 'true' && matrix.mpi == 'openmpi'
+        if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
         run: |
           sudo apt-get install -y openmpi-bin libopenmpi-dev
       - name: Configure MPICH
-        if: needs.filter.outputs.linux_test == 'true' && matrix.mpi == 'mpich'
+        if: needs.filter.outputs.test == 'true' && matrix.mpi == 'mpich'
         run: |
           sudo apt-get install -y mpich libmpich-dev
 
       - name: Configure Intel MPI
-        if: needs.filter.outputs.linux_test == 'true' && matrix.mpi == 'intelmpi'
+        if: needs.filter.outputs.test == 'true' && matrix.mpi == 'intelmpi'
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: ${{ matrix.mpi }}
@@ -264,13 +277,13 @@ jobs:
           fi
 
       - name: Configure Intel oneAPI compiler
-        if: needs.filter.outputs.linux_test == 'true' && matrix.compiler == 'intel'
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel'
         run: |
           sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp \
                                   intel-oneapi-compiler-fortran
 
       - name: Install math libraries (OpenBLAS)
-        if: needs.filter.outputs.linux_test == 'true' && matrix.math-libs == 'openblas'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'openblas'
         run: |
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             sudo apt-get install -y libopenblas-openmp-dev
@@ -278,17 +291,17 @@ jobs:
             sudo apt-get install -y libopenblas-serial-dev
           fi
       - name: Install GCC OpenMP runtime
-        if: needs.filter.outputs.linux_test == 'true' && matrix.with-openmp == 'openmp'
+        if: needs.filter.outputs.test == 'true' && matrix.with-openmp == 'openmp'
         run: |
           sudo apt-get install -y libgomp1
 
       - name: Install math libraries (Intel oneAPI MKL)
-        if: needs.filter.outputs.linux_test == 'true' && matrix.math-libs == 'intelmkl'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'intelmkl'
         run: |
           sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
 
       - name: Install math libraries (AOCL)
-        if: needs.filter.outputs.linux_test == 'true' && matrix.math-libs == 'aocl'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'aocl'
         run: |
           wget -q https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
           sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
@@ -296,7 +309,7 @@ jobs:
           echo "AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
-        if: needs.filter.outputs.linux_test == 'true' && matrix.math-libs == 'armpl'
+        if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'armpl'
         run: |
           wget -q https://developer.arm.com/-/cdn-downloads/permalink/Arm-Performance-Libraries/Version_24.10/arm-performance-libraries_24.10_deb_gcc.tar
           tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
@@ -304,7 +317,7 @@ jobs:
           echo "ARMPL_DIR=/opt/arm/armpl_24.10_gcc" >> $GITHUB_ENV
 
       - name: Test MPI installation
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         run: |
           # Create test program
           cat > mpi_test.c << 'EOF'
@@ -348,12 +361,12 @@ jobs:
           mpirun -np 2 ./mpi_test
 
       - uses: julia-actions/setup-julia@v2
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
 
       - name: Build Palace
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         env:
           CMAKE_BUILD_TYPE: Release
           NUM_PROC_BUILD_MAX: '32'
@@ -418,7 +431,7 @@ jobs:
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         timeout-minutes: 5
         env:
           NUM_PROC_TEST_MAX: '2'
@@ -448,7 +461,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
-        if: needs.filter.outputs.linux_test == 'true'
+        if: needs.filter.outputs.test == 'true'
         timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
