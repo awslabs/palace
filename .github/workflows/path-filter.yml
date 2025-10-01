@@ -49,11 +49,25 @@ jobs:
             code_changed:
               - any: ['source_changed', 'examples_changed', 'tests_changed']
 
+  debug-path-filter:
+    needs: path-filter
+    name: Debug path-filter outputs
+    runs-on: ubuntu-latest
+    steps:
+    - name: Debug path-filter outputs
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed }}"
+        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed }}"
+        echo "tests_changed: ${{ needs.path-filter.outputs.tests_changed }}"
+        echo "linux_workflow_changed: ${{ needs.path-filter.outputs.linux_workflow_changed }}"
+        echo "macos_workflow_changed: ${{ needs.path-filter.outputs.macos_workflow_changed }}"
+        echo "spack_changed: ${{ needs.path-filter.outputs.spack_changed }}"
+        echo "singularity_changed: ${{ needs.path-filter.outputs.singularity_changed }}"
+
   # Dummy jobs that succeed when only spack, singularity or docs files change
   build-and-test-linux:
     needs: path-filter
-    if: |
-      ${{ needs.path-filter.outputs.code_changed == 'false'
+    if: ${{ needs.path-filter.outputs.code_changed == 'false'
        && needs.path-filter.outputs.linux_workflow_changed == 'false'}}
     strategy:
       matrix:
@@ -80,6 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping linux build (${{ matrix.config }}) because there were no relevant changes!"
+
   build-and-test-macos:
     needs: path-filter
     if: |
