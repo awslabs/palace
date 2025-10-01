@@ -3,24 +3,23 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
+    outputs:
+      code_changed: ${{ jobs.path-filter.outputs.code_changed }}
+      linux_test: ${{ jobs.path-filter.outputs.linux_test }}
+      macos_test: ${{ jobs.path-filter.outputs.macos_test }}
+      spack_test: ${{ jobs.path-filter.outputs.spack_test }}
+      singularity_test: ${{ jobs.path-filter.outputs.singularity_test }}
 
 jobs:
   path-filter:
     runs-on: ubuntu-latest
     outputs:
       code_changed: ${{ steps.filter.outputs.code_changed }}
-      source_changed: ${{ steps.filter.outputs.source_changed }}
-      examples_changed: ${{ steps.filter.outputs.examples_changed }}
-      tests_changed: ${{ steps.filter.outputs.tests_changed }}
-      linux_workflow_changed: ${{ steps.filter.outputs.linux_workflow_changed }}
-      macos_workflow_changed: ${{ steps.filter.outputs.macos_workflow_changed }}
-      spack_changed: ${{ steps.filter.outputs.spack_changed }}
-      singularity_changed: ${{ steps.filter.outputs.singularity_changed }}
+      linux_test: ${{ steps.filter.outputs.linux_test }}
+      macos_test: ${{ steps.filter.outputs.macos_test }}
+      spack_test: ${{ steps.filter.outputs.spack_test }}
+      singularity_test: ${{ steps.filter.outputs.singularity_test }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v2
@@ -48,6 +47,14 @@ jobs:
               - '.github/workflows/singularity.yml'
             code_changed:
               - any: ['source_changed', 'examples_changed', 'tests_changed']
+            linux_test:
+              - any: ['code_changed', 'linux_workflow_changed']
+            macos_test:
+              - any: ['code_changed', 'macos_workflow_changed']
+            spack_test:
+              - any: ['code_changed', 'spack_changed']
+            singularity_test:
+              - any: ['code_changed', 'singularity_changed']
 
   debug-path-filter:
     needs: path-filter
@@ -104,38 +111,37 @@ jobs:
         echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed}}"
 
 
-
-  # Dummy jobs that succeed when only spack, singularity or docs files change
-  build-and-test-linux:
-    needs: path-filter
-    if: |
-      needs.path-filter.outputs.code_changed == 'false' &&
-      needs.path-filter.outputs.linux_workflow_changed == 'false'
-    strategy:
-      matrix:
-        include:
-          # List of configuration that must be kept in sync with build-and-test-linux.yml
-          - config: "x86, intel, intelmpi, intelmkl, shared, int64, openmp, slepc, superlu"
-          - config: "x86, clang, openmpi, aocl, static, int64, serial, slepc, mumps"
-          - config: "x86, gcc, openmpi, openblas, shared, int64, openmp, slepc, strumpack"
-          - config: "x86, intel, intelmpi, intelmkl, static, int32, serial, arpack, superlu"
-          - config: "x86, intel, intelmpi, intelmkl, static, int32, openmp, slepc, strumpack"
-          - config: "x86, intel, intelmpi, intelmkl, shared, int64, serial, arpack, mumps"
-          - config: "x86, gcc, openmpi, aocl, shared, int32, serial, arpack, superlu"
-          - config: "arm, gcc, mpich, openblas, shared, int64, openmp, slepc, superlu"
-          - config: "arm, clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
-          - config: "arm, clang, mpich, armpl, shared, int32, serial, arpack, mumps"
-          - config: "arm, gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
-          - config: "arm, gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
-          - config: "arm, clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
-          - config: "arm, clang, mpich, openblas, static, int64, serial, arpack, superlu"
-          - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, strumpack"
-          - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, superlu"
-          - config: "arm, gcc, openmpi, armpl, shared, int64, openmp, slepc, strumpack"
-    name: build-and-test-linux (${{ matrix.config }})
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Skipping linux build (${{ matrix.config }}) because there were no relevant changes!"
+  # # Dummy jobs that succeed when only spack, singularity or docs files change
+  # build-and-test-linux:
+  #   needs: path-filter
+  #   if: |
+  #     needs.path-filter.outputs.code_changed == 'false' &&
+  #     needs.path-filter.outputs.linux_workflow_changed == 'false'
+  #   strategy:
+  #     matrix:
+  #       include:
+  #         # List of configuration that must be kept in sync with build-and-test-linux.yml
+  #         - config: "x86, intel, intelmpi, intelmkl, shared, int64, openmp, slepc, superlu"
+  #         - config: "x86, clang, openmpi, aocl, static, int64, serial, slepc, mumps"
+  #         - config: "x86, gcc, openmpi, openblas, shared, int64, openmp, slepc, strumpack"
+  #         - config: "x86, intel, intelmpi, intelmkl, static, int32, serial, arpack, superlu"
+  #         - config: "x86, intel, intelmpi, intelmkl, static, int32, openmp, slepc, strumpack"
+  #         - config: "x86, intel, intelmpi, intelmkl, shared, int64, serial, arpack, mumps"
+  #         - config: "x86, gcc, openmpi, aocl, shared, int32, serial, arpack, superlu"
+  #         - config: "arm, gcc, mpich, openblas, shared, int64, openmp, slepc, superlu"
+  #         - config: "arm, clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
+  #         - config: "arm, clang, mpich, armpl, shared, int32, serial, arpack, mumps"
+  #         - config: "arm, gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
+  #         - config: "arm, gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
+  #         - config: "arm, clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
+  #         - config: "arm, clang, mpich, openblas, static, int64, serial, arpack, superlu"
+  #         - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, strumpack"
+  #         - config: "arm, gcc, openmpi, armpl, shared, int32, openmp, slepc, superlu"
+  #         - config: "arm, gcc, openmpi, armpl, shared, int64, openmp, slepc, strumpack"
+  #   name: build-and-test-linux (${{ matrix.config }})
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: echo "Skipping linux build (${{ matrix.config }}) because there were no relevant changes!"
 
   build-and-test-macos:
     needs: path-filter
