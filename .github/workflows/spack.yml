@@ -4,7 +4,10 @@ on:
   push:
     branches:
       - main
-  pull_request:
+  workflow_run:
+    workflows: ["Style"]
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -26,6 +29,9 @@ jobs:
   # Filter to allow skipping the test if no relevant changes occurred.
   filter:
     runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      github.event_name != 'workflow_run'
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
