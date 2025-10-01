@@ -13,9 +13,14 @@ jobs:
   path-filter:
     runs-on: ubuntu-latest
     outputs:
-      spack_only: ${{ steps.filter.outputs.spack_only }}
-      singularity_only: ${{ steps.filter.outputs.singularity_only }}
-      docs_only: ${{ steps.filter.outputs.docs_only }}
+      code_changed: ${{ steps.filter.outputs.code_changed }}
+      source_changed: ${{ steps.filter.outputs.source_changed }}
+      examples_changed: ${{ steps.filter.outputs.examples_changed }}
+      tests_changed: ${{ steps.filter.outputs.tests_changed }}
+      linux_workflow_changed: ${{ steps.filter.outputs.linux_workflow_changed }}
+      macos_workflow_changed: ${{ steps.filter.outputs.macos_workflow_changed }}
+      spack_changed: ${{ steps.filter.outputs.spack_changed }}
+      singularity_changed: ${{ steps.filter.outputs.singularity_changed }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v2
@@ -31,18 +36,25 @@ jobs:
               - 'test/examples/**'
             tests_changed:
               - 'test/unit/**'
+            linux_workflow_changed:
+              - '.github/workflows/build-and-test-linux.yml'
+            macos_workflow_changed:
+              - '.github/workflows/build-and-test-linux.yml'
             spack_changed:
               - 'spack_repo/**'
+              - '.github/workflows/spack.yml'
             singularity_changed:
               - 'singularity/**'
+              - '.github/workflows/singularity.yml'
+            code_changed:
+              - any: ['source_changed', 'examples_changed', 'tests_changed']
 
   # Dummy jobs that succeed when only spack, singularity or docs files change
   build-and-test-linux:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'false'
-        && needs.path-filter.outputs.examples_changed == 'false'
-        && needs.path-filter.outputs.tests_changed == 'false'}}
+      ${{ needs.path-filter.outputs.code_changed == 'false'
+       && needs.path-filter.outputs.linux_workflow_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -71,9 +83,8 @@ jobs:
   build-and-test-macos:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'false'
-        && needs.path-filter.outputs.examples_changed == 'false'
-        && needs.path-filter.outputs.tests_changed == 'false'}}
+      ${{ needs.path-filter.outputs.code_changed == 'false'
+       && needs.path-filter.outputs.macos_workflow_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -91,10 +102,8 @@ jobs:
   build-and-test-spack:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'false'
-        && needs.path-filter.outputs.examples_changed == 'false'
-        && needs.path-filter.outputs.tests_changed == 'false'
-        && needs.path-filter.outputs.spack_changed == 'false'}}
+      ${{ needs.path-filter.outputs.code_changed == 'false'
+       && needs.path-filter.outputs.spack_changed == 'false'}}
     strategy:
       matrix:
         include:
@@ -108,10 +117,8 @@ jobs:
   build-and-test-singularity:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.source_changed == 'false'
-        && needs.path-filter.outputs.examples_changed == 'false'
-        && needs.path-filter.outputs.tests_changed == 'false'
-        && needs.path-filter.outputs.singularity_changed == 'false'}}
+      ${{ needs.path-filter.outputs.code_changed == 'false'
+       && needs.path-filter.outputs.singularity_changed == 'false'}}
     name: build-and-test-singularity
     runs-on: ubuntu-latest
     steps:
