@@ -65,15 +65,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping linux build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
+  build-and-test-macos:
+    needs: path-filter
+    if: ${{ needs.path-filter.outputs.spack_only == 'true'
+      || needs.path-filter.outputs.singularity_only == 'true'
+      || needs.path-filter.outputs.docs_only == 'true' }}
+    strategy:
+      matrix:
+        include:
+          # List of configuration that must be kept in sync with build-and-test-macos.yml
+          - config: "clang, openmpi, armpl, static, int32, serial, arpack, strumpack"
+          - config: "gcc, openmpi, openblas, static, int64, serial, slepc, mumps"
+          - config: "gcc, openmpi, armpl, shared, int64, serial, arpack, superlu"
+          - config: "clang, mpich, openblas, static, int32, openmp, slepc, strumpack"
+          - config: "clang, mpich, openblas, static, int64, serial, arpack, superlu"
+    name: build-and-test-macos (${{ matrix.config }})
+    runs-on: macos-latest-xlarge
+    steps:
+      - run: echo "Skipping macos build (${{ matrix.config }}) as only Spack, Singularity or docs files changed"
 
   build-and-test-spack:
     needs: path-filter
     if: ${{ needs.path-filter.outputs.singularity_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
-        config:
+      include:
           # List of configuration that must be kept in sync with spack.yml
-          - "gcc, none, openblas, develop, openmpi"
+        - config: "gcc, none, openblas, develop, openmpi"
     name: spack (${{ matrix.config }})
     runs-on: palace_ubuntu-latest_16-core
     steps:
@@ -84,9 +102,9 @@ jobs:
     if: ${{ needs.path-filter.outputs.spack_only == 'true' || needs.path-filter.outputs.docs_only == 'true' }}
     strategy:
       matrix:
-        config:
+        include:
           # List of configuration that must be kept in sync with spack.yml
-          - "gcc, none, openblas, develop, openmpi"
+          - config: "gcc, none, openblas, develop, openmpi"
     name: spack (${{ matrix.config }})
     runs-on: palace_ubuntu-latest_16-core
     steps:
