@@ -8,7 +8,6 @@ from spack_repo.builtin.build_systems.rocm import ROCmPackage
 
 from spack.package import *
 
-
 class Palace(CMakePackage, CudaPackage, ROCmPackage):
     """3D finite element solver for computational electromagnetics"""
 
@@ -272,5 +271,5 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         return args
 
     def install(self, spec, prefix):
-        # No install phase for Palace (always performed during build)
+        # No install phase for Palace, always performed during build.
         pass
