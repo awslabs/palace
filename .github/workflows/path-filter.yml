@@ -54,21 +54,63 @@ jobs:
     name: Debug path-filter outputs
     runs-on: ubuntu-latest
     steps:
-    - name: Debug path-filter outputs
+    - name: Source changed 1
+      if: |
+        needs.path-filter.outputs.source_changed == 'true'
       run: |
-        echo "source_changed: ${{ needs.path-filter.outputs.source_changed }}"
-        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed }}"
-        echo "tests_changed: ${{ needs.path-filter.outputs.tests_changed }}"
-        echo "linux_workflow_changed: ${{ needs.path-filter.outputs.linux_workflow_changed }}"
-        echo "macos_workflow_changed: ${{ needs.path-filter.outputs.macos_workflow_changed }}"
-        echo "spack_changed: ${{ needs.path-filter.outputs.spack_changed }}"
-        echo "singularity_changed: ${{ needs.path-filter.outputs.singularity_changed }}"
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+    - name: Source changed 2
+      if: |
+        needs.path-filter.outputs.source_changed == true
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+    - name: Source changed 3
+      if: |
+        needs.path-filter.outputs.source_changed == 'false'
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+    - name: Source changed 4
+      if: |
+        needs.path-filter.outputs.source_changed == false
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+    - name: Source changed 5
+      if: |
+        needs.path-filter.outputs.source_changed == 'false' &&
+        needs.path-filter.outputs.examples_changed == 'false'
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed}}"
+    - name: Source changed 6
+      if: |
+        needs.path-filter.outputs.source_changed == 'true' &&
+        needs.path-filter.outputs.examples_changed == 'false'
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed}}"
+    - name: Source changed 7
+      if: |
+        needs.path-filter.outputs.source_changed == 'true' ||
+        needs.path-filter.outputs.examples_changed == 'false'
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed}}"
+    - name: Source changed 8
+      if: |
+        needs.path-filter.outputs.source_changed == 'false' ||
+        needs.path-filter.outputs.examples_changed == 'true'
+      run: |
+        echo "source_changed: ${{ needs.path-filter.outputs.source_changed}}"
+        echo "examples_changed: ${{ needs.path-filter.outputs.examples_changed}}"
+
+
 
   # Dummy jobs that succeed when only spack, singularity or docs files change
   build-and-test-linux:
     needs: path-filter
-    if: ${{ needs.path-filter.outputs.code_changed == 'false'
-       && needs.path-filter.outputs.linux_workflow_changed == 'false'}}
+    if: |
+      needs.path-filter.outputs.code_changed == 'false' &&
+      needs.path-filter.outputs.linux_workflow_changed == 'false'
     strategy:
       matrix:
         include:
@@ -98,8 +140,8 @@ jobs:
   build-and-test-macos:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.code_changed == 'false'
-       && needs.path-filter.outputs.macos_workflow_changed == 'false'}}
+      needs.path-filter.outputs.code_changed == 'false' &&
+      needs.path-filter.outputs.macos_workflow_changed == 'false'
     strategy:
       matrix:
         include:
@@ -117,8 +159,8 @@ jobs:
   build-and-test-spack:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.code_changed == 'false'
-       && needs.path-filter.outputs.spack_changed == 'false'}}
+      needs.path-filter.outputs.code_changed == 'false' &&
+      needs.path-filter.outputs.spack_changed == 'false'
     strategy:
       matrix:
         include:
@@ -132,8 +174,8 @@ jobs:
   build-and-test-singularity:
     needs: path-filter
     if: |
-      ${{ needs.path-filter.outputs.code_changed == 'false'
-       && needs.path-filter.outputs.singularity_changed == 'false'}}
+      needs.path-filter.outputs.code_changed == 'false' &&
+      needs.path-filter.outputs.singularity_changed == 'false'
     name: build-and-test-singularity
     runs-on: ubuntu-latest
     steps:
