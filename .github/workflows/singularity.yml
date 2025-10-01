@@ -19,28 +19,43 @@ env:
   CONTAINER_NAME: palace.sif
 
 jobs:
-  check-run:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
     runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
     steps:
-      - run: echo "Checking for relevant changes!"
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - '.github/workflows/singularity.yml'
 
   build-and-test-singularity:
-    needs: path-filter
-    if: |
-      needs.path-filter.outputs.code_changed == 'false' ||
-      needs.path-filter.outputs.singularity_changed == 'false'
+    needs: filter
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
+        if: needs.filter.outputs.test == 'true'
 
       - uses: singularityhub/install-singularity@main
+        if: needs.filter.outputs.test == 'true'
 
       - name: Build container
+        if: needs.filter.outputs.test == 'true'
         run: |
           sudo singularity build --bind ${{ github.workspace }}:/opt/palace-src:ro \
                                  $CONTAINER_NAME singularity/singularity.def
 
       - name: Run tests
+        if: needs.filter.outputs.test == 'true'
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
@@ -56,6 +71,7 @@ jobs:
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
       - uses: actions/upload-artifact@v4
+        if: needs.filter.outputs.test == 'true'
         with:
           name: ${{ env.CONTAINER_NAME }}
           path: ${{ env.CONTAINER_NAME }}
