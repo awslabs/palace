@@ -170,6 +170,9 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
+  // Floquet periodic postprocessing
+  mfem::Vector wave_vector;
+
   void SetupFieldCoefficients();
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 

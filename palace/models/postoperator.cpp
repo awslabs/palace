@@ -20,6 +20,7 @@
 #include "utils/prettyprint.hpp" // remove later
 namespace palace
 {
+  using namespace std::complex_literals;
 
 namespace
 {
@@ -139,6 +140,13 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 
   mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
   mfem_gf_bdr_output_dir = (post_dir / "gridfunction" / fmt::format("{}_boundary", OutputFolderName(solver_t))).string();
+
+  // Should probably get this material operator?
+  wave_vector.SetSize(3);
+  wave_vector = 0.0;
+  const auto &data = iodata.boundaries.periodic;
+  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
+  Mpi::Print("post operator wave_vector: "); wave_vector.Print();
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -525,6 +533,78 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   Mpi::Barrier(fem_op->GetComm());
 }
 
+// Create coefficient to compute E = Ep exp(-i k * x)
+class CustomCoefficientReal : public mfem::VectorCoefficient
+{
+  GridFunction *E;
+  mfem::Vector &k;
+
+public:
+  CustomCoefficientReal(GridFunction *E, mfem::Vector &k) :
+    mfem::VectorCoefficient(3), E(E), k(k) {}
+
+  virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+                    const mfem::IntegrationPoint &ip)
+  {
+    mfem::Vector er(3), ei(3), pos(3);
+    E->Real().GetVectorValue(T, ip, er);
+    E->Imag().GetVectorValue(T, ip, ei);
+    T.Transform(ip, pos);
+
+    // Element-wise operation
+    // k dot x
+    double kx = 0.0;
+    for (int i = 0; i < 3; i++)
+    {
+      kx += k[i] * pos[i];
+    }
+    std::complex<double> phase_factor = std::exp(-1i * kx);
+
+    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
+    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
+    for (int i = 0; i < 3; i++)
+    {
+      V[i] = er[i] * phase_factor.real() - ei[i] * phase_factor.imag();
+    }
+
+  }
+};
+
+class CustomCoefficientImag : public mfem::VectorCoefficient
+{
+  GridFunction *E;
+  mfem::Vector &k;
+
+public:
+  CustomCoefficientImag(GridFunction *E, mfem::Vector &k) :
+    mfem::VectorCoefficient(3), E(E), k(k) {}
+
+  virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+                    const mfem::IntegrationPoint &ip)
+  {
+    mfem::Vector er(3), ei(3), pos(3);
+    E->Real().GetVectorValue(T, ip, er);
+    E->Imag().GetVectorValue(T, ip, ei);
+    T.Transform(ip, pos);
+
+    // Element-wise operation
+    // k dot x
+    double kx = 0.0;
+    for (int i = 0; i < 3; i++)
+    {
+      kx += k[i] * pos[i];
+    }
+    std::complex<double> phase_factor = std::exp(-1i * kx);
+
+    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
+    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
+    for (int i = 0; i < 3; i++)
+    {
+      V[i] = er[i] * phase_factor.imag() + ei[i] * phase_factor.real();
+    }
+  }
+};
+
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
@@ -553,54 +633,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
   mfem::ParGridFunction gridfunc_scalar(&pwconst_fespace);
 
-  // Get boundary attributes
-  mfem::Array<int> boundary_attributes, marker;
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  std::set<int> attr_set;
-
-  // Collect unique boundary attributes
-  for (int i = 0; i < mesh.GetNBE(); i++) {
-      attr_set.insert(mesh.GetBdrAttribute(i));
-  }
-
-  // Convert to Array
-  boundary_attributes.SetSize(attr_set.size());
-  int idx = 0;
-  for (int attr : attr_set) {
-    boundary_attributes[idx++] = attr;
-  }
-  Mpi::Print("bdr_attr_max: {}, bdr attr:", bdr_attr_max); utils::PrettyPrint(boundary_attributes);
-  //marker.SetSize(bdr_attr_max); marker = 1; // all surfaces?
-  marker = mesh::AttrToMarker(bdr_attr_max, boundary_attributes);
-
-  //mfem::ParMesh *boundary_mesh = new mfem::ParMesh(mesh, true);
-  //std::cout << "mesh GlobalNE: " << mesh.GetGlobalNE() << " bdr mesh GlobalNE: " << boundary_mesh->GetGlobalNE() << "\n";
-  mfem::ND_FECollection fec(1, mesh.Dimension());
-  mfem::ParFiniteElementSpace bdr_fespace(&mesh, &fec);
-  mfem::ParGridFunction gf_bdr_vector(&bdr_fespace);
-
-  /**/
-  // Not sure this is appropriate in general since submesh should be ONE CONNECTED SUBSET of the parent mesh...
-  std::unique_ptr<Mesh> bdr_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromBoundary(mesh, boundary_attributes)));
-
-  std::unique_ptr<mfem::FiniteElementCollection> bdr_vec_fec = std::make_unique<mfem::ND_FECollection>(fespace.GetMaxElementOrder(),
-                                                        bdr_mesh->Dimension());
-  std::unique_ptr<mfem::FiniteElementCollection> bdr_sca_fec = std::make_unique<mfem::L2_FECollection>(fespace.GetMaxElementOrder(),
-                                                        bdr_mesh->Dimension());
-  std::unique_ptr<FiniteElementSpace> bdr_vec_fespace = std::make_unique<FiniteElementSpace>(*bdr_mesh, bdr_vec_fec.get());
-  std::unique_ptr<FiniteElementSpace> bdr_sca_fespace = std::make_unique<FiniteElementSpace>(*bdr_mesh,bdr_sca_fec.get());
-
-  GridFunction E0t(fespace), E0n(pwconst_fespace);
-  std::unique_ptr<GridFunction> port_E0t = std::make_unique<GridFunction>(*bdr_vec_fespace, true);
-  std::unique_ptr<GridFunction> port_E0n = std::make_unique<GridFunction>(*bdr_sca_fespace, true);
-  std::unique_ptr<GridFunction> port_E = std::make_unique<GridFunction>(*bdr_vec_fespace, true);
-  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
-      mfem::ParSubMesh::CreateTransferMap(E->Real(), port_E->Real()));
-  //std::unique_ptr<mfem::ParTransferMap> port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
-  //    mfem::ParSubMesh::CreateTransferMap(E0n.Real(), port_E0n->Real()));
-/**/
-
   const int local_rank = mesh.GetMyRank();
 
   // Write grid functions using MFEM's built-in Save method
@@ -621,60 +653,33 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
-        fs::path e_bdr_real_filename =
-            fs::path(mfem_gf_bdr_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}", step,
+        fs::path e_floquet_real_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("E_floquet_real_{:0{}d}.gf.{:0{}d}", step,
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
-        fs::path e_bdr_imag_filename =
-            fs::path(mfem_gf_bdr_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}", step,
+        fs::path e_floquet_imag_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("E_floquet_imag_{:0{}d}.gf.{:0{}d}", step,
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
-
-        std::ofstream e_bdr_real_file(e_bdr_real_filename);
-       //std::ofstream e_bdr_imag_file(e_bdr_imag_filename);
+        std::ofstream e_floquet_real_file(e_floquet_real_filename);
+        std::ofstream e_floquet_imag_file(e_floquet_imag_filename);
 
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
 
-        //std::cout << "project E_sr\n";
-        //gridfunc_vector = 0.0;
-        //gf_bdr_vector = 0.0;
-        //marker = 1; // test
-        //mfem::Vector vConst(3); vConst = 0.0; vConst[0]=0.1234;//vConst = 0.1234;
-        //mfem::VectorConstantCoefficient test(vConst);
-        //gridfunc_vector.ProjectBdrCoefficientTangent(*E_sr.get(), marker);
-        //gridfunc_vector.ProjectBdrCoefficient(test, marker);
-        //gf_bdr_vector.ProjectBdrCoefficient(test, marker);
-        //gridfunc_vector.ProjectBdrCoefficientTangent(test, marker);
-        //gridfunc_vector.ProjectBdrCoefficientNormal(test, marker);
+        // Test to export gridfunction multiplied by exp(-ik*x), only for complex E.
+        gridfunc_vector = 0.0;
+        CustomCoefficientReal coeff_real(E.get(), wave_vector);
+        gridfunc_vector.ProjectCoefficient(coeff_real);
+        gridfunc_vector.Save(e_floquet_real_file);
 
-        //gridfunc_vector.ProjectBdrCoefficientTangent(*E_sr.get(), marker);
-        //gridfunc_vector.ProjectBdrCoefficientNormal(*E_sr.get(), marker);
-        // std::cout << " gridfunc_vector min/max: " << gridfunc_vector.Min() << " " << gridfunc_vector.Max() << "\n";
-        //std::cout << " gf_bdr_vector min/max: " << gf_bdr_vector.Min() << " " << gf_bdr_vector.Max() << "\n";
-        std::cout << " E min/max: " << E->Real().Min() << " " << E->Real().Max() << "\n";
-        port_nd_transfer->Transfer(E->Real(), port_E->Real());
-        port_nd_transfer->Transfer(E->Imag(), port_E->Imag());
-        std::cout << " port_E min/max: " << port_E->Real().Min() << " " << port_E->Real().Max() << "\n";
-        //port_E->Real().ProjectCoefficient(*E_sr.get());
-        //std::cout << " port_E min/max: " << port_E->Real().Min() << " " << port_E->Real().Max() << "\n";
-        port_E->Real().Save(e_bdr_real_file);
-        fs::path mesh_filename = fs::path(mfem_gf_bdr_output_dir) / "mesh";
-        //mesh.Save(mesh_filename);
-        bdr_mesh->Get().Save(mesh_filename);
-        //gridfunc_vector.Save(e_bdr_real_file);
-        //gf_bdr_vector.Save(e_bdr_real_file);
-        //gf_bdr_vector.ProjectBdrCoefficient(*E_sr.get(), boundary_attributes);
-        //std::cout << "project E_si\n";
-        //gridfunc_vector = 0.0;
-        //gridfunc_vector.ProjectBdrCoefficient(*E_si.get(), marker);
-        ////gf_bdr_vector.ProjectBdrCoefficient(*E_si.get(), boundary_attributes);
-        //gridfunc_vector.Save(e_bdr_imag_file);
-        ////gf_bdr_vector.Save(e_bdr_real_file);
-        ////gf_bdr_vector.Save(e_bdr_imag_file);
+        gridfunc_vector = 0.0;
+        CustomCoefficientImag coeff_imag(E.get(), wave_vector);
+        gridfunc_vector.ProjectCoefficient(coeff_imag);
+        gridfunc_vector.Save(e_floquet_imag_file);
       }
       else
       {
@@ -705,11 +710,35 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
+        fs::path b_floquet_real_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("B_floquet_real_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+        fs::path b_floquet_imag_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("B_floquet_imag_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+
         std::ofstream b_real_file(b_real_filename);
         std::ofstream b_imag_file(b_imag_filename);
+        std::ofstream b_floquet_real_file(b_floquet_real_filename);
+        std::ofstream b_floquet_imag_file(b_floquet_imag_filename);
 
         B->Real().Save(b_real_file);
         B->Imag().Save(b_imag_file);
+
+        mfem::ParFiniteElementSpace &fespace = *B->ParFESpace();
+        mfem::ParGridFunction gridfunc_vectorB(&fespace);
+
+        gridfunc_vectorB = 0.0;
+        CustomCoefficientReal coeff_real(B.get(), wave_vector);
+        gridfunc_vectorB.ProjectCoefficient(coeff_real);
+        gridfunc_vectorB.Save(b_floquet_real_file);
+
+        gridfunc_vectorB = 0.0;
+        CustomCoefficientReal coeff_imag(B.get(), wave_vector);
+        gridfunc_vectorB.ProjectCoefficient(coeff_imag);
+        gridfunc_vectorB.Save(b_floquet_imag_file);
       }
       else
       {
@@ -767,19 +796,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                         local_rank, pad_digits_default);
     std::ofstream u_m_file(u_m_filename);
 
-    fs::path u_m_bdr_filename = fs::path(mfem_gf_bdr_output_dir) /
-                            fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                        local_rank, pad_digits_default);
-    std::ofstream u_m_bdr_file(u_m_bdr_filename);
     gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_m.get());
     gridfunc_scalar.Save(u_m_file);
-
-    //gridfunc_scalar = 0.0;
-    //marker = 1;
-    //mfem::ConstantCoefficient test(0.1234);
-    //gridfunc_scalar.ProjectBdrCoefficient(test, marker);
-    //gridfunc_scalar.Save(u_m_bdr_file);
   }
 
   if (S)
