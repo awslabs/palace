@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
   // (this also means that these tags cannot be used to filter out tests, only
   // to filter in).
   //
-  // Here, we automatically add the relevent tags depending on the device/number
+  // Here, we automatically add the relevant tags depending on the device/number
   // of MPI processes we detect.
 
   auto cfg = session.configData();
@@ -85,6 +85,10 @@ int main(int argc, char *argv[])
   if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
   {
     cfg.testsOrTags.emplace_back("[GPU]");
+    if (ceed_backend == "/cpu/self")
+    {
+      ceed_backend = device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda" : "/gpu/hip";
+    }
   }
   // Check if we are running with more than 1 MPI process, if yes, add the
   // [Parallel] tag, if not add the [Serial] tag.
