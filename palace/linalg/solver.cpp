@@ -83,34 +83,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     }
     if (drop_small_entries)
     {
-      /**/
-      int nthresh = 100;
-      std::vector<double> thresholds;
-      thresholds.push_back(1e-200);
-      thresholds.push_back(1e-150);
-      thresholds.push_back(1e-100);
-      thresholds.push_back(1e-80);
-      thresholds.push_back(1e-60);
-      double log_start = std::log(1e-50); double log_end = std::log(1e10);
-      for (int i = 0; i < nthresh; i++)
-      {
-        double log_val = log_start + i * (log_end - log_start) / (nthresh - 1);
-        thresholds.push_back(std::exp(log_val));
-      }
-      for (const auto thresh : thresholds)
-      {
-        const auto nnz_before = A->NNZ();
-        A->DropSmallEntries(thresh);
-        const auto nnz_after = A->NNZ();
-        Mpi::Print("{} {} {}\n", thresh, nnz_before, nnz_after);
-      }
-      /**/
-     /*
       const auto nnz_before = A->NNZ();
-      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
       const auto nnz_after = A->NNZ();
-      Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n", (nnz_before-nnz_after), nnz_before, (double)(nnz_before-nnz_after)/nnz_before*100.0);
-      */
+      Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+                 (nnz_before - nnz_after), nnz_before,
+                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
     }
     pc->SetOperator(*A);
     if (!save_assembled)
@@ -123,7 +101,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     if (drop_small_entries)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
-      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      const auto nnz_before = A->NNZ();
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+      const auto nnz_after = A->NNZ();
+      Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+                 (nnz_before - nnz_after), nnz_before,
+                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
       pc->SetOperator(*A);
     }
     else
@@ -140,7 +123,12 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     if (drop_small_entries)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
-      A->DropSmallEntries(std::numeric_limits<double>::epsilon());
+      const auto nnz_before = A->NNZ();
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+      const auto nnz_after = A->NNZ();
+      Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+                 (nnz_before - nnz_after), nnz_before,
+                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
       pc->SetOperator(*A);
     }
     else
