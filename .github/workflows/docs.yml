@@ -106,9 +106,7 @@ jobs:
         # Explicitly not using cache to get latest develop
       - name: Build Palace
         run: |
-          spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
-        # If you want to use the branch-local source instead (should we always do this?)
-        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . install --only-concrete --show-log-on-error --only package --keep-stage
 
       - name: Build and deploy
         env:
