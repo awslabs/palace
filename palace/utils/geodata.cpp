@@ -1870,11 +1870,32 @@ struct UnorderedPairHasher
 int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
+  // Exclude some internal boundary conditions for which cracking would give invalid
+  // results: lumpedports in particular.
+  const auto crack_boundary_attributes = [&iodata]()
+  {
+    auto cba = iodata.boundaries.attributes;
+    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    {
+      for (const auto &e : data.elements)
+      {
+        auto attr_in_elem = [&](auto x)
+        {
+          return std::find(e.attributes.begin(), e.attributes.end(), x) !=
+                 e.attributes.end();
+        };
+        cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
+      }
+    }
+    return cba;
+  }();
+
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
-  if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)
+  if (crack_boundary_attributes.empty() && !iodata.model.add_bdr_elements)
   {
     return 1;  // Success
   }
+
   if (face_to_be.size() != static_cast<std::size_t>(orig_mesh->GetNBE()))
   {
     face_to_be = GetFaceToBdrElementMap(*orig_mesh, iodata.boundaries);
@@ -1890,11 +1911,11 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!iodata.boundaries.attributes.empty() && iodata.model.crack_bdr_elements)
+  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements)
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
-        iodata.boundaries.attributes, true);
+        crack_boundary_attributes, true);
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       if (crack_bdr_marker[orig_mesh->GetBdrAttribute(be) - 1])
@@ -2234,7 +2255,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
 
   // Add duplicated vertices from interior boundary cracking, renumber the vertices of
   // domain and boundary elements to tear the mesh, and add new crack boundary elements.
-  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty())
+  if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty())
   {
     // Add duplicate vertices. We assign the vertex number of the duplicated vertex in order
     // to update the element connectivities in the next step.
@@ -2440,7 +2461,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   // perturbation to separate the duplicated boundary elements on either side and prevent
   // them from lying exactly on top of each other. This is mostly just for visualization
   // and can be increased in magnitude for debugging.
-  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty() &&
+  if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty() &&
       iodata.model.crack_displ_factor > 0.0)
   {
     // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.
