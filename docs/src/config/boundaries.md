@@ -91,18 +91,18 @@ boundary using a user specified surface impedance.
 artificial scattering boundary conditions at farfield boundaries.
 
 `"Conductivity"` :  Array of objects for configuring finite conductivity surface impedance
-boundary conditions. Finite conductivity boundaries are only available for the frequency
-domain driven simulation type.
+boundary conditions. Finite conductivity boundaries are only available for frequency
+domain driven and eigenmode simulation types.
 
 `"LumpedPort"` :  Array of objects for configuring lumped port boundary conditions. Lumped
 ports can be specified on boundaries which are internal to the computational domain.
 
 `"WavePort"` :  Array of objects for configuring numeric wave port boundary conditions. Wave
 ports can only be specified on boundaries which are on the true boundary of the
-computational domain. Additionally, wave port boundaries are only available for the
-frequency domain driven simulation type.
+computational domain. Additionally, wave port boundaries are only available for
+frequency domain driven and eigenmode simulation types.
 
-`"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
+`"WavePortPEC"` :  Top-level object for configuring additional PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant
 when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
@@ -405,10 +405,10 @@ for the wave port problem.
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider along with
-those specified under
-[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) as PEC when
-performing wave port boundary mode analysis.
+`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider as PEC when solving the
+2D eigenproblem for the wave port boundary mode analysis, along with those specified under
+[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) and
+[`config["Boundaries"]["Conductivity"]["Attributes"]`](#boundaries%5B%22Conductivity%22%5D).
 
 ## `boundaries["SurfaceCurrent"]`
 
