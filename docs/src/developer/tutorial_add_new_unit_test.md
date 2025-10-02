@@ -143,7 +143,7 @@ simplicity let us ignore GPU compatibility):
 
 ```cpp
 TEST_CASE("MyTest Vector Sum - Different Lenghts", "[myvector][Parallel]")
-
+{
  Vector v;
 
  if (Mpi::Root(Mpi::World())){
@@ -158,8 +158,9 @@ TEST_CASE("MyTest Vector Sum - Different Lenghts", "[myvector][Parallel]")
  double sum = linalg::Sum(Mpi::World(), v);
  double expected = 3 * (Mpi::Size(Mpi::World()) - 1) + 30;
  REQUIRE_THAT(value, Catch::Matchers::WithinRel(expected))
+}
 ```
 
-This test is a useful test because it checks that `Sum` is not implemented
-making assumptions on the length of the vector. This test is also meaningless
-when run with less than 2 MPI processes, so we removed the `[Serial]` tag.
+This test is because it checks that `Sum` is not implemented making assumptions
+on the length of the vector. This test is also meaningless when run with less
+than 2 MPI processes, so we removed the `[Serial]` tag.

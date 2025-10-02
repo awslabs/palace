@@ -479,7 +479,7 @@ discretized by Nédélec and Raviart-Thomas elements, respectively.
 ## Far-field extraction
 
 This feature is based upon Stratton-Chu's transformations in the limit for ``kr \gg 1`` (with ``k`` wave number and ``r`` observation distance). One can show
-that, in this limit,
+that [6], in this limit,
 
 ```math
 r \mathbf{E}_p(\mathbf{r}_0) = \frac{ik}{4\pi} \mathbf{r}_0 \times \int [\mathbf{n} \times \mathbf{E} - Z \mathbf{r}_0 \times (\mathbf{n} \times \mathbf{H})] \exp(ik\mathbf{r} \cdot \mathbf{r}_0) dS
@@ -527,3 +527,6 @@ frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
 waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).\
 [5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, _Comptes Rendus
 Mathematique_ 340 (2005) 697-702.
+[6] [COMSOL RF
+Manual](https://doc.comsol.com/6.2/doc/com.comsol.help.rf/RFModuleUsersGuide.pdf),
+Version 6.2, (2025) 88-90.

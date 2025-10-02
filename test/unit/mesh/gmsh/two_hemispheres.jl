@@ -18,7 +18,7 @@
 using Gmsh: gmsh
 
 radius = 1.5
-mesh_size = 0.25  # Controls mesh resolution (smaller = finer mesh)
+mesh_size = 0.125  # Controls mesh resolution (smaller = finer mesh)
 filename = "two_hemispheres.msh"
 
 gmsh.initialize()
@@ -72,6 +72,9 @@ end
 gmsh.model.addPhysicalGroup(2, north_surfaces, 2, "north")
 gmsh.model.addPhysicalGroup(2, south_surfaces, 3, "south")
 
+gmsh.option.setNumber("Mesh.Algorithm", 6)
+gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.option.setNumber("Mesh.Binary", 1)
 gmsh.write(joinpath(@__DIR__, filename))
 gmsh.finalize()

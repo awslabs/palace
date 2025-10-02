@@ -84,7 +84,7 @@ struct Measurement
     std::vector<std::pair<double, double>> thetaphis;
 
     // Components of the electric field.
-    std::vector<std::vector<std::complex<double>>> E_field;
+    std::vector<std::array<std::complex<double>, 3>> E_field;
   };
 
   // Data for both lumped and wave port.
@@ -269,7 +269,10 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
-  // PrintFarFieldE has no Initialize because each frequency produces its own file.
+  std::optional<TableWithCSVFile> farfield_E;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
   auto PrintFarFieldE(const SurfacePostOperator &surf_post_op)
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;

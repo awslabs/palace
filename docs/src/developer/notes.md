@@ -115,8 +115,12 @@ Adaptation                      // < Time spent performing adaptive mesh refinem
   Rebalancing                   // < Rebalancing time for AMR simulations with rebalancing
 Postprocessing                  // < Time spent in postprocessing once the field solution
                                 //   has been computed
+  Far Fields                    // < Time spent computing surface integrals to exterpolate
+                                //   near fields to far fields
 Disk IO                         // < Disk read/write time for loading the mesh file and
-                                //   writing fields for visualization
+                                //   writing CSV fields
+  Paraview                      // < Disk read/write time writing fields for visualization
+  Far Fields                    // < Disk read/write time writing farfield-rE.csv
 -----------------------
 Total                           // < Total simulation time
 ```

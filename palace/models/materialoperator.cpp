@@ -56,9 +56,22 @@ bool IsValid(const config::SymmetricMatrixData<N> &data)
 }
 
 template <std::size_t N>
-bool IsIsotropic(const config::SymmetricMatrixData<N> &data)
+bool IsMatIsotropic(const config::SymmetricMatrixData<N> &data)
 {
-  bool valid = true;
+  for (std::size_t i = 1; i < N; i++)
+  {
+    if (data.s[i] != data.s[0])
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <std::size_t N>
+bool IsIdentity(const config::SymmetricMatrixData<N> &data)
+{
+  auto valid = std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
   for (std::size_t i = 0; i < N; i++)
   {
     for (std::size_t j = 0; j < N; j++)
@@ -73,14 +86,6 @@ bool IsIsotropic(const config::SymmetricMatrixData<N> &data)
       }
     }
   }
-  return valid;
-}
-
-template <std::size_t N>
-bool IsIdentity(const config::SymmetricMatrixData<N> &data)
-{
-  auto valid = std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
-  valid &= IsIsotropic(data);
   return valid;
 }
 
@@ -158,6 +163,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
 
+  attr_is_isotropic.SetSize(nmats);
+
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
   mat_epsilon.SetSize(sdim, sdim, nmats);
@@ -223,6 +230,9 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
                     "electrical conductivity!");
       }
     }
+
+    attr_is_isotropic[i] = IsMatIsotropic(data.mu_r) && IsMatIsotropic(data.epsilon_r) &&
+                           IsMatIsotropic(data.tandelta) && IsMatIsotropic(data.sigma);
 
     // Map all attributes to this material property index.
     for (auto attr : data.attributes)

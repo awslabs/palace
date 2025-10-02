@@ -27,7 +27,6 @@ makedocs(
             "guide/problem.md",
             "guide/model.md",
             "guide/boundaries.md",
-            "guide/farfield.md",
             "guide/postprocessing.md",
             "guide/parallelism.md"
         ],
@@ -39,6 +38,7 @@ makedocs(
             "config/boundaries.md",
             "config/solver.md"
         ],
+        "Features" => Any["features/farfield.md",],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",

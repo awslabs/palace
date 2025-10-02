@@ -9,10 +9,12 @@
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -267,18 +269,9 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
       }
     }
 
-    auto IsIsotropic = [](const auto &data)
-    {
-      for (size_t i = 0; i < data.Size(); i++)
-        for (size_t j = 0; j < data.Size(); j++)
-          if (data(i, j) != (i == j ? data(0, 0) : 0.0))
-            return false;
-      return true;
-    };
-
     for (int attr : domain_attrs)
     {
-      MFEM_VERIFY(IsIsotropic(mat_op.GetInvImpedance(attr)),
+      MFEM_VERIFY(mat_op.IsIsotropic(attr),
                   "FarField requires isotropic materials, but attribute " +
                       std::to_string(attr) + " is not.");
     }
@@ -360,29 +353,37 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
   return linalg::LocalSum(s);
 }
 
-std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldrE(
+std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
     const GridFunction *B, double omega) const
 {
   if (theta_phi_pairs.empty())
-  {
     return {};
-  }
+  BlockTimer bt0(Timer::POSTPRO_FARFIELD);
 
-  BdrFarFieldBatchCoefficient coeff(*E, *B, mat_op, omega, theta_phi_pairs);
+  // Compute target unit vectors from the given theta and phis.
+  std::vector<StaticVector<3>> r_naughts;
+  r_naughts.reserve(theta_phi_pairs.size());
+  for (const auto &[theta, phi] : theta_phi_pairs)
+  {
+    r_naughts.emplace_back();
+    auto &r_naught = r_naughts.back();
+    r_naught(0) = std::sin(theta) * std::cos(phi);
+    r_naught(1) = std::sin(theta) * std::sin(phi);
+    r_naught(2) = std::cos(theta);
+  }
 
   const auto &mesh = *nd_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Initialize integrals.
-  std::vector<std::array<std::complex<double>, 3>> integrals(theta_phi_pairs.size());
-  for (auto &integral : integrals)
-  {
-    integral.fill({0.0, 0.0});
-  }
+  // Integrate. Each MPI process computes its contribution and we will reduce
+  // everything at the end. We make them std::vector<std::array<double, 3>>
+  // because we want a very simple memory layout so that we can reduce
+  // everything with two MPI calls.
+  std::vector<std::array<double, 3>> integrals_r(theta_phi_pairs.size());
+  std::vector<std::array<double, 3>> integrals_i(theta_phi_pairs.size());
 
-  // Integrate.
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
@@ -390,41 +391,32 @@ std::vector<std::vector<std::complex<double>>> SurfacePostOperator::GetFarFieldr
 
     auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(i);
     const auto *fe = nd_fespace.GetBE(i);
-    int integration_order = fem::DefaultIntegrationOrder::Get(*T);
-    const auto *ir = &mfem::IntRules.Get(fe->GetGeomType(), integration_order);
+    const auto *ir =
+        &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    for (int j = 0; j < ir->GetNPoints(); j++)
-    {
-      const auto &ip = ir->IntPoint(j);
-      T->SetIntPoint(&ip);
-
-      auto f_vals = coeff.EvalComplexBatch(*T, ip);
-      double w = ip.weight * T->Weight();
-
-      for (size_t k = 0; k < theta_phi_pairs.size(); k++)
-      {
-        for (int d = 0; d < 3; d++)
-        {
-          integrals[k][d] += w * f_vals[k][d];
-        }
-      }
-    }
+    AddStrattonChuIntegrandAtElement(*E, *B, mat_op, omega, r_naughts, *T, *ir, integrals_r,
+                                     integrals_i);
   }
 
-  // Apply MPI reduction across all the results.
-  std::complex<double> *data_ptr =
-      reinterpret_cast<std::complex<double> *>(integrals.data());
-  size_t total_elements = integrals.size() * 3;  // Each integral has 3 components
-  Mpi::GlobalSum(total_elements, data_ptr, E->GetComm());
+  double *data_r_ptr = integrals_r.data()->data();
+  double *data_i_ptr = integrals_i.data()->data();
+  size_t total_elements = integrals_r.size() * 3;
+  Mpi::GlobalSum(total_elements, data_i_ptr, E->GetComm());
+  Mpi::GlobalSum(total_elements, data_r_ptr, E->GetComm());
 
-  // Then apply cross product to reduced integrals.
-  std::vector<std::vector<std::complex<double>>> result(theta_phi_pairs.size());
+  // Finally, we apply cross product to reduced integrals and package the result
+  // in a neatly accessible vector of arrays of complex numbers.
+  std::vector<std::array<std::complex<double>, 3>> result(theta_phi_pairs.size());
+  StaticVector<3> tmp_r, tmp_i;
   for (size_t k = 0; k < theta_phi_pairs.size(); k++)
   {
-    auto final_integral = coeff.cross_product(coeff.GetRNaught(k), integrals[k]);
-    result[k] = {final_integral[0], final_integral[1], final_integral[2]};
+    linalg::Cross3(r_naughts[k], integrals_r[k], tmp_r);
+    linalg::Cross3(r_naughts[k], integrals_i[k], tmp_i);
+    for (size_t d = 0; d < 3; d++)
+    {
+      result[k][d] = std::complex<double>{tmp_r[d], tmp_i[d]};
+    }
   }
-
   return result;
 }
 

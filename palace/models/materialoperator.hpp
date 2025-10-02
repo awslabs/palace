@@ -32,6 +32,10 @@ private:
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
+  // Are material isotropic? True when all the material properties are effectively
+  // scalar-valued (ie, true scalars or vectors with identical entries).
+  mfem::Array<bool> attr_is_isotropic;
+
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // London penetration depth, or Floquet wave vector.
   bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
@@ -75,6 +79,8 @@ public:
 
   auto GetLightSpeedMin(int attr) const { return mat_c0_min[AttrToMat(attr)]; }
   auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }
+
+  bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
 
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }

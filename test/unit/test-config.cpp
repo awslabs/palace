@@ -242,7 +242,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
-TEST_CASE("FarField", "[config]")
+TEST_CASE("FarField", "[config][Serial]")
 {
   constexpr double delta_eps = 1.0e-6;  // Precision in angle comparisons (rad)
 
