@@ -269,7 +269,7 @@ jobs:
           mpi: ${{ matrix.mpi }}
 
       - name: Configure Clang compiler
-        if: matrix.compiler == 'clang'
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
         run: |
           sudo apt-get install -y clang lld
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
