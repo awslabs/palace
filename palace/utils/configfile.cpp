@@ -2085,6 +2085,7 @@ void DrivenSolverData::SetUp(json &solver)
     std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
     std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
     std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
+    std::cout << "AdaptiveCircuitSynthesis: " << adaptive_circuit_synthesis << '\n';
   }
 
   // Cleanup
