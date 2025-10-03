@@ -142,7 +142,7 @@ correct when vectors have different lengths on different MPI processes (for
 simplicity let us ignore GPU compatibility):
 
 ```cpp
-TEST_CASE("MyTest Vector Sum - Different Lenghts", "[myvector][Parallel]")
+TEST_CASE("MyTest Vector Sum - Different Lengths", "[myvector][Parallel]")
 {
  Vector v;
 

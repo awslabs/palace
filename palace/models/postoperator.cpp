@@ -837,8 +837,8 @@ void PostOperator<solver_t>::MeasureFarField() const
 
     // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
     measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, E.get(), B.get(),
-        measurement_cache.freq.real(), measurement_cache.freq.imag());
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq.real(),
+        measurement_cache.freq.imag());
   }
 }
 

@@ -207,7 +207,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.postpro.flux.empty() ||
       !iodata.boundaries.postpro.dielectric.empty() ||
-      !iodata.boundaries.postpro.farfield.thetaphis.empty())
+      !iodata.boundaries.postpro.farfield.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -248,7 +248,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
               "Far-field extraction is only available for driven and eigenmode problems!");
 
   // Check that we don't have anisotropic materials.
-  if (!iodata.boundaries.postpro.farfield.thetaphis.empty())
+  if (!iodata.boundaries.postpro.farfield.empty())
   {
     const auto &mesh = *nd_fespace.GetParMesh();
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -355,8 +355,8 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 }
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
-    const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction *E,
-    const GridFunction *B, double omega_re, double omega_im) const
+    const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction &E,
+    const GridFunction &B, double omega_re, double omega_im) const
 {
   if (theta_phi_pairs.empty())
     return {};
@@ -394,15 +394,15 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(*E, *B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
                                      integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();
   double *data_i_ptr = integrals_i.data()->data();
   size_t total_elements = integrals_r.size() * 3;
-  Mpi::GlobalSum(total_elements, data_i_ptr, E->GetComm());
-  Mpi::GlobalSum(total_elements, data_r_ptr, E->GetComm());
+  Mpi::GlobalSum(total_elements, data_i_ptr, E.GetComm());
+  Mpi::GlobalSum(total_elements, data_r_ptr, E.GetComm());
 
   // Finally, we apply cross product to reduced integrals and package the result
   // in a neatly accessible vector of arrays of complex numbers.

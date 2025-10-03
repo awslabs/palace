@@ -1590,7 +1590,7 @@ void FarFieldPostData::SetUp(json &postpro)
     auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
     for (const auto &vec : vec_of_vec)
     {
-      thetaphis.emplace_back(std::make_pair(vec[0] * M_PI / 180, vec[1] * M_PI / 180));
+      thetaphis.emplace_back(vec[0] * M_PI / 180, vec[1] * M_PI / 180);
     }
   }
 

@@ -240,8 +240,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   double omega_rad_per_time =
       units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
-  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, &E_field, &B_field,
-                                                omega_rad_per_time, omega_im);
+  auto rE_computed =
+      surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
 
   // Validate computed far-field against analytical solution
   for (size_t i = 0; i < thetaphis.size(); i++)
@@ -304,14 +304,13 @@ TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
 
 TEST_CASE("PostOperator", "[strattonchu][Serial]")
 {
-  // This test checks that the Stratton-Chu code using a non-trivial mesh:
+  // This test checks the Stratton-Chu code using a non-trivial mesh:
   // 1. The outer boundary has multiple attributes.
   // 2. The mesh is offset with respect to the source.
   // 2. The outer boundary is not a sphere.
 
   double freq_Hz = GENERATE(35e6, 50e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
-  ;
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1].
   int resolution = 20;

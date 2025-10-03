@@ -116,14 +116,15 @@ Measurement Measurement::Dimensionalize(const Units &units,
     eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
 
-  measurement_cache.farfield.thetaphis = nondim_measurement_cache.farfield.thetaphis;
+  measurement_cache.farfield.thetaphis =
+      nondim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
 
   return measurement_cache;
 }
 
-// static
+// static.
 Measurement Measurement::Nondimensionalize(const Units &units,
                                            const Measurement &dim_measurement_cache)
 {
@@ -619,7 +620,7 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
   int nr_expected_measurement_rows = surf_post_op.farfield.size();
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  if (U == ProblemType::EIGENMODE)
+  if constexpr (U == ProblemType::EIGENMODE)
   {
     t.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
     t.insert("f_re", "f_re (GHz)");
@@ -653,15 +654,11 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
   int v_dim = surf_post_op.GetVDim();
   for (size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
   {
-    if (U == ProblemType::EIGENMODE)
+    farfield_E->table["idx"] << row_idx_v;
+    if constexpr (U == ProblemType::EIGENMODE)
     {
-      farfield_E->table["idx"] << row_idx_v;
       farfield_E->table["f_re"] << measurement_cache.freq.real();
       farfield_E->table["f_im"] << measurement_cache.freq.imag();
-    }
-    else
-    {
-      farfield_E->table["idx"] << row_idx_v;
     }
     const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
     const auto &E_field = measurement_cache.farfield.E_field[i];
