@@ -385,10 +385,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     BlockTimer bt0(Timer::POSTPRO);
     Mpi::Print(" Printing PROM Matrices to disk.\n");
-    if (root)
-    {
-      prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
-    }
+    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
 
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
