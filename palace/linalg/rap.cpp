@@ -36,9 +36,9 @@ ParOperator::ParOperator(const Operator &A, const FiniteElementSpace &trial_fesp
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                        DiagonalPolicy policy)
 {
-  MFEM_VERIFY(policy == DiagonalPolicy::DIAG_ONE || policy == DiagonalPolicy::DIAG_ZERO,
-              "Essential boundary condition true dof elimination for ParOperator supports "
-              "only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
+  // MFEM_VERIFY(policy == DiagonalPolicy::DIAG_ONE || policy == DiagonalPolicy::DIAG_ZERO,
+  //             "Essential boundary condition true dof elimination for ParOperator supports "
+  //             "only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ParOperator!");
   tdof_list.Read();
@@ -435,10 +435,10 @@ ComplexParOperator::ComplexParOperator(const Operator *Ar, const Operator *Ai,
 void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                               Operator::DiagonalPolicy policy)
 {
-  MFEM_VERIFY(policy == Operator::DiagonalPolicy::DIAG_ONE ||
-                  policy == Operator::DiagonalPolicy::DIAG_ZERO,
-              "Essential boundary condition true dof elimination for ComplexParOperator "
-              "supports only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
+  // MFEM_VERIFY(policy == Operator::DiagonalPolicy::DIAG_ONE ||
+  //                 policy == Operator::DiagonalPolicy::DIAG_ZERO,
+  //             "Essential boundary condition true dof elimination for ComplexParOperator "
+  //             "supports only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(
       policy != Operator::DiagonalPolicy::DIAG_ONE || RAPr,
       "DiagonalPolicy::DIAG_ONE specified for ComplexParOperator with no real part!");
@@ -958,13 +958,18 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
 }
 
 // Explicit instantiation.
+template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[1],
+                                                          const Operator *(&&)[1], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[2],
                                                           const Operator *(&&)[2], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[3],
                                                           const Operator *(&&)[3], bool);
 template std::unique_ptr<ParOperator> BuildParSumOperator(double (&&)[4],
                                                           const Operator *(&&)[4], bool);
+
 template std::unique_ptr<ComplexParOperator>
+    BuildParSumOperator(std::complex<double> (&&)[1], const ComplexOperator *(&&)[1], bool);
+                                                          template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[2], const ComplexOperator *(&&)[2], bool);
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[3], const ComplexOperator *(&&)[3], bool);

@@ -848,8 +848,6 @@ bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &R
   RHS.UseDevice(true);
   RHS = 0.0;
 
-  MFEM_VERIFY(RHS.Size() == GetNDSpace().GetTrueVSize(),
-              "Invalid T-vector size for AddExcitationVector1Internal!");
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
 
   const auto &data = lumped_port_op.GetPort(port_idx);
@@ -859,13 +857,50 @@ bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &R
 
   for (const auto &elem : data.elems)
   {
+    Mpi::Print("Width {}, Length {}, Nr {}\n", elem->GetGeometryWidth(), elem->GetGeometryLength(), data.elems.size() );
+    std::cout << "Attr list:" << elem->GetAttrList().Size() << std::endl;
+
+    auto bbox =  mesh::GetBoundingBox(GetMesh(), elem->GetAttrList()[0], true);
+   Mpi::Print("Attr bounding box (center): {}\n", bbox.center);
+   Mpi::Print("Attr bounding box (axes): {}n\n", bbox.axes);
+   Mpi::Print("Attr bounding box (planar): {}\n", bbox.planar);
+   Mpi::Print("Attr bounding box (area): {}\n", bbox.Area());
+   Mpi::Print("Attr bounding box (volume): {}\n", bbox.Volume());
+   Mpi::Print("Attr bounding box (lengths): {}\n", bbox.Lengths());
+   Mpi::Print("Attr bounding box (Normals): {}\n", bbox.Normals());
+
+  auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+   mfem::Array<int> attr_marker_loc;
+   mesh::AttrToMarker(bdr_attr_max, elem->GetAttrList(), attr_marker_loc);
+
+   Mpi::Print("Mesh get surface area: {}\n", mesh::GetSurfaceArea(mesh, attr_marker_loc));
+
+
+  //  Mpi::Print("Attr bounding box (Deviations): {}", bbox.Deviations());
+
+
     attr_list.Append(elem->GetAttrList());
-    fb.AddCoefficient(
-        elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * data.elems.size())));
+
+    Mpi::Print("Attr list: {}\n", attr_list);
+    fb.AddCoefficient(elem->GetModeCoefficient(1.0 / std::sqrt(elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()))); // / std::sqrt(elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()))
   }
   auto &mesh = GetNDSpace().GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+  Mpi::Print("Attr attr_marker: {}\n", attr_marker);
+
+
+  // mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
+  GridFunction E_port_vec(GetNDSpace());
+  E_port_vec = 0.0;
+  E_port_vec.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+  E_port_vec.Real().GetTrueDofs(RHS.Real());
+
+   auto V_out = data.GetVoltage(E_port_vec);
+   Mpi::Print("GetLumpedPortExcitationVector Voltage: {:e}, {:e}\n", V_out.real(), V_out.imag());
+
+  // GetNDSpace().GetProlongationMatrix()->Mult(RHS.Real(), RHS.Real());
 
   mfem::LinearForm rhs1(&GetNDSpace().Get());
   rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
@@ -873,12 +908,25 @@ bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &R
   rhs1.UseDevice(false);
   rhs1.Assemble();
   rhs1.UseDevice(true);
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS.Real());
 
-  if (zero_metal)
-  {
-    linalg::SetSubVector(RHS.Real(), nd_dbc_tdof_lists.back(), 0.0);
-  }
+   std::complex<double> dot(rhs1 * E_port_vec.Real());
+   Mpi::GlobalSum(1, &dot, GetComm());
+   Mpi::Print("GetLumpedPortExcitationVector Norm: {:e}, {:e}\n", dot.real(), dot.imag());
+
+
+  // GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS.Real());
+
+  // std::complex<double> dot(rhs1 * RHS.Real());
+  // dot += rhs1 * RHS.Imag();
+  // Mpi::GlobalSum(1, &dot, GetComm());
+
+  // Mpi::Print("GetLumpedPortExcitationVector Norm: {:e}, {:e}\n", dot.real(), dot.imag());
+
+
+  // if (zero_metal)
+  // {
+  //   linalg::SetSubVector(RHS.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  // }
   return true;
 }
 
