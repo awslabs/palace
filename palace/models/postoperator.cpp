@@ -139,14 +139,12 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 
 
   mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
-  mfem_gf_bdr_output_dir = (post_dir / "gridfunction" / fmt::format("{}_boundary", OutputFolderName(solver_t))).string();
 
   // Should probably get this material operator?
   wave_vector.SetSize(3);
   wave_vector = 0.0;
   const auto &data = iodata.boundaries.periodic;
   std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
-  Mpi::Print("post operator wave_vector: "); wave_vector.Print();
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -613,7 +611,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   // Create output directory if it doesn't exist
   fs::create_directories(mfem_gf_output_dir);
-  fs::create_directories(mfem_gf_bdr_output_dir);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -621,6 +618,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  wave_vector /= mesh_Lc0; // Dimensionalize wave vector
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
 
@@ -813,6 +811,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  wave_vector *= mesh_Lc0; // Nondimensionalize wave vector
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
