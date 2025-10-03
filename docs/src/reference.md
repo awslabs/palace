@@ -476,6 +476,97 @@ where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operator
 orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
 discretized by Nédélec and Raviart-Thomas elements, respectively.
 
+## Far-field extraction
+
+This feature is based upon Stratton-Chu's transformations [6] in the limit of ``kr \gg 1``
+(with ``k`` wave number and ``r`` observation distance). One can show (see below) that, in
+this limit,
+
+```math
+r \mathbf{E}_p(\mathbf{r}_0) = \frac{ik}{4\pi} \mathbf{r}_0 \times \int_S [\mathbf{n} \times \mathbf{E} - Z \mathbf{r}_0 \times (\mathbf{n} \times \mathbf{H})] \exp(ik\mathbf{r} \cdot \mathbf{r}_0) dS
+```
+
+where:
+
+  - ``E_p`` is the electric field at the observation point
+  - ``k`` is the wave number
+  - ``r₀`` is the unit vector from source to observation point, parameterized by ``(\theta, \phi)``
+  - ``n`` is the surface normal (to ``S``)
+  - ``E, H`` are the tangential fields on the surface
+  - ``Z`` is the impedance
+
+The integral is over the exterior surface ``S``.
+
+Note, we obtain ``r \mathbf{E}_p`` because the electric field decays with
+``exp(ikr)/r``, so multiplying it by ``r`` ensures that the quantity is finite.
+Note also that the solution is defined up to a global phase factor.
+
+This equation relies on an analytic form for Green's function and is only valid
+in 3D and if ``S`` only crosses isotropic materials.
+
+From ``r \mathbf{E}_p``, one can obtain the magnetic field assuming that the
+waves are propagating in free space,
+
+```math
+r \mathbf{H}_p = \frac{r_0 \times r \mathbf{E}_p}{Z_0}\,,
+```
+
+with ``Z_0`` impedance of free space.
+
+With this, one can immediately compute the far-field relative radiation pattern
+as ``|r \mathbf{E}_p|``.
+
+#### How to obtain the equation above from Stratton-Chu's original equations
+
+Let us start from Stratton-Chu's transformation for the electric field (we will get the magnetic field from ``E``):
+
+```math
+\mathbf{E}(\mathbf{r}_0) = \int_S \left[ i \omega \mu (\mathbf{n} \times \mathbf{H}) g(\mathbf{r}, \mathbf{r}_0) +
+(\mathbf{n} \times \mathbf{E}) \times \nabla g(\mathbf{r}, \mathbf{r}_0) + (\mathbf{n} \cdot \mathbf{E}) \nabla g(\mathbf{r}, \mathbf{r}_0) \right] dS
+```
+
+with Green's function (here is where the assumption of isotropicity comes in):
+
+```math
+g(\mathbf{r}, \mathbf{r}_0) = \frac{e^{-i k |\mathbf{r} - \mathbf{r}_0|}}{4 \pi |\mathbf{r} - \mathbf{r}_0|}.
+```
+
+Let us take the limit for ``r \to \infty`` and define ``R = |\mathbf{r} - \mathbf{r}_0|`` (``R \to \infty`` when ``r \to \infty``).
+For ``r \gg r_0`` (far-field approximation):
+
+```math
+R \approx r - \mathbf{r}\cdot\mathbf{r}_0
+```
+
+where ``\mathbf{r}_0 = \mathbf{r}/r`` is the unit vector in the direction of ``\mathbf{r}``.
+
+The far-field approximation for Green's function becomes:
+
+```math
+g(\mathbf{r}, \mathbf{r}_0) \approx \frac{e^{-i k r}}{4 \pi r} e^{i k \mathbf{r}_0\cdot\mathbf{r}}.
+```
+
+For the gradient of ``g``, we start with the exact expression and expand phase and magnitude to reach:
+
+```math
+\nabla g(\mathbf{r}, \mathbf{r}_0) = -\frac{e^{-i k R}}{4 \pi R}\left(\frac{1}{R} + i k\right)\hat{R}
+```
+
+where ``\hat{R} = (\mathbf{r} - \mathbf{r}_0)/R`` is the unit vector pointing from ``\mathbf{r}_0`` to ``\mathbf{r}``.
+
+In the far-field limit, ``R \approx r`` and ``\hat{R} \approx \mathbf{r}_0``, so:
+
+```math
+\nabla g(\mathbf{r}, \mathbf{r}_0) \approx -i k \mathbf{r}_0 g(\mathbf{r}, \mathbf{r}_0)
+```
+
+where we've neglected the ``1/R`` term since ``k R \gg 1`` in the far-field.
+
+With these ingredients, one then uses the triple vector product rule and drops
+the radial terms (i.e., those proportional to ``\mathbf{r}_0``, in the wave zone
+there are only transverse fields) to arrive at the equation presented in the
+previous section and implemented in *Palace*.
+
 ## References
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
@@ -487,4 +578,6 @@ frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
 [4] J. Wenner, R. Barends, R. C. Bialczak, et al., Surface loss of superconducting coplanar
 waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).\
 [5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, _Comptes Rendus
-Mathematique_ 340 (2005) 697-702.
+Mathematique_ 340 (2005) 697-702.\
+[6] J. A, Stratton and L. J. Chu, Diffraction theory of Electromagnetic
+Waves, _Physical Review_, 56, 1, (1939), 99-107.

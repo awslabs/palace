@@ -45,6 +45,8 @@ public:
     ADAPTATION,           // Adaptation
     REBALANCE,            // Rebalancing
     POSTPRO,              // Solution postprocessing
+    POSTPRO_FARFIELD,     // Computing far-fields
+    POSTPRO_PARAVIEW,     // Paraview calculations and I/O
     IO,                   // Disk I/O
     TOTAL,
     NUM_TIMINGS
@@ -71,6 +73,8 @@ public:
       "Adaptation",
       "  Rebalancing",
       "Postprocessing",
+      "  Far Fields",
+      "  Paraview",
       "Disk IO",
       "Total"};
   // clang-format on

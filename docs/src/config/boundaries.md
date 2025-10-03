@@ -70,6 +70,10 @@
         [
             ...
         ]
+        "FarField":
+        {
+            ...
+        }
     }
 }
 ```
@@ -132,6 +136,8 @@ with meshes that are identical after translation and/or rotation.
 `"SurfaceFlux"` :  Array of objects for postprocessing surface flux.
 
 `"Dielectric"` :  Array of objects for postprocessing surface interface dielectric loss.
+
+`"FarField"` :  Top-level object for extracting electric fields in the far-field region.
 
 ## `boundaries["PEC"]`
 
@@ -602,7 +608,7 @@ an internal boundary surface is averaged. When `true`, it is summed with an oppo
 direction.
 
 `"Center" [None]` :  Floating point array of length equal to the model spatial dimension
-specfiying the coordinates of a central point used to compute the outward flux. The true
+specifying the coordinates of a central point used to compute the outward flux. The true
 surface normal is used in the calculation, and this point is only used to ensure the correct
 orientation of the normal. Specified in mesh length units, and only relevant when
 `"TwoSided"` is `false`. If not specified, the point will be computed as the centroid of the
@@ -639,7 +645,7 @@ interface.
 boundary. See also [this page](../reference.md#Bulk-and-interface-dielectric-loss).
 Available options are:
 
-  - `"Default"` :  Use the full electric field evaulated at the boundary to compute the
+  - `"Default"` :  Use the full electric field evaluated at the boundary to compute the
     energy participation ratio (EPR) of this dielectric interface and estimate loss.
   - `"MA"` :  Use the boundary conditions assuming a metal-air interface to compute the EPR
     of this dielectric interface.
@@ -655,3 +661,30 @@ units.
 be the interface layer permittivity for the specific `"Type"` of interface specified.
 
 `"LossTan" [0.0]` :  Loss tangent for this lossy dielectric interface.
+
+## `boundaries["Postprocessing"]["FarField"]`
+
+```json
+"Postprocessing":
+{
+    "FarField":
+    {
+        "Attributes": [<int array>],
+        "NSample": <int>,
+        "ThetaPhis": [<array of pairs of floats>]
+    }
+}
+```
+
+with
+
+`"Attributes" [None]` : Integer array of mesh boundary attributes to be used to
+compute the far fields. It has to be an external boundary and enclose the
+system.
+
+`"NSample" [0]` : Number of uniformly-spaced points to use to discretize the
+far-field sphere.
+
+`"ThetaPhi" [None]` : Evaluate the far-field electric field at these specific
+angles too (in degrees). $\theta \in [0, 180°]$ is the polar angle and $\phi \in
+[0, 360°]$ is the azimuthal angle.

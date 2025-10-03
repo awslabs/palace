@@ -38,10 +38,12 @@ makedocs(
             "config/boundaries.md",
             "config/solver.md"
         ],
+        "Features" => Any["features/farfield.md",],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",
             "examples/rings.md",
+            "examples/antenna.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md"

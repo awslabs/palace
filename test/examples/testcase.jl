@@ -5,6 +5,8 @@ using Test
 using CSV
 using DataFrames
 
+# custom_tests is a dictionary that maps filenames to functions of the signature
+# (new_data, ref_data) -> None, where arbitrary tests can be implemented
 function testcase(
     testdir,
     testconfig,
@@ -14,6 +16,7 @@ function testcase(
     rtol=1.0e-6,
     atol=1.0e-18,
     excluded_columns=[],
+    custom_tests=Dict(),
     skip_rowcount=false,
     generate_data=true
 )
@@ -109,19 +112,24 @@ function testcase(
             rename!(dataref, strip.(names(dataref)))
 
             @test names(data) == names(dataref) || logdump(names(data), names(dataref))
-            test = isapprox.(data, dataref; rtol=rtol, atol=atol)
-            for (row, rowdataref, rowdata) in
-                zip(eachrow(test), eachrow(dataref), eachrow(data))
-                for (rowcol, rowcoldataref, rowcoldata) in
-                    zip(pairs(row), pairs(rowdataref), pairs(rowdata))
-                    if !last(rowcol)
-                        @warn string(
-                            "Regression test error at ",
-                            "row $(rownumber(row)), column $(strip(string(first(rowcol)))): ",
-                            "$(last(rowcoldataref)) ≉ $(last(rowcoldata))"
-                        )
+
+            if file in keys(custom_tests)
+                custom_tests[file](data, dataref)
+            else
+                test = isapprox.(data, dataref; rtol=rtol, atol=atol)
+                for (row, rowdataref, rowdata) in
+                    zip(eachrow(test), eachrow(dataref), eachrow(data))
+                    for (rowcol, rowcoldataref, rowcoldata) in
+                        zip(pairs(row), pairs(rowdataref), pairs(rowdata))
+                        if !last(rowcol)
+                            @warn string(
+                                "Regression test error at ",
+                                "row $(rownumber(row)), column $(strip(string(first(rowcol)))): ",
+                                "$(last(rowcoldataref)) ≉ $(last(rowcoldata))"
+                            )
+                        end
+                        @test last(rowcol)
                     end
-                    @test last(rowcol)
                 end
             end
         end

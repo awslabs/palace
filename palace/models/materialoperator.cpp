@@ -14,15 +14,12 @@
 namespace palace
 {
 
-namespace
+namespace internal::mat
 {
 
 template <std::size_t N>
-bool IsValid(const config::SymmetricMatrixData<N> &data)
+bool IsOrthonormal(const config::SymmetricMatrixData<N> &data)
 {
-  // All the coefficients are nonzero.
-  bool valid =
-      std::all_of(data.s.begin(), data.s.end(), [](auto d) { return std::abs(d) > 0.0; });
 
   // All the vectors are normalized.
   constexpr auto tol = 1.0e-6;
@@ -35,7 +32,7 @@ bool IsValid(const config::SymmetricMatrixData<N> &data)
     }
     return std::abs(s) < tol;
   };
-  valid &= std::all_of(data.v.begin(), data.v.end(), UnitNorm);
+  bool valid = std::all_of(data.v.begin(), data.v.end(), UnitNorm);
 
   // All the vectors are orthogonal.
   for (std::size_t i1 = 0; i1 < N; i1++)
@@ -56,32 +53,24 @@ bool IsValid(const config::SymmetricMatrixData<N> &data)
 }
 
 template <std::size_t N>
+bool IsValid(const config::SymmetricMatrixData<N> &data)
+{
+  return IsOrthonormal(data) && std::all_of(data.s.begin(), data.s.end(),
+                                            [](auto d) { return std::abs(d) > 0.0; });
+}
+
+template <std::size_t N>
 bool IsIsotropic(const config::SymmetricMatrixData<N> &data)
 {
-  bool valid = true;
-  for (std::size_t i = 0; i < N; i++)
-  {
-    for (std::size_t j = 0; j < N; j++)
-    {
-      if (i == j)
-      {
-        valid &= data.v[i][j] == 1.0;
-      }
-      else
-      {
-        valid &= data.v[i][j] == 0.0;
-      }
-    }
-  }
-  return valid;
+  return IsOrthonormal(data) &&
+         std::all_of(data.s.begin(), data.s.end(), [&](auto d) { return d == data.s[0]; });
 }
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data)
 {
-  auto valid = std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
-  valid &= IsIsotropic(data);
-  return valid;
+  return IsOrthonormal(data) &&
+         std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
 }
 
 template <std::size_t N>
@@ -100,7 +89,7 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
-}  // namespace
+}  // namespace internal::mat
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
 {
@@ -158,6 +147,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
 
+  attr_is_isotropic.SetSize(nmats);
+
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
   mat_epsilon.SetSize(sdim, sdim, nmats);
@@ -187,8 +178,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     const auto &data = iodata.domains.materials[i];
     if (iodata.problem.type == ProblemType::ELECTROSTATIC)
     {
-      MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
-      if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
+      MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
+                  "Material has no valid permittivity defined!");
+      if (!internal::mat::IsIdentity(data.mu_r) || internal::mat::IsValid(data.sigma) ||
+          std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
             "Electrostatic problem type does not account for material permeability,\n"
@@ -197,8 +190,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
     else if (iodata.problem.type == ProblemType::MAGNETOSTATIC)
     {
-      MFEM_VERIFY(IsValid(data.mu_r), "Material has no valid permeability defined!");
-      if (!IsIdentity(data.epsilon_r) || IsValid(data.tandelta) || IsValid(data.sigma) ||
+      MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
+                  "Material has no valid permeability defined!");
+      if (!internal::mat::IsIdentity(data.epsilon_r) ||
+          internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma) ||
           std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
@@ -208,21 +203,28 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
     else
     {
-      MFEM_VERIFY(IsValid(data.mu_r) && IsValid(data.epsilon_r),
+      MFEM_VERIFY(internal::mat::IsValid(data.mu_r) &&
+                      internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permeability or no valid permittivity defined!");
       if (iodata.problem.type == ProblemType::TRANSIENT)
       {
-        MFEM_VERIFY(!IsValid(data.tandelta),
+        MFEM_VERIFY(!internal::mat::IsValid(data.tandelta),
                     "Transient problem type does not support material loss tangent, use "
                     "electrical conductivity instead!");
       }
       else
       {
-        MFEM_VERIFY(!(IsValid(data.tandelta) && IsValid(data.sigma)),
-                    "Material loss model should probably use only one of loss tangent or "
-                    "electrical conductivity!");
+        MFEM_VERIFY(
+            !(internal::mat::IsValid(data.tandelta) && internal::mat::IsValid(data.sigma)),
+            "Material loss model should probably use only one of loss tangent or "
+            "electrical conductivity!");
       }
     }
+
+    attr_is_isotropic[i] = internal::mat::IsIsotropic(data.mu_r) &&
+                           internal::mat::IsIsotropic(data.epsilon_r) &&
+                           internal::mat::IsIsotropic(data.tandelta) &&
+                           internal::mat::IsIsotropic(data.sigma);
 
     // Map all attributes to this material property index.
     for (auto attr : data.attributes)
@@ -239,13 +241,13 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
 
     // Compute the inverse of the input permeability matrix.
-    mfem::DenseMatrix mat_mu = ToDenseMatrix(data.mu_r);
+    mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrix(data.mu_r);
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
-    mat_epsilon(count) = ToDenseMatrix(data.epsilon_r);
-    Mult(mat_epsilon(count), ToDenseMatrix(data.tandelta), T);
+    mat_epsilon(count) = internal::mat::ToDenseMatrix(data.epsilon_r);
+    Mult(mat_epsilon(count), internal::mat::ToDenseMatrix(data.tandelta), T);
     T *= -1.0;
     mat_epsilon_imag(count) = T;
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
@@ -254,7 +256,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
 
     // ε * √(I + tan(δ) * tan(δ)ᵀ)
-    MultAAt(ToDenseMatrix(data.tandelta), T);
+    MultAAt(internal::mat::ToDenseMatrix(data.tandelta), T);
     for (int d = 0; d < T.Height(); d++)
     {
       T(d, d) += 1.0;
@@ -272,7 +274,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
-    mat_sigma(count) = ToDenseMatrix(data.sigma);
+    mat_sigma(count) = internal::mat::ToDenseMatrix(data.sigma);
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
@@ -672,5 +674,11 @@ template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array
                                                                double);
 template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
                                                                const double &, double);
+
+// Explicit template instantiations for internal::mat functions.
+template bool internal::mat::IsOrthonormal(const config::SymmetricMatrixData<3> &);
+template bool internal::mat::IsValid(const config::SymmetricMatrixData<3> &);
+template bool internal::mat::IsIsotropic(const config::SymmetricMatrixData<3> &);
+template bool internal::mat::IsIdentity(const config::SymmetricMatrixData<3> &);
 
 }  // namespace palace

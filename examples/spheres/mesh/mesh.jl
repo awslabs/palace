@@ -185,13 +185,8 @@ function generate_spheres_mesh(;
     gmsh.model.mesh.field.setNumber(1, "DistMax", radius_farfield)
     gmsh.model.mesh.field.setNumber(1, "SizeMax", l_farfield)
 
-    # Second, create a second mesh size field (with id 101) that takes the minimum of the
-    # Extend field (as specified by its id)
-    gmsh.model.mesh.field.add("Min", 101)
-    gmsh.model.mesh.field.setNumbers(101, "FieldsList", [1])
-
-    # Finally, use this Min field to determine element sizes
-    gmsh.model.mesh.field.setAsBackgroundMesh(101)
+    # Finally, use this Extend field to determine element sizes
+    gmsh.model.mesh.field.setAsBackgroundMesh(1)
 
     # Choose meshing algorithm. Typically, we would choose HXT, 10, because it
     # is parallel and high-performance, but it is not reproducible, so best to

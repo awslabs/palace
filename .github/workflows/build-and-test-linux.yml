@@ -492,3 +492,8 @@ jobs:
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
+
+      - name: Check antenna postprocessing example
+        run: |
+          julia --project=examples -e 'using Pkg; Pkg.instantiate()'
+          julia --project=examples examples/antenna/plot_farfield.jl examples/antenna/postpro/farfield-rE.csv

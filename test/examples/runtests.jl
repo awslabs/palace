@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 using Hwloc
+using Test
 
 include("testcase.jl")
 
@@ -36,6 +37,7 @@ else
     cases = [
         "spheres",
         "rings",
+        "antenna",
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -165,6 +167,21 @@ end
 
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
+abstol = 1.0e-10
+
+if "antenna" in cases
+    @info "Testing antenna..."
+    @time testcase(
+        "antenna",
+        "antenna.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=50abstol
+    )
+end
+
 abstol = 2.0e-12
 
 if "coaxial/open" in cases
@@ -252,6 +269,26 @@ if "cpw/wave_adaptive" in cases
 end
 
 if "cpw/lumped_eigen" in cases
+
+    # The phase of the eigenmodes is not stable across architectures, so we
+    # compare the magnitudes.
+    function test_farfield(new_data, ref_data)
+        # Compute E field magnitudes.
+        Ex_new = new_data[:, 4] + 1im * new_data[:, 5]
+        Ey_new = new_data[:, 6] + 1im * new_data[:, 7]
+        Ez_new = new_data[:, 8] + 1im * new_data[:, 9]
+        E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
+
+        Ex_ref = ref_data[:, 4] + 1im * ref_data[:, 5]
+        Ey_ref = ref_data[:, 6] + 1im * ref_data[:, 7]
+        Ez_ref = ref_data[:, 8] + 1im * ref_data[:, 9]
+        E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
+
+        # Test magnitudes with relative tolerance.
+        @test E_mag_new ≈ E_mag_ref rtol=reltol
+        return true
+    end
+
     @info "Testing CPW (lumped ports, eigenmode)..."
     @time testcase(
         "cpw",
@@ -292,6 +329,7 @@ if "cpw/lumped_eigen" in cases
             "Q_ext[4]",
             "κ_ext[4] (GHz)"
         ],
+        custom_tests=Dict("farfield-rE.csv" => test_farfield),
         skip_rowcount=true
     )
 end

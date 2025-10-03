@@ -11,6 +11,7 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -114,10 +115,16 @@ Measurement Measurement::Dimensionalize(const Units &units,
     auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
     eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
+
+  measurement_cache.farfield.thetaphis =
+      nondim_measurement_cache.farfield.thetaphis;  // NONE
+  measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.farfield.E_field);
+
   return measurement_cache;
 }
 
-// static
+// static.
 Measurement Measurement::Nondimensionalize(const Units &units,
                                            const Measurement &dim_measurement_cache)
 {
@@ -216,6 +223,11 @@ Measurement Measurement::Nondimensionalize(const Units &units,
     auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
     eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
+
+  measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
+  measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      dim_measurement_cache.farfield.E_field);
+
   return measurement_cache;
 }
 
@@ -381,7 +393,7 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
   auto expected_ex_idx_nrows = _impl::table_expected_filling(
       row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
 
-  // Copy over other options from reference table, since we dont't recover them on load.
+  // Copy over other options from reference table, since we don't recover them on load.
   t_csv_base.table.col_options = t_ref.col_options;
 
   MFEM_VERIFY(base_ex_idx_nrows == expected_ex_idx_nrows,
@@ -586,6 +598,81 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
     surface_Q->table[format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
   }
   surface_Q->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
+{
+  if (!(surf_post_op.farfield.size() > 0))
+  {
+    return;
+  }
+  using fmt::format;
+
+  farfield_E = TableWithCSVFile(post_dir / "farfield-rE.csv");
+
+  Table t;  // Define table locally first due to potential reload.
+
+  int v_dim = surf_post_op.GetVDim();
+  int scale_col = 2 * v_dim;                         // Real + Imag components
+  int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
+  int nr_expected_measurement_rows = surf_post_op.farfield.size();
+  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
+  if constexpr (U == ProblemType::EIGENMODE)
+  {
+    t.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+    t.insert("f_re", "f_re (GHz)");
+    t.insert("f_im", "f_im (GHz)");
+  }
+  else
+  {
+    t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  }
+  t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+  for (int i_dim = 0; i_dim < v_dim; i_dim++)
+  {
+    t.insert(format("rE{}_re", i_dim), format("r*Re{{E_{}}} (V)", DimLabel(i_dim)));
+    t.insert(format("rE{}_im", i_dim), format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
+  }
+
+  MoveTableValidateReload(*farfield_E, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_post_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
+{
+  if (!farfield_E)
+  {
+    return;
+  }
+  using fmt::format;
+  int v_dim = surf_post_op.GetVDim();
+  for (size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
+  {
+    farfield_E->table["idx"] << row_idx_v;
+    if constexpr (U == ProblemType::EIGENMODE)
+    {
+      farfield_E->table["f_re"] << measurement_cache.freq.real();
+      farfield_E->table["f_im"] << measurement_cache.freq.imag();
+    }
+    const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
+    const auto &E_field = measurement_cache.farfield.E_field[i];
+
+    // Print as degrees instead of radians.
+    farfield_E->table["theta"] << 180 / M_PI * theta;
+    farfield_E->table["phi"] << 180 / M_PI * phi;
+    for (int i_dim = 0; i_dim < v_dim; i_dim++)
+    {
+      farfield_E->table[format("rE{}_re", i_dim)] << E_field[i_dim].real();
+      farfield_E->table[format("rE{}_im", i_dim)] << E_field[i_dim].imag();
+    }
+  }
+  farfield_E->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1145,6 +1232,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
   InitializeSurfaceQ(post_op.surf_post_op);
+
 #if defined(MFEM_USE_GSLIB)
   InitializeProbeE(post_op.interp_op);
   InitializeProbeB(post_op.interp_op);
@@ -1161,6 +1249,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS(*post_op.fem_op);
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    InitializeFarFieldE(post_op.surf_post_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
@@ -1188,6 +1280,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   PrintDomainE();
   PrintSurfaceF();
   PrintSurfaceQ();
+
 #if defined(MFEM_USE_GSLIB)
   PrintProbeE(post_op.interp_op);
   PrintProbeB(post_op.interp_op);
@@ -1205,6 +1298,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
+  }
+  if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
+  {
+    PrintFarFieldE(post_op.surf_post_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {

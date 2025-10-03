@@ -11,33 +11,50 @@ The format of this changelog is based on
 
 ## In progress
 
+#### New Features
+
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent
+    boundary conditions. Two nonlinear eigensolvers are now available and can be specified
+    by setting the `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"`
+    (default) or `"SLP"`. The nonlinear eigensolver will automatically be used if
+    frequency-dependent boundary conditions are used. [PR
+    467](https://github.com/awslabs/palace/pull/467).
+  - Added support for extraction of electric fields in the radiative zone.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
+    additional information. [PR
+    449](https://github.com/awslabs/palace/pull/449).
+
+#### Interface Changes
+
+  - `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary
+    pairs, built into the mesh file or not, should be specified in
+    `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
+    vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [PR
+    471](https://github.com/awslabs/palace/pull/471).
+
+#### Bug Fixes
+
   - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
-    subsequent modes are ordered by decreasing propagation constant. [Issue
-    423](https://github.com/awslabs/palace/issues/423), [Issue 437](https://github.com/awslabs/palace/issues/437).
-  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file) were
-    failing. The periodic boundary condition specification has also changed slightly,
-    `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary pairs, built
-    into the mesh file or not, should be specified in `config["Boundaries"]["Periodic"]["BoundaryPairs"]`
-    and a single global Floquet wave vector can be specified in
-    `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [Issue
-    447](https://github.com/awslabs/palace/issues/447).
-  - Added support for nonlinear eigenvalue problems arising from frequency-dependent boundary
-    conditions. Two nonlinear eigensolvers are now available and can be specified by setting the
-    `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"` (default) or `"SLP"`.
-    The nonlinear eigensolver will automatically be used if frequency-dependent boundary
-    conditions are used. [Issue 422](https://github.com/awslabs/palace/issues/422).
+    subsequent modes are ordered by decreasing propagation constant. [PR
+    448](https://github.com/awslabs/palace/pull/448).
+  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
+    were failing. [PR
+    471](https://github.com/awslabs/palace/pull/471).
   - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
-    use in a non-amr simulation. [Issue 444](https://github.com/awslabs/palace/issues/444).
-  - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect
-    results for some lumped port boundary conditions. [Issue 501](https://github.com/awslabs/palace/issues/501).
+    use in a non-amr simulation. [PR
+    497](https://github.com/awslabs/palace/pull/497).
+  - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect results for
+    some lumped port boundary conditions. [PR
+    505](https://github.com/awslabs/palace/pull/505).
 
 ## [0.14.0] - 2025-08-20
 
   - Added `--version` command line flag for displaying Palace version information.
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
-  - Added an improvement to numeric wave ports to avoid targetting evanescent modes at
+  - Added an improvement to numeric wave ports to avoid targeting evanescent modes at
     higher operating frequencies. Also finite conductivity boundaries
     (`config["Boundaries"]["Conductivity"]`) are automatically marked as PEC for the wave
     port mode solve (previously these were marked as PMC unless specified under

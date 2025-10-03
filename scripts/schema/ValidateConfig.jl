@@ -53,7 +53,7 @@ function replace_range_expand(str::AbstractString)
         res = ""
         for r in eachsplit(range, ",")
             i = findfirst('-', r[2:end])
-            if i != nothing
+            if i !== nothing
                 j = i + 1
                 r0 = parse(Int, r[1:(j - 1)])
                 r1 = parse(Int, r[(j + 1):end])

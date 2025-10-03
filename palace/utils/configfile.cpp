@@ -1479,6 +1479,175 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
   }
 }
+void FarFieldPostData::SetUp(json &postpro)
+{
+  auto farfield = postpro.find("FarField");
+  if (farfield == postpro.end())
+  {
+    return;
+  }
+
+  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
+              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
+              "configuration file!");
+
+  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+
+  // Generate NSample points with the following properties:
+  // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
+  // - The poles, the equator, and the XZ plane are always included.
+  // - The points are almost uniformly on a sphere, with a small bias due to satisfying the
+  //   previous condition.
+  // - The points are on rings of constant theta.
+
+  auto nsample_json = farfield->find("NSample");
+  int nsample = 0;
+  if (nsample_json != farfield->end())
+  {
+    nsample = nsample_json->get<int>();
+    if (nsample > 0)
+    {
+      // Always include poles.
+      thetaphis.emplace_back(0.0, 0.0);   // North pole.
+      thetaphis.emplace_back(M_PI, 0.0);  // South pole.
+
+      if (nsample > 2)
+      {
+        int remaining = nsample - 2;
+
+        // Distribute all remaining points across rings with number weighted by the
+        // local circumference.
+        int n_theta = std::max(1, static_cast<int>(std::sqrt(remaining)));
+        n_theta = std::min(n_theta, remaining);  // Can't have more rings than points.
+
+        std::vector<int> points_per_level(n_theta);
+        std::vector<double> sin_theta_values(n_theta);
+        double total_sin_theta = 0.0;
+
+        // Calculate sin(theta) for each ring and total (sin(theta) is proportional to the
+        // circumference).
+        for (int i = 0; i < n_theta; ++i)
+        {
+          double theta = std::acos(1.0 - 2.0 * (i + 1) / (n_theta + 1.0));
+          sin_theta_values[i] = std::sin(theta);
+          total_sin_theta += sin_theta_values[i];
+        }
+
+        // Distribute points proportional to sin(theta).
+        int assigned_points = 0;
+        for (int i = 0; i < n_theta - 1; ++i)
+        {
+          points_per_level[i] =
+              static_cast<int>(remaining * sin_theta_values[i] / total_sin_theta + 0.5);
+          assigned_points += points_per_level[i];
+        }
+        // Assign remaining points to last ring to ensure exact total.
+        points_per_level[n_theta - 1] = remaining - assigned_points;
+
+        for (int i = 1; i <= n_theta; ++i)
+        {
+          // Ensure equator and XZ plane inclusion.
+          bool is_equator = (i == (n_theta + 1) / 2);
+          double theta = is_equator ? M_PI / 2 : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
+          int points_in_level = points_per_level[i - 1];
+
+          for (int j = 0; j < points_in_level; ++j)
+          {
+            double phi = 2.0 * M_PI * j / points_in_level;
+
+            // Force XZ plane points (phi = 0 or π).
+            if (j == 0)
+            {
+              phi = 0.0;
+            }
+            else if (j == points_in_level / 2)
+            {
+              phi = M_PI;
+            }
+
+            thetaphis.emplace_back(theta, phi);
+          }
+        }
+      }
+
+      if (nsample > 2)
+        MFEM_ASSERT(thetaphis.size() == nsample,
+                    "Sampled number of points is not NSample!");
+    }
+  }
+
+  auto thetaphis_json = farfield->find("ThetaPhis");
+  if (thetaphis_json != farfield->end())
+  {
+    MFEM_VERIFY(thetaphis_json->is_array(),
+                "\"ThetaPhis\" should specify an array in the configuration file!");
+
+    // JSON does not support the notion of pair, so we read the theta and phis as vectors
+    // of vectors, and then cast them to vectors of pairs.
+    //
+    // Convert to radians in the process.
+    auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
+    for (const auto &vec : vec_of_vec)
+    {
+      thetaphis.emplace_back(vec[0] * M_PI / 180, vec[1] * M_PI / 180);
+    }
+  }
+
+  // Remove duplicate entries with numerical tolerance.
+  constexpr double tol = 1e-6;
+  std::sort(thetaphis.begin(), thetaphis.end());
+  auto it = std::unique(thetaphis.begin(), thetaphis.end(),
+                        [tol](const auto &a, const auto &b)
+                        {
+                          // At poles (theta ≈ 0 or π), phi is irrelevant.
+                          if ((std::abs(a.first) < tol || std::abs(a.first - M_PI) < tol) &&
+                              (std::abs(b.first) < tol || std::abs(b.first - M_PI) < tol))
+                          {
+                            return std::abs(a.first - b.first) < tol;
+                          }
+
+                          // Check direct match.
+                          if (std::abs(a.first - b.first) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - b.second);
+                            return phi_diff < tol || std::abs(phi_diff - 2.0 * M_PI) < tol;
+                          }
+
+                          // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
+                          if (std::abs(a.first - (M_PI - b.first)) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - (b.second + M_PI));
+                            if (phi_diff > M_PI)
+                              phi_diff = 2.0 * M_PI - phi_diff;
+                            return phi_diff < tol;
+                          }
+
+                          return false;
+                        });
+  thetaphis.erase(it, thetaphis.end());
+
+  if (thetaphis.empty())
+  {
+    MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
+  }
+
+  // Cleanup
+  farfield->erase("Attributes");
+  farfield->erase("NSample");
+  farfield->erase("ThetaPhis");
+  MFEM_VERIFY(farfield->empty(),
+              "Found an unsupported configuration file keyword under \"FarField\"!\n"
+                  << farfield->dump(2));
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "Attributes: " << attributes << '\n';
+    std::cout << "NSample: " << nsample << '\n';
+    std::cout << "ThetaPhis: " << thetaphis << '\n';
+  }
+}
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1488,6 +1657,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
+  farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1498,6 +1668,10 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+
+  attributes.insert(attributes.end(), farfield.attributes.begin(),
+                    farfield.attributes.end());
+
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
@@ -1505,6 +1679,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Cleanup
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
+  postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));

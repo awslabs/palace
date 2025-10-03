@@ -100,17 +100,17 @@ protected:
   std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
   std::vector<std::size_t> paraview_save_indices = {};  // explicit saves for ParaView
   // Whether any paraview fields will be written.
-  bool write_paraview_fields() const
+  bool WriteParaviewFields() const
   {
     return (paraview_delta_post > 0) || (paraview_n_post > 0) ||
            !paraview_save_indices.empty();
   }
   // Whether paraview fields should be written for this particular step.
-  bool write_paraview_fields(std::size_t step);
+  bool WriteParaviewFields(std::size_t step);
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if write_paraview_fields() is true.
+  // and we only want initialize it if WriteParaviewFields() is true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
@@ -160,8 +160,8 @@ protected:
 
   // Helper classes that actually do some measurements that will be saved to csv files.
 
-  DomainPostOperator dom_post_op;           // Energy in bulk
-  SurfacePostOperator surf_post_op;         // Dielectric Interface Energy and Flux
+  DomainPostOperator dom_post_op;    // Energy in bulk
+  SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
@@ -176,6 +176,7 @@ protected:
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts
   void MeasureSurfaceFlux() const;
+  void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
   void MeasureProbes() const;
 
@@ -191,6 +192,7 @@ protected:
     MeasureSurfaceFlux();
     MeasureInterfaceEFieldEnergy();
     MeasureProbes();
+    MeasureFarField();
   }
 
   // Setting grid functions.

@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
 #include "utils/labels.hpp"
@@ -72,26 +73,6 @@ public:
     mfem::CalcOrtho(T.Jacobian(), normal);
     normal /= invert ? -normal.Norml2() : normal.Norml2();
   }
-
-  // 3D cross product.
-  static void Cross3(const mfem::Vector &A, const mfem::Vector &B, mfem::Vector &C,
-                     bool add = false)
-  {
-    MFEM_ASSERT(A.Size() == B.Size() && A.Size() == C.Size() && A.Size() == 3,
-                "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
-    if (add)
-    {
-      C(0) += A(1) * B(2) - A(2) * B(1);
-      C(1) += A(2) * B(0) - A(0) * B(2);
-      C(2) += A(0) * B(1) - A(1) * B(0);
-    }
-    else
-    {
-      C(0) = A(1) * B(2) - A(2) * B(1);
-      C(1) = A(2) * B(0) - A(0) * B(2);
-      C(2) = A(0) * B(1) - A(1) * B(0);
-    }
-  }
 };
 
 // Computes surface current Jₛ = n x H = n x μ⁻¹ B on boundaries from B as a vector grid
@@ -142,7 +123,7 @@ public:
     mfem::Vector normal(normal_data, vdim);
     GetNormal(T, normal, ori);
     V.SetSize(vdim);
-    Cross3(normal, VU, V);
+    linalg::Cross3(normal, VU, V);
   }
 };
 
@@ -260,7 +241,7 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
   mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
   E->GetVectorValue(T, T.GetIntPoint(), W1);
   V.SetSize(W1.Size());
-  Cross3(W1, W2, V);
+  linalg::Cross3(W1, W2, V);
 }
 
 // Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
@@ -559,13 +540,13 @@ private:
     mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
     E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
     V.SetSize(vdim);
-    Cross3(W1, W2, V);
+    linalg::Cross3(W1, W2, V);
     if (E.HasImag())
     {
       B.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
       mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
       E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
-      Cross3(W1, W2, V, true);
+      linalg::Cross3(W1, W2, V, true);
     }
   }
 
