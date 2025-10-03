@@ -34,6 +34,8 @@ set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
+set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
+
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
   "Path to MFEM build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
@@ -84,6 +86,25 @@ target_compile_options(
             -Wpedantic
             -Wno-deprecated-declarations
 )
+
+if(PALACE_BUILD_WITH_COVERAGE)
+  add_library(coverage_flags INTERFACE)
+  target_compile_options(
+    coverage_flags
+    INTERFACE 
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
+        $<$<CXX_COMPILER_ID:GNU>:-fprofile-abs-path>
+  )
+  target_link_options(
+    coverage_flags
+    INTERFACE 
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
+  )
+endif()
 
 # Add extra CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -315,7 +336,10 @@ target_link_libraries(${LIB_TARGET_NAME}
   PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
-target_link_libraries(${LIB_TARGET_NAME} PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>)
+target_link_libraries(
+  ${LIB_TARGET_NAME}
+  PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
+          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>)
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB
