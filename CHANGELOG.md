@@ -34,7 +34,8 @@ The format of this changelog is based on
     [GLVis](https://glvis.org). Output formats can be specified in `config["Problem"]["OutputFormats"]`.
     [PR 518](https://github.com/awslabs/palace/pull/518).
   - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
-    direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`. [PR 476](https://github.com/awslabs/palace/pull/476).
+    direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
+    [PR 476](https://github.com/awslabs/palace/pull/476).
 
 #### Interface Changes
 
