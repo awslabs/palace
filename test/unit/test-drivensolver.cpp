@@ -22,12 +22,13 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/meshio.hpp"
+#include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
 
-TEST_CASE("PortOrthogonalityAdaptivePROM", "[driven_solver]")
+TEST_CASE("PortOrthogonalityAdaptivePROM", "[driven_solver][Serial][Parallel]")
 {
   MPI_Comm world_comm = Mpi::World();
   // Recycle previous test input which has non-zero port overlap at edges.
@@ -55,7 +56,8 @@ TEST_CASE("PortOrthogonalityAdaptivePROM", "[driven_solver]")
     }
   }
 
-  DrivenSolver solver{iodata, Mpi::Root(world_comm), Mpi::Size(world_comm), 0, ""};
+  DrivenSolver solver{iodata, Mpi::Root(world_comm), Mpi::Size(world_comm),
+                      utils::ConfigureOmp(), ""};
   CHECK_THROWS(solver.SolveEstimateMarkRefine(mesh_),
                Catch::Matchers::ContainsSubstring(
                    "Lumped port modes should have exactly zero overlap"));
