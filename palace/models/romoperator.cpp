@@ -11,6 +11,21 @@
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
+#include "linalg/rap.hpp"
+#include "linalg/operator.hpp"
+#include <set>
+#include <type_traits>
+#include "fem/bilinearform.hpp"
+#include "fem/coefficient.hpp"
+#include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
+#include "fem/multigrid.hpp"
+#include "linalg/hypre.hpp"
+#include "linalg/rap.hpp"
+#include "utils/communication.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
+#include "utils/prettyprint.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
 // for this.
@@ -25,10 +40,76 @@ extern "C"
 namespace palace
 {
 
+  
+
+
 using namespace std::complex_literals;
 
 namespace
 {
+
+
+
+void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
+                    const MaterialPropertyCoefficient *f,
+                    const MaterialPropertyCoefficient *dfb,
+                    const MaterialPropertyCoefficient *fb,
+                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+{
+  if (df && !df->empty() && f && !f->empty())
+  {
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
+  }
+  else
+  {
+    if (df && !df->empty())
+    {
+      a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
+    }
+    if (f && !f->empty())
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
+    }
+  }
+  if (dfb && !dfb->empty() && fb && !fb->empty())
+  {
+    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
+  }
+  else
+  {
+    if (dfb && !dfb->empty())
+    {
+      a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
+    }
+    if (fb && !fb->empty())
+    {
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
+    }
+  }
+  if (fp && !fp->empty())
+  {
+    a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp, true);
+    a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp);
+  }
+  if (assemble_q_data)
+  {
+    a.AssembleQuadratureData();
+  }
+}
+
+  auto AssembleOperator(const FiniteElementSpace &fespace,
+                      const MaterialPropertyCoefficient *df,
+                      const MaterialPropertyCoefficient *f,
+                      const MaterialPropertyCoefficient *dfb,
+                      const MaterialPropertyCoefficient *fb,
+                      const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
+                      bool assemble_q_data = false)
+{
+  BilinearForm a(fespace);
+  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
+  return a.Assemble(skip_zeros);
+}
+
 
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
@@ -49,6 +130,38 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
     case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
       break;
+  }
+}
+
+// template <typename VecType, typename ScalarType>
+// inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
+//                                    ScalarType *H, int m)
+// {
+//   MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
+//               "Out of bounds number of columns for MGS orthogonalization!");
+//   for (int j = 0; j < m; j++)
+//   {
+//     H[j] = linalg::Dot(comm, w, V[j]);  // Global inner product
+//     w.Add(-H[j], V[j]);
+//   }
+// }
+
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeColumnNew(const Operator &M_matrix, Orthogonalization type, MPI_Comm comm,
+                                const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
+                                int m)
+{
+
+  for (int j = 0; j < m; j++)
+  {
+    VecType mass_V_j;
+    mass_V_j.SetSize(V[j].Size());
+    mass_V_j.UseDevice(true);
+
+    M_matrix.Mult(V[j], mass_V_j);
+    Rj[j] = linalg::Dot(comm, w, mass_V_j);  // Global inner product
+    Mpi::Print("Rj[j] in OrthogonalizeColumnNew with j={}: {}", j,  Rj[j]);
+    w.Add(-Rj[j], V[j]);
   }
 }
 
@@ -337,6 +450,32 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
+  // auto C_innerprod = BuildParSumOperator({1.0 + 0i}, {C.get()}, false);
+  // C_innerprod->Mult(v, Cv);
+
+  Kinnerproduct = BuildParSumOperator({1.0 + 0i}, {K.get()}, false);
+  Cinnerproduct = BuildParSumOperator({1.0 + 0i}, {C.get()}, false);
+  Minnerproduct = BuildParSumOperator({1.0 + 0i}, {M.get()}, false);
+
+  auto & mat_op = space_op.GetMaterialOp();
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()), fb(mat_op.MaxCeedBdrAttribute());
+  // std::cout << "mat_op.GetPermittivityReal()" << mat_op.GetPermittivityReal() << std::endl;
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), 1.0);
+  // fb.AddCoefficient(mat_op.GetBdrAttributeToMaterial(), 1.0, 1.0);
+  for(const auto &[port_idx, port_data]: space_op.GetLumpedPortOp()) {
+      for (const auto &elem : port_data.elems)
+    {
+      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), 1.0);
+    }
+  }
+  M_inner_product_weight_base = std::make_unique<ParOperator>(
+    AssembleOperator(space_op.GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, false), space_op.GetNDSpace())
+    ;
+  M_inner_product_weight = BuildParSumOperator({1.0}, {M_inner_product_weight_base.get()}, false);
+
+
+  // M_inner_product_weight = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+
   // Initialize working vector storage.
   r.SetSize(K->Height());
   r.UseDevice(true);
@@ -454,8 +593,17 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
-    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
+    OrthogonalizeColumnNew(*M_inner_product_weight, orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
                         dim_V);
+
+    Vector mass_V_j;
+    mass_V_j.SetSize(V.back().Size());
+    mass_V_j.UseDevice(true);
+
+    M_inner_product_weight->Mult(V.back(), mass_V_j);
+    orth_R(dim_V, dim_V) = std::sqrt(std::abs(linalg::Dot(space_op.GetComm(), V.back(), mass_V_j)));  // Global inner product
+
+
     orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
     v *= 1.0 / orth_R(dim_V, dim_V);
   };
@@ -474,15 +622,33 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
+
+  // mfem::Array<int> ess_dof;
+  // dynamic_cast<ComplexParOperator*>(C.get())->SetEssentialTrueDofs(ess_dof);
+
+  // auto Ckeep = dynamic_cast<ComplexParOperator*>(C.get());
+  // Ckeep->SetEssentialTrueDofs(ess_dof, Operator::DiagonalPolicy::DIAG_KEEP);
+
+
+  // // Update reduced-order operators.
+  // Kr.conservativeResize(dim_V_new, dim_V_new);
+  // ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  // if (C)
+  // {
+  //   Cr.conservativeResize(dim_V_new, dim_V_new);
+  //   ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+  // }
+  // Mr.conservativeResize(dim_V_new, dim_V_new);
+  // ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *Kinnerproduct, Kr, r, dim_V_old);
   if (C)
   {
     Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+    ProjectMatInternal(comm, V, *Cinnerproduct, Cr, r, dim_V_old);
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *Minnerproduct, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
@@ -596,8 +762,15 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
   // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
-  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
-
+  //
+  // In more detail: there are two normalizations  associated with ports: alpha & beta in
+  // the notation of Marks and Williams  "A General Waveguide Circuit Theory" [J. Res. Natl.
+  // Inst. Stand. Technol. 97, 533 (1992)]. "alpha" is the normalization power through the
+  // port mode. Palace defines the input power to be normalized to 1 (see
+  // LumpedPortData::GetExcitationPower). "beta" is the normalization convention of the port
+  // voltage \beta * v_0 and current i_0 / \beta^* at constant power.
+  // auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+auto v_d = Eigen::MatrixXcd::Identity(orth_R.rows(), orth_R.cols());
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
   // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 

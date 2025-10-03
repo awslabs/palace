@@ -14,6 +14,7 @@
 #include "linalg/vector.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -66,6 +67,11 @@ private:
   // - The non-quadratic operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
   // - Need to recompute RHS1 when excitation index changes.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
+  std::unique_ptr<ComplexOperator> Kinnerproduct, Minnerproduct, Cinnerproduct, A2innerproduct;
+
+  std::unique_ptr<Operator> M_inner_product_weight_base;
+  std::unique_ptr<Operator> M_inner_product_weight;
+
   ComplexVector RHS1, RHS2, r;
 
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
@@ -96,6 +102,7 @@ private:
   // Upper-triangular matrix R from orthogonalization procedure U = VR. Here U the HDM
   // fields added by `UpdatePROM`.
   Eigen::MatrixXd orth_R;
+
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;

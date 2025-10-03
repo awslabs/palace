@@ -29,6 +29,8 @@
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
+#include "linalg/rap.hpp"
+
 
 namespace palace
 {
@@ -273,10 +275,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     {
       ComplexVector port_excitation_E;
       port_excitation_E.UseDevice(true);
-      space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
+      space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, false);
       prom_op.UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
     }
     const auto &orth_R = prom_op.GetRomOrthogonalityMatrix();
+    fs::path fs_tmp = fs::path(iodata.problem.output) / "quick_dir";
+    fs::create_directories(fs_tmp);
+    prom_op.PrintPROMMatrices(iodata.units, fs_tmp);
     MFEM_VERIFY(orth_R.isDiagonal(), "Lumped port modes should have exactly zero overlap.");
   }
 
