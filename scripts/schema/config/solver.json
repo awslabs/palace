@@ -168,6 +168,7 @@
         "PCMatShifted": { "type": "boolean" },
         "ComplexCoarseSolve": {"type": "boolean"},
         "DropSmallEntries": {"type": "boolean"},
+        "ReorderingReuse": {"type": "boolean"},
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },

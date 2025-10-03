@@ -890,6 +890,9 @@ public:
   // solver.
   bool drop_small_entries = true;
 
+  // Reuse the sparsity pattern (reordering) for repeated factorizations.
+  bool reorder_reuse = true;
+
   // Choose left or right preconditioning.
   PreconditionerSide pc_side = PreconditionerSide::DEFAULT;
 

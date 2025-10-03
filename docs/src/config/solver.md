@@ -550,6 +550,7 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`
   - `"MGSmoothChebyshev4th" [true]`
+  - `"ReorderingReuse" [true]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
     `"PORD"`, `"AMD"`, `"RCM"`, `"Default"`
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,

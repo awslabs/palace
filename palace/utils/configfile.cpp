@@ -2349,6 +2349,7 @@ void LinearSolverData::SetUp(json &solver)
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
   drop_small_entries = linear->value("DropSmallEntries", drop_small_entries);
+  reorder_reuse = linear->value("ReorderingReuse", reorder_reuse);
   pc_side = linear->value("PCSide", pc_side);
   sym_factorization = linear->value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
@@ -2393,6 +2394,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("PCMatShifted");
   linear->erase("ComplexCoarseSolve");
   linear->erase("DropSmallEntries");
+  linear->erase("ReorderingReuse");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -2439,6 +2441,7 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
     std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
     std::cout << "DropSmallEntries: " << drop_small_entries << '\n';
+    std::cout << "ReorderingReuse: " << reorder_reuse << '\n';
     std::cout << "PCSide: " << pc_side << '\n';
     std::cout << "ColumnOrdering: " << sym_factorization << '\n';
     std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
