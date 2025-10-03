@@ -90,10 +90,11 @@ private:
   std::vector<Vector> V;
   Orthogonalization orthog_type;
 
-  // Label to distinguish port modes from solution  projection and to print PROM matrices
+  // Label to distinguish port modes from solution projection and to print PROM matrices.
   std::vector<std::string> v_node_label;
 
-  // Upper-triangular orthognoalization matrix R; U = VR with U modes. Memory pre-allocated.
+  // Upper-triangular matrix R from orthogonalization procedure U = VR. Here U the HDM
+  // fields added by `UpdatePROM`.
   Eigen::MatrixXd orth_R;
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
@@ -115,7 +116,7 @@ public:
     return mri.at(excitation_idx).GetSamplePoints();
   }
 
-  // Return overlap matrix form orthogonalization of vectors in ROM.
+  // Upper-triangular matrix of from orthogonalization of HDM fields added to PROM.
   const auto &GetRomOrthogonalityMatrix() const { return orth_R; }
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
@@ -124,7 +125,10 @@ public:
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
-  // Add field configuration to the reduced-order basis and update the PROM.
+  // Add field configuration to the reduced-order basis and update the PROM. Requires a name
+  // "node_label". This will be printed in the header of the csv files when printing PROM
+  // matrices. It is needed to distinguish port and solution field configuration as well as
+  // to reconstruct if field configuration are pure real, imaginary or complex.
   void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
