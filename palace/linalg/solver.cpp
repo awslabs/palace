@@ -33,11 +33,14 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
   // Assemble the real and imaginary parts, then add.
   // XX TODO: Test complex matrix assembly if coarse solve supports it.
-  //const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
-  //const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
-  mfem::HypreParMatrix *hAr = const_cast<mfem::HypreParMatrix *>(dynamic_cast<const mfem::HypreParMatrix *>(op.Real()));
-  mfem::HypreParMatrix *hAi = const_cast<mfem::HypreParMatrix *>(dynamic_cast<const mfem::HypreParMatrix *>(op.Imag()));
-    const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
+  // const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix
+  // *>(op.Real()); const mfem::HypreParMatrix *hAi = dynamic_cast<const
+  // mfem::HypreParMatrix *>(op.Imag());
+  mfem::HypreParMatrix *hAr = const_cast<mfem::HypreParMatrix *>(
+      dynamic_cast<const mfem::HypreParMatrix *>(op.Real()));
+  mfem::HypreParMatrix *hAi = const_cast<mfem::HypreParMatrix *>(
+      dynamic_cast<const mfem::HypreParMatrix *>(op.Imag()));
+  const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
   if (op.Real() && !hAr)
   {
     PtAPr = dynamic_cast<const ParOperator *>(op.Real());
@@ -52,7 +55,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
     hAi = &PtAPi->ParallelAssemble();
   }
-  if (/*false &&*/ drop_small_entries)
+  if (drop_small_entries)
   {
     if (hAr)
     {
@@ -62,19 +65,17 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       Mpi::Print(" Dropping {} small entries in real sparse matrix out of {} ({:.1f}%)\n",
                  (nnz_before - nnz_after), nnz_before,
                  (double)(nnz_before - nnz_after) / nnz_before * 100.0);
-
     }
     if (hAi)
     {
-      const auto nnz_before = hAr->NNZ();
+      const auto nnz_before = hAi->NNZ();
       hAi->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
-      const auto nnz_after = hAr->NNZ();
-      Mpi::Print(" Dropping {} small entries in imaginary sparse matrix out of {} ({:.1f}%)\n",
-                 (nnz_before - nnz_after), nnz_before,
-                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
-
+      const auto nnz_after = hAi->NNZ();
+      Mpi::Print(
+          " Dropping {} small entries in imaginary sparse matrix out of {} ({:.1f}%)\n",
+          (nnz_before - nnz_after), nnz_before,
+          (double)(nnz_before - nnz_after) / nnz_before * 100.0);
     }
-
   }
 
   if (hAr && hAi)
@@ -113,9 +114,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       const auto nnz_before = A->NNZ();
       A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
       const auto nnz_after = A->NNZ();
-      Mpi::Print(" Dropping {} small entries in complex sparse matrix out of {} ({:.1f}%)\n",
-                 (nnz_before - nnz_after), nnz_before,
-                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+      Mpi::Print(
+          " Dropping {} small entries in complex sparse matrix out of {} ({:.1f}%)\n",
+          (nnz_before - nnz_after), nnz_before,
+          (double)(nnz_before - nnz_after) / nnz_before * 100.0);
     }
     pc->SetOperator(*A);
     if (!save_assembled)
@@ -125,20 +127,20 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAr)
   {
-    //if (drop_small_entries)
+    // if (drop_small_entries)
     //{
-    //  A = std::make_unique<mfem::HypreParMatrix>(*hAr);
-    //  const auto nnz_before = A->NNZ();
-    //  A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
-    //  const auto nnz_after = A->NNZ();
-    //  Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
-    //             (nnz_before - nnz_after), nnz_before,
-    //             (double)(nnz_before - nnz_after) / nnz_before * 100.0);
-    //  pc->SetOperator(*A);
-    //}
-    //else
+    //   A = std::make_unique<mfem::HypreParMatrix>(*hAr);
+    //   const auto nnz_before = A->NNZ();
+    //   A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+    //   const auto nnz_after = A->NNZ();
+    //   Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+    //              (nnz_before - nnz_after), nnz_before,
+    //              (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+    //   pc->SetOperator(*A);
+    // }
+    // else
     //{
-      pc->SetOperator(*hAr);
+    pc->SetOperator(*hAr);
     //}
     if (PtAPr && !save_assembled)
     {
@@ -147,20 +149,20 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAi)
   {
-    //if (drop_small_entries)
+    // if (drop_small_entries)
     //{
-    //  A = std::make_unique<mfem::HypreParMatrix>(*hAi);
-    //  const auto nnz_before = A->NNZ();
-    //  A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
-    //  const auto nnz_after = A->NNZ();
-    //  Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
-    //             (nnz_before - nnz_after), nnz_before,
-    //             (double)(nnz_before - nnz_after) / nnz_before * 100.0);
-    //  pc->SetOperator(*A);
-    //}
-    //else
+    //   A = std::make_unique<mfem::HypreParMatrix>(*hAi);
+    //   const auto nnz_before = A->NNZ();
+    //   A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+    //   const auto nnz_after = A->NNZ();
+    //   Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+    //              (nnz_before - nnz_after), nnz_before,
+    //              (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+    //   pc->SetOperator(*A);
+    // }
+    // else
     //{
-      pc->SetOperator(*hAi);
+    pc->SetOperator(*hAi);
     //}
     if (PtAPi && !save_assembled)
     {
