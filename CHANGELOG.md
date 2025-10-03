@@ -31,6 +31,8 @@ The format of this changelog is based on
     use in a non-amr simulation. [Issue 444](https://github.com/awslabs/palace/issues/444).
   - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect
     results for some lumped port boundary conditions. [Issue 501](https://github.com/awslabs/palace/issues/501).
+  - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
+    direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
 
 ## [0.14.0] - 2025-08-20
 
