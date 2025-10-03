@@ -149,7 +149,7 @@ protected:
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
   // MFEM grid function output details
-  std::string mfem_gf_output_dir, mfem_gf_bdr_output_dir;
+  std::string mfem_gf_output_dir;
   const std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
