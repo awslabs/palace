@@ -279,7 +279,11 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  // TODO: currently we always us this. Consider other optimization above again.
+  //
+  // TODO: Currently we always use this brute for sampling and we could optimize this more.
+  // Also, the case of N>1 samples is not very useful below. It will typically give us
+  // multiple sample points right next to each other in the same local maximum, rather than
+  // N separate local maxima.
 
   // We could use priority queue here to keep the N lowest values. However, we don't use
   // std::priority_queue class since we want to have access to the vector and also binary
@@ -289,6 +293,10 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   queue.reserve(N);
 
   const std::size_t nr_sample = 1.0e6;  // must be >= N
+  MFEM_VERIFY(N < nr_sample,
+              fmt::format("Number of location of error maximum N={} needs to be less than "
+                          "the fine sampling grid nr_sample={}.",
+                          N, nr_sample));
   const auto delta = (end - start) / nr_sample;
   for (double z_sample = start; z_sample <= end; z_sample += delta)
   {
@@ -348,7 +356,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
   }
 
-  // Reserve empty vectors but don't pre-allocate actual memory size due to overhead.
+  // Reserve empty vectors.
   V.reserve(max_prom_size);
   v_node_label.reserve(max_prom_size);
 
@@ -362,7 +370,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
   // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
-  // expiation index, so this is triggered the first time it is called in drivensolver.
+  // excitation index, so this is triggered the first time it is called in drivensolver.
   if (excitation_idx_cache == excitation_idx)
   {
     return;
@@ -442,27 +450,30 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
-  auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view full_label)
+  auto add_real_vector_to_basis = [this](const Vector &vector)
   {
     auto dim_V = V.size();
-    V.push_back(vector);
-    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, V.back(),
-                        orth_R.col(dim_V).data(), dim_V);
-    orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), V.back());
-    V.back() *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(full_label);
+    auto &v = V.emplace_back(vector);
+    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
+                        dim_V);
+    orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    v *= 1.0 / orth_R(dim_V, dim_V);
   };
 
   if (has_real)
   {
-    add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label));
+    add_real_vector_to_basis(u.Real());
+    v_node_label.emplace_back(fmt::format("{}_re", node_label));
   }
   if (has_imag)
   {
-    add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
+    add_real_vector_to_basis(u.Imag());
+    v_node_label.emplace_back(fmt::format("{}_im", node_label));
   }
 
-  // Update reduced-order operators.
+  // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
+  // matrix and first dim0 entries of each vector and the projection uses the values
+  // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V_new, dim_V_new);
   ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
   if (C)
@@ -561,10 +572,14 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
 
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
 {
+  if (!Mpi::Root(space_op.GetComm()))
+  {
+    return;
+  }
   auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
                                                              std::string_view filename)
   {
-    MFEM_VERIFY(labels.size() == mat.cols(), "Insonsistent PROM size!");
+    MFEM_VERIFY(labels.size() == mat.cols(), "Inconsistent PROM size!");
     auto out = TableWithCSVFile(post_dir / filename);
     out.table.col_options.float_precision = 17;
     for (long i = 0; i < mat.cols(); i++)
