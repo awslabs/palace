@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #include <iterator>
 #include <vector>
 #include <fmt/format.h>
@@ -43,7 +46,7 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   auto max_err_1 = mri_1.FindMaxError(5);
   REQUIRE(max_err_1.size() == 5);
 
-  // By symmetry highest error should be at at zero.
+  // By symmetry highest error should be at zero.
   CHECK_THAT(max_err_1[0], Catch::Matchers::WithinAbsMatcher(0.0, 1e-6));
 
   // Test that elements of max_error are unique.
