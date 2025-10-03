@@ -181,8 +181,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       if (space_op.GetMaterialOp().HasWaveVector())
       {
         // Calculate B field correction for Floquet BCs.
-        // B = -1/(iω) ∇ x E + 1/ω kp x E
-        floquet_corr->AddMult(E, B, 1.0 / omega);
+        // B = -1/(iω) ∇ x E - 1/ω kp x E
+        floquet_corr->AddMult(E, B, -1.0 / omega);
       }
 
       auto total_domain_energy =
@@ -280,8 +280,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     if (space_op.GetMaterialOp().HasWaveVector())
     {
       // Calculate B field correction for Floquet BCs.
-      // B = -1/(iω) ∇ x E + 1/ω kp x E
-      floquet_corr->AddMult(E, B, 1.0 / omega);
+      // B = -1/(iω) ∇ x E - 1/ω kp x E
+      floquet_corr->AddMult(E, B, -1.0 / omega);
     }
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
@@ -402,8 +402,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       if (space_op.GetMaterialOp().HasWaveVector())
       {
         // Calculate B field correction for Floquet BCs.
-        // B = -1/(iω) ∇ x E + 1/ω kp x E
-        floquet_corr->AddMult(E, B, 1.0 / omega);
+        // B = -1/(iω) ∇ x E - 1/ω kp x E
+        floquet_corr->AddMult(E, B, -1.0 / omega);
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }

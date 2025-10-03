@@ -48,6 +48,8 @@ The format of this changelog is based on
   - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect results for
     some lumped port boundary conditions. [PR
     505](https://github.com/awslabs/palace/pull/505).
+  - Changed the sign of the Floquet phase factor from $\exp(+ik\cdot x)$ to $\exp(-ik\cdot x)$.
+    [PR 510](https://github.com/awslabs/palace/pull/510).
 
 ## [0.14.0] - 2025-08-20
 
