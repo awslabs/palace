@@ -13,18 +13,17 @@ The format of this changelog is based on
 
 #### New Features
 
-  - Added support for extraction of electric fields in the radiative zone.
-    Consult the
-    [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
-    additional information. [Issue
-    378](https://github.com/awslabs/palace/issues/378), [PR
-    449](https://github.com/awslabs/palace/pull/449)
   - Added support for nonlinear eigenvalue problems arising from frequency-dependent
     boundary conditions. Two nonlinear eigensolvers are now available and can be specified
     by setting the `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"`
     (default) or `"SLP"`. The nonlinear eigensolver will automatically be used if
-    frequency-dependent boundary conditions are used. [Issue
-    422](https://github.com/awslabs/palace/issues/422).
+    frequency-dependent boundary conditions are used. [PR
+    467](https://github.com/awslabs/palace/pull/467).
+  - Added support for extraction of electric fields in the radiative zone.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
+    additional information. [PR
+    449](https://github.com/awslabs/palace/pull/449).
 
 #### Interface Changes
 
@@ -32,22 +31,23 @@ The format of this changelog is based on
     pairs, built into the mesh file or not, should be specified in
     `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
     vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [PR
-    #471](https://github.com/awslabs/palace/pull/471).
+    471](https://github.com/awslabs/palace/pull/471).
 
 #### Bug Fixes
 
   - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
-    subsequent modes are ordered by decreasing propagation constant. [Issue
-    423](https://github.com/awslabs/palace/issues/423), [Issue
-    437](https://github.com/awslabs/palace/issues/437)
+    subsequent modes are ordered by decreasing propagation constant. [PR
+    448](https://github.com/awslabs/palace/pull/448).
   - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
-    were failing. [Issue 447](https://github.com/awslabs/palace/issues/447).
+    were failing. [PR
+    471](https://github.com/awslabs/palace/pull/471).
   - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
-    use in a non-amr simulation. [Issue 444](https://github.com/awslabs/palace/issues/444).
+    use in a non-amr simulation. [PR
+    497](https://github.com/awslabs/palace/pull/497).
   - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect results for
-    some lumped port boundary conditions. [Issue
-    501](https://github.com/awslabs/palace/issues/501).
+    some lumped port boundary conditions. [PR
+    505](https://github.com/awslabs/palace/pull/505).
 
 ## [0.14.0] - 2025-08-20
 
