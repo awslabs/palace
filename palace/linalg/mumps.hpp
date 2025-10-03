@@ -20,7 +20,7 @@ class MumpsSolver : public mfem::MUMPSSolver
 {
 public:
   MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym, SymbolicFactorization reorder,
-              double blr_tol, int print);
+              double blr_tol, bool reorder_reuse, int print);
   MumpsSolver(const IoData &iodata, MPI_Comm comm, int print)
     : MumpsSolver(
           comm,
@@ -36,7 +36,7 @@ public:
           (iodata.solver.linear.strumpack_compression_type == SparseCompression::BLR)
               ? iodata.solver.linear.strumpack_lr_tol
               : 0.0,
-          print)
+          iodata.solver.linear.reorder_reuse, print)
   {
   }
 };

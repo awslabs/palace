@@ -411,7 +411,17 @@ void IoData::CheckConfiguration()
                                      problem.type == ProblemType::MAGNETOSTATIC ||
                                      problem.type == ProblemType::TRANSIENT);
   }
-
+  if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
+      solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
+      (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
+       (!boundaries.farfield.empty() && boundaries.farfield.order > 1)))
+  {
+    // Do not reuse the sparsity pattern for nonlinear eigenmode simulations with complex
+    // coarse preconditioners when dropping small entries. In those cases, the sparsity
+    // pattern of the first preconditioner (purely real coefficients) will be different from
+    // subsequent preconditioners with complex coefficients.
+    solver.linear.reorder_reuse = false;
+  }
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
