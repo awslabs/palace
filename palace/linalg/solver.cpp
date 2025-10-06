@@ -133,7 +133,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     //   const auto nnz_before = A->NNZ();
     //   A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
     //   const auto nnz_after = A->NNZ();
-    //   Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+    //   Mpi::Print(" Dropping {} small entries in real sparse matrix out of {} ({:.1f}%)\n",
     //              (nnz_before - nnz_after), nnz_before,
     //              (double)(nnz_before - nnz_after) / nnz_before * 100.0);
     //   pc->SetOperator(*A);
@@ -155,7 +155,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     //   const auto nnz_before = A->NNZ();
     //   A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
     //   const auto nnz_after = A->NNZ();
-    //   Mpi::Print(" Dropping {} small sparse matrix entries out of {} ({:.1f}%)\n",
+    //   Mpi::Print(" Dropping {} small entries in imaginary sparse matrix out of {} ({:.1f}%)\n",
     //              (nnz_before - nnz_after), nnz_before,
     //              (double)(nnz_before - nnz_after) / nnz_before * 100.0);
     //   pc->SetOperator(*A);
