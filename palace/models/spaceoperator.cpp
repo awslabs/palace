@@ -263,8 +263,8 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
   }
   if (fp && !fp->empty())
   {
-    a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp, true);
-    a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp);
+    a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp); // true
+    a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp, true);
   }
   if (assemble_q_data)
   {

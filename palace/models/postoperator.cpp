@@ -530,14 +530,16 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
 }
 
 // Create coefficient to compute E = Ep exp(-i k * x)
-class CustomCoefficientReal : public mfem::VectorCoefficient
+class CustomCoefficient : public mfem::VectorCoefficient
 {
   GridFunction *E;
   mfem::Vector &k;
+  bool real;
+  bool norm;
 
 public:
-  CustomCoefficientReal(GridFunction *E, mfem::Vector &k) :
-    mfem::VectorCoefficient(3), E(E), k(k) {}
+  CustomCoefficient(GridFunction *E, mfem::Vector &k, bool real, bool norm=false) :
+    mfem::VectorCoefficient(3), E(E), k(k), real(real), norm(norm) {}
 
   virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                     const mfem::IntegrationPoint &ip)
@@ -556,47 +558,22 @@ public:
     }
     std::complex<double> phase_factor = std::exp(-1i * kx);
 
-    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
-    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
     for (int i = 0; i < 3; i++)
     {
-      V[i] = er[i] * phase_factor.real() - ei[i] * phase_factor.imag();
-    }
-
-  }
-};
-
-class CustomCoefficientImag : public mfem::VectorCoefficient
-{
-  GridFunction *E;
-  mfem::Vector &k;
-
-public:
-  CustomCoefficientImag(GridFunction *E, mfem::Vector &k) :
-    mfem::VectorCoefficient(3), E(E), k(k) {}
-
-  virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-                    const mfem::IntegrationPoint &ip)
-  {
-    mfem::Vector er(3), ei(3), pos(3);
-    E->Real().GetVectorValue(T, ip, er);
-    E->Imag().GetVectorValue(T, ip, ei);
-    T.Transform(ip, pos);
-
-    // Element-wise operation
-    // k dot x
-    double kx = 0.0;
-    for (int i = 0; i < 3; i++)
-    {
-      kx += k[i] * pos[i];
-    }
-    std::complex<double> phase_factor = std::exp(-1i * kx);
-
-    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
-    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
-    for (int i = 0; i < 3; i++)
-    {
-      V[i] = er[i] * phase_factor.imag() + ei[i] * phase_factor.real();
+      double Vr = er[i] * phase_factor.real() - ei[i] * phase_factor.imag();
+      double Vi = er[i] * phase_factor.imag() + ei[i] * phase_factor.real();
+      if (norm)
+      {
+        V[i] = std::sqrt(Vr*Vr + Vi*Vi);
+      }
+      else if (real)
+      {
+        V[i] = Vr;
+      }
+      else
+      {
+        V[i] = Vi;
+      }
     }
   }
 };
@@ -657,24 +634,35 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
+        fs::path e_floquet_norm_filename =
+            fs::path(mfem_gf_output_dir) / fmt::format("E_floquet_norm_{:0{}d}.gf.{:0{}d}", step,
+                                                       pad_digits_default, local_rank,
+                                                       pad_digits_default);
+
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
         std::ofstream e_floquet_real_file(e_floquet_real_filename);
         std::ofstream e_floquet_imag_file(e_floquet_imag_filename);
+        std::ofstream e_floquet_norm_file(e_floquet_norm_filename);
 
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
 
         // Test to export gridfunction multiplied by exp(-ik*x), only for complex E.
         gridfunc_vector = 0.0;
-        CustomCoefficientReal coeff_real(E.get(), wave_vector);
+        CustomCoefficient coeff_real(E.get(), wave_vector, true);
         gridfunc_vector.ProjectCoefficient(coeff_real);
         gridfunc_vector.Save(e_floquet_real_file);
 
         gridfunc_vector = 0.0;
-        CustomCoefficientImag coeff_imag(E.get(), wave_vector);
+        CustomCoefficient coeff_imag(E.get(), wave_vector, false);
         gridfunc_vector.ProjectCoefficient(coeff_imag);
         gridfunc_vector.Save(e_floquet_imag_file);
+
+        gridfunc_vector = 0.0;
+        CustomCoefficient coeff_norm(E.get(), wave_vector, true, true);
+        gridfunc_vector.ProjectCoefficient(coeff_norm);
+        gridfunc_vector.Save(e_floquet_norm_file);
       }
       else
       {
@@ -725,12 +713,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
         mfem::ParGridFunction gridfunc_vectorB(&fespace);
 
         gridfunc_vectorB = 0.0;
-        CustomCoefficientReal coeff_real(B.get(), wave_vector);
+        CustomCoefficient coeff_real(B.get(), wave_vector, true);
         gridfunc_vectorB.ProjectCoefficient(coeff_real);
         gridfunc_vectorB.Save(b_floquet_real_file);
 
         gridfunc_vectorB = 0.0;
-        CustomCoefficientReal coeff_imag(B.get(), wave_vector);
+        CustomCoefficient coeff_imag(B.get(), wave_vector, false);
         gridfunc_vectorB.ProjectCoefficient(coeff_imag);
         gridfunc_vectorB.Save(b_floquet_imag_file);
       }
