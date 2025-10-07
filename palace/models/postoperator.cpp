@@ -17,10 +17,9 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
-#include "utils/prettyprint.hpp" // remove later
+
 namespace palace
 {
-  using namespace std::complex_literals;
 
 namespace
 {
@@ -139,12 +138,6 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 
 
   mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
-
-  // Should probably get this material operator?
-  wave_vector.SetSize(3);
-  wave_vector = 0.0;
-  const auto &data = iodata.boundaries.periodic;
-  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -531,78 +524,6 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   Mpi::Barrier(fem_op->GetComm());
 }
 
-// Create coefficient to compute E = Ep exp(-i k * x)
-class CustomCoefficientReal : public mfem::VectorCoefficient
-{
-  GridFunction *E;
-  mfem::Vector &k;
-
-public:
-  CustomCoefficientReal(GridFunction *E, mfem::Vector &k) :
-    mfem::VectorCoefficient(3), E(E), k(k) {}
-
-  virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-                    const mfem::IntegrationPoint &ip)
-  {
-    mfem::Vector er(3), ei(3), pos(3);
-    E->Real().GetVectorValue(T, ip, er);
-    E->Imag().GetVectorValue(T, ip, ei);
-    T.Transform(ip, pos);
-
-    // Element-wise operation
-    // k dot x
-    double kx = 0.0;
-    for (int i = 0; i < 3; i++)
-    {
-      kx += k[i] * pos[i];
-    }
-    std::complex<double> phase_factor = std::exp(-1i * kx);
-
-    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
-    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
-    for (int i = 0; i < 3; i++)
-    {
-      V[i] = er[i] * phase_factor.real() - ei[i] * phase_factor.imag();
-    }
-
-  }
-};
-
-class CustomCoefficientImag : public mfem::VectorCoefficient
-{
-  GridFunction *E;
-  mfem::Vector &k;
-
-public:
-  CustomCoefficientImag(GridFunction *E, mfem::Vector &k) :
-    mfem::VectorCoefficient(3), E(E), k(k) {}
-
-  virtual void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-                    const mfem::IntegrationPoint &ip)
-  {
-    mfem::Vector er(3), ei(3), pos(3);
-    E->Real().GetVectorValue(T, ip, er);
-    E->Imag().GetVectorValue(T, ip, ei);
-    T.Transform(ip, pos);
-
-    // Element-wise operation
-    // k dot x
-    double kx = 0.0;
-    for (int i = 0; i < 3; i++)
-    {
-      kx += k[i] * pos[i];
-    }
-    std::complex<double> phase_factor = std::exp(-1i * kx);
-
-    // Vreal = er * phase_factor.real() - ei * phase_factor.imag();
-    // Vimag = er * phase_factor.imag() + ei * phase_factor.real();
-    for (int i = 0; i < 3; i++)
-    {
-      V[i] = er[i] * phase_factor.imag() + ei[i] * phase_factor.real();
-    }
-  }
-};
-
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
@@ -618,7 +539,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  wave_vector /= mesh_Lc0; // Dimensionalize wave vector
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
 
@@ -627,9 +547,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mfem::ParGridFunction gridfunc_vector(&fespace);
 
   // Create grid function for scalar coefficients
-  mfem::L2_FECollection pwconst_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
-  mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-  mfem::ParGridFunction gridfunc_scalar(&pwconst_fespace);
+  mfem::H1_FECollection h1_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
+  mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
+  mfem::ParGridFunction gridfunc_scalar(&h1_fespace);
 
   const int local_rank = mesh.GetMyRank();
 
@@ -651,33 +571,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
-        fs::path e_floquet_real_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("E_floquet_real_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
-        fs::path e_floquet_imag_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("E_floquet_imag_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
-
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
-        std::ofstream e_floquet_real_file(e_floquet_real_filename);
-        std::ofstream e_floquet_imag_file(e_floquet_imag_filename);
 
         E->Real().Save(e_real_file);
         E->Imag().Save(e_imag_file);
-
-        // Test to export gridfunction multiplied by exp(-ik*x), only for complex E.
-        gridfunc_vector = 0.0;
-        CustomCoefficientReal coeff_real(E.get(), wave_vector);
-        gridfunc_vector.ProjectCoefficient(coeff_real);
-        gridfunc_vector.Save(e_floquet_real_file);
-
-        gridfunc_vector = 0.0;
-        CustomCoefficientImag coeff_imag(E.get(), wave_vector);
-        gridfunc_vector.ProjectCoefficient(coeff_imag);
-        gridfunc_vector.Save(e_floquet_imag_file);
       }
       else
       {
@@ -708,35 +606,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                                                        pad_digits_default, local_rank,
                                                        pad_digits_default);
 
-        fs::path b_floquet_real_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("B_floquet_real_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
-        fs::path b_floquet_imag_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("B_floquet_imag_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
-
         std::ofstream b_real_file(b_real_filename);
         std::ofstream b_imag_file(b_imag_filename);
-        std::ofstream b_floquet_real_file(b_floquet_real_filename);
-        std::ofstream b_floquet_imag_file(b_floquet_imag_filename);
 
         B->Real().Save(b_real_file);
         B->Imag().Save(b_imag_file);
-
-        mfem::ParFiniteElementSpace &fespace = *B->ParFESpace();
-        mfem::ParGridFunction gridfunc_vectorB(&fespace);
-
-        gridfunc_vectorB = 0.0;
-        CustomCoefficientReal coeff_real(B.get(), wave_vector);
-        gridfunc_vectorB.ProjectCoefficient(coeff_real);
-        gridfunc_vectorB.Save(b_floquet_real_file);
-
-        gridfunc_vectorB = 0.0;
-        CustomCoefficientReal coeff_imag(B.get(), wave_vector);
-        gridfunc_vectorB.ProjectCoefficient(coeff_imag);
-        gridfunc_vectorB.Save(b_floquet_imag_file);
       }
       else
       {
@@ -793,7 +667,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
                             fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
     std::ofstream u_m_file(u_m_filename);
-
     gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_m.get());
     gridfunc_scalar.Save(u_m_file);
@@ -811,7 +684,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  wave_vector *= mesh_Lc0; // Nondimensionalize wave vector
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
