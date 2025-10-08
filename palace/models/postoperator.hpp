@@ -95,18 +95,17 @@ protected:
 
   // Field output format control flags
   bool enable_paraview_output = false;
-  bool enable_mfem_gf_output = false;
+  bool enable_gridfunction_output = false;
 
   // How many / which fields to output
   std::size_t output_delta_post = 0;                  // printing rate (TRANSIENT)
   std::size_t output_n_post = 0;                      // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
 
-
   // Whether any output formats were specified
   bool any_output_formats() const
   {
-    return enable_paraview_output || enable_mfem_gf_output;
+    return enable_paraview_output || enable_gridfunction_output;
   }
   bool anything_to_save() const
   {
@@ -135,13 +134,13 @@ protected:
   {
     return enable_paraview_output && should_write_fields(step);
   }
-  bool should_write_mfem_gf_fields() const
+  bool should_write_gridfunction_fields() const
   {
-    return enable_mfem_gf_output && anything_to_save();
+    return enable_gridfunction_output && anything_to_save();
   }
-  bool should_write_mfem_gf_fields(std::size_t step) const
+  bool should_write_gridfunction_fields(std::size_t step) const
   {
-    return enable_mfem_gf_output && should_write_fields(step);
+    return enable_gridfunction_output && should_write_fields(step);
   }
 
   // ParaView data collection: writing fields to disk for visualization.
@@ -150,7 +149,7 @@ protected:
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
   // MFEM grid function output details
-  std::string mfem_gf_output_dir;
+  std::string gridfunction_output_dir;
   const std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).

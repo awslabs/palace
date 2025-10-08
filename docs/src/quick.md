@@ -48,7 +48,7 @@ In this tutorial, we will:
 
  1. [Install *Palace* using Spack](#Installing-Palace)
  2. [Set up a simulation using a provided mesh](#The-config-file)
- 3. [Run the simulation and visualize results with ParaView](#Running-the-simulation-and-inspecting-the-output)
+ 3. [Run the simulation and visualize results](#Running-the-simulation-and-inspecting-the-output)
 
 By the end of this page, you'll understand the basic workflow of electromagnetic
 simulations with *Palace*. You will be able to follow the
@@ -102,13 +102,14 @@ leading to different electromagnetic [problem types](guide/problem.md):
     at probe points, etc.)
  2. PVD files for visualizing fields with [ParaView](https://www.paraview.org)
     or compatible software
+ 3. Grid function files for visualizing fields with [GLVis](https://glvis.org)
 
 The full list of problem types and their outputs is available in the
 [problem configuration guide](config/problem.md).
 
 In this tutorial, we'll use a mesh generated with [Gmsh](https://gmsh.info/),
 create a configuration file for an `Electrostatic` problem, and visualize the
-resulting electric field with ParaView.
+resulting electric field with ParaView and GLVis.
 
 ## Installing Palace
 
@@ -169,14 +170,14 @@ nothing # hide
     You need to load *Palace* with `spack load palace` in each new shell session.
     For convenience, add this command to your shell initialization file if you are a frequent *Palace* user.
 
-## (Optional) Install ParaView
+## (Optional) Install ParaView and GLVis
 
 *Palace* optionally saves electromagnetic field data in the PVD format, which is
-immediately accessible by ParaView or ParaView-compatible software. You can
-download ParaView from the [official
-website](https://www.
-paraview.org/download/) or using your package manager
-(`dnf`, `apt`, `brew`, ...). ParaView is not required for running simulations,
+immediately accessible by ParaView or ParaView-compatible software, and as MFEM grid functions,
+which can be visualized with GLVis. You can download ParaView from the
+[official website](https://www.paraview.org/download/) or using your package manager
+(`dnf`, `apt`, `brew`, ...). GLVis can be downloaded from the
+[official website](https://glvis.org). ParaView and GLVis are not required for running simulations,
 but we will use it in this tutorial to visualize our simulated fields.
 
 ## The mesh
@@ -370,7 +371,7 @@ details on all solver options, see [`config["Solver"]`](config/solver.md).
 print_section(spheres_json, "Solver") # hide
 ```
 
-### Running the simulation and inspecting the output
+## Running the simulation and inspecting the output
 
 If you've followed along, you should now have two files:
 
@@ -443,10 +444,10 @@ nothing # hide
 ```
 
 In addition to the `palace.json`, which contains metadata about the simulation
-(including timing information and counts), the output consists of CSV and PVD
-files. You can safely ignore all the `Cycle` directories as their content is
-accessed through the corresponding PVD file. For more details on output files
-and formats, see the [output documentation](guide/postprocessing.md).
+(including timing information and counts), the output consists of CSV, PVD, and
+grid function files. You can safely ignore all the `Cycle` directories as their
+content is accessed through the corresponding PVD file. For more details on output
+files and formats, see the [output documentation](guide/postprocessing.md).
 
 #### CSV files
 
@@ -478,7 +479,7 @@ matrix is symmetric.
 
 #### Visualizing with ParaView
 
-In this final step, we'll create a visualization of our simulation results using
+In this step, we'll create a visualization of our simulation results using
 [ParaView](https://www.paraview.org). We'll work with both the volume field data
 (`electrostatic.pvd`) and the boundary surface data
 (`electrostatic_boundaries.pvd`) to reproduce the figures in [the example
@@ -529,6 +530,37 @@ setup later). The result should look more or less like the images below:
 ParaView offers many more advanced features for data analysis and visualization.
 For more details, refer to the [official ParaView
 documentation](https://docs.paraview.org/en/latest/).
+
+#### Visualizing with GLVis
+
+In this optional step, we'll create a visualization of our simulation results using
+[GLVis](https://glvis.org).
+
+The potential field `V` with the first terminal activated can be visualized with
+
+```bash
+glvis -m postpro/gridfunction/electrostatic/mesh -g postpro/gridfunction/electrostatic/V_000001.gf -np 1
+```
+
+Note that `-np 1` instructs *GLVis* that the data was generated with a single MPI process. The number
+must match the number of MPI processes used in *Palace*.
+
+To visualize the potential field along the middle $x-z$ plane:
+
+  - Press `c` to display the colorbar.
+  - Press `a` to display the axes.
+  - Press `i` to cut the domain.
+  - Press `y` or `Y` repeatedly to rotate the cutting plane until it is aligned with the $x-z$ plane.
+  - Press `R` to cycle through 2D projections until you are viewing the $x-z$ plane.
+  - Press `S` to take a screenshot.
+
+The result should look more or less like the image below:
+
+```@raw html
+<br/><p align="center">
+  <img src="../assets/examples/spheres-5.png" width="45%" />
+</p>
+```
 
 ## Where to go next
 

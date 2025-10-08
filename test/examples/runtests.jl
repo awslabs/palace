@@ -70,7 +70,8 @@ if "spheres" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        gridfunction_fields=true
     )
 end
 

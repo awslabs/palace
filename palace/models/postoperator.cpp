@@ -105,39 +105,31 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
 
   // Prepare for saving fields
+  enable_paraview_output = iodata.problem.output_formats.paraview;
+  enable_gridfunction_output = iodata.problem.output_formats.gridfunction;
   if (solver_t == ProblemType::DRIVEN)
   {
-    enable_paraview_output = iodata.solver.driven.output_formats.paraview;
-    enable_mfem_gf_output = iodata.solver.driven.output_formats.mfem_grid_function;
     output_save_indices = iodata.solver.driven.save_indices;
   }
   else if (solver_t == ProblemType::EIGENMODE)
   {
-    enable_paraview_output = iodata.solver.eigenmode.output_formats.paraview;
-    enable_mfem_gf_output = iodata.solver.eigenmode.output_formats.mfem_grid_function;
     output_n_post = iodata.solver.eigenmode.n_post;
   }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
-    enable_paraview_output = iodata.solver.electrostatic.output_formats.paraview;
-    enable_mfem_gf_output = iodata.solver.electrostatic.output_formats.mfem_grid_function;
     output_n_post = iodata.solver.electrostatic.n_post;
   }
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
-    enable_paraview_output = iodata.solver.magnetostatic.output_formats.paraview;
-    enable_mfem_gf_output = iodata.solver.magnetostatic.output_formats.mfem_grid_function;
     output_n_post = iodata.solver.magnetostatic.n_post;
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
-    enable_paraview_output = iodata.solver.transient.output_formats.paraview;
-    enable_mfem_gf_output = iodata.solver.transient.output_formats.mfem_grid_function;
     output_delta_post = iodata.solver.transient.delta_post;
   }
 
-
-  mfem_gf_output_dir = (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
+  gridfunction_output_dir =
+      (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
 
   SetupFieldCoefficients();
   InitializeParaviewDataCollection();
@@ -529,9 +521,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::IO);
 
-
   // Create output directory if it doesn't exist
-  fs::create_directories(mfem_gf_output_dir);
+  fs::create_directories(gridfunction_output_dir);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -563,13 +554,13 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       {
         // Write real and imaginary parts separately
         fs::path e_real_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
+            fs::path(gridfunction_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}",
+                                                            step, pad_digits_default,
+                                                            local_rank, pad_digits_default);
         fs::path e_imag_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
+            fs::path(gridfunction_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}",
+                                                            step, pad_digits_default,
+                                                            local_rank, pad_digits_default);
 
         std::ofstream e_real_file(e_real_filename);
         std::ofstream e_imag_file(e_imag_filename);
@@ -580,7 +571,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path e_filename = fs::path(mfem_gf_output_dir) /
+        fs::path e_filename = fs::path(gridfunction_output_dir) /
                               fmt::format("E_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                           local_rank, pad_digits_default);
         std::ofstream e_file(e_filename);
@@ -588,7 +579,6 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       }
     }
   }
-
 
   if constexpr (HasBGridFunction<solver_t>())
   {
@@ -598,13 +588,13 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       {
         // Write real and imaginary parts separately
         fs::path b_real_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("B_real_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
+            fs::path(gridfunction_output_dir) / fmt::format("B_real_{:0{}d}.gf.{:0{}d}",
+                                                            step, pad_digits_default,
+                                                            local_rank, pad_digits_default);
         fs::path b_imag_filename =
-            fs::path(mfem_gf_output_dir) / fmt::format("B_imag_{:0{}d}.gf.{:0{}d}", step,
-                                                       pad_digits_default, local_rank,
-                                                       pad_digits_default);
+            fs::path(gridfunction_output_dir) / fmt::format("B_imag_{:0{}d}.gf.{:0{}d}",
+                                                            step, pad_digits_default,
+                                                            local_rank, pad_digits_default);
 
         std::ofstream b_real_file(b_real_filename);
         std::ofstream b_imag_file(b_imag_filename);
@@ -615,7 +605,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
       else
       {
         // Write real part only
-        fs::path b_filename = fs::path(mfem_gf_output_dir) /
+        fs::path b_filename = fs::path(gridfunction_output_dir) /
                               fmt::format("B_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                           local_rank, pad_digits_default);
         std::ofstream b_file(b_filename);
@@ -624,12 +614,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
-
   if constexpr (HasVGridFunction<solver_t>())
   {
     if (V)
     {
-      fs::path v_filename = fs::path(mfem_gf_output_dir) /
+      fs::path v_filename = fs::path(gridfunction_output_dir) /
                             fmt::format("V_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
       std::ofstream v_file(v_filename);
@@ -637,12 +626,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
-
   if constexpr (HasAGridFunction<solver_t>())
   {
     if (A)
     {
-      fs::path a_filename = fs::path(mfem_gf_output_dir) /
+      fs::path a_filename = fs::path(gridfunction_output_dir) /
                             fmt::format("A_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
       std::ofstream a_file(a_filename);
@@ -652,7 +640,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   if (U_e)
   {
-    fs::path u_e_filename = fs::path(mfem_gf_output_dir) /
+    fs::path u_e_filename = fs::path(gridfunction_output_dir) /
                             fmt::format("U_e_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
     std::ofstream u_e_file(u_e_filename);
@@ -663,7 +651,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   if (U_m)
   {
-    fs::path u_m_filename = fs::path(mfem_gf_output_dir) /
+    fs::path u_m_filename = fs::path(gridfunction_output_dir) /
                             fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                         local_rank, pad_digits_default);
     std::ofstream u_m_file(u_m_filename);
@@ -674,7 +662,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   if (S)
   {
-    fs::path s_filename = fs::path(mfem_gf_output_dir) /
+    fs::path s_filename = fs::path(gridfunction_output_dir) /
                           fmt::format("S_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
                                       local_rank, pad_digits_default);
     std::ofstream s_file(s_filename);
@@ -694,19 +682,15 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 {
   BlockTimer bt(Timer::IO);
 
-
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
-
 
   // Write the mesh partitioning and (optionally) error indicators at the final step.
   // Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
 
-
   // Create output directory if it doesn't exist
-  fs::create_directories(mfem_gf_output_dir);
-
+  fs::create_directories(gridfunction_output_dir);
 
   // Create piecewise constant finite element space for rank and error indicator
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
@@ -719,12 +703,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
     mfem::GridFunction rank(&pwconst_fespace);
     rank = local_rank + 1;
 
-    fs::path rank_filename = fs::path(mfem_gf_output_dir) /
+    fs::path rank_filename = fs::path(gridfunction_output_dir) /
                              fmt::format("rank.gf.{:0{}d}", local_rank, pad_digits_default);
     std::ofstream rank_file(rank_filename);
     rank.Save(rank_file);
   }
-
 
   // Write error indicator if provided
   if (indicator)
@@ -735,15 +718,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
     eta = indicator->Local();
 
     fs::path indicator_filename =
-        fs::path(mfem_gf_output_dir) /
+        fs::path(gridfunction_output_dir) /
         fmt::format("indicator.gf.{:0{}d}", local_rank, pad_digits_default);
     std::ofstream indicator_file(indicator_filename);
     eta.Save(indicator_file);
   }
 
-
   // Save ParMesh files; necessary to visualize grid functions.
-  fs::path mesh_filename = fs::path(mfem_gf_output_dir) / "mesh";
+  fs::path mesh_filename = fs::path(gridfunction_output_dir) / "mesh";
   mesh.Save(mesh_filename);
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
@@ -1165,14 +1147,14 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     WriteParaviewFields(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
-  if (should_write_mfem_gf_fields(step))
+  if (should_write_gridfunction_fields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::lower_bound(output_save_indices.begin(),
                                                   output_save_indices.end(), step));
     WriteMFEMGridFunctions(omega.real(), ind);
-    Mpi::Print(" Wrote fields to disk (MFEM grid functions) at step {:d}\n", step + 1);
+    Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1225,10 +1207,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     WriteParaviewFields(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (Paraview)\n", print_idx);
   }
-  if (should_write_mfem_gf_fields(step))
+  if (should_write_gridfunction_fields(step))
   {
     WriteMFEMGridFunctions(step, print_idx);
-    Mpi::Print(" Wrote mode {:d} to disk (MFEM grid functions)\n", print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1255,11 +1237,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (should_write_mfem_gf_fields(step))
+  if (should_write_gridfunction_fields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);
-    Mpi::Print(" Wrote fields to disk (MFEM grid functions) for source {:d}\n", idx);
+    Mpi::Print(" Wrote fields to disk (grid function) for source {:d}\n", idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1285,11 +1267,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (should_write_mfem_gf_fields(step))
+  if (should_write_gridfunction_fields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);
-    Mpi::Print(" Wrote fields to disk (MFEM grid functions) for source {:d}\n", idx);
+    Mpi::Print(" Wrote fields to disk (grid function) for source {:d}\n", idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1319,11 +1301,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
     WriteParaviewFields(double(step) / output_delta_post, time);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
-  if (should_write_mfem_gf_fields(step))
+  if (should_write_gridfunction_fields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(double(step) / output_delta_post, time);
-    Mpi::Print(" Wrote fields to disk (MFEM grid functions) at step {:d}\n", step + 1);
+    Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1339,7 +1321,7 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   {
     WriteParaviewFieldsFinal(&indicator);
   }
-  if (should_write_mfem_gf_fields())
+  if (should_write_gridfunction_fields())
   {
     WriteMFEMGridFunctionsFinal(&indicator);
   }

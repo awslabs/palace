@@ -30,6 +30,8 @@ The format of this changelog is based on
     additional information. [PR
     398](https://github.com/awslabs/palace/pull/398), [PR
     480](https://github.com/awslabs/palace/pull/480).
+  - Added option to export field solutions as MFEM grid functions to visualize with
+    [GLVis](https://glvis.org). Output formats can be specified in `config["Problem"]["OutputFormats"]`.
 
 #### Interface Changes
 
