@@ -4,11 +4,11 @@
 #include <complex>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
-#include <nlohmann/json.hpp>
 #include "models/postoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -389,9 +389,12 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     {
       for (const auto field : expected_fields)
       {
-        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "electrostatic" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "electrostatic" / filename));
+        std::string filename =
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" /
+                         "electrostatic" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" /
+                            "electrostatic" / filename));
       }
     }
   }
@@ -414,9 +417,12 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     {
       for (const auto field : expected_fields)
       {
-        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "magnetostatic" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "magnetostatic" / filename));
+        std::string filename =
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" /
+                         "magnetostatic" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" /
+                            "magnetostatic" / filename));
       }
     }
   }
@@ -441,9 +447,12 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     {
       for (const auto field : expected_fields)
       {
-        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "transient" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "transient" / filename));
+        std::string filename =
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "transient" /
+                         filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "transient" /
+                            filename));
       }
     }
   }
@@ -459,17 +468,22 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
 
     // Write fields.
     const int pad_digits = post_op.GetPadDigitsDefault();
-    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
 
-    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"};
+    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
+                                                "S",      "U_e",    "U_m"};
     for (int i = 0; i < size; i++)
     {
       for (const auto field : expected_fields)
       {
-        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "driven" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "driven" / filename));
+        std::string filename =
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "driven" /
+                         filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "driven" /
+                            filename));
       }
     }
   }
@@ -484,17 +498,22 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
 
     // Write fields.
     const int pad_digits = post_op.GetPadDigitsDefault();
-    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
     post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
 
-    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"};
+    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
+                                                "S",      "U_e",    "U_m"};
     for (int i = 0; i < size; i++)
     {
       for (const auto field : expected_fields)
       {
-        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" / filename));
+        std::string filename =
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" /
+                         filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" /
+                            filename));
       }
     }
   }
