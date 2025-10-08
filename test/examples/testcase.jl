@@ -73,7 +73,8 @@ function testcase(
         (~, ~, filesref) = first(walkdir(refpostprodir))
         metafiles = filter(x -> last(splitext(x)) != ".csv", files)
         if (paraview_fields && gridfunction_fields)
-            @test length(dirs) == 2 && "paraview" in dirs && "gridfunction" in dirs || (@show dirs; false)
+            @test length(dirs) == 2 && "paraview" in dirs && "gridfunction" in dirs ||
+                  (@show dirs; false)
         elseif (paraview_fields)
             @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
         elseif (gridfunction_fields)

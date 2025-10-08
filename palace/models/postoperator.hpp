@@ -415,6 +415,9 @@ public:
     return *A;
   }
 
+  // Access to number of padding digits
+  const auto GetPadDigitsDefault() const { return pad_digits_default; }
+
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }

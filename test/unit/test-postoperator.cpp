@@ -8,10 +8,13 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
+#include <nlohmann/json.hpp>
 #include "models/postoperator.hpp"
+#include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 using namespace palace;
-
+using json = nlohmann::json;
 // Helpers
 
 // random integer between 0 and n as a double.
@@ -335,5 +338,164 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(dc.tandelta));
     CHECK_THAT(c.energy_participation, Catch::Matchers::WithinRel(dc.energy_participation));
     CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(dc.quality_factor));
+  }
+}
+
+TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
+{
+  // Create iodata.
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.boundaries.pec.attributes = {1};
+  iodata.problem.output_formats.gridfunction = true;
+
+  // Setup lumped port boundary data for driven and transient.
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
+  auto config = json::parse(jsonstream);
+  config::BoundaryData boundary_port;
+  REQUIRE_NOTHROW(boundary_port.SetUp(*config.find("boundaries_lumped_port_X_2")));
+
+  // Create serial mesh.
+  int resolution = 3;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+
+  // Create parallel mesh.
+  auto comm = Mpi::World();
+  int size = Mpi::Size(comm);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  SECTION("Electrostatic")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::ELECTROSTATIC;
+    iodata.solver.electrostatic.n_post = 1;
+    LaplaceOperator laplace_op(iodata, mesh);
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const auto &Grad = laplace_op.GetGradMatrix();
+    Vector V(Grad.Width()), E(Grad.Height());
+    post_op.MeasureAndPrintAll(0, V, E, 0);
+    std::vector<std::string> expected_fields = {"E", "V", "U_e"};
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto field : expected_fields)
+      {
+        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "electrostatic" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "electrostatic" / filename));
+      }
+    }
+  }
+
+  SECTION("Magnetostatic")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    iodata.solver.magnetostatic.n_post = 1;
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const auto &Curl = curlcurl_op.GetCurlMatrix();
+    Vector A(Curl.Width()), B(Curl.Height());
+    post_op.MeasureAndPrintAll(0, A, B, 0);
+    std::vector<std::string> expected_fields = {"B", "A", "U_m"};
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto field : expected_fields)
+      {
+        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "magnetostatic" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "magnetostatic" / filename));
+      }
+    }
+  }
+
+  SECTION("Transient")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::TRANSIENT;
+    iodata.solver.transient.delta_post = 1;
+    iodata.boundaries.lumpedport = boundary_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::TRANSIENT> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    Vector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    std::function<double(double)> J_coef = [](double x) -> double { return x; };
+    post_op.MeasureAndPrintAll(0, E, B, 0.0, J_coef(0.0));
+
+    std::vector<std::string> expected_fields = {"E", "B", "S", "U_e", "U_m"};
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto field : expected_fields)
+      {
+        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "transient" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "transient" / filename));
+      }
+    }
+  }
+
+  SECTION("Driven")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.save_indices = {0};
+    iodata.boundaries.lumpedport = boundary_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+
+    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"};
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto field : expected_fields)
+      {
+        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "driven" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "driven" / filename));
+      }
+    }
+  }
+
+  SECTION("Eigenmode")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::EIGENMODE;
+    iodata.solver.eigenmode.n_post = 1;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
+
+    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"};
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto field : expected_fields)
+      {
+        std::string filename = fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
+        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" / filename));
+        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" / filename));
+      }
+    }
   }
 }

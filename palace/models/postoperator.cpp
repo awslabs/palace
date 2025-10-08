@@ -533,11 +533,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
 
-  // Create grid function for vector coefficients
+  // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
 
-  // Create grid function for scalar coefficients
+  // Create grid function for scalar coefficients.
   mfem::H1_FECollection h1_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
   mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
   mfem::ParGridFunction gridfunc_scalar(&h1_fespace);
