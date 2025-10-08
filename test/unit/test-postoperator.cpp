@@ -383,6 +383,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     const int pad_digits = post_op.GetPadDigitsDefault();
     const auto &Grad = laplace_op.GetGradMatrix();
     Vector V(Grad.Width()), E(Grad.Height());
+    V = 0.0;
+    E = 0.0;
     post_op.MeasureAndPrintAll(0, V, E, 0);
     std::vector<std::string> expected_fields = {"E", "V", "U_e"};
     for (int i = 0; i < size; i++)
@@ -411,6 +413,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     const int pad_digits = post_op.GetPadDigitsDefault();
     const auto &Curl = curlcurl_op.GetCurlMatrix();
     Vector A(Curl.Width()), B(Curl.Height());
+    A = 0.0;
+    B = 0.0;
     post_op.MeasureAndPrintAll(0, A, B, 0);
     std::vector<std::string> expected_fields = {"B", "A", "U_m"};
     for (int i = 0; i < size; i++)
@@ -439,6 +443,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     // Write fields.
     const int pad_digits = post_op.GetPadDigitsDefault();
     Vector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
     std::function<double(double)> J_coef = [](double x) -> double { return x; };
     post_op.MeasureAndPrintAll(0, E, B, 0.0, J_coef(0.0));
 
@@ -470,6 +476,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     const int pad_digits = post_op.GetPadDigitsDefault();
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
         B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
 
     std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
@@ -500,6 +508,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     const int pad_digits = post_op.GetPadDigitsDefault();
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
         B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
     post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
 
     std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
