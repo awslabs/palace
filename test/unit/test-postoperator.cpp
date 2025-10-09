@@ -468,6 +468,7 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     // Create operator.
     iodata.problem.type = ProblemType::DRIVEN;
     iodata.solver.driven.save_indices = {0};
+    iodata.solver.driven.sample_f = {1.0};
     iodata.boundaries.lumpedport = boundary_port.lumpedport;
     SpaceOperator space_op(iodata, mesh);
     PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
