@@ -554,12 +554,39 @@ To visualize the potential field along the middle $x-z$ plane:
   - Press `R` to cycle through 2D projections until you are viewing the $x-z$ plane.
   - Press `S` to take a screenshot.
 
-The result should look more or less like the image below:
+The result should look more or less like what we have below, where we embed a
+Javascript version of *GLVis* ([GLVis-js](https://github.com/GLVis/glvis-js))
+that can be interacted with in almost the same way as the native *GLVis*. See
+[Documentation](https://github.com/glvis/glvis/blob/v4.4/README.md) for full
+list of keys.
 
 ```@raw html
-<br/><p align="center">
-  <img src="../assets/examples/spheres-5.png" width="45%" />
-</p>
+<div id="glvis-container" style="width: 100%; height: 500px;">
+  <div id="glvis-div" style="width: 100%; height: 100%;" tabindex="0"></div>
+</div>
+
+<!-- Note, the snippet below only works with one MPI process because we are
+    manually composing a stream file. -->
+<script type="text/javascript">
+  var div = document.getElementById("glvis-div");
+  require(["../assets/js/glvis/index.js"], function (glvis) {
+    var glv = new glvis.State(div);
+
+    Promise.all([
+      fetch('../postpro/gridfunction/electrostatic/mesh.000000').then(r => r.text()),
+      fetch('../postpro/gridfunction/electrostatic/V_000001.gf.000000').then(r => r.text())
+    ]).then(function(results) {
+      var stream = "solution\n" + results[0] + results[1] + "keys OOOOOOOOOyyyyyyyyyyyyyyyyyyRRRRcai\n";
+      var originalTitle = document.title;
+      glv.display(stream).then(function() {
+        document.title = originalTitle;
+        div.focus();
+      });
+    }).catch(function(e) {
+      console.error('Failed to load GLVis data:', e);
+    });
+  });
+</script>
 ```
 
 ## Where to go next

@@ -85,7 +85,14 @@ julia --project=docs -e "using Pkg; Pkg.instantiate()"
 ```
 
 Then, generate the documentation with `julia --project make.jl` from within the
-[`docs/`](./docs) directory.
+[`docs/`](./docs) directory. An HTTP server is needed to visualize the
+rendered documentation. The simple way is to start a server is with python:
+
+```sh
+cd docs/build && python -m http.server 8000
+```
+
+Then, navigate to `localhost:8000` with your browser.
 
 ## Examples
 
@@ -112,3 +119,7 @@ Computing (CQC). Please contact the development team at
 ## License
 
 This project is licensed under the [Apache-2.0 License](./LICENSE).
+
+This project contains a copy of [GLVis-js](https://github.com/GLVis/glvis-js),
+developed by NOTICE. See [NOTICE](docs/assets/js/glvis/NOTICE) and
+[NOTICE](docs/assets/js/glvis/LICENSE).
