@@ -94,7 +94,7 @@ if(PALACE_WITH_UMPIRE)
     "--with-umpire"
     "--with-umpire-include=${CMAKE_INSTALL_PREFIX}/include"
     "--with-umpire-lib-dirs=${CMAKE_INSTALL_PREFIX}/lib"
-    "--with-umpire-libs=umpire"
+    "--with-umpire-libs=\"camp umpire\""
   )
 endif()
 
