@@ -340,7 +340,7 @@ void ProblemData::SetUp(json &config)
   verbose = problem->value("Verbose", verbose);
   output = problem->value("Output", output);
 
-  // Parse output formats
+  // Parse output formats.
   auto output_formats_it = problem->find("OutputFormats");
   if (output_formats_it != problem->end())
   {

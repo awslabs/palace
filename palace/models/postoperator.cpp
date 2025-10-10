@@ -158,7 +158,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 {
   // We currently don't use the dependent grid functions apart from saving fields, so only
   // initialize if needed.
-  if (!should_write_fields())
+  if (!ShouldWriteFields())
   {
     return;
   }
@@ -223,7 +223,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
     const fs::path &sub_folder_name)
 {
-  if (!should_write_paraview_fields())
+  if (!ShouldWriteParaviewFields())
   {
     return;
   }
@@ -521,8 +521,11 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::IO);
 
-  // Create output directory if it doesn't exist
-  fs::create_directories(gridfunction_output_dir);
+  // Create output directory if it doesn't exist.
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    fs::create_directories(gridfunction_output_dir);
+  }
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -544,38 +547,31 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   const int local_rank = mesh.GetMyRank();
 
-  // Write grid functions using MFEM's built-in Save method
-  // Use 6-digit padding to match MFEM's pad_digits_default
+  auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
+  {
+    auto path = fs::path(gridfunction_output_dir) /
+                fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
+                            local_rank, pad_digits_default);
+    std::ofstream file(path);
+    gridfunc.Save(file);
+  };
+
+  // Write grid functions using MFEM's built-in Save method.
+  // Use 6-digit padding to match MFEM's pad_digits_default.
   if constexpr (HasEGridFunction<solver_t>())
   {
     if (E)
     {
       if constexpr (HasComplexGridFunction<solver_t>())
       {
-        // Write real and imaginary parts separately
-        fs::path e_real_filename =
-            fs::path(gridfunction_output_dir) / fmt::format("E_real_{:0{}d}.gf.{:0{}d}",
-                                                            step, pad_digits_default,
-                                                            local_rank, pad_digits_default);
-        fs::path e_imag_filename =
-            fs::path(gridfunction_output_dir) / fmt::format("E_imag_{:0{}d}.gf.{:0{}d}",
-                                                            step, pad_digits_default,
-                                                            local_rank, pad_digits_default);
-
-        std::ofstream e_real_file(e_real_filename);
-        std::ofstream e_imag_file(e_imag_filename);
-
-        E->Real().Save(e_real_file);
-        E->Imag().Save(e_imag_file);
+        // Write real and imaginary parts separately.
+        write_grid_function(E->Real(), "E_real");
+        write_grid_function(E->Imag(), "E_imag");
       }
       else
       {
-        // Write real part only
-        fs::path e_filename = fs::path(gridfunction_output_dir) /
-                              fmt::format("E_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                          local_rank, pad_digits_default);
-        std::ofstream e_file(e_filename);
-        E->Real().Save(e_file);
+        // Write real part only.
+        write_grid_function(E->Real(), "E");
       }
     }
   }
@@ -586,30 +582,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     {
       if constexpr (HasComplexGridFunction<solver_t>())
       {
-        // Write real and imaginary parts separately
-        fs::path b_real_filename =
-            fs::path(gridfunction_output_dir) / fmt::format("B_real_{:0{}d}.gf.{:0{}d}",
-                                                            step, pad_digits_default,
-                                                            local_rank, pad_digits_default);
-        fs::path b_imag_filename =
-            fs::path(gridfunction_output_dir) / fmt::format("B_imag_{:0{}d}.gf.{:0{}d}",
-                                                            step, pad_digits_default,
-                                                            local_rank, pad_digits_default);
-
-        std::ofstream b_real_file(b_real_filename);
-        std::ofstream b_imag_file(b_imag_filename);
-
-        B->Real().Save(b_real_file);
-        B->Imag().Save(b_imag_file);
+        // Write real and imaginary parts separately.
+        write_grid_function(B->Real(), "B_real");
+        write_grid_function(B->Imag(), "B_imag");
       }
       else
       {
-        // Write real part only
-        fs::path b_filename = fs::path(gridfunction_output_dir) /
-                              fmt::format("B_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                          local_rank, pad_digits_default);
-        std::ofstream b_file(b_filename);
-        B->Real().Save(b_file);
+        // Write real part only.
+        write_grid_function(B->Real(), "B");
       }
     }
   }
@@ -618,11 +598,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   {
     if (V)
     {
-      fs::path v_filename = fs::path(gridfunction_output_dir) /
-                            fmt::format("V_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                        local_rank, pad_digits_default);
-      std::ofstream v_file(v_filename);
-      V->Real().Save(v_file);
+      write_grid_function(V->Real(), "V");
     }
   }
 
@@ -630,45 +606,29 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   {
     if (A)
     {
-      fs::path a_filename = fs::path(gridfunction_output_dir) /
-                            fmt::format("A_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                        local_rank, pad_digits_default);
-      std::ofstream a_file(a_filename);
-      A->Real().Save(a_file);
+      write_grid_function(A->Real(), "A");
     }
   }
 
   if (U_e)
   {
-    fs::path u_e_filename = fs::path(gridfunction_output_dir) /
-                            fmt::format("U_e_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                        local_rank, pad_digits_default);
-    std::ofstream u_e_file(u_e_filename);
     gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_e.get());
-    gridfunc_scalar.Save(u_e_file);
+    write_grid_function(gridfunc_scalar, "U_e");
   }
 
   if (U_m)
   {
-    fs::path u_m_filename = fs::path(gridfunction_output_dir) /
-                            fmt::format("U_m_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                        local_rank, pad_digits_default);
-    std::ofstream u_m_file(u_m_filename);
     gridfunc_scalar = 0.0;
     gridfunc_scalar.ProjectCoefficient(*U_m.get());
-    gridfunc_scalar.Save(u_m_file);
+    write_grid_function(gridfunc_scalar, "U_m");
   }
 
   if (S)
   {
-    fs::path s_filename = fs::path(gridfunction_output_dir) /
-                          fmt::format("S_{:0{}d}.gf.{:0{}d}", step, pad_digits_default,
-                                      local_rank, pad_digits_default);
-    std::ofstream s_file(s_filename);
     gridfunc_vector = 0.0;
     gridfunc_vector.ProjectCoefficient(*S.get());
-    gridfunc_vector.Save(s_file);
+    write_grid_function(gridfunc_vector, "S");
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
@@ -689,39 +649,41 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
 
-  // Create output directory if it doesn't exist
-  fs::create_directories(gridfunction_output_dir);
+  // Create output directory if it doesn't exist.
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    fs::create_directories(gridfunction_output_dir);
+  }
 
-  // Create piecewise constant finite element space for rank and error indicator
+  // Create piecewise constant finite element space for rank and error indicator.
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
   mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
 
   const int local_rank = mesh.GetMyRank();
 
-  // Write mesh partitioning (rank information)
+  auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
+  {
+    auto path = fs::path(gridfunction_output_dir) /
+                fmt::format("{}.gf.{:0{}d}", name, local_rank, pad_digits_default);
+    std::ofstream file(path);
+    gridfunc.Save(file);
+  };
+
+  // Write mesh partitioning (rank information).
   {
     mfem::GridFunction rank(&pwconst_fespace);
     rank = local_rank + 1;
-
-    fs::path rank_filename = fs::path(gridfunction_output_dir) /
-                             fmt::format("rank.gf.{:0{}d}", local_rank, pad_digits_default);
-    std::ofstream rank_file(rank_filename);
-    rank.Save(rank_file);
+    write_grid_function(rank, "rank");
   }
 
-  // Write error indicator if provided
+  // Write error indicator if provided.
   if (indicator)
   {
     mfem::GridFunction eta(&pwconst_fespace);
     MFEM_VERIFY(eta.Size() == indicator->Local().Size(),
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
     eta = indicator->Local();
-
-    fs::path indicator_filename =
-        fs::path(gridfunction_output_dir) /
-        fmt::format("indicator.gf.{:0{}d}", local_rank, pad_digits_default);
-    std::ofstream indicator_file(indicator_filename);
-    eta.Save(indicator_file);
+    write_grid_function(eta, "indicator");
   }
 
   // Save ParMesh files; necessary to visualize grid functions.
@@ -1138,7 +1100,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
 
   omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
-  if (should_write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
@@ -1147,7 +1109,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     WriteParaviewFields(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
-  if (should_write_gridfunction_fields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
@@ -1202,12 +1164,12 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (should_write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (Paraview)\n", print_idx);
   }
-  if (should_write_gridfunction_fields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     WriteMFEMGridFunctions(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
@@ -1231,13 +1193,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (should_write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (should_write_gridfunction_fields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);
@@ -1261,13 +1223,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (should_write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (should_write_gridfunction_fields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);
@@ -1295,13 +1257,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   // method.
   time = units.Dimensionalize<Units::ValueType::TIME>(time);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, time, step);
-  if (should_write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteParaviewFields(double(step) / output_delta_post, time);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
-  if (should_write_gridfunction_fields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(double(step) / output_delta_post, time);
@@ -1317,11 +1279,11 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   BlockTimer bt0(Timer::POSTPRO);
   auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
   post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
-  if (should_write_paraview_fields())
+  if (ShouldWriteParaviewFields())
   {
     WriteParaviewFieldsFinal(&indicator);
   }
-  if (should_write_gridfunction_fields())
+  if (ShouldWriteGridFunctionFields())
   {
     WriteMFEMGridFunctionsFinal(&indicator);
   }

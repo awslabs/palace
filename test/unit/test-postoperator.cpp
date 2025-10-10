@@ -371,6 +371,22 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
 
+  auto check_files = [&](const std::string &subdir, int step, int pad_digits,
+                         const std::vector<std::string> &fields)
+  {
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto &field : fields)
+      {
+        auto path =
+            fs::path(iodata.problem.output) / "gridfunction" / subdir /
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, step, pad_digits, i, pad_digits);
+        CHECK(fs::exists(path));
+        CHECK(!fs::is_empty(path));
+      }
+    }
+  };
+
   SECTION("Electrostatic")
   {
     // Create operator.
@@ -386,19 +402,7 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     V = 0.0;
     E = 0.0;
     post_op.MeasureAndPrintAll(0, V, E, 0);
-    std::vector<std::string> expected_fields = {"E", "V", "U_e"};
-    for (int i = 0; i < size; i++)
-    {
-      for (const auto field : expected_fields)
-      {
-        std::string filename =
-            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" /
-                         "electrostatic" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" /
-                            "electrostatic" / filename));
-      }
-    }
+    check_files("electrostatic", 0, post_op.GetPadDigitsDefault(), {"E", "V", "U_e"});
   }
 
   SECTION("Magnetostatic")
@@ -416,19 +420,7 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     A = 0.0;
     B = 0.0;
     post_op.MeasureAndPrintAll(0, A, B, 0);
-    std::vector<std::string> expected_fields = {"B", "A", "U_m"};
-    for (int i = 0; i < size; i++)
-    {
-      for (const auto field : expected_fields)
-      {
-        std::string filename =
-            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" /
-                         "magnetostatic" / filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" /
-                            "magnetostatic" / filename));
-      }
-    }
+    check_files("magnetostatic", 0, post_op.GetPadDigitsDefault(), {"B", "A", "U_m"});
   }
 
   SECTION("Transient")
@@ -447,20 +439,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     B = 0.0;
     std::function<double(double)> J_coef = [](double x) -> double { return x; };
     post_op.MeasureAndPrintAll(0, E, B, 0.0, J_coef(0.0));
-
-    std::vector<std::string> expected_fields = {"E", "B", "S", "U_e", "U_m"};
-    for (int i = 0; i < size; i++)
-    {
-      for (const auto field : expected_fields)
-      {
-        std::string filename =
-            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 0, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "transient" /
-                         filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "transient" /
-                            filename));
-      }
-    }
+    check_files("transient", 0, post_op.GetPadDigitsDefault(),
+                {"E", "B", "S", "U_e", "U_m"});
   }
 
   SECTION("Driven")
@@ -480,21 +460,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     E = 0.0;
     B = 0.0;
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
-
-    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
-                                                "S",      "U_e",    "U_m"};
-    for (int i = 0; i < size; i++)
-    {
-      for (const auto field : expected_fields)
-      {
-        std::string filename =
-            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "driven" /
-                         filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "driven" /
-                            filename));
-      }
-    }
+    check_files("driven", 1, post_op.GetPadDigitsDefault(),
+                {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
   }
 
   SECTION("Eigenmode")
@@ -512,20 +479,7 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     E = 0.0;
     B = 0.0;
     post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
-
-    std::vector<std::string> expected_fields = {"E_real", "E_imag", "B_real", "B_imag",
-                                                "S",      "U_e",    "U_m"};
-    for (int i = 0; i < size; i++)
-    {
-      for (const auto field : expected_fields)
-      {
-        std::string filename =
-            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, 1, pad_digits, i, pad_digits);
-        CHECK(fs::exists(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" /
-                         filename));
-        CHECK(!fs::is_empty(fs::path(iodata.problem.output) / "gridfunction" / "eigenmode" /
-                            filename));
-      }
-    }
+    check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
+                {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
   }
 }

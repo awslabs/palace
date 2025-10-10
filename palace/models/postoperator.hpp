@@ -102,53 +102,53 @@ protected:
   std::size_t output_n_post = 0;                      // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
 
-  // Whether any output formats were specified
-  bool any_output_formats() const
+  // Whether any output formats were specified.
+  bool AnyOutputFormats() const
   {
     return enable_paraview_output || enable_gridfunction_output;
   }
-  bool anything_to_save() const
+  bool AnythingToSave() const
   {
     return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty();
   }
 
-  // Whether any fields should be written at all
-  bool should_write_fields() const { return any_output_formats() && anything_to_save(); }
+  // Whether any fields should be written at all.
+  bool ShouldWriteFields() const { return AnyOutputFormats() && AnythingToSave(); }
 
-  // Whether any fields should be written for this step
-  bool should_write_fields(std::size_t step) const
+  // Whether any fields should be written for this step.
+  bool ShouldWriteFields(std::size_t step) const
   {
-    return any_output_formats() &&
+    return AnyOutputFormats() &&
            ((output_delta_post > 0 && step % output_delta_post == 0) ||
             (output_n_post > 0 && step < output_n_post) ||
             std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(),
                                step));
   }
 
-  // Whether fields should be written for a particular output format (at a given step)
-  bool should_write_paraview_fields() const
+  // Whether fields should be written for a particular output format (at a given step).
+  bool ShouldWriteParaviewFields() const
   {
-    return enable_paraview_output && anything_to_save();
+    return enable_paraview_output && AnythingToSave();
   }
-  bool should_write_paraview_fields(std::size_t step) const
+  bool ShouldWriteParaviewFields(std::size_t step) const
   {
-    return enable_paraview_output && should_write_fields(step);
+    return enable_paraview_output && ShouldWriteFields(step);
   }
-  bool should_write_gridfunction_fields() const
+  bool ShouldWriteGridFunctionFields() const
   {
-    return enable_gridfunction_output && anything_to_save();
+    return enable_gridfunction_output && AnythingToSave();
   }
-  bool should_write_gridfunction_fields(std::size_t step) const
+  bool ShouldWriteGridFunctionFields(std::size_t step) const
   {
-    return enable_gridfunction_output && should_write_fields(step);
+    return enable_gridfunction_output && ShouldWriteFields(step);
   }
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if should_write_paraview_fields() returns true.
+  // and we only want initialize it if ShouldWriteParaviewFields() returns true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
 
-  // MFEM grid function output details
+  // MFEM grid function output details.
   std::string gridfunction_output_dir;
   const std::size_t pad_digits_default = 6;
 
@@ -169,7 +169,10 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
+  // Setup coefficients for field postprocessing.
   void SetupFieldCoefficients();
+
+  // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 
 public:
@@ -415,8 +418,8 @@ public:
     return *A;
   }
 
-  // Access to number of padding digits
-  const auto GetPadDigitsDefault() const { return pad_digits_default; }
+  // Access to number of padding digits.
+  constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
 
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).

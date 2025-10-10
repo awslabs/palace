@@ -101,6 +101,9 @@ directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/problem.md#config%5B%22Problem%22%5D).
 
+ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
+format can be useful to embed visualizations in webpages with its Javascript version.
+
 All fields are written out as nondimensionalized quantities. The specific quantities
 available varies by [simulation type](problem.md#Problem-Types), but the variable names for
 various possible postprocessed scalar and vector are:
@@ -118,6 +121,12 @@ for visualization:
 
   - Mesh partitioning (1-based): `Rank`
   - Error indicator: `Indicator`
+
+When saving fields in the grid function (GLVis) format, the file names have the format
+`Field_xxxxxx.gf.yyyyyy` where `Field` is the variable name of the postprocessed scalar
+or vector field, `xxxxxx` is the six-digit index of the terminal index (electrostatic
+or magnetostatic), time step index (transient), or frequency index (driven or eigenmode),
+and `yyyyyy` is the six-digit index of the rank of the corresponding MPI process.
 
 In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
 fields is also written to disk. The boundary mesh includes all surfaces with prescribed
