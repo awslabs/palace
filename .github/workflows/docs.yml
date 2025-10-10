@@ -10,6 +10,7 @@ on:
 permissions:
   packages: write
   contents: write
+  statuses: write  # Used to report documentation build statuses
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
