@@ -17,6 +17,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
