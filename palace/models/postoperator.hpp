@@ -93,13 +93,13 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // Field output format control flags
+  // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
 
-  // How many / which fields to output
-  std::size_t output_delta_post = 0;                  // printing rate (TRANSIENT)
-  std::size_t output_n_post = 0;                      // max printing (OTHER SOLVERS)
+  // How many / which fields to output.
+  int output_delta_post = 0;                          // printing rate (TRANSIENT)
+  int output_n_post = 0;                              // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
 
   // Whether any output formats were specified.

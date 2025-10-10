@@ -102,7 +102,8 @@ directories located in the output directory specified under
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/problem.md#config%5B%22Problem%22%5D).
 
 ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
-format can be useful to embed visualizations in webpages with its Javascript version.
+format can be useful to embed visualizations in webpages with its
+[Javascript version](https://github.com/GLVis/glvis-js/).
 
 All fields are written out as nondimensionalized quantities. The specific quantities
 available varies by [simulation type](problem.md#Problem-Types), but the variable names for
