@@ -120,6 +120,6 @@ Computing (CQC). Please contact the development team at
 
 This project is licensed under the [Apache-2.0 License](./LICENSE).
 
-This project contains a copy of [GLVis-js](https://github.com/GLVis/glvis-js),
-developed by LLNL. See the corresponding [NOTICE](docs/assets/js/glvis/NOTICE) and
-[LICENSE](docs/assets/js/glvis/LICENSE).
+See [THIRD-PARTY-LICENSES](./THIRD-PARTY-LICENSES) and
+[THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES) for licenses and notices of
+third-party software in this repository.
