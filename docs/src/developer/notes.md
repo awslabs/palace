@@ -47,13 +47,6 @@ The reason for this is that such compilers might not support all the features
 tend to be slower. The list of files that contains code that has to run on the
 device is defined by the `TARGET_SOURCES_DEVICE` CMake variable.
 
-## Coverage
-
-During the `cmake` configuration step, setting the variable `PALACE_BUILD_WITH_COVERAGE` to `ON`
-will turn on coverage reporting. For LLVM-based compilers (Clang, AppleClang, IntelLLVM) this uses
-the "[source-based code coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)". For
-gcc, it uses [`gcov`](https://gcc.gnu.org/onlinedocs/gcc/Gcov.html).
-
 ## JSON Schema for configuration files
 
 A JSON format [configuration file](../config/config.md), for example named
