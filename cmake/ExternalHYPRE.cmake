@@ -9,12 +9,6 @@
 set(HYPRE_DEPENDENCIES)
 if(PALACE_WITH_UMPIRE)
   list(APPEND HYPRE_DEPENDENCIES umpire)
-  list(APPEND HYPRE_OPTIONS
-    "--with-umpire"
-    "--with-umpire-include=${CMAKE_INSTALL_PREFIX}/include"
-    "--with-umpire-lib-dirs=${CMAKE_INSTALL_PREFIX}/lib"
-    "--with-umpire-libs=umpire"
-  )
 endif()
 
 # Hypre does not add OpenMP flags
@@ -92,6 +86,16 @@ else()
 endif()
 if(PALACE_WITH_OPENMP)
   list(APPEND HYPRE_OPTIONS "--with-openmp")
+endif()
+
+# Configure Umpire support
+if(PALACE_WITH_UMPIRE)
+  list(APPEND HYPRE_OPTIONS
+    "--with-umpire"
+    "--with-umpire-include=${CMAKE_INSTALL_PREFIX}/include"
+    "--with-umpire-lib-dirs=${CMAKE_INSTALL_PREFIX}/lib"
+    "--with-umpire-libs=umpire"
+  )
 endif()
 
 # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
