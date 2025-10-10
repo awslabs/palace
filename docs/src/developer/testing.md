@@ -22,14 +22,14 @@ with `CMake`. From the *Palace* root directory:
 
 ```bash
 mkdir build && cd build
-cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_COVERAGE=yes ..
+cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes ..
 make -j palace-tests
 ```
 
 The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
-test assertions. The `PALACE_BUILD_WITH_COVERAGE` flag is used to enable
-measuring test coverage. See [Unit test coverage](#Unit-test-coverage) for more
-details on this.
+test assertions. If you want to also measure test coverage, turn
+`PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
+for more details on this.
 
 Once the build completes, run the tests with:
 
@@ -166,6 +166,13 @@ from your package manager.
     
     ```sh
     lcov --version
+    ```
+    
+    Also make sure that *Palace* was build with `PALACE_BUILD_WITH_COVERAGE`.
+    If not, compile it with
+    
+    ```sh
+    cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_COVERAGE=yes ..
     ```
 
 To obtain comprehensive coverage data, tests must be executed in three
