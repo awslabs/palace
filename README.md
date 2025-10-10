@@ -121,5 +121,5 @@ Computing (CQC). Please contact the development team at
 This project is licensed under the [Apache-2.0 License](./LICENSE).
 
 This project contains a copy of [GLVis-js](https://github.com/GLVis/glvis-js),
-developed by NOTICE. See [NOTICE](docs/assets/js/glvis/NOTICE) and
-[NOTICE](docs/assets/js/glvis/LICENSE).
+developed by LLNL. See the corresponding [NOTICE](docs/assets/js/glvis/NOTICE) and
+[LICENSE](docs/assets/js/glvis/LICENSE).
