@@ -10,7 +10,7 @@ using namespace palace::electromagnetics;
 
 TEST_CASE("EM Constant Check", "[units][Serial]")
 {
-  // This test Should be EXACT within double, so no matcher
+  // This test Should be EXACT within double, so no matcher.
   CHECK(epsilon0_ * mu0_ * c0_ * c0_ == 1.0);
 
   CHECK_THAT(epsilon0_, Catch::Matchers::WithinAbs(8.8541878188e-12, 14e-24));
