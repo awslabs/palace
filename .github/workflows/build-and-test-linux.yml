@@ -494,6 +494,7 @@ jobs:
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
       - name: Check antenna postprocessing example
+        if: needs.filter.outputs.test == 'true'
         run: |
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=examples examples/antenna/plot_farfield.jl examples/antenna/postpro/farfield-rE.csv
