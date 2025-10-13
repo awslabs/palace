@@ -140,7 +140,7 @@ if "cylinder/floquet" in cases
     # compare the magnitudes.
     function test_probe_magnitude(new_data, ref_data)
         num_probes = Int((size(new_data)[2] - 1) / 6)
-        for i in 0:num_probes-1
+        for i = 0:(num_probes - 1)
             # Compute component magnitudes.
             Ex_new = new_data[:, 2 + i * 6] + 1im * new_data[:, 3 + i * 6]
             Ey_new = new_data[:, 4 + i * 6] + 1im * new_data[:, 5 + i * 6]
@@ -168,7 +168,10 @@ if "cylinder/floquet" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        custom_tests=Dict("probe-E.csv" => test_probe_magnitude, "probe-B.csv" => test_probe_magnitude),
+        custom_tests=Dict(
+            "probe-E.csv" => test_probe_magnitude,
+            "probe-B.csv" => test_probe_magnitude
+        ),
         skip_rowcount=true
     )
 end
