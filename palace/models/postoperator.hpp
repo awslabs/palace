@@ -323,6 +323,14 @@ protected:
     }
   }
 
+  // Scale gridfunctions from non-dimensional to SI units.
+  template <typename T>
+  void DimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A);
+
+  // Scale gridfunctions from SI units to non-dimensional.
+  template <typename T>
+  void NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A);
+
 public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
 
