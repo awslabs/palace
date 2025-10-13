@@ -10,36 +10,6 @@ if(__check_compiler_feature_support)
 endif()
 set(__check_compiler_feature_support YES)
 
-function(check_constexpr_sqrt_support _has_constexpr_sqrt)
-  set(CONSTEXPR_SQRT_TEST_DIR ${CMAKE_BINARY_DIR}/CMakeFiles/try_run)
-  set(CONSTEXPR_SQRT_TEST_CPP ${CONSTEXPR_SQRT_TEST_DIR}/constexpr_sqrt_test.cpp)
-  file(WRITE ${CONSTEXPR_SQRT_TEST_CPP}
-"#include <cmath>
-int main()
-{
-  constexpr double two = 2.0;
-  constexpr double four = two*two;
-  constexpr double sqrtfour = std::sqrt(four);
-  return 0;
-}
-")
-  try_run(
-    CONSTEXPR_SQRT_TEST_EXITCODE
-    CONSTEXPR_SQRT_TEST_COMPILED
-    ${CONSTEXPR_SQRT_TEST_DIR}
-    ${CONSTEXPR_SQRT_TEST_CPP}
-    COMPILE_OUTPUT_VARIABLE CONSTEXPR_SQRT_TEST_COMPILE_OUTPUT
-    RUN_OUTPUT_VARIABLE CONSTEXPR_SQRT_TEST_OUTPUT
-  )
-  if(CONSTEXPR_SQRT_TEST_COMPILED AND CONSTEXPR_SQRT_TEST_EXITCODE EQUAL 0)
-    message(STATUS "CXX compiler supports constexpr std::sqrt")
-    set(${_has_constexpr_sqrt} TRUE PARENT_SCOPE)
-  else()
-    message(STATUS "CXX compiler does not support constexpr std::sqrt")
-    set(${_has_constexpr_sqrt} FALSE PARENT_SCOPE)
-  endif()
-endfunction()
-
 function(check_std_fs_support _has_std_fs_support _extra_fs_libraries)
   set(STD_FS_TEST_DIR ${CMAKE_BINARY_DIR}/CMakeFiles/try_run)
   set(STD_FS_TEST_CPP ${STD_FS_TEST_DIR}/std_fs_test.cpp)

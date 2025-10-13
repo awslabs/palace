@@ -288,15 +288,6 @@ endif()
 
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
-if(NOT DEFINED CONSTEXPR_SQRT_SUPPORT_CACHE)
-  check_constexpr_sqrt_support(CONSTEXPR_SQRT_SUPPORT)
-  set(CONSTEXPR_SQRT_SUPPORT_CACHE ${CONSTEXPR_SQRT_SUPPORT} CACHE INTERNAL "")
-endif()
-if(CONSTEXPR_SQRT_SUPPORT_CACHE)
-  target_compile_definitions(${LIB_TARGET_NAME}
-    PUBLIC PALACE_WITH_CONSTEXPR_SQRT
-  )
-endif()
 if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
   check_std_fs_support(STD_FS_SUPPORT STD_FS_LIBRARIES)
   if(NOT STD_FS_SUPPORT)
