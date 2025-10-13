@@ -74,6 +74,31 @@ satisfied at all exterior boundaries by the finite element formulation. Impedanc
 boundaries are modeled using a Robin boundary condition with ``\gamma = i\omega/Z_s``, in
 which ``Z_s`` the surface impedance of the boundary, with units of impedance per square.
 
+## Floquet periodic boundary conditions
+
+When applying Floquet periodic boundary conditions, the phase delay is incorporated into
+the time-harmonic Maxwell equations and exact periodic boundary conditions are applied.
+The modified Maxwell equations are obtained by substituting
+``\bm{E}(\bm{x}) = \bm{E}_p(\bm{x})e^{-i \bm{k}_p \cdot \bm{x}}``, where ``\bm{E}_p`` is
+the periodic electric field and  ``\bm{k}_p`` is the user-specified Bloch wavevector.
+The resulting equation is
+
+```math
+\nabla\times\mu_r^{-1}\nabla\times\bm{E}_p
+    -i\bm{k}_p\times\mu_r^{-1}\nabla\times\bm{E}_p
+    -i\nabla\times(\mu_r^{-1}\bm{k}_p\times\bm{E}_p)
+    -\bm{k}_p\times\mu_r^{-1}\bm{k}_p\times\bm{E}_p
+    + i\omega\sigma\bm{E}_p
+    - \omega^2\varepsilon_r\bm{E}_p = 0 \,,\; \bm{x}\in\Omega
+```
+
+and given the electric field solution, the time-harmonic magnetic flux density can be calculated
+as
+
+```math
+\bm{B}_p = -\frac{1}{i\omega}\nabla\times\bm{E}_p + \frac{1}{\omega} \bm{k}_p \times \bm{E}_p \,.
+```
+
 ## Time domain formulation
 
 A time-dependent formulation is also available to compute the electric field response
