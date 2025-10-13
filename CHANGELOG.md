@@ -58,7 +58,7 @@ The format of this changelog is based on
     some lumped port boundary conditions. [PR
     505](https://github.com/awslabs/palace/pull/505).
   - Changed the sign of the Floquet phase factor from $\exp(+ik\cdot x)$ to $\exp(-ik\cdot x)$.
-    [PR 510](https://github.com/awslabs/palace/pull/510) and [PR 520](https://github.com/awslabs/palace/pull/520).
+    [PR 510](https://github.com/awslabs/palace/pull/510) and [PR 526](https://github.com/awslabs/palace/pull/526).
   - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants 2022
     [PR 525](https://github.com/awslabs/palace/pull/525).
 
