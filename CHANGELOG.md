@@ -56,6 +56,8 @@ The format of this changelog is based on
     505](https://github.com/awslabs/palace/pull/505).
   - Changed the sign of the Floquet phase factor from $\exp(+ik\cdot x)$ to $\exp(-ik\cdot x)$.
     [PR 510](https://github.com/awslabs/palace/pull/510).
+  - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants 2022
+    [PR 525](https://github.com/awslabs/palace/pull/525).
 
 ## [0.14.0] - 2025-08-20
 
