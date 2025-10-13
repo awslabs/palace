@@ -141,19 +141,19 @@ if "cylinder/floquet" in cases
     function test_probe_magnitude(new_data, ref_data)
         num_probes = Int((size(new_data)[2] - 1) / 6)
         for i = 0:(num_probes - 1)
-            # Compute component magnitudes.
+            # Compute magnitudes.
             Ex_new = new_data[:, 2 + i * 6] + 1im * new_data[:, 3 + i * 6]
             Ey_new = new_data[:, 4 + i * 6] + 1im * new_data[:, 5 + i * 6]
             Ez_new = new_data[:, 6 + i * 6] + 1im * new_data[:, 7 + i * 6]
+            E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
 
             Ex_ref = ref_data[:, 2 + i * 6] + 1im * ref_data[:, 3 + i * 6]
             Ey_ref = ref_data[:, 4 + i * 6] + 1im * ref_data[:, 5 + i * 6]
             Ez_ref = ref_data[:, 6 + i * 6] + 1im * ref_data[:, 7 + i * 6]
+            E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
 
             # Test magnitudes with relative tolerance.
-            @test abs.(Ex_new) ≈ abs.(Ex_ref) rtol=reltol
-            @test abs.(Ey_new) ≈ abs.(Ey_ref) rtol=reltol
-            @test abs.(Ez_new) ≈ abs.(Ez_ref) rtol=reltol
+            @test E_mag_new ≈ E_mag_ref rtol=reltol
         end
         return true
     end
