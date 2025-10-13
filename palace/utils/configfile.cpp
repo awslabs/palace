@@ -340,6 +340,15 @@ void ProblemData::SetUp(json &config)
   verbose = problem->value("Verbose", verbose);
   output = problem->value("Output", output);
 
+  // Parse output formats.
+  auto output_formats_it = problem->find("OutputFormats");
+  if (output_formats_it != problem->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.gridfunction =
+        output_formats_it->value("GridFunction", output_formats.gridfunction);
+  }
+
   // Check for provided solver configuration data (not required for electrostatics or
   // magnetostatics since defaults can be used for every option).
   auto solver = config.find("Solver");
@@ -380,6 +389,7 @@ void ProblemData::SetUp(json &config)
   problem->erase("Type");
   problem->erase("Verbose");
   problem->erase("Output");
+  problem->erase("OutputFormats");
   MFEM_VERIFY(problem->empty(),
               "Found an unsupported configuration file keyword under \"Problem\"!\n"
                   << problem->dump(2));
@@ -390,6 +400,8 @@ void ProblemData::SetUp(json &config)
     std::cout << "Type: " << type << '\n';
     std::cout << "Verbose: " << verbose << '\n';
     std::cout << "Output: " << output << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.GridFunction: " << output_formats.gridfunction << '\n';
   }
 }
 

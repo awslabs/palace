@@ -17,6 +17,8 @@ function testcase(
     atol=1.0e-18,
     excluded_columns=[],
     custom_tests=Dict(),
+    paraview_fields=true,
+    gridfunction_fields=false,
     skip_rowcount=false,
     generate_data=true
 )
@@ -70,7 +72,14 @@ function testcase(
         (~, dirs, files) = first(walkdir(postprodir))
         (~, ~, filesref) = first(walkdir(refpostprodir))
         metafiles = filter(x -> last(splitext(x)) != ".csv", files)
-        @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
+        if (paraview_fields && gridfunction_fields)
+            @test length(dirs) == 2 && "paraview" in dirs && "gridfunction" in dirs ||
+                  (@show dirs; false)
+        elseif (paraview_fields)
+            @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
+        elseif (gridfunction_fields)
+            @test length(dirs) == 1 && first(dirs) == "gridfunction" || (@show dirs; false)
+        end
         @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
               (@show metafiles; false)
         @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||

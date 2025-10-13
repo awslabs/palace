@@ -3,7 +3,12 @@
   {
     "Type": "Electrostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro",
+    "OutputFormats":
+    {
+      "Paraview": true,
+      "GridFunction": true
+    }
   },
   "Model":
   {
@@ -88,4 +93,3 @@
     }
   }
 }
-

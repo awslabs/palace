@@ -93,25 +93,64 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // ParaView Measure & Print.
+  // Field output format control flags.
+  bool enable_paraview_output = false;
+  bool enable_gridfunction_output = false;
 
-  // Option to write ParaView fields at all and rate / number of iterations printed.
-  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (TRANSIENT)
-  std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
-  std::vector<std::size_t> paraview_save_indices = {};  // explicit saves for ParaView
-  // Whether any paraview fields will be written.
-  bool WriteParaviewFields() const
+  // How many / which fields to output.
+  int output_delta_post = 0;                          // printing rate (TRANSIENT)
+  int output_n_post = 0;                              // max printing (OTHER SOLVERS)
+  std::vector<std::size_t> output_save_indices = {};  // explicit saves
+
+  // Whether any output formats were specified.
+  bool AnyOutputFormats() const
   {
-    return (paraview_delta_post > 0) || (paraview_n_post > 0) ||
-           !paraview_save_indices.empty();
+    return enable_paraview_output || enable_gridfunction_output;
   }
-  // Whether paraview fields should be written for this particular step.
-  bool WriteParaviewFields(std::size_t step);
+  bool AnythingToSave() const
+  {
+    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty();
+  }
+
+  // Whether any fields should be written at all.
+  bool ShouldWriteFields() const { return AnyOutputFormats() && AnythingToSave(); }
+
+  // Whether any fields should be written for this step.
+  bool ShouldWriteFields(std::size_t step) const
+  {
+    return AnyOutputFormats() &&
+           ((output_delta_post > 0 && step % output_delta_post == 0) ||
+            (output_n_post > 0 && step < output_n_post) ||
+            std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(),
+                               step));
+  }
+
+  // Whether fields should be written for a particular output format (at a given step).
+  bool ShouldWriteParaviewFields() const
+  {
+    return enable_paraview_output && AnythingToSave();
+  }
+  bool ShouldWriteParaviewFields(std::size_t step) const
+  {
+    return enable_paraview_output && ShouldWriteFields(step);
+  }
+  bool ShouldWriteGridFunctionFields() const
+  {
+    return enable_gridfunction_output && AnythingToSave();
+  }
+  bool ShouldWriteGridFunctionFields(std::size_t step) const
+  {
+    return enable_gridfunction_output && ShouldWriteFields(step);
+  }
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if WriteParaviewFields() is true.
+  // and we only want initialize it if ShouldWriteParaviewFields() returns true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+
+  // MFEM grid function output details.
+  std::string gridfunction_output_dir;
+  const std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
@@ -130,6 +169,10 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
+  // Setup coefficients for field postprocessing.
+  void SetupFieldCoefficients();
+
+  // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 
 public:
@@ -143,8 +186,10 @@ protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
   // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(double time, int step);
-  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteParaviewFields(double time, int step);
+  void WriteParaviewFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteMFEMGridFunctions(double time, int step);
+  void WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator = nullptr);
 
   // CSV Measure & Print.
 
@@ -372,6 +417,9 @@ public:
   {
     return *A;
   }
+
+  // Access to number of padding digits.
+  constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
 
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).

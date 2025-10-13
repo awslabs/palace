@@ -4,14 +4,17 @@
 #include <complex>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "models/postoperator.hpp"
+#include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 using namespace palace;
-
+using json = nlohmann::json;
 // Helpers
 
 // random integer between 0 and n as a double.
@@ -335,5 +338,148 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(dc.tandelta));
     CHECK_THAT(c.energy_participation, Catch::Matchers::WithinRel(dc.energy_participation));
     CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(dc.quality_factor));
+  }
+}
+
+TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
+{
+  // Create iodata.
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.boundaries.pec.attributes = {1};
+  iodata.problem.output_formats.gridfunction = true;
+
+  // Setup lumped port boundary data for driven and transient.
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
+  auto config = json::parse(jsonstream);
+  config::BoundaryData boundary_port;
+  REQUIRE_NOTHROW(boundary_port.SetUp(*config.find("boundaries_lumped_port_X_2")));
+
+  // Create serial mesh.
+  int resolution = 3;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+
+  // Create parallel mesh.
+  auto comm = Mpi::World();
+  int size = Mpi::Size(comm);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  auto check_files = [&](const std::string &subdir, int step, int pad_digits,
+                         const std::vector<std::string> &fields)
+  {
+    for (int i = 0; i < size; i++)
+    {
+      for (const auto &field : fields)
+      {
+        auto path =
+            fs::path(iodata.problem.output) / "gridfunction" / subdir /
+            fmt::format("{}_{:0{}d}.gf.{:0{}d}", field, step, pad_digits, i, pad_digits);
+        CHECK(fs::exists(path));
+        CHECK(!fs::is_empty(path));
+      }
+    }
+  };
+
+  SECTION("Electrostatic")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::ELECTROSTATIC;
+    iodata.solver.electrostatic.n_post = 1;
+    LaplaceOperator laplace_op(iodata, mesh);
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const auto &Grad = laplace_op.GetGradMatrix();
+    Vector V(Grad.Width()), E(Grad.Height());
+    V = 0.0;
+    E = 0.0;
+    post_op.MeasureAndPrintAll(0, V, E, 0);
+    check_files("electrostatic", 0, post_op.GetPadDigitsDefault(), {"E", "V", "U_e"});
+  }
+
+  SECTION("Magnetostatic")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    iodata.solver.magnetostatic.n_post = 1;
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const auto &Curl = curlcurl_op.GetCurlMatrix();
+    Vector A(Curl.Width()), B(Curl.Height());
+    A = 0.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(0, A, B, 0);
+    check_files("magnetostatic", 0, post_op.GetPadDigitsDefault(), {"B", "A", "U_m"});
+  }
+
+  SECTION("Transient")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::TRANSIENT;
+    iodata.solver.transient.delta_post = 1;
+    iodata.boundaries.lumpedport = boundary_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::TRANSIENT> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    Vector E(space_op.GetNDSpace().GetTrueVSize()), B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
+    std::function<double(double)> J_coef = [](double x) -> double { return x; };
+    post_op.MeasureAndPrintAll(0, E, B, 0.0, J_coef(0.0));
+    check_files("transient", 0, post_op.GetPadDigitsDefault(),
+                {"E", "B", "S", "U_e", "U_m"});
+  }
+
+  SECTION("Driven")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.save_indices = {0};
+    iodata.solver.driven.sample_f = {1.0};
+    iodata.boundaries.lumpedport = boundary_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    check_files("driven", 1, post_op.GetPadDigitsDefault(),
+                {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
+  }
+
+  SECTION("Eigenmode")
+  {
+    // Create operator.
+    iodata.problem.type = ProblemType::EIGENMODE;
+    iodata.solver.eigenmode.n_post = 1;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+
+    // Write fields.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
+    check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
+                {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
   }
 }

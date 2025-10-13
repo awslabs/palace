@@ -128,7 +128,7 @@ uses the solver default.
 
 `"Save" [0]` :  Number of computed field modes to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in
-the `paraview/` directory under the directory specified by
+the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Type" ["Default"]` :  Specifies the eigenvalue solver to be used in computing the given
@@ -187,7 +187,7 @@ with
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
 fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
-Files are saved in the `paraview/` directory under the directory specified by
+Files are saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Samples" [None]` : Array of [sample
@@ -200,7 +200,7 @@ the construction of each of these structs.
 
 `"Save" [None]` : Array of frequencies to save computed fields to disk for [visualization
 with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by
-`"SaveStep"` in any sample specification. Files are saved in the `paraview/`
+`"SaveStep"` in any sample specification. Files are saved in the `paraview/` (and/or `gridfunction/`)
 directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -259,7 +259,7 @@ Mutually exclusive with `"FreqStep"`.
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
 fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
-Files are saved in the `paraview/` directory under the directory specified by
+Files are saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"AddToPROM" [false]` : Advanced option to force the inclusion of this sample into the PROM
@@ -328,7 +328,7 @@ start from rest at ``t = 0.0``.
 
 `"SaveStep" [0]` :  Controls how often, in number of time steps, to save computed fields to
 disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are
-saved in the `paraview/` directory under the directory specified by
+saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Order" [2]` :  Order of the adaptive Runge-Kutta integrators or maximum order of the
@@ -354,7 +354,7 @@ with
 
 `"Save" [0]` :  Number of computed electric field solutions to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the
-entries in the computed capacitance matrix. Files are saved in the `paraview/` directory
+entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -371,7 +371,7 @@ with
 
 `"Save" [0]` :  Number of computed magnetic field solutions to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization)), ordered by the
-entries in the computed inductance matrix. Files are saved in the `paraview/` directory
+entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 

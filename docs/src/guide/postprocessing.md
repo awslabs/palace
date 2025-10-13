@@ -32,7 +32,7 @@ Finally, as described further in [Visualization](#Visualization), various field 
 on the 3D computational domain as well as 2D domain boundaries and material interfaces are
 written to disk when requested using the relevant parameters under
 [`config["Solver"]`](../config/solver.md). These fields are meant to be visualized with
-[ParaView](https://www.paraview.org/).
+[ParaView](https://www.paraview.org/) or [GLVis](https://glvis.org/).
 
 ## Ports and surface currents
 
@@ -93,12 +93,17 @@ file. These include:
 ## Visualization
 
 When specified in the configuration file, the electric field and magnetic flux density
-solutions are written to disk for 3D visualization with
-[ParaView](https://www.paraview.org/). Various other postprocessed fields are also written
-to the ParaView database as available, including electric and magnetic energy density,
-surface currents, and charge density. These files are found in the `paraview/` directory
-located in the output directory specified under
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
+solutions are written to disk for 3D visualization with [ParaView](https://www.paraview.org/)
+or [GLVis](https://glvis.org/). Various other postprocessed fields are also written to the ParaView
+or grid function (GLVis) database as available, including electric and magnetic energy density,
+surface currents, and charge density. These files are found in the `paraview/` or `gridfunction/`
+directories located in the output directory specified under
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). The output
+formats are specified in [`config["Problem"]["OutputFormats"]`](../config/problem.md#config%5B%22Problem%22%5D).
+
+ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
+format can be useful to embed visualizations in webpages with its
+[Javascript version](https://github.com/GLVis/glvis-js/).
 
 All fields are written out as nondimensionalized quantities. The specific quantities
 available varies by [simulation type](problem.md#Problem-Types), but the variable names for
@@ -118,10 +123,17 @@ for visualization:
   - Mesh partitioning (1-based): `Rank`
   - Error indicator: `Indicator`
 
+When saving fields in the grid function (GLVis) format, the file names have the format
+`Field_xxxxxx.gf.yyyyyy` where `Field` is the variable name of the postprocessed scalar
+or vector field, `xxxxxx` is the six-digit index of the terminal index (electrostatic
+or magnetostatic), time step index (transient), or frequency index (driven or eigenmode),
+and `yyyyyy` is the six-digit index of the rank of the corresponding MPI process.
+
 In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
 fields is also written to disk. The boundary mesh includes all surfaces with prescribed
 boundary conditions as well as any material interfaces in the computational domain. It is
-located in the same `paraview/` directory, with suffix `_boundary`.
+located in the same `paraview/` directory, with suffix `_boundary`. The boundary data
+collection is only available for the ParaView output format.
 
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:

@@ -12,6 +12,16 @@
       "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic"]
     },
     "Verbose": { "type": "integer", "minimum": 0 },
-    "Output": { "type": "string" }
+    "Output": { "type": "string" },
+    "OutputFormats":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties":
+      {
+        "Paraview": { "type": "boolean" },
+        "GridFunction": { "type": "boolean" }
+      }
+    }
   }
 }

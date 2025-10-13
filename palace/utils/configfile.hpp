@@ -90,6 +90,16 @@ struct ElementData
 
 // Problem & Model Config.
 
+struct OutputFormatsData
+{
+public:
+  // Enable Paraview output format.
+  bool paraview = true;
+
+  // Enable MFEM GLVis grid function output format.
+  bool gridfunction = false;
+};
+
 struct ProblemData
 {
 public:
@@ -101,6 +111,9 @@ public:
 
   // Output path for storing results.
   std::string output = "";
+
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
 
   void SetUp(json &config);
 };
