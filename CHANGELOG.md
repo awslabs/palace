@@ -61,6 +61,7 @@ The format of this changelog is based on
     [PR 510](https://github.com/awslabs/palace/pull/510) and [PR 526](https://github.com/awslabs/palace/pull/526).
   - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants 2022
     [PR 525](https://github.com/awslabs/palace/pull/525).
+  - Changed Paraview and GLVis output fields to SI units [PR ???](????).
 
 ## [0.14.0] - 2025-08-20
 

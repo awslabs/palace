@@ -412,6 +412,75 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 }  // namespace
 
 template <ProblemType solver_t>
+template <typename T>
+void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A)
+{
+  if (E)
+  {
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+    E->Real() *= scaling;
+    if (imag)
+    {
+      E->Imag() *= scaling;
+    }
+  }
+  if (B)
+  {
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+    B->Real() *= scaling;
+    if (imag)
+    {
+      B->Imag() *= scaling;
+    }
+  }
+  if (A)
+  {
+    const double scaling = units.Dimensionalize<Units::ValueType::CURRENT>(1.0);
+    A->Real() *= scaling;
+  }
+  if (V)
+  {
+    const double scaling = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+    V->Real() *= scaling;
+  }
+}
+
+template <ProblemType solver_t>
+template <typename T>
+void PostOperator<solver_t>::NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A)
+{
+  if (E)
+  {
+    const double scaling = units.Nondimensionalize<Units::ValueType::FIELD_E>(1.0);
+    E->Real() *= scaling;
+    if (imag)
+    {
+      E->Imag() *= scaling;
+    }
+  }
+  if (B)
+  {
+    const double scaling = units.Nondimensionalize<Units::ValueType::FIELD_B>(1.0);
+    B->Real() *= scaling;
+    if (imag)
+    {
+      B->Imag() *= scaling;
+    }
+  }
+  if (A)
+  {
+    const double scaling = units.Nondimensionalize<Units::ValueType::CURRENT>(1.0);
+    A->Real() *= scaling;
+  }
+  if (V)
+  {
+    const double scaling = units.Nondimensionalize<Units::ValueType::VOLTAGE>(1.0);
+    V->Real() *= scaling;
+  }
+}
+
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
@@ -424,6 +493,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
+  //DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -433,6 +503,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
+  //NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -535,7 +606,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
-
+  //DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -634,6 +705,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
+  //NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
   Mpi::Barrier(fem_op->GetComm());
 }
 
