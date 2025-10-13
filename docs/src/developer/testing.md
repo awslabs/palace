@@ -17,15 +17,19 @@ integration (CI) workflows.
 
 The simplest way to build unit tests is using `CMake`.
 
-First, follow the [quick start](../install.md#Quick-start) to build *Palace* with `CMake`. From the *Palace* root directory:
+First, follow the [quick start](../install.md#Quick-start) to build *Palace*
+with `CMake`. From the *Palace* root directory:
 
 ```bash
 mkdir build && cd build
-cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes .. 
+cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes ..
 make -j palace-tests
 ```
 
-The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and test assertions.
+The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
+test assertions. If you want to also measure test coverage, turn
+`PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
+for more details on this.
 
 Once the build completes, run the tests with:
 
@@ -139,6 +143,151 @@ important settings:
   - Path variables used in tests, such as `MFEM_DATA_PATH`
     `MFEM_DATA_PATH` contains 2D and 3D sample meshes for testing (these meshes come
     from the [MFEM repository](https://github.com/mfem/mfem/tree/master/data)).
+
+### Unit test coverage
+
+When *Palace* is built with `PALACE_BUILD_WITH_COVERAGE`, running the unit tests
+generates coverage information that tracks which parts of the codebase are
+exercised by the tests. This feature uses "[source-based code
+coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)" for
+LLVM-based compilers (Clang, AppleClang, IntelLLVM) and
+[`gcov`](https://gcc.gnu.org/onlinedocs/gcc/Gcov.html) for GNU compilers.
+
+Both methods can produce coverage data compatible with
+[LCOV](https://github.com/linux-test-project/lcov), which provides standardized
+processing and HTML report generation. In the sections below, we discuss how to
+obtain a `coverage.info` that can be further processed by `lcov`. Before
+proceeding, ensure `lcov` is installed on your system. If not, you can obtain it
+from your package manager.
+
+!!! warning "Before continuing"
+    
+    Make sure you have `lcov` installed. To check that it works, run
+    
+    ```sh
+    lcov --version
+    ```
+    
+    Also make sure that *Palace* was build with `PALACE_BUILD_WITH_COVERAGE`.
+    If not, compile it with
+    
+    ```sh
+    cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_COVERAGE=yes ..
+    ```
+
+To obtain comprehensive coverage data, tests must be executed in three
+configurations: `Serial`, `Parallel`, and `GPU` (if available). Each
+configuration produces separate coverage files that are later merged into a
+unified report.
+
+*Palace* is a complex codebase that involves inlined and just-in-time compiled
+functions. This can lead to minor inconsistencies in the coverage files. These
+are not fatal, and ignoring them still produces good reports. For this reason,
+most `lcov` commands you will see in the following sections have the
+`--ignore-errors inconsistent` flag.
+
+#### Coverage with GNU compilers
+
+GNU compilers automatically generate raw coverage files during program
+execution. The `lcov` tool can directly process these files without additional
+conversion steps.
+
+Run the test suite in all configurations and capture coverage data:
+
+```sh
+# Serial tests
+palace-build/test/unit/unit-tests
+lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage1.info
+
+# Parallel tests
+mpirun -np 2 palace-build/test/unit/unit-tests
+lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage2.info
+
+# GPU tests (if available)
+# (command -v nvidia-smi is for your convenience, so that you can copy this block of code
+#  and use it as-is even when a GPU is not available)
+command -v nvidia-smi && palace-build/test/unit/unit-tests --device cuda
+command -v nvidia-smi && lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage3.info
+
+# Merge all coverage files (works whether coverage3.info exists or not)
+# The $() expands to --add-tracefile coverage1.info --add-tracefile coverage2.info --add-tracefile coverage3.info 
+lcov $(for f in coverage[1-3].info; do echo "--add-tracefile $f"; done) --ignore-errors inconsistent --output-file coverage.info
+```
+
+#### Coverage with LLVM-based compilers
+
+LLVM compilers use a different coverage format that requires additional
+processing steps. The `LLVM_PROFILE_FILE` environment variable controls the
+naming pattern for generated coverage files.
+
+First, clean any existing coverage files and configure the profile naming:
+
+```sh
+rm -f coverage*.profraw
+export LLVM_PROFILE_FILE="coverage-%p.profraw"
+```
+
+Execute the test suite in all configurations:
+
+```sh
+# Serial tests
+palace-build/test/unit/unit-tests
+
+# Parallel tests
+mpirun -np 2 palace-build/test/unit/unit-tests
+
+# GPU tests (if available)
+# (command -v nvidia-smi is for your convenience, so that you can copy this block of code
+#  and use it as-is even when a GPU is not available)
+command -v nvidia-smi && palace-build/test/unit/unit-tests --device cuda
+```
+
+This generates multiple `coverage-<pid>.profraw` files, where `<pid>` represents
+each process ID. These raw files must be merged and converted to LCOV format:
+
+```sh
+# Merge raw coverage files
+llvm-profdata merge -output=coverage.profdata coverage*.profraw
+
+# Export to JSON format
+llvm-cov export -format text -instr-profile coverage.profdata palace-build/test/unit/unit-tests > coverage_llvm.json
+
+# Convert to LCOV format
+llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
+```
+
+!!! note "Why two different coverage systems?"
+    
+    LLVM's source-based coverage provides more accurate instrumentation than the
+    gcov-compatible mode, which attempts to emulate gcov behavior but has known
+    reliability issues. The source-based approach offers better precision
+    for complex codebases.
+
+#### Generating coverage reports
+
+Once you have produced `coverage.info` using either method, filter the data to
+include only *Palace* source code:
+
+```sh
+lcov --extract coverage.info \
+  '*/palace/drivers/*' \
+  '*/palace/fem/*' \
+  '*/palace/linalg/*' \
+  '*/palace/models/*' \
+  '*/palace/utils/*' \
+  '*/test/unit/*' \
+  --output-file coverage_filtered.info
+```
+
+Generate an HTML report for visualization:
+
+```sh
+genhtml coverage_filtered.info --output-directory coverage_html
+```
+
+Open `coverage_html/index.html` in your web browser to explore the interactive
+coverage report, which shows line-by-line coverage statistics and identifies
+untested code paths.
 
 ## Regression tests
 

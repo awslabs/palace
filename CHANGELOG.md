@@ -24,6 +24,12 @@ The format of this changelog is based on
     [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
     additional information. [PR
     449](https://github.com/awslabs/palace/pull/449).
+  - Added support for more granular tests and for computing the testing coverage.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/developer/testing/) for
+    additional information. [PR
+    398](https://github.com/awslabs/palace/pull/398), [PR
+    480](https://github.com/awslabs/palace/pull/480).
 
 #### Interface Changes
 

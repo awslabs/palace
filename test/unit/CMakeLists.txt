@@ -9,7 +9,7 @@
 Include(FetchContent)
 FetchContent_Declare(Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.4.0
+  GIT_TAG        v3.8.1
 )
 FetchContent_MakeAvailable(Catch2)
 
@@ -27,7 +27,14 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
-target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
+# Below we link using WHOLE_ARCHIVE with coverage, otherwise LLVM won't report coverage of
+# all palace files. The actual linker commands to do this by hand is delicate. (see
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_LINK_LIBRARY_USING_FEATURE.html#loading-a-whole-static-library)
+target_link_libraries(unit-tests 
+  PRIVATE Catch2::Catch2
+          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
+          $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
+          )
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
