@@ -84,12 +84,14 @@ the periodic electric field and  ``\bm{k}_p`` is the user-specified Bloch waveve
 The resulting equation is
 
 ```math
+\begin{aligned}
 \nabla\times\mu_r^{-1}\nabla\times\bm{E}_p
-    -i\bm{k}_p\times\mu_r^{-1}\nabla\times\bm{E}_p
-    -i\nabla\times(\mu_r^{-1}\bm{k}_p\times\bm{E}_p)
-    -\bm{k}_p\times\mu_r^{-1}\bm{k}_p\times\bm{E}_p
-    + i\omega\sigma\bm{E}_p
-    - \omega^2\varepsilon_r\bm{E}_p = 0 \,,\; \bm{x}\in\Omega
+- i\bm{k}_p\times\mu_r^{-1}\nabla\times\bm{E}_p
+- i\nabla\times(\mu_r^{-1}\bm{k}_p\times\bm{E}_p) & \\
+- \bm{k}_p\times\mu_r^{-1}\bm{k}_p\times\bm{E}_p
++ i\omega\sigma\bm{E}_p
+- \omega^2\varepsilon_r\bm{E}_p &= 0 \,,\; \bm{x}\in\Omega
+\end{aligned}
 ```
 
 and given the electric field solution, the time-harmonic magnetic flux density can be calculated
