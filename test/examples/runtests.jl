@@ -139,8 +139,7 @@ if "cylinder/floquet" in cases
     # The phase of the eigenmodes is not stable across architectures, so we
     # compare the magnitudes.
     function test_probe_magnitude(new_data, ref_data)
-        num_probes = Int((size(new_data)[2] - 1) / 6)
-        num_modes = min(size(new_data)[1], size(ref_data)[1])
+        num_probes = Int((size(new_data)[2] - 1) / 6) # 6 components per probe, 1 column with the mode number
         for i = 0:(num_probes - 1)
             # Compute magnitudes.
             Ex_new = new_data[:, 2 + i * 6] + 1im * new_data[:, 3 + i * 6]
@@ -154,7 +153,7 @@ if "cylinder/floquet" in cases
             E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
 
             # Test magnitudes with relative tolerance.
-            @test E_mag_new[1:num_modes] ≈ E_mag_ref[1:num_modes] rtol=reltol
+            @test E_mag_new ≈ E_mag_ref rtol=reltol
         end
         return true
     end
