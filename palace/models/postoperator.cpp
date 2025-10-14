@@ -414,7 +414,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -439,7 +439,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indicator)
 {
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -519,7 +519,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
 
   // Create output directory if it doesn't exist.
   if (Mpi::Root(fem_op->GetComm()))
@@ -640,7 +640,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
 {
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
