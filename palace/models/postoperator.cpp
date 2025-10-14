@@ -447,7 +447,8 @@ void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, 
 
 template <ProblemType solver_t>
 template <typename T>
-void PostOperator<solver_t>::NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A)
+void PostOperator<solver_t>::NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V,
+                                                            T &A)
 {
   if (E)
   {
@@ -479,7 +480,6 @@ void PostOperator<solver_t>::NondimensionalizeGridFunctions(bool imag, T &E, T &
   }
 }
 
-
 template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
@@ -493,7 +493,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
-  //DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
+  DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -503,7 +503,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
-  //NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
+  NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -606,7 +606,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
-  //DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
+  DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -705,7 +705,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
-  //NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A); // test??
+  NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
