@@ -177,45 +177,52 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   if constexpr (HasEGridFunction<solver_t>())
   {
     // Electric Energy Density.
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
-        *E, fem_op->GetMaterialOp());
+        *E, fem_op->GetMaterialOp(), scaling);
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
+        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
       Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
+          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     }
   }
 
   if constexpr (HasBGridFunction<solver_t>())
   {
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
     // Magnetic Energy Density.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
-        *B, fem_op->GetMaterialOp());
+        *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
     B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(),
-                                                                fem_op->GetMaterialOp());
+    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+        B->Real(), fem_op->GetMaterialOp(), scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(),
-                                                                  fem_op->GetMaterialOp());
+      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+          B->Imag(), fem_op->GetMaterialOp(), scaling);
     }
   }
 
   if constexpr (HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
     // Poynting Vector.
-    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp());
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
+                                                    scaling);
   }
 }
 
@@ -443,6 +450,22 @@ void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, 
     const double scaling = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
     V->Real() *= scaling;
   }
+  std::cout << "scaling Field H [A/m]: "
+            << units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) << "\n";
+  std::cout << "scaling Field E [V/m]: "
+            << units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) << "\n";
+  std::cout << "scaling Field B [Wb/m2]: "
+            << units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) << "\n";
+  std::cout << "scaling Field D [C/m2]: "
+            << units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) << "\n";
+  std::cout << "scaling D/E (eps0): "
+            << units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                   units.Dimensionalize<Units::ValueType::FIELD_E>(1.0)
+            << "\n";
+  std::cout << "scaling B/H (mu0): "
+            << units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) /
+                   units.Dimensionalize<Units::ValueType::FIELD_H>(1.0)
+            << "\n";
 }
 
 template <ProblemType solver_t>

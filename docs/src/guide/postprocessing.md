@@ -105,17 +105,17 @@ ParaView is recommended to visualize large simulations in parallel. The grid fun
 format can be useful to embed visualizations in webpages with its
 [Javascript version](https://github.com/GLVis/glvis-js/).
 
-All fields are written out as nondimensionalized quantities. The specific quantities
-available varies by [simulation type](problem.md#Problem-Types), but the variable names for
+All fields are written out in SI units. The specific quantities available varies by
+[simulation type](problem.md#Problem-Types), but the variable names and corresponding units for
 various possible postprocessed scalar and vector are:
 
-  - Electric field: `E`, `E_real`, and `E_imag`
-  - Magnetic flux density: `B`, `B_real`, and `B_imag`
-  - Electric potential: `V`
-  - Magnetic vector potential : `A`, `A_real`, and `A_imag`
-  - Electric energy density : `U_e`
-  - Magnetic energy density : `U_m`
-  - Poynting vector: `S`
+  - Electric field: `E`, `E_real`, and `E_imag` (V/m)
+  - Magnetic flux density: `B`, `B_real`, and `B_imag` (Wb/m²)
+  - Electric potential: `V` (V)
+  - Magnetic vector potential : `A`, `A_real`, and `A_imag` (A)
+  - Electric energy density : `U_e` (J/m³)
+  - Magnetic energy density : `U_m` (J/m³)
+  - Poynting vector: `S` (W/m²)
 
 Also, at the final step of the simulation the following element-wise quantities are written
 for visualization:
@@ -138,8 +138,8 @@ collection is only available for the ParaView output format.
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:
 
-  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag`
-  - Surface current density: `J_s`, `J_s_real`, `J_s_imag`
+  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (Wb/m²)
+  - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
 
 ## Adaptive mesh refinement
 
