@@ -13,6 +13,14 @@
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
+#include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
+#include "utils/communication.hpp"
+#include "utils/iodata.hpp"
+#include <chrono>
+#include <mfem.hpp>
+
+
 using namespace palace;
 using json = nlohmann::json;
 // Helpers
@@ -482,4 +490,45 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
   }
+}
+
+TEST_CASE("ParaView Save Performance", "[ParaView][Serial][Parallel][GPU]")
+{
+  // Create a simple test mesh
+  constexpr int dim = 3;
+  constexpr int ne = 100; // Number of elements per dimension
+  auto mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(ne, ne, ne, mfem::Element::HEXAHEDRON));
+
+  auto comm = Mpi::World();
+  
+  // Create parallel mesh
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, *mesh);
+  
+  // Create finite element space
+  auto fec = std::make_unique<mfem::H1_FECollection>(1, dim);
+  auto fespace = std::make_unique<mfem::ParFiniteElementSpace>(pmesh.get(), fec.get());
+  
+  // Benchmark ParaView save
+  auto start = std::chrono::high_resolution_clock::now();
+  
+  mfem::ParaViewDataCollection test_paraview("perf_test", pmesh.get());
+  
+  mfem::ParGridFunction test_field(fespace.get());
+  test_field = 1.0;
+  test_paraview.RegisterField("test", &test_field);
+  
+  test_paraview.SetCycle(0);
+  test_paraview.SetTime(0.0);
+  test_paraview.Save();
+  
+  auto end = std::chrono::high_resolution_clock::now();
+  auto save_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();  
+  if (Mpi::Root(comm))
+  {
+    std::cout << "ParaView save benchmark: " << save_time << " ms" << std::endl;
+  }
+  
+  // Basic assertion - save should complete in reasonable time (< 10 seconds)
+  CHECK(save_time < 10000);
 }
