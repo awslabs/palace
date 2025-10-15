@@ -111,6 +111,11 @@ ExternalProject_Add(hypre
   PREFIX            ${CMAKE_BINARY_DIR}/extern/hypre-cmake
   SOURCE_SUBDIR     src
   UPDATE_COMMAND    ""
+  # This is hypre PR 1380 (https://github.com/hypre-space/hypre/pull/1380).
+  # We need it for a side-effects: if fixes a problem in BLT, where BLT uses obsolete cuda
+  # libraries (-lcuda_runtime instead of -lcudart).
+  # We can safely remove this once PR 1380 is merged in hypre.
+  PATCH_COMMAND     git apply ${CMAKE_SOURCE_DIR}/extern/patch/hypre/cuda_runtime_fix.patch
   CMAKE_ARGS        ${HYPRE_OPTIONS}
   TEST_COMMAND      ""
 )
