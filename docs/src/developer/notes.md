@@ -125,6 +125,62 @@ Disk IO                         // < Disk read/write time for loading the mesh f
 Total                           // < Total simulation time
 ```
 
+## Profiling *Palace* on CPUs
+
+A typical *Palace* simulation spends most of its time in libCEED kernels, which, in turn, executed `libsxmm` code on CPUs. Libsxmm generates code just-in-time to ensure it is the most performant on the given architecture and for the given problem. This code generation confuses most profilers. Luckily, [libsxmm](https://libxsmm.readthedocs.io/en/latest/libxsmm_prof/) can integrate with the VTune APIs to enable profiling of jitted functions as well.
+
+!!! note "Using a different libCEED backend?"
+    
+    The following notes assume that you are using the `libxsmm` backend for libCEED. If this is not the case and you have a preference for other profilers, such as [perf](https://perfwiki.github.io/main/) or [HPCToolkit](https://hpctoolkit.org/), you can consider using them as well.
+
+### Requirements
+
+ 1. Verify your system meets the [VTune system requirements](https://www.intel.com/content/www/us/en/developer/articles/system-requirements/vtune-profiler/2025-1.html)
+ 2. [Install VTune Profiler](https://www.intel.com/content/www/us/en/developer/tools/oneapi/vtune-profiler-download.html)
+ 3. Set VTune's root directory during Palace build (see below)
+ 4. Use `RelWithDebInfo` build type for optimal profiling results
+
+### Building *Palace* with VTune Support
+
+From the *Palace* root directory:
+
+```bash
+$ source /path/to/vtune-vars.sh # Replace with your VTune installation path
+$ mkdir build && cd build
+$ cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo
+$ make -j $(nproc)
+```
+
+### Running a Basic Profile
+
+A flamegraph can be created using either:
+
+  - The VTune graphical user interface
+  - The command line interface
+
+Follow [Intel's official instructions](https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-2/launch.html) for detailed usage information.
+
+Below is a sample flamegraph resulted from profiling the rings example located at [`/examples/rings/rings.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings.json) with polynomial order P=6 (`Solver["Order"]: 6`).
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/profiling/vtune-flamegraph.png" width="100%" />
+</p><br/>
+```
+
+**Note:** Set `Verbose: 0` in the JSON file to reduce terminal output. For profiling, use the binary executable (`build/bin/palace-*.bin`) rather than the `build/bin/palace` wrapper script.
+
+For [MPI profiling](https://www.intel.com/content/www/us/en/docs/vtune-profiler/cookbook/2023-0/profiling-mpi-applications.html) with multiple processes:
+
+```bash
+# Run with 10 MPI processes
+$ cd /path/to/palace/examples/rings
+$ mpirun -n 10 -gtool "vtune -collect hpc-performance --app-working-dir=$(pwd) -result-dir $(pwd)/vtune-mpi:0-9" /path/to/palace/build/bin/palace-x86_64.bin rings.json
+
+# Open the results from VTune GUI
+$ vtune-gui vtune-mpi.*
+```
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the
