@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "8fb8990bf235439c90f0e041fb078c151857c1de" CACHE STRING
+  "21845bffdf74f74370707f2d174b276454646774" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
