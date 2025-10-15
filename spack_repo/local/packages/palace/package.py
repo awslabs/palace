@@ -132,7 +132,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.14.0")  # MFEM 4.8 is incompatible with hypre v3+
-    depends_on("hypre@3:")
+    depends_on("hypre@3:", when="@0.14.1:")
     depends_on("hypre~complex")
     depends_on("hypre+shared", when="+shared")
     depends_on("hypre~shared", when="~shared")
@@ -142,6 +142,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~openmp", when="~openmp")
     depends_on("hypre~cuda", when="~cuda")
     depends_on("hypre~rocm", when="~rocm")
+
+    with when("hypre@3:"):
+        depends_on("fortran", type="build")
 
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
