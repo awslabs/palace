@@ -140,6 +140,7 @@ well as:
 
   - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (Wb/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
+  - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
 
 ## Adaptive mesh refinement
 

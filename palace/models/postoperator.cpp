@@ -96,11 +96,12 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   // Add wave port boundary mode postprocessing, if available.
   if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
   {
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
       auto ret = port_E0.emplace(idx, WavePortFieldData());
-      ret.first->second.E0r = data.GetModeFieldCoefficientReal();
-      ret.first->second.E0i = data.GetModeFieldCoefficientImag();
+      ret.first->second.E0r = data.GetModeFieldCoefficientReal(scaling);
+      ret.first->second.E0i = data.GetModeFieldCoefficientImag(scaling);
     }
   }
 
@@ -450,22 +451,6 @@ void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, 
     const double scaling = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
     V->Real() *= scaling;
   }
-  std::cout << "scaling Field H [A/m]: "
-            << units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) << "\n";
-  std::cout << "scaling Field E [V/m]: "
-            << units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) << "\n";
-  std::cout << "scaling Field B [Wb/m2]: "
-            << units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) << "\n";
-  std::cout << "scaling Field D [C/m2]: "
-            << units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) << "\n";
-  std::cout << "scaling D/E (eps0): "
-            << units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
-                   units.Dimensionalize<Units::ValueType::FIELD_E>(1.0)
-            << "\n";
-  std::cout << "scaling B/H (mu0): "
-            << units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) /
-                   units.Dimensionalize<Units::ValueType::FIELD_H>(1.0)
-            << "\n";
 }
 
 template <ProblemType solver_t>

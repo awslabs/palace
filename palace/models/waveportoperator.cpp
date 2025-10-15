@@ -326,13 +326,15 @@ private:
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
   mfem::IsoparametricTransformation T_loc;
+  const double scaling;
 
 public:
   BdrSubmeshEVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const mfem::ParSubMesh &submesh,
-                               const std::unordered_map<int, int> &submesh_parent_elems)
+                               const std::unordered_map<int, int> &submesh_parent_elems,
+                               const double scaling = 1.0)
     : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), submesh(submesh),
-      submesh_parent_elems(submesh_parent_elems)
+      submesh_parent_elems(submesh_parent_elems), scaling(scaling)
   {
   }
 
@@ -390,6 +392,7 @@ public:
       auto Vn = En.Imag().GetValue(*T_submesh, ip);
       V.Add(-Vn, normal);
     }
+    V *= scaling;
   }
 };
 
@@ -957,20 +960,22 @@ WavePortData::GetModeExcitationCoefficientImag() const
       omega0);
 }
 
-std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientReal() const
+std::unique_ptr<mfem::VectorCoefficient>
+WavePortData::GetModeFieldCoefficientReal(const double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::REAL>>>(
-      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems, scaling);
 }
 
-std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientImag() const
+std::unique_ptr<mfem::VectorCoefficient>
+WavePortData::GetModeFieldCoefficientImag(const double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::IMAG>>>(
-      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems, scaling);
 }
 
 double WavePortData::GetExcitationPower() const
