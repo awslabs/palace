@@ -7,6 +7,15 @@
 
 # Force build order
 set(HYPRE_DEPENDENCIES)
+if(PALACE_WITH_UMPIRE)
+  list(APPEND HYPRE_DEPENDENCIES umpire)
+  list(APPEND HYPRE_OPTIONS
+    "--with-umpire"
+    "--with-umpire-include=${CMAKE_INSTALL_PREFIX}/include"
+    "--with-umpire-lib-dirs=${CMAKE_INSTALL_PREFIX}/lib"
+    "--with-umpire-libs=umpire"
+  )
+endif()
 
 # Hypre does not add OpenMP flags
 set(HYPRE_CFLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${BUILD_TYPE_UPPER}}")

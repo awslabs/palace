@@ -1,0 +1,53 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+#
+# Build Umpire.
+#
+
+set(UMPIRE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
+list(APPEND UMPIRE_OPTIONS
+  "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+  "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+  "-DENABLE_C=ON"
+  "-DENABLE_FORTRAN=ON"
+)
+
+# Configure GPU support.
+if(PALACE_WITH_CUDA)
+  list(APPEND UMPIRE_OPTIONS
+    "-DENABLE_CUDA=ON"
+    "-DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
+    "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
+    "-DCUDA_TOOLKIT_ROOT_DIR=${CUDAToolkit_LIBRARY_ROOT}"
+  )
+elseif(PALACE_WITH_HIP)
+  list(APPEND UMPIRE_OPTIONS
+    "-DENABLE_HIP=ON"
+    "-DCMAKE_HIP_COMPILER=${CMAKE_HIP_COMPILER}"
+    "-DCMAKE_HIP_ARCHITECTURES=${CMAKE_HIP_ARCHITECTURES}"
+  )
+endif()
+
+# Fix CUDA compatibility in BLT.
+set(UMPIRE_PATCH_FILES
+  # https://github.com/LLNL/blt/pull/735
+  "${CMAKE_SOURCE_DIR}/extern/patch/umpire/cuda_compatibility.diff"
+)
+
+string(REPLACE ";" "; " UMPIRE_OPTIONS_PRINT "${UMPIRE_OPTIONS}")
+message(STATUS "UMPIRE_OPTIONS: ${UMPIRE_OPTIONS_PRINT}")
+
+include(ExternalProject)
+ExternalProject_Add(umpire
+  GIT_REPOSITORY    ${EXTERN_UMPIRE_URL}
+  GIT_TAG           ${EXTERN_UMPIRE_GIT_TAG}
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/umpire
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/umpire-build
+  INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/umpire-cmake
+  UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply ${UMPIRE_PATCH_FILES}
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${UMPIRE_OPTIONS}"
+  TEST_COMMAND      ""
+)

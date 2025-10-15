@@ -1,0 +1,17 @@
+diff --git a/cmake/thirdparty/BLTSetupCUDA.cmake b/cmake/thirdparty/BLTSetupCUDA.cmake
+index f22fbc9..e7f0902 100644
+--- a/blt/cmake/thirdparty/BLTSetupCUDA.cmake
++++ b/blt/cmake/thirdparty/BLTSetupCUDA.cmake
+@@ -7,6 +7,12 @@
+ # Sanity Checks
+ ################################
+ 
++# Use legacy FindCUDA. This was deprecated in 3.10 and removed in 3.27.
++# TODO: Do not rely on this setting and use the new CUDA finding mechanism instead
++if(POLICY CMP0146)
++  cmake_policy(SET CMP0146 OLD)
++endif()
++
+ # Rare case of two flags being incompatible
+ if (DEFINED CMAKE_SKIP_BUILD_RPATH AND DEFINED CUDA_LINK_WITH_NVCC)
+     if (NOT CMAKE_SKIP_BUILD_RPATH AND CUDA_LINK_WITH_NVCC)
