@@ -29,14 +29,29 @@
           "Index": 1,
           "Attributes": [1]
         }
-      ]
+      ],
+      "Probe":
+      [
+        {
+          "Index": 1,
+          "Center": [0.0, 0.0, 1.0]
+        },
+        {
+          "Index": 2,
+          "Center": [0.0, 0.0, 3.0]
+        },
+        {
+          "Index": 3,
+          "Center": [0.0, 0.0, 5.0]
+        },
+      ],
     }
   },
   "Boundaries":
   {
     "Periodic":
     {
-      "FloquetWaveVector": [0.0, 0.0, 0.2],
+      "FloquetWaveVector": [0.0, 0.0, 0.4],
       "BoundaryPairs":
       [
         {
@@ -58,7 +73,7 @@
     {
       "N": 15,
       "Tol": 1.0e-8,
-      "Target": 2.0,  // TE f111 ~ 2.9 GHz
+      "Target": 2.0,
       "Save": 15
     },
     "Linear":
@@ -66,7 +81,9 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 200
+      "MaxIts": 200,
+      "MGMaxLevels": 1, // Can be faster for small meshes, but much slower for large meshes
+      "ComplexCoarseSolve": true // Can be faster, but requires more memory
     }
   }
 }

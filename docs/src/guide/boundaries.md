@@ -77,6 +77,13 @@ and requires that the surface meshes on the donor and receiver boundaries be ide
 translation or rotation. Periodicity in *Palace* is also supported through meshes generated
 incorporating periodicity as part of the meshing process.
 
+*Palace* also supports Floquet periodic boundary conditions, where a phase shift is imposed
+between the fields on the donor and receiver boundaries. The phase shift is
+``e^{-i \bm{k}_p \cdot (\bm{x}_{\textrm{receiver}}-\bm{x}_{\textrm{donor}})}``, where
+``\bm{k}_p`` is the Floquet wave vector and ``\bm{x}`` is the position vector. See
+[Floquet periodic boundary conditions](../reference.md#Floquet-periodic-boundary-conditions)
+for implementation details.
+
 ## Lumped and wave port excitation
 
   - [`config["Boundaries"]["LumpedPort"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D) :
