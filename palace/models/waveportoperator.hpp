@@ -100,8 +100,10 @@ public:
   std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientReal() const;
   std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientImag() const;
 
-  std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientReal() const;
-  std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientImag() const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeFieldCoefficientReal(const double scaling = 1.0) const;
+  std::unique_ptr<mfem::VectorCoefficient>
+  GetModeFieldCoefficientImag(const double scaling = 1.0) const;
 
   std::complex<double> GetCharacteristicImpedance() const
   {
