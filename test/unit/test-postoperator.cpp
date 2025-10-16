@@ -565,13 +565,11 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   // A [A/m].
   auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
   // Ue = 1/2 ε_0 Eᴴ E.
-  auto scaling_Ue =
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
+                    iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
   // U_m = 1/2 μ⁻¹ Bᴴ B.
-  auto scaling_Um =
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) *
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) *
+                    iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
   // S = Re{E x μ⁻¹B⋆}.
   auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
                    iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 *
