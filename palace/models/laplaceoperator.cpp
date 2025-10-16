@@ -124,13 +124,13 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
   return dbc_bcs;
 }
 
-std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &iodata)
+std::map<int, std::pair<mfem::Array<int>, double>> LaplaceOperator::ConstructSources(const IoData &iodata)
 {
   // Construct mapping from terminal index to list of associated attributes.
-  std::map<int, mfem::Array<int>> attr_lists;
+  std::map<int, std::pair<mfem::Array<int>, double>> attr_lists_voltage;
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
-    mfem::Array<int> &attr_list = attr_lists[idx];
+    mfem::Array<int> &attr_list = attr_lists_voltage[idx].first;
     attr_list.Reserve(
         static_cast<int>(data.elements.size()));  // Average one attribute per element
     for (const auto &elem : data.elements)
@@ -140,8 +140,9 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &
         attr_list.Append(attr);
       }
     }
+    attr_lists_voltage[idx].second = data.voltage;
   }
-  return attr_lists;
+  return attr_lists_voltage;
 }
 
 namespace
@@ -236,9 +237,11 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   // Get a marker of all boundary attributes with the given source surface index.
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
-  mfem::ConstantCoefficient one(1.0);
-  x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
+  mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx].first);
+  //mfem::ConstantCoefficient one(1.0); // modify this to allow user to set terminal voltage??
+  std::cout << "laplaceoperator setting voltage for idx: " << idx << " to " << source_attr_lists[idx].second << "\n";
+  mfem::ConstantCoefficient voltage(source_attr_lists[idx].second);
+  x.ProjectBdrCoefficient(voltage, source_marker);  // Values are only correct on master
 
   // Eliminate the essential BC to get the RHS vector.
   X.SetSize(GetH1Space().GetTrueVSize());

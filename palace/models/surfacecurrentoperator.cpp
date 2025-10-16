@@ -32,12 +32,17 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
         break;
     }
   }
+
+  // Get the current.
+  current = data.current;
 }
 
 double SurfaceCurrentData::GetExcitationCurrent() const
 {
   // Ideal unit current source for each index.
-  return 1.0;
+  //return 1.0;
+  std::cout << "SurfaceCurrent GetExcitationCurrent: " << current << "\n";
+  return current;
 }
 
 SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
@@ -103,8 +108,8 @@ void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
     {
       for (auto attr : elem->GetAttrList())
       {
-        Mpi::Print(" {:d}: Index = {:d}, n = ({:+.1f})\n", attr, idx,
-                   fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
+        Mpi::Print(" {:d}: Index = {:d}, n = ({:+.1f}), I = {:.3e} A\n", attr, idx,
+                   fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","), iodata.units.Dimensionalize<Units::ValueType::CURRENT>(data.current));
       }
     }
   }
@@ -156,7 +161,8 @@ void SurfaceCurrentOperator::AddExcitationBdrCoefficients(const SurfaceCurrentDa
   // all elements of the current source in parallel.
   for (const auto &elem : data.elems)
   {
-    const double Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size());
+    //const double Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size()); // modify this to allow user to set current (in Amps??)
+    const double Jinc = data.current / (elem->GetGeometryWidth() * data.elems.size());
     fb.AddCoefficient(elem->GetModeCoefficient(-Jinc));
   }
 }

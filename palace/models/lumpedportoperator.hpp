@@ -44,6 +44,7 @@ public:
   double R, L, C;
   int excitation;
   bool active;
+  double power;
 
 private:
   // Linear forms for postprocessing integrated quantities on the port.
