@@ -178,6 +178,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   if constexpr (HasEGridFunction<solver_t>())
   {
     // Electric Energy Density.
+    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
@@ -185,6 +186,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
 
@@ -201,11 +203,13 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
     // Magnetic Energy Density.
+    // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
         *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
     B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+    // J_s = n x H = n x μ⁻¹ B.
     J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
         B->Real(), fem_op->GetMaterialOp(), scaling);
 
@@ -220,6 +224,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   if constexpr (HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
     // Poynting Vector.
+    // S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
     S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
@@ -372,9 +377,6 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 }
 
-namespace
-{
-
 template <typename T>
 void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 {
@@ -417,11 +419,8 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
   }
 }
 
-}  // namespace
-
-template <ProblemType solver_t>
 template <typename T>
-void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A)
+void DimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A)
 {
   if (E)
   {
@@ -453,10 +452,8 @@ void PostOperator<solver_t>::DimensionalizeGridFunctions(bool imag, T &E, T &B, 
   }
 }
 
-template <ProblemType solver_t>
 template <typename T>
-void PostOperator<solver_t>::NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V,
-                                                            T &A)
+void NondimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A)
 {
   if (E)
   {
@@ -501,7 +498,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
-  DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
+  DimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -511,7 +508,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
-  NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -614,7 +611,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
                      V, A);
-  DimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
+  DimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -713,7 +710,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
                      E, B, V, A);
-  NondimensionalizeGridFunctions(HasComplexGridFunction<solver_t>(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
