@@ -105,7 +105,7 @@ ParaView is recommended to visualize large simulations in parallel. The grid fun
 format can be useful to embed visualizations in webpages with its
 [Javascript version](https://github.com/GLVis/glvis-js/).
 
-All fields are written out in SI units. The specific quantities available varies by
+All fields are written out in SI units. The specific quantities available vary by
 [simulation type](problem.md#Problem-Types), but the variable names and corresponding units for
 various possible postprocessed scalar and vector are:
 
