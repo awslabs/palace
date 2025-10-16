@@ -1421,4 +1421,16 @@ PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRI
 template auto
 PostOperator<ProblemType::DRIVEN>::InitializeParaviewDataCollection(int ex_idx) -> void;
 
+template void ScaleGridFunctions<std::unique_ptr<GridFunction>>(
+    double, int, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
+    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
+
+template void DimensionalizeGridFunctions<std::unique_ptr<GridFunction>>(
+    Units &, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
+    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
+
+template void NondimensionalizeGridFunctions<std::unique_ptr<GridFunction>>(
+    Units &, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
+    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
+
 }  // namespace palace
