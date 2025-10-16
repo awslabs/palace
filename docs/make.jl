@@ -48,7 +48,12 @@ makedocs(
             "examples/coaxial.md",
             "examples/cpw.md"
         ],
-        "For Developers" => Any["developer/notes.md", "developer/testing.md"],
+        "For Developers" => Any[
+            "developer/notes.md",
+            "developer/testing.md",
+            "developer/tutorial_add_new_unit_test.md",
+            "developer/tutorial_gpu_profiling.md"
+        ],
         "reference.md"
     ]
 )
