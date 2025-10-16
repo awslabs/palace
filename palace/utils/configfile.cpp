@@ -1087,7 +1087,6 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     data.Cs = it->value("Cs", data.Cs);
 
     data.excitation = ParsePortExcitation(it, data.excitation);
-    data.power = it->value("Power", data.power); //?
     data.active = it->value("Active", data.active);
     if (it->find("Attributes") != it->end())
     {
@@ -1155,7 +1154,6 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
       std::cout << "Ls: " << data.Ls << '\n';
       std::cout << "Cs: " << data.Cs << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Power: " << data.power << '\n'; //?
       std::cout << "Active: " << data.active << '\n';
       for (const auto &elem : data.elements)
       {
@@ -1274,7 +1272,6 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.eigen_solver = it->value("SolverType", data.eigen_solver);
 
     data.excitation = ParsePortExcitation(it, data.excitation);
-    data.power = it->value("Power", data.power);
     data.active = it->value("Active", data.active);
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
@@ -1288,7 +1285,6 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("Offset");
     it->erase("SolverType");
     it->erase("Excitation");
-    it->erase("Power");
     it->erase("Active");
     it->erase("MaxIts");
     it->erase("KSPTol");
@@ -1307,7 +1303,6 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "Offset: " << data.d_offset << '\n';
       std::cout << "SolverType: " << data.eigen_solver << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Power: " << data.power << '\n';
       std::cout << "Active: " << data.active << '\n';
       std::cout << "MaxIts: " << data.ksp_max_its << '\n';
       std::cout << "KSPTol: " << data.ksp_tol << '\n';
@@ -1366,7 +1361,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
                                           << elem_it->dump(2));
       }
     }
-    data.current = it->value("Current", data.current);
 
     // Cleanup
     it->erase("Index");
@@ -1374,7 +1368,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     it->erase("Direction");
     it->erase("Elements");
     it->erase("CoordinateSystem");
-    it->erase("Current");
     MFEM_VERIFY(
         it->empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
@@ -1390,7 +1383,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
         std::cout << "Direction: " << elem.direction << '\n';
         std::cout << "CoordinateSystem: " << elem.coordinate_system << '\n';
       }
-      std::cout << "Current: " << data.current << '\n';
     }
   }
 }

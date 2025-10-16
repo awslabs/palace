@@ -283,7 +283,7 @@ ComplexHypreParMatrix GetSystemMatrixB(const mfem::HypreParMatrix *Bttr,
 }
 
 void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
-               mfem::LinearForm &sr, mfem::LinearForm &si, double power = 1.0)
+               mfem::LinearForm &sr, mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the direction of propagation). The n x H
@@ -297,7 +297,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
       {sr * S0t.Real(), si * S0t.Real()},
       {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
   Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
-  auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1]))) * power; // modify this to allow user to set wave port power?
+  auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
   ComplexVector::AXPBY(scale, E0t.Real(), E0t.Imag(), 0.0, E0t.Real(), E0t.Imag());
   ComplexVector::AXPBY(scale, E0n.Real(), E0n.Imag(), 0.0, E0n.Real(), E0n.Imag());
   ComplexVector::AXPBY(scale, sr, si, 0.0, sr, si);
@@ -525,7 +525,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op), excitation(data.excitation), active(data.active), power(data.power)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
@@ -936,7 +936,7 @@ void WavePortData::Initialize(double omega)
       port_si->Assemble();
       port_si->UseDevice(true);
     }
-    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si, power);
+    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
 }
 
@@ -981,10 +981,8 @@ WavePortData::GetModeFieldCoefficientImag(const double scaling) const
 double WavePortData::GetExcitationPower() const
 {
   // The computed port modes are normalized such that the power integrated over the port is
-  // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.  // ????
-  //return HasExcitation() ? 1.0 : 0.0;
-  std::cout << "waveportdata getexcitationpower: " << power << "\n";
-  return HasExcitation() ? power : 0.0; //????
+  // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
@@ -1201,7 +1199,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     }
     for (auto attr : data.GetAttrList())
     {
-      to(" {:d}: Index = {:d}, P = {:.3e} W\n", attr, idx, iodata.units.Dimensionalize<Units::ValueType::POWER>(data.power));
+      to(" {:d}: Index = {:d}\n", attr, idx);
     }
   }
   if (buf.size() > 0)

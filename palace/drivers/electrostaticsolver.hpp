@@ -34,7 +34,7 @@ class ElectrostaticSolver : public BaseSolver
 {
 private:
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
-                            const std::map<int, std::pair<mfem::Array<int>, double>> &terminal_sources,
+                            const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 
   std::pair<ErrorIndicator, long long int>
