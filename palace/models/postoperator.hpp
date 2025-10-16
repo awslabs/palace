@@ -70,6 +70,18 @@ constexpr bool HasBGridFunction()
   return solver_t != ProblemType::ELECTROSTATIC;
 }
 
+// Scale gridfunctions after redimensionalizing the mesh.
+template <typename T>
+void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A);
+
+// Scale gridfunctions from non-dimensional to SI units.
+template <typename T>
+void DimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A);
+
+// Scale gridfunctions from SI units to non-dimensional.
+template <typename T>
+void NondimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A);
+
 //
 // A class to handle solution postprocessing for all solvers.
 //
@@ -322,14 +334,6 @@ protected:
       A->Real().ExchangeFaceNbrData();
     }
   }
-
-  // Scale gridfunctions from non-dimensional to SI units.
-  template <typename T>
-  void DimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A);
-
-  // Scale gridfunctions from SI units to non-dimensional.
-  template <typename T>
-  void NondimensionalizeGridFunctions(bool imag, T &E, T &B, T &V, T &A);
 
 public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
