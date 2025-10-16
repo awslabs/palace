@@ -59,8 +59,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplace_op.GetSources())
   {
-    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, n_step,
-               idx, Timer::Duration(Timer::Now() - t0).count());
+    Mpi::Print("\nIt {:d}/{:d}: Index = {:d}, Voltage = {:.3e} V (elapsed time = {:.2e} s)\n", step + 1, n_step,
+               idx, iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(data.second),Timer::Duration(Timer::Now() - t0).count());
 
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
@@ -99,7 +99,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 void ElectrostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::ELECTROSTATIC> &post_op,
-    const std::map<int, mfem::Array<int>> &terminal_sources,
+    const std::map<int, std::pair<mfem::Array<int>, double>> &terminal_sources,
     const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
@@ -184,7 +184,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     for (const auto &[idx, data] : terminal_sources)
     {
       terminal_V.table["i"] << double(idx);
-      terminal_V.table["Vinc"] << iodata.units.Dimensionalize<VT::VOLTAGE>(1.0);
+      terminal_V.table["Vinc"] << iodata.units.Dimensionalize<VT::VOLTAGE>(data.second); // was 1.0
     }
     terminal_V.WriteFullTableTrunc();
   }

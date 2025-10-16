@@ -101,6 +101,8 @@
               { "type": "integer", "minimum": 0 }
             ]
           },
+          "Power": { "type": "number", "exclusiveMinimum": 0.0 },
+          "Voltage": { "type": "number", "exclusiveMinimum": 0.0 },
           "Active": { "type": "boolean" },
           "Elements":
           {
@@ -144,6 +146,7 @@
               { "type": "integer", "minimum": 0 }
             ]
           },
+          "Power": { "type": "number", "exclusiveMinimum": 0.0 },
           "Active": { "type": "boolean" },
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
@@ -193,7 +196,8 @@
                 "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
               }
             }
-          }
+          },
+          "Current": { "type": "number", "exclusiveMinimum": 0.0 }
         }
       }
     },

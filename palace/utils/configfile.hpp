@@ -468,6 +468,10 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
+  // Excitation power. ?? what about terminals? add a voltage data?
+  double power = -1.0; // will default to unit power if not specified
+  double voltage = -1.0; // will default to unit voltage if not specified
+
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
@@ -525,6 +529,9 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
+  // Excitation power.
+  double power = -1.0; // will default to unit power if not specified
+
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
@@ -556,6 +563,9 @@ public:
   // For each surface current source index, each element contains a list of attributes
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};
+
+  // Current.
+  double current = -1.0; // will default to unit current if not specified
 };
 
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>

@@ -34,6 +34,9 @@ public:
   // total source current.
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
+  // current? make it private? needed?
+  double current;
+
 public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
 
