@@ -50,7 +50,6 @@ public:
   std::complex<double> kn0;
   double omega0;
   mfem::Vector port_normal;
-  double power;
 
 private:
   // List of all boundary attributes making up this port boundary.

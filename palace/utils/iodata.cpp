@@ -509,36 +509,6 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
     data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
     data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-    if (data.power > 0.0)
-    {
-      data.power /= units.GetScaleFactor<Units::ValueType::POWER>();
-    }
-    else
-    {
-      data.power = 1.0; // unit power
-    }
-    if (data.voltage > 0.0)
-    {
-      data.voltage /= units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-    }
-    else
-    {
-      data.voltage = 1.0; // unit voltage
-    }
-  }
-
-  // Surface current boundaries.
-  for (auto &[idx, data] : boundaries.current)
-  {
-    if (data.current > 0.0)
-    {
-      data.current /= units.GetScaleFactor<Units::ValueType::CURRENT>();
-    }
-    else
-    {
-      data.current = 1.0; // unit current
-    }
-
   }
 
   // Floquet periodic boundaries.
@@ -551,15 +521,6 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   for (auto &[idx, data] : boundaries.waveport)
   {
     data.d_offset /= units.GetMeshLengthRelativeScale();
-    if (data.power > 0.0)
-    {
-      data.power /= units.GetScaleFactor<Units::ValueType::POWER>();
-    }
-    else
-    {
-      data.power = 1.0; // unit power
-    }
-
   }
 
   // Center coordinates for surface flux.

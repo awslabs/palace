@@ -19,7 +19,7 @@ using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op), excitation(data.excitation), active(data.active), power(data.power)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
   // for the port boundary.
@@ -135,8 +135,7 @@ double LumpedPortData::GetExcitationPower() const
 {
   // The lumped port excitation is normalized such that the power integrated over the port
   // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1.
-  //return HasExcitation() ? 1.0 : 0.0;
-  return HasExcitation() ? power : 0.0; // user-specified power????
+  return HasExcitation() ? 1.0 : 0.0;
 }
 
 double LumpedPortData::GetExcitationVoltage() const
@@ -149,7 +148,7 @@ double LumpedPortData::GetExcitationVoltage() const
     {
       const double Rs = R * GetToSquare(*elem);
       const double E_inc = std::sqrt(
-          Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size())); // multiply by power?!?
+          Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size()));
       V_inc += E_inc * elem->GetGeometryLength() / elems.size();
     }
     return V_inc;
@@ -184,7 +183,7 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     {
       const double Rs = R * GetToSquare(*elem);
       const double Hinc = (std::abs(Rs) > 0.0)
-                              ? power / std::sqrt(Rs * elem->GetGeometryWidth() * // modify this 1.0 if allowing user to set arbitrary port power?
+                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                                 elem->GetGeometryLength() * elems.size())
                               : 0.0;
       fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
@@ -210,7 +209,7 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     for (const auto &elem : elems)
     {
       fb.AddCoefficient(
-          elem->GetModeCoefficient(power / (elem->GetGeometryWidth() * elems.size()))); // modify this 1.0 if allowing user to set arbitrary port power?
+          elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())));
     }
     v = std::make_unique<mfem::LinearForm>(&nd_fespace);
     v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
@@ -418,10 +417,6 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
     {
       to(buf_a, "C = {:.3e} F,", iodata.units.Dimensionalize<VT::CAPACITANCE>(data.C));
     }
-    if (std::abs(data.power) > 0.0)
-    {
-      to(buf_a, "P = {:.3e} W,", iodata.units.Dimensionalize<VT::POWER>(data.power));
-    }
     buf_a.resize(buf_a.size() - 1);  // Remove last ","
     to(buf_a, "\n");
   }
@@ -627,7 +622,7 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     for (const auto &elem : data.elems)
     {
       const double Rs = data.R * data.GetToSquare(*elem);
-      const double Hinc = data.power / std::sqrt(Rs * elem->GetGeometryWidth() * // Modify this to allow the user to set the port power (W?) or voltage (V?)?
+      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                           elem->GetGeometryLength() * data.elems.size());
       fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
     }
