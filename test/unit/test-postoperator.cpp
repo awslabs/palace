@@ -14,6 +14,7 @@
 #include "utils/units.hpp"
 
 using namespace palace;
+using namespace Catch::Matchers;
 using json = nlohmann::json;
 // Helpers
 
@@ -481,5 +482,146 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     post_op.MeasureAndPrintAll(0, E, B, 1.0, 0.0, 0.0, 1);
     check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
+  }
+}
+
+TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
+{
+  // Create iodata.
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+
+  // Create serial mesh.
+  int resolution = 3;
+  double length = 12.2;
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
+                                  mfem::Element::TETRAHEDRON, length, length, length));
+
+  // Create parallel mesh.
+  auto comm = Mpi::World();
+  int size = Mpi::Size(comm);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  Mesh mesh(std::move(par_mesh));
+
+  // Create gridfunctions.
+  int order = 1;
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
+  mfem::ParGridFunction gridfunc_h1(&h1_fespace);
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_fec);
+  mfem::ParGridFunction gridfunc_nd(&nd_fespace);
+
+  mfem::RT_FECollection rt_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace rt_fespace(&mesh.Get(), &rt_fec);
+  mfem::ParGridFunction gridfunc_rt(&rt_fespace);
+
+  std::unique_ptr<GridFunction> E, B, V, A;
+  E = std::make_unique<GridFunction>(nd_fespace, true);
+  B = std::make_unique<GridFunction>(rt_fespace, true);
+  A = std::make_unique<GridFunction>(nd_fespace);
+  V = std::make_unique<GridFunction>(h1_fespace);
+
+  // Create fields, initialize them, and set the corresponding gridfunctions.
+  ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
+  Vector a(rt_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
+  e = std::complex<double>(1.0, 1.0);
+  b = std::complex<double>(1.0, 1.0);
+  a = 1.0;
+  v = 1.0;
+
+  E->Real().SetFromTrueDofs(e.Real());
+  E->Imag().SetFromTrueDofs(e.Imag());
+  B->Real().SetFromTrueDofs(b.Real());
+  B->Imag().SetFromTrueDofs(b.Imag());
+  A->Real().SetFromTrueDofs(a);
+  V->Real().SetFromTrueDofs(v);
+
+  // Create some coefficients.
+  MaterialOperator mat_op(iodata, mesh);
+  std::unique_ptr<mfem::VectorCoefficient> S;
+  std::unique_ptr<mfem::Coefficient> U_e, U_m;
+
+  const double scaling = 1.0;
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
+                                                                                scaling);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
+                                                                                scaling);
+  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
+
+  // Expected scalings.
+  auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
+  // E [V/m].
+  auto scaling_E = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) * mesh_Lc0;
+  // B [Wb/m²].
+  auto scaling_B =
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 * mesh_Lc0;
+  // V [V].
+  auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+  // A [A/m].
+  auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
+  // Ue = 1/2 ε_0 Eᴴ E.
+  auto scaling_Ue =
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  // U_m = 1/2 μ⁻¹ Bᴴ B.
+  auto scaling_Um =
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) *
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+  // S = Re{E x μ⁻¹B⋆}.
+  auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
+                   iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 *
+                   mesh_Lc0;
+  std::vector<double> expected_scaling = {scaling_E,  scaling_E,  scaling_B,
+                                          scaling_B,  scaling_V,  scaling_A,
+                                          scaling_Ue, scaling_Um, scaling_S};
+  auto get_max_values = [&]()
+  {
+    std::vector<double> values;
+    values.push_back(E->Real().Max());
+    values.push_back(E->Imag().Max());
+    values.push_back(B->Real().Max());
+    values.push_back(B->Imag().Max());
+    values.push_back(V->Real().Max());
+    values.push_back(A->Real().Max());
+    gridfunc_h1 = 0.0;
+    gridfunc_h1.ProjectCoefficient(*U_e.get());
+    values.push_back(gridfunc_h1.Max());
+    gridfunc_h1 = 0.0;
+    gridfunc_h1.ProjectCoefficient(*U_m.get());
+    values.push_back(gridfunc_h1.Max());
+    gridfunc_rt = 0.0;
+    gridfunc_rt.ProjectCoefficient(*S.get());
+    values.push_back(gridfunc_rt.Max());
+    return values;
+  };
+
+  // Get max values before dimensionalizing.
+  std::vector<double> values_before = get_max_values();
+
+  // Dimensionalize.
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), true, E, B, V, A);
+  DimensionalizeGridFunctions(iodata.units, true, E, B, V, A);
+  std::vector<double> dim_values = get_max_values();
+  // Check values are as expected.
+  for (size_t i = 0; i < dim_values.size(); i++)
+  {
+    CHECK_THAT(dim_values[i], WithinRel(values_before[i] * expected_scaling[i]));
+  }
+
+  // Nondimensionalize.
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), true, E, B, V, A);
+  NondimensionalizeGridFunctions(iodata.units, true, E, B, V, A);
+  std::vector<double> values_after = get_max_values();
+  // Check values are back to initial values.
+  for (size_t i = 0; i < dim_values.size(); i++)
+  {
+    CHECK_THAT(values_after[i], WithinRel(values_before[i]));
   }
 }
