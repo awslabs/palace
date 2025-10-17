@@ -33,8 +33,6 @@ The format of this changelog is based on
   - Added option to export field solutions as MFEM grid functions to visualize with
     [GLVis](https://glvis.org). Output formats can be specified in `config["Problem"]["OutputFormats"]`.
     [PR 518](https://github.com/awslabs/palace/pull/518).
-  - Changed Paraview and GLVis output fields from nondimensional to SI units
-    [PR 532](https://github.com/awslabs/palace/pull/532).
 
 #### Interface Changes
 
@@ -43,6 +41,8 @@ The format of this changelog is based on
     `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
     vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [PR
     471](https://github.com/awslabs/palace/pull/471).
+  - Changed Paraview and GLVis output fields from nondimensional to SI units
+    [PR 532](https://github.com/awslabs/palace/pull/532).
 
 #### Bug Fixes
 
