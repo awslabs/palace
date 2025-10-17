@@ -345,6 +345,22 @@ public:
   void SetUp(json &domains);
 };
 
+struct CurrentDipoleData
+{
+public:
+  // Current dipole moment vector.
+  std::array<double, 3> moment{{0.0, 0.0, 0.0}};
+
+  // Current dipole center position.
+  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+};
+
+struct CurrentDipoleSourceData : public internal::DataMap<CurrentDipoleData>
+{
+public:
+  void SetUp(json &domains);
+};
+
 struct DomainData
 {
 public:
@@ -353,6 +369,7 @@ public:
 
   // Domain objects.
   DomainMaterialData materials = {};
+  CurrentDipoleSourceData current_dipole = {};
   DomainPostData postpro = {};
 
   void SetUp(json &config);
