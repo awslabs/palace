@@ -7,7 +7,8 @@
 #include <algorithm>
 #include <array>
 #include <vector>
-
+#include "fem/gridfunction.hpp"
+#include "linalg/vector.hpp"
 #include "utils/constants.hpp"
 
 namespace palace
@@ -157,6 +158,44 @@ public:
     return out;
   }
 
+  template <ValueType unit>
+  auto Dimensionalize(const Vector &value) const
+  {
+    auto out = value;
+    out *= GetScaleFactor<unit>();
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Dimensionalize(const ComplexVector &value) const
+  {
+    auto out = value;
+    out *= GetScaleFactor<unit>();
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Dimensionalize(const mfem::ParGridFunction &value) const
+  {
+    auto out = value;
+    out *= GetScaleFactor<unit>();
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Dimensionalize(const GridFunction &value) const
+  {
+    auto out = value;
+    out *= GetScaleFactor<unit>();
+    return out;
+  }
+
+  template <ValueType unit, typename T>
+  void DimensionalizeInPlace(T &value) const
+  {
+    value *= GetScaleFactor<unit>();
+  }
+
   template <ValueType unit, typename T>
   auto Nondimensionalize(T value) const
   {
@@ -179,6 +218,44 @@ public:
     std::transform(out.begin(), out.end(), out.begin(),
                    [this](T v) { return Nondimensionalize<unit>(v); });
     return out;
+  }
+
+  template <ValueType unit>
+  auto Nondimensionalize(const Vector &value) const
+  {
+    auto out = value;
+    out *= (1.0 / GetScaleFactor<unit>());
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Nondimensionalize(const ComplexVector &value) const
+  {
+    auto out = value;
+    out *= (1.0 / GetScaleFactor<unit>());
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Nondimensionalize(const mfem::ParGridFunction &value) const
+  {
+    auto out = value;
+    out *= (1.0 / GetScaleFactor<unit>());
+    return out;
+  }
+
+  template <ValueType unit>
+  auto Nondimensionalize(const GridFunction &value) const
+  {
+    auto out = value;
+    out *= (1.0 / GetScaleFactor<unit>());
+    return out;
+  }
+
+  template <ValueType unit, typename T>
+  void NondimensionalizeInPlace(T &value) const
+  {
+    value *= (1.0 / GetScaleFactor<unit>());
   }
 };
 
