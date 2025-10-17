@@ -55,7 +55,8 @@ arg_configs = [
             "spheres",
             "rings",
             # "transmon", # not included by default because of its cost
-            "antenna",
+            "antenna/antenna_halfwave_dipole",
+            "antenna/antenna_short_dipole",
             "cylinder/cavity_pec",
             "cylinder/cavity_impedance",
             "cylinder/waveguide",
@@ -291,12 +292,25 @@ end
 reltol = 2.0e-2
 abstol = 1.0e-10
 
-if "antenna" in cases
-    @info "Testing antenna..."
+if "antenna/antenna_halfwave_dipole" in cases
+    @info "Testing antenna/antenna_halfwave_dipole"
     @time testcase(
         "antenna",
-        "antenna.json",
-        "";
+        "antenna_halfwave_dipole.json",
+        "antenna_halfwave_dipole";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=50abstol
+    )
+end
+
+if "antenna/antenna_short_dipole" in cases
+    @info "Testing antenna/antenna_short_dipole"
+    @time testcase(
+        "antenna",
+        "antenna_short_dipole.json",
+        "antenna_short_dipole";
         palace=palace,
         np=numprocs,
         rtol=reltol,

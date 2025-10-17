@@ -44,12 +44,12 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
         rt_fecs)),
-    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
-    surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
-    lumped_port_op(iodata, mat_op, *mesh.back()),
+    mat_op(iodata, *mesh.back()), current_dipole_op(iodata, *mesh.back()),
+    farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
+    surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
     surf_j_op(iodata, *mesh.back()),
-    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op)
+    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
 {
   // Check Excitations.
   if (iodata.problem.type == ProblemType::DRIVEN)
@@ -867,21 +867,40 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
-  // The g'(t) or iω factors are not accounted for here, they is accounted for in the time
+  // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
   // integration or frequency sweep later.
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
+
+  // Boundary sources
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
-  int empty = (fb.empty());
-  Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
+
+  // Domain sources (current dipoles) - use integrator-based approach
+  bool has_current_dipoles = !current_dipole_op.Empty();
+
+  int empty[2] = {(fb.empty()), (!has_current_dipoles)};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
   {
     return false;
   }
+
   mfem::LinearForm rhs1(&GetNDSpace().Get());
-  rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+
+  // Add boundary integrators
+  if (!empty[0])
+  {
+    rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  }
+
+  // Add domain integrators for current dipoles
+  if (!empty[1])
+  {
+    current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+  }
+
   rhs1.UseFastAssembly(false);
   rhs1.UseDevice(false);
   rhs1.Assemble();

@@ -10,7 +10,17 @@ The 3D relative radiation pattern plot depicts a 3D surface whose distance from
 the center is proportional to the strength of the electric field.
 
 Usage:
-    julia plot_farfield.jl [filename]
+    julia plot_farfield.jl [model=<model_type> file=<filename>]
+
+Arguments:
+    model=<model_type>  - Dipole model type: "antenna_short_dipole" or "antenna_halfwave_dipole"
+    file=<filename>     - Path to farfield file
+
+Note: If any arguments are provided, both model= and file= must be specified.
+
+Defaults:
+    model: antenna_halfwave_dipole
+    file: postpro/antenna_halfwave_dipole/farfield-rE.csv
 
 Requires CSV, DataFrames, and CairoMakie.
 """
@@ -111,24 +121,51 @@ function compute_db(magnitude)
 end
 
 """
-    generate_theoretical_dipole()
+    generate_theoretical_dipole(model_type="antenna_halfwave_dipole")
 
-Return angles and angles for theoretical half-wave dipole radiation pattern.
+Return angles and patterns for theoretical dipole radiation pattern.
+
+Arguments:
+model_type - "antenna_short_dipole" for electrical current dipole or "antenna_halfwave_dipole" for half-wave dipole
+
+For antenna_short_dipole (z-oriented electrical current dipole):
+Based on geosci.xyz far-field analytical solution for z-oriented dipole.
+
+  - E-plane (xz): |E_θ|² ∝ |sin(θ)|² (nulls along dipole axis, maxima perpendicular)
+  - H-plane (xy): |H_φ|² ∝ constant (omnidirectional)
+
+For antenna_halfwave_dipole:
 
   - E-plane: [cos(π/2 * cos(θ)) / sin(θ)]²
   - H-plane: omnidirectional (constant)
 """
-function generate_theoretical_dipole()
+function generate_theoretical_dipole(model_type="antenna_halfwave_dipole")
     angles = 0:360
 
-    # E-plane: [cos(π/2 * cos(θ)) / sin(θ)]²
-    eplane = zeros(length(angles))
-    for (i, θ_deg) in enumerate(angles)
-        θ_rad = deg2rad(θ_deg)
-        sin_θ = sin(θ_rad)
-        if abs(sin_θ) > 1e-6
-            eplane[i] = abs(cos(π/2 * cos(θ_rad)) / sin_θ)
+    if model_type == "antenna_short_dipole"
+        # E-plane: sin(θ)²
+        eplane = zeros(length(angles))
+        for (i, θ_deg) in enumerate(angles)
+            θ_rad = deg2rad(θ_deg)
+            sin_θ = sin(θ_rad)
+            if abs(sin_θ) > 1e-6
+                eplane[i] = abs(sin_θ)
+            end
         end
+    elseif model_type == "antenna_halfwave_dipole"
+        # E-plane: [cos(π/2 * cos(θ)) / sin(θ)]²
+        eplane = zeros(length(angles))
+        for (i, θ_deg) in enumerate(angles)
+            θ_rad = deg2rad(θ_deg)
+            sin_θ = sin(θ_rad)
+            if abs(sin_θ) > 1e-6
+                eplane[i] = abs(cos(π/2 * cos(θ_rad)) / sin_θ)
+            end
+        end
+    else
+        error(
+            "Unknown model_type: $model_type. Use 'antenna_short_dipole' or 'antenna_halfwave_dipole'"
+        )
     end
 
     # H-plane: omnidirectional
@@ -138,15 +175,20 @@ function generate_theoretical_dipole()
 end
 
 """
-    polar_plots(data, label, filename = "farfield_polar.png")
+    polar_plots(data, label, model_type="halfwave_dipole", filename="farfield_polar.png")
 
-Plot the polar radiation patterns and the expected half-dipole pattern.
+Plot the polar radiation patterns and the expected dipole pattern.
 """
-function polar_plots(data, label, filename="farfield_polar.png")
+function polar_plots(
+    data,
+    label,
+    model_type="halfwave_dipole",
+    filename="farfield_polar.png"
+)
     e_angles, e_mag = extract_eplane(data)
     h_angles, h_mag = extract_hplane(data)
 
-    theo_angles, theo_eplane, _, theo_hplane = generate_theoretical_dipole()
+    theo_angles, theo_eplane, _, theo_hplane = generate_theoretical_dipole(model_type)
     theo_e_db = compute_db(theo_eplane)
     theo_h_db = compute_db(theo_hplane)
 
@@ -213,7 +255,7 @@ function polar_plots(data, label, filename="farfield_polar.png")
 end
 
 """
-    three_d_plot(data, label, filename = "farfield_3d.png")
+    three_d_plot(data, label, filename="farfield_3d.png")
 
 Plot a 3D representation of the strength of the electric field.
 
@@ -239,16 +281,84 @@ function three_d_plot(data, label, filename="farfield_3d.png")
 end
 
 function main()
-    filename = length(ARGS) > 0 ? ARGS[1] : "postpro/farfield-rE.csv"
+    # Set defaults
+    model_type = "antenna_halfwave_dipole"
+    filename = "postpro/antenna_halfwave_dipole/farfield-rE.csv"
+
+    # Check if any arguments provided
+    if length(ARGS) == 0
+        # Use defaults - no arguments provided
+    elseif length(ARGS) == 2
+        # Both arguments must be provided
+        has_model = false
+        has_file = false
+
+        # Parse named arguments
+        for arg in ARGS
+            if startswith(arg, "model=")
+                model_type = split(arg, "=", limit=2)[2]
+                has_model = true
+            elseif startswith(arg, "file=")
+                filename = split(arg, "=", limit=2)[2]
+                has_file = true
+            else
+                println("Error: Invalid argument '$arg'")
+                println(
+                    "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+                )
+                println(
+                    "Valid model types: 'antenna_short_dipole', 'antenna_halfwave_dipole'"
+                )
+                println("Examples:")
+                println("  julia plot_farfield.jl")
+                println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
+                return
+            end
+        end
+
+        # Ensure both arguments were provided
+        if !has_model || !has_file
+            println(
+                "Error: If arguments are provided, both model= and file= must be specified"
+            )
+            println(
+                "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+            )
+            println("Examples:")
+            println("  julia plot_farfield.jl")
+            println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
+            return
+        end
+    else
+        println("Error: If arguments are provided, both model= and file= must be specified")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
+        println("Examples:")
+        println("  julia plot_farfield.jl")
+        println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
+        return
+    end
+
+    if !(model_type in ["antenna_short_dipole", "antenna_halfwave_dipole"])
+        println("Error: Invalid model_type '$model_type'")
+        println("Valid options: 'antenna_short_dipole', 'antenna_halfwave_dipole'")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
+        return
+    end
 
     if !isfile(filename)
         println("Error: File '$filename' not found")
-        println("Usage: julia --project plot_farfield.jl [filename]")
-        println("Default filename: postpro/farfield-E.csv")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
         return
     end
 
     println("Reading farfield data from: $filename")
+    println("Using dipole model: $model_type")
 
     # Read the entire data file into a DataFrame
     df = CSV.read(filename, DataFrame)
@@ -268,8 +378,11 @@ function main()
         data = filter(row -> row["f"] == freq, df)
     end
 
-    polar_plots(data, label)
-    three_d_plot(data, label)
+    polar_filename = "farfield_polar_$(model_type).png"
+    three_d_filename = "farfield_3d_$(model_type).png"
+
+    polar_plots(data, label, model_type, polar_filename)
+    three_d_plot(data, label, three_d_filename)
     return nothing
 end
 

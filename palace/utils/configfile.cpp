@@ -767,12 +767,70 @@ void DomainPostData::SetUp(json &domains)
                   << postpro->dump(2));
 }
 
+void CurrentDipoleSourceData::SetUp(json &domains)
+{
+  auto current_dipole = domains.find("CurrentDipole");
+  if (current_dipole == domains.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(current_dipole->is_array(),
+              "\"CurrentDipole\" should specify an array in the configuration file!");
+
+  for (auto it = current_dipole->begin(); it != current_dipole->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"CurrentDipole\" source");
+    auto ret = mapdata.insert(std::make_pair(index, CurrentDipoleData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"CurrentDipole\" "
+                            "sources in the configuration file!");
+    auto &data = ret.first->second;
+
+    MFEM_VERIFY(
+        it->find("Direction") != it->end(),
+        "Missing \"CurrentDipole\" source \"Direction\" in the configuration file!");
+    MFEM_VERIFY(it->find("Center") != it->end(),
+                "Missing \"CurrentDipole\" source \"Center\" in the configuration file!");
+    MFEM_VERIFY(
+        it->find("Moment") != it->end(),
+        "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
+    auto direction = it->find("Direction");
+    auto center = it->find("Center");
+    MFEM_VERIFY(
+        direction->is_array() && center->is_array(),
+        "\"CurrentDipole\" source \"Direction\" and \"Center\" should specify arrays "
+        "in the configuration file!");
+
+    data.direction = direction->get<std::array<double, 3>>();  // Required
+    data.center = center->get<std::array<double, 3>>();        // Required
+    data.moment = it->value("Moment", data.moment);            // Required
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("Direction");
+    it->erase("Center");
+    it->erase("Moment");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "Index: " << ret.first->first << '\n';
+      std::cout << "Direction: " << data.moment << '\n';
+      std::cout << "Center: " << data.center << '\n';
+      std::cout << "Moment: " << data.moment << '\n';
+    }
+  }
+}
+
 void DomainData::SetUp(json &config)
 {
   auto domains = config.find("Domains");
   MFEM_VERIFY(domains != config.end(),
               "\"Domains\" must be specified in the configuration file!");
   materials.SetUp(*domains);
+  current_dipole.SetUp(*domains);
   postpro.SetUp(*domains);
 
   // Store all unique domain attributes.
@@ -793,6 +851,7 @@ void DomainData::SetUp(json &config)
 
   // Cleanup
   domains->erase("Materials");
+  domains->erase("CurrentDipole");
   domains->erase("Postprocessing");
   MFEM_VERIFY(domains->empty(),
               "Found an unsupported configuration file keyword under \"Domains\"!\n"
