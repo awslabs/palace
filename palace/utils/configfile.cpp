@@ -767,12 +767,56 @@ void DomainPostData::SetUp(json &domains)
                   << postpro->dump(2));
 }
 
+void CurrentDipoleSourceData::SetUp(json &domains)
+{
+  auto current_dipole = domains.find("CurrentDipole");
+  if (current_dipole == domains.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(current_dipole->is_array(),
+              "\"CurrentDipole\" should specify an array in the configuration file!");
+
+  for (auto it = current_dipole->begin(); it != current_dipole->end(); ++it)
+  {
+    MFEM_VERIFY(it->find("Moment") != it->end() && it->find("Center") != it->end(),
+                "Missing \"CurrentDipole\" source \"Moment\" or \"Center\" in the "
+                "configuration file!");
+
+    CurrentDipoleData &data = dipoles.emplace_back();
+
+    auto moment = it->find("Moment");
+    auto center = it->find("Center");
+    MFEM_VERIFY(moment->is_array() && center->is_array(),
+                "\"CurrentDipole\" source \"Moment\" and \"Center\" should specify arrays "
+                "in the configuration file!");
+
+    data.moment = moment->get<std::array<double, 3>>();  // Required
+    data.center = center->get<std::array<double, 3>>();  // Required
+
+    // Cleanup
+    it->erase("Moment");
+    it->erase("Center");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "Moment: " << data.moment << '\n';
+      std::cout << "Center: " << data.center << '\n';
+    }
+  }
+}
+
 void DomainData::SetUp(json &config)
 {
   auto domains = config.find("Domains");
   MFEM_VERIFY(domains != config.end(),
               "\"Domains\" must be specified in the configuration file!");
   materials.SetUp(*domains);
+  current_dipole.SetUp(*domains);
   postpro.SetUp(*domains);
 
   // Store all unique domain attributes.
@@ -793,6 +837,7 @@ void DomainData::SetUp(json &config)
 
   // Cleanup
   domains->erase("Materials");
+  domains->erase("CurrentDipole");
   domains->erase("Postprocessing");
   MFEM_VERIFY(domains->empty(),
               "Found an unsupported configuration file keyword under \"Domains\"!\n"

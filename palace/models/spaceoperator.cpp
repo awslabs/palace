@@ -44,7 +44,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
         rt_fecs)),
-    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
+    mat_op(iodata, *mesh.back()), current_dipole_op(iodata, *mesh.back()),
+    farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
     lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
@@ -871,17 +872,37 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   // integration or frequency sweep later.
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
+
+  // Boundary sources
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
-  int empty = (fb.empty());
-  Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
+
+  // Domain sources (current dipoles)
+  SumVectorCoefficient fd(GetMesh().SpaceDimension());
+  current_dipole_op.AddExcitationDomainCoefficients(excitation_idx, fd);
+
+  int empty[2] = {(fb.empty()), (fd.empty())};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
   {
     return false;
   }
+
   mfem::LinearForm rhs1(&GetNDSpace().Get());
-  rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+
+  // Add boundary integrators
+  if (!empty[0])
+  {
+    rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  }
+
+  // Add domain integrators for current dipoles
+  if (!empty[1])
+  {
+    rhs1.AddDomainIntegrator(new VectorFEDomainLFIntegrator(fd));
+  }
+
   rhs1.UseFastAssembly(false);
   rhs1.UseDevice(false);
   rhs1.Assemble();
