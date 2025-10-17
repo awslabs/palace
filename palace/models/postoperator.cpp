@@ -424,31 +424,31 @@ void DimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A
 {
   if (E)
   {
-    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
-    E->Real() *= scaling;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Real().FaceNbrData());
     if (imag)
     {
-      E->Imag() *= scaling;
+      units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Imag().FaceNbrData());
     }
   }
   if (B)
   {
-    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-    B->Real() *= scaling;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Real().FaceNbrData());
     if (imag)
     {
-      B->Imag() *= scaling;
+      units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Imag().FaceNbrData());
     }
   }
   if (A)
   {
-    const double scaling = units.Dimensionalize<Units::ValueType::CURRENT>(1.0);
-    A->Real() *= scaling;
+    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real().FaceNbrData());
   }
   if (V)
   {
-    const double scaling = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-    V->Real() *= scaling;
+    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real().FaceNbrData());
   }
 }
 
@@ -457,31 +457,31 @@ void NondimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T
 {
   if (E)
   {
-    const double scaling = units.Nondimensionalize<Units::ValueType::FIELD_E>(1.0);
-    E->Real() *= scaling;
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Real().FaceNbrData());
     if (imag)
     {
-      E->Imag() *= scaling;
+      units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Imag().FaceNbrData());
     }
   }
   if (B)
   {
-    const double scaling = units.Nondimensionalize<Units::ValueType::FIELD_B>(1.0);
-    B->Real() *= scaling;
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Real().FaceNbrData());
     if (imag)
     {
-      B->Imag() *= scaling;
+      units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Imag().FaceNbrData());
     }
   }
   if (A)
   {
-    const double scaling = units.Nondimensionalize<Units::ValueType::CURRENT>(1.0);
-    A->Real() *= scaling;
+    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real().FaceNbrData());
   }
   if (V)
   {
-    const double scaling = units.Nondimensionalize<Units::ValueType::VOLTAGE>(1.0);
-    V->Real() *= scaling;
+    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real().FaceNbrData());
   }
 }
 
