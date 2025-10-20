@@ -31,6 +31,12 @@ spack install palace
 More information about the available configuration options and dependencies can
 be found using `spack info palace`.
 
+**Note for beginners** If you are installing *Palace* from scratch for the first time you have to add the solvers. You can do this with the following command:
+
+```bash
+spack install palace +mumps +slepc
+```
+
 ## Build using Singularity/Apptainer
 
 *Palace* can be built in a
