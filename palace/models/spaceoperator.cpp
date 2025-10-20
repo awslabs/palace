@@ -860,12 +860,30 @@ bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &R
   for (const auto &elem : data.elems)
   {
     attr_list.Append(elem->GetAttrList());
-    fb.AddCoefficient(
-        elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * data.elems.size())));
+    fb.AddCoefficient(elem->GetModeCoefficient(
+        1.0 / std::sqrt(elem->GetGeometryWidth() * elem->GetGeometryLength() *
+                        data.elems.size())));
   }
   auto &mesh = GetNDSpace().GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  ComplexVector RHS_tmp;
+  RHS_tmp.SetSize(GetNDSpace().GetTrueVSize());
+  RHS_tmp.UseDevice(true);
+  RHS_tmp = 0.0;
+
+  GridFunction E_port_vec(GetNDSpace());
+  E_port_vec = 0.0;
+  E_port_vec.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+  E_port_vec.Real().GetTrueDofs(RHS_tmp.Real());
+
+  auto V_out = data.GetVoltage(E_port_vec);
+  Mpi::Print("GetLumpedPortExcitationVector Voltage: {:e}, {:e}\n", V_out.real(),
+             V_out.imag());
+
+  GetNDSpace().GetProlongationMatrix()->Mult(RHS_tmp.Real(), RHS.Real());
+  // return true;
 
   mfem::LinearForm rhs1(&GetNDSpace().Get());
   rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
@@ -873,6 +891,7 @@ bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &R
   rhs1.UseDevice(false);
   rhs1.Assemble();
   rhs1.UseDevice(true);
+
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS.Real());
 
   if (zero_metal)

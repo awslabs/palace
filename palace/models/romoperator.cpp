@@ -3,11 +3,28 @@
 
 #include "romoperator.hpp"
 
+#include <iostream>
 #include <Eigen/SVD>
+#include <fmt/format.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
+#include "drivers/drivensolver.hpp"
+#include "fem/bilinearform.hpp"
+#include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
+#include "fem/integrator.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
+#include "linalg/rap.hpp"
+#include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -30,6 +47,66 @@ using namespace std::complex_literals;
 namespace
 {
 
+// void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
+//                     const MaterialPropertyCoefficient *f,
+//                     const MaterialPropertyCoefficient *dfb,
+//                     const MaterialPropertyCoefficient *fb,
+//                     const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+// {
+//   if (df && !df->empty() && f && !f->empty())
+//   {
+//     a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
+//   }
+//   else
+//   {
+//     if (df && !df->empty())
+//     {
+//       a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
+//     }
+//     if (f && !f->empty())
+//     {
+//       a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
+//     }
+//   }
+//   if (dfb && !dfb->empty() && fb && !fb->empty())
+//   {
+//     a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
+//   }
+//   else
+//   {
+//     if (dfb && !dfb->empty())
+//     {
+//       a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
+//     }
+//     if (fb && !fb->empty())
+//     {
+//       a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
+//     }
+//   }
+//   if (fp && !fp->empty())
+//   {
+//     a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp, true);
+//     a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp);
+//   }
+//   if (assemble_q_data)
+//   {
+//     a.AssembleQuadratureData();
+//   }
+// }
+
+// auto AssembleOperator(const FiniteElementSpace &fespace,
+//                       const MaterialPropertyCoefficient *df,
+//                       const MaterialPropertyCoefficient *f,
+//                       const MaterialPropertyCoefficient *dfb,
+//                       const MaterialPropertyCoefficient *fb,
+//                       const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
+//                       bool assemble_q_data = false)
+// {
+//   BilinearForm a(fespace);
+//   AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
+//   return a.Assemble(skip_zeros);
+// }
+
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
 template <typename VecType, typename ScalarType>
@@ -49,6 +126,81 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
     case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
       break;
+  }
+}
+
+// template <typename VecType, typename ScalarType>
+// inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType
+// &w,
+//                                    ScalarType *H, int m)
+// {
+//   MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
+//               "Out of bounds number of columns for MGS orthogonalization!");
+//   for (int j = 0; j < m; j++)
+//   {
+//     H[j] = linalg::Dot(comm, w, V[j]);  // Global inner product
+//     w.Add(-H[j], V[j]);
+//   }
+// }
+
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeColumnNewMGS(MPI_Comm comm, const Operator &M_matrix,
+                                      const std::vector<VecType> &V, VecType &w,
+                                      ScalarType *Rj, int m)
+{
+
+  for (int j = 0; j < m; j++)
+  {
+    VecType mass_V_j;
+    mass_V_j.SetSize(V[j].Size());
+    mass_V_j.UseDevice(true);
+
+    // M_matrix.Mult(V[j], mass_V_j);
+    Rj[j] = linalg::Dot(comm, w, V[j]);  // Global inner product
+    Mpi::Print("Rj[j] in OrthogonalizeColumnNew with j={}: {}\n", j, Rj[j]);
+    w.Add(-Rj[j], V[j]);
+  }
+}
+
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeColumnNewCGS(MPI_Comm comm, const Operator &M_matrix,
+                                      const std::vector<VecType> &V, VecType &w,
+                                      ScalarType *H, int m, bool refine = false)
+{
+  MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
+              "Out of bounds number of columns for CGS orthogonalization!");
+  if (m == 0)
+  {
+    return;
+  }
+  VecType mass_V_j;
+  mass_V_j.SetSize(V[0].Size());
+  mass_V_j.UseDevice(true);
+
+  for (int j = 0; j < m; j++)
+  {
+    M_matrix.Mult(V[j], mass_V_j);
+    H[j] = w * mass_V_j;  // Local inner product
+  }
+  Mpi::GlobalSum(m, H, comm);
+  for (int j = 0; j < m; j++)
+  {
+    w.Add(-H[j], V[j]);
+  }
+  if (refine)
+  {
+    std::vector<ScalarType> dH(m);
+    for (int j = 0; j < m; j++)
+    {
+      M_matrix.Mult(V[j], mass_V_j);
+      dH[j] = w * mass_V_j;  // Local inner product
+    }
+    Mpi::GlobalSum(m, dH.data(), comm);
+    for (int j = 0; j < m; j++)
+    {
+      H[j] += dH[j];
+      w.Add(-dH[j], V[j]);
+    }
   }
 }
 
@@ -210,7 +362,8 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
   }
-  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  OrthogonalizeColumn(Orthogonalization::CGS2, comm, Q, Q[dim_Q], R.col(dim_Q).data(),
+                      dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
@@ -326,7 +479,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
+  : space_op(space_op), orthog_type(Orthogonalization::MGS)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -336,6 +489,49 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
+
+  Kinnerproduct = BuildParSumOperator({1.0 + 0i}, {K.get()}, true);
+  Cinnerproduct = BuildParSumOperator({1.0 + 0i}, {C.get()}, true);
+  Minnerproduct = BuildParSumOperator({1.0 + 0i}, {M.get()}, true);
+
+  BilinearForm m_ij_bulk(space_op.GetNDSpace());
+  m_ij_bulk.AddDomainIntegrator<VectorFEMassIntegrator>();
+  M_inner_product_weight_base = m_ij_bulk.FullAssemble(false);
+
+  M_inner_product_weight_ksp =
+      std::make_unique<ParOperator>(*M_inner_product_weight_base, space_op.GetNDSpace());
+  M_inner_product_weight_ksp->SetEssentialTrueDofs(space_op.GetNDDbcTDofLists().back(),
+                                                   Operator::DIAG_ONE);
+
+  for (auto &[port_idx, port] : space_op.GetLumpedPortOp())
+  {
+    const auto &mesh = space_op.GetNDSpace().GetParMesh();
+
+    mfem::Array<int> attr_marker;
+
+    mfem::Array<int> attr_list;
+    for (const auto &elem : port.elems)
+    {
+      attr_list.Append(elem->GetAttrList());
+    }
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+    SumVectorCoefficient fb(space_op.GetMesh().SpaceDimension());
+    for (const auto &elem : port.elems)
+    {
+      const double E_inc = 1.0 / std::sqrt(elem->GetGeometryWidth() *
+                                           elem->GetGeometryLength() * port.elems.size());
+      fb.AddCoefficient(elem->GetModeCoefficient(E_inc));
+    }
+    auto s = std::make_unique<mfem::LinearForm>(&space_op.GetNDSpace().Get());
+    s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
+    s->UseFastAssembly(false);
+    s->UseDevice(false);
+    s->Assemble();
+    s->UseDevice(true);
+
+    port_forms.emplace_back(std::move(s));
+  }
 
   // Initialize working vector storage.
   r.SetSize(K->Height());
@@ -347,6 +543,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // matrix.
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
+
+  ksp_rom =
+      std::make_unique<KspSolver>(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -430,6 +629,73 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   // Solve the linear system.
   ksp->Mult(r, u);
 }
+void RomOperator::UpdatePROMPortHack(const ComplexVector &port_form_vector,
+                                     std::string_view node_label)
+{
+  // ComplexVector out;
+  // out.UseDevice(true);
+  // out.SetSize(port_form_vector.Size());
+  // out = 0.0;
+  // // auto P = space_op.GetPreconditionerMatrix<Operator, double>(0.0, 0.0, 1.0, 0.0);
+  // // ksp_rom->SetOperators(*M_inner_product_weight_ksp, *P);
+  // // ksp_rom->Mult(port_form_vector.Real(), out.Real());
+
+  // mfem::GridFunction E_port_vec_lifted(&space_op.GetNDSpace().Get());
+  // E_port_vec_lifted = 0.0;
+
+  // mfem::SparseMatrix A;
+  // mfem::Vector B, X;
+
+  // mfem::Array<int> ess_dof;
+
+  // mfem::BilinearForm m_ij_bulk(&space_op.GetNDSpace().Get());
+  // m_ij_bulk.AddDomainIntegrator(new mfem::VectorFEMassIntegrator());
+  // m_ij_bulk.Assemble(true);
+
+  // m_ij_bulk.FormLinearSystem(ess_dof, E_port_vec_lifted, *port_forms.at(0), A, X, B);
+
+  // mfem::CGSolver cg(MPI_COMM_WORLD);
+  // cg.SetRelTol(1e-12);
+  // cg.SetMaxIter(2000);
+  // cg.SetPrintLevel(1);
+  // cg.SetOperator(A);
+  // cg.Mult(B, out.Real());
+
+  // // m_ij_bulk.RecoverFEMSolution(X, E_port_vec.Real(), E_port_vec_lifted);
+
+  // auto dot = port_form_vector.Dot(out);
+  // Mpi::Print("\nSurface Form inner with Domain Primary ({}): {},{}\n", node_label,
+  //            dot.real(), dot.imag());
+
+  // for (int i = 0; i < port_forms.size(); i++)
+  // {
+  //   auto dot3 = (*port_forms.at(i)) * out.Real();
+  //   Mpi::GlobalSum(1, &dot3, space_op.GetComm());
+  //   Mpi::Print("Suface g_ij with u_surf, G^-1 u_surf: {}\n", dot3);
+  // }
+
+  // ComplexVector out2;
+  // out2.UseDevice(true);
+  // out2.SetSize(port_form_vector.Size());
+  // out2 = 0.0;
+
+  // M_inner_product_weight_base->Mult(out.Real(), out2.Real());
+  // auto dot2 = out2.Dot(out);
+
+  // Mpi::Print("\nSurface Form inner with Domain Primary ({}): {},{}\n", node_label,
+  //            dot2.real(), dot2.imag());
+
+  // for (int i = 0; i < port_forms.size(); i++)
+  // {
+  //   auto dot3 = (*port_forms.at(i)) * out2.Real();
+  //   Mpi::GlobalSum(1, &dot3, space_op.GetComm());
+  //   Mpi::Print("Suface g_ij with u_surf, G^-1 u_surf: {}\n", dot3);
+  // }
+
+  // // out *= 1.0 / std::sqrt(dot2);
+
+  UpdatePROM(port_form_vector, node_label);
+}
 
 void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
 {
@@ -452,8 +718,77 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
 
   const auto &orth_R = GetRomOrthogonalityMatrix();
   MFEM_VERIFY(orth_R.isDiagonal(), "Lumped port modes should have exactly zero overlap.");
-}
 
+  // WIP Tests
+
+  ComplexVector out;
+  out.UseDevice(true);
+  out.SetSize(port_form_vector.Size());
+  out = 0.0;
+  // auto P = space_op.GetPreconditionerMatrix<Operator, double>(0.0, 0.0, 1.0, 0.0);
+  // auto ksp_rom =
+  //     std::make_unique<KspSolver>(iodata, space_op.GetNDSpaces(),
+  //     &space_op.GetH1Spaces());
+  // ksp_rom->SetOperators(*M_inner_product_weight_ksp, *P);
+  // ksp_rom->Mult(port_form_vector.Real(), out.Real());
+
+  mfem::GridFunction E_port_vec_lifted(&space_op.GetNDSpace().Get());
+  E_port_vec_lifted = 0.0;
+
+  mfem::SparseMatrix A;
+  mfem::Vector B, X;
+
+  mfem::Array<int> ess_dof;
+
+  mfem::BilinearForm m_ij_bulk(&space_op.GetNDSpace().Get());
+  m_ij_bulk.AddDomainIntegrator(new mfem::VectorFEMassIntegrator());
+  m_ij_bulk.Assemble(true);
+
+  m_ij_bulk.FormLinearSystem(ess_dof, E_port_vec_lifted, *port_forms.at(0), A, X, B);
+
+  mfem::CGSolver cg(MPI_COMM_WORLD);
+  cg.SetRelTol(1e-12);
+  cg.SetMaxIter(2000);
+  cg.SetPrintLevel(1);
+  cg.SetOperator(A);
+  cg.SetOperator(A);
+  cg.Mult(B, out.Real());
+
+  // m_ij_bulk.RecoverFEMSolution(X, E_port_vec.Real(), E_port_vec_lifted);
+
+  auto dot = port_form_vector.Dot(out);
+  Mpi::Print("\nSurface Form inner with Domain Primary ({}): {},{}\n", node_label,
+             dot.real(), dot.imag());
+
+  for (int i = 0; i < port_forms.size(); i++)
+  {
+    auto dot3 = (*port_forms.at(i)) * out.Real();
+    Mpi::GlobalSum(1, &dot3, space_op.GetComm());
+    Mpi::Print("Suface g_ij with u_surf, G^-1 u_surf: {}\n", dot3);
+  }
+
+  ComplexVector out2;
+  out2.UseDevice(true);
+  out2.SetSize(port_form_vector.Size());
+  out2 = 0.0;
+
+  M_inner_product_weight_base->Mult(out.Real(), out2.Real());
+  auto dot2 = out2.Dot(out);
+
+  Mpi::Print("\nSurface Form inner with Domain Primary ({}): {},{}\n", node_label,
+             dot2.real(), dot2.imag());
+
+  for (int i = 0; i < port_forms.size(); i++)
+  {
+    auto dot3 = (*port_forms.at(i)) * out2.Real();
+    Mpi::GlobalSum(1, &dot3, space_op.GetComm());
+    Mpi::Print("Suface g_ij with u_surf, G^-1 u_surf: {}\n", dot3);
+  }
+
+  // out *= 1.0 / std::sqrt(dot2);
+
+  UpdatePROM(out, node_label);
+}
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
@@ -478,35 +813,78 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
-    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
-                        dim_V);
-    orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    OrthogonalizeColumnNewCGS(space_op.GetComm(), *M_inner_product_weight_base, V, v,
+                              orth_R.col(dim_V).data(), dim_V, true);
+
+    Vector mass_V_j;
+    mass_V_j.SetSize(V.back().Size());
+    mass_V_j.UseDevice(true);
+
+    M_inner_product_weight_base->Mult(V.back(), mass_V_j);
+    orth_R(dim_V, dim_V) = std::sqrt(std::abs(
+        linalg::Dot(space_op.GetComm(), V.back(), mass_V_j)));  // Global inner product
+
+    // orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
     v *= 1.0 / orth_R(dim_V, dim_V);
   };
 
+  port_form_overlap.conservativeResize(dim_V_new, port_forms.size());
   if (has_real)
   {
     add_real_vector_to_basis(u.Real());
     v_node_label.emplace_back(fmt::format("{}_re", node_label));
+
+    auto dim_V = V.size() - 1;
+    for (int i = 0; i < port_forms.size(); i++)
+    {
+      auto dot = (*port_forms[i]) * (V.back());
+      Mpi::GlobalSum(1, &dot, space_op.GetComm());
+      port_form_overlap(dim_V, i) = dot;
+    }
   }
   if (has_imag)
   {
     add_real_vector_to_basis(u.Imag());
     v_node_label.emplace_back(fmt::format("{}_im", node_label));
+
+    auto dim_V = V.size() - 1;
+    for (int i = 0; i < port_forms.size(); i++)
+    {
+      auto dot = (*port_forms.at(i)) * (V.back());
+      Mpi::GlobalSum(1, &dot, space_op.GetComm());
+      port_form_overlap(dim_V, i) = dot;
+    }
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
+
+  // mfem::Array<int> ess_dof;
+  // dynamic_cast<ComplexParOperator*>(C.get())->SetEssentialTrueDofs(ess_dof);
+
+  // auto Ckeep = dynamic_cast<ComplexParOperator*>(C.get());
+  // Ckeep->SetEssentialTrueDofs(ess_dof, Operator::DiagonalPolicy::DIAG_KEEP);
+
+  // // Update reduced-order operators.
+  // Kr.conservativeResize(dim_V_new, dim_V_new);
+  // ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  // if (C)
+  // {
+  //   Cr.conservativeResize(dim_V_new, dim_V_new);
+  //   ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+  // }
+  // Mr.conservativeResize(dim_V_new, dim_V_new);
+  // ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *Kinnerproduct, Kr, r, dim_V_old);
   if (C)
   {
     Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+    ProjectMatInternal(comm, V, *Cinnerproduct, Cr, r, dim_V_old);
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *Minnerproduct, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
@@ -606,7 +984,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
                                                              std::string_view filename)
   {
-    MFEM_VERIFY(labels.size() == mat.cols(), "Inconsistent PROM size!");
+    // MFEM_VERIFY(labels.size() == mat.cols(), "Inconsistent PROM size!");
     auto out = TableWithCSVFile(post_dir / filename);
     out.table.col_options.float_precision = 17;
     for (long i = 0; i < mat.cols(); i++)
@@ -630,10 +1008,14 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // port mode. Palace defines the input power to be normalized to 1 (see
   // LumpedPortData::GetExcitationPower). "beta" is the normalization convention of the port
   // voltage \beta * v_0 and current i_0 / \beta^* at constant power.
-  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
 
+  // auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+  auto v_d = Eigen::MatrixXcd::Identity(orth_R.rows(), orth_R.cols());
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
   // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
+
+  print_table(port_form_overlap.real(), "port_form_overlap_re.csv");
+  print_table(port_form_overlap.imag(), "port_form_overlap_im.csv");
 
   auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
@@ -666,6 +1048,107 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
   print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
+
+  // WIP: Compute and print boundary overlap matrix
+
+  auto &mesh = space_op.GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+
+  SumCoefficient fb_i{};
+  SumVectorCoefficient fb_v(mesh.SpaceDimension());
+
+  std::vector<ComplexVector> port_v_primary(space_op.GetLumpedPortOp().Size());
+
+  int port_idx = 0;
+  for (const auto &[port_i, port] : space_op.GetLumpedPortOp())
+  {
+    port_v_primary.at(port_idx).SetSize(space_op.GetNDSpace().GetTrueVSize());
+    port_v_primary.at(port_idx).UseDevice(true);
+    port_v_primary.at(port_idx) = 0.0;
+
+    mfem::Array<int> attr_list;
+
+    SumVectorCoefficient fb(mesh.SpaceDimension());
+    for (const auto &elem : port.elems)
+    {
+      auto port_element_scale_factor =
+          1.0 / std::sqrt(elem->GetGeometryWidth() * elem->GetGeometryLength() *
+                          port.elems.size());
+
+      attr_list.Append(elem->GetAttrList());
+      fb_v.AddCoefficient(elem->GetModeCoefficient(port_element_scale_factor));
+      fb_i.AddCoefficient(
+          std::make_unique<RestrictedCoefficient<mfem::ConstantCoefficient>>(
+              elem->GetAttrList(), port_element_scale_factor));
+      fb.AddCoefficient(elem->GetModeCoefficient(port_element_scale_factor));
+    }
+
+    {
+      mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+      GridFunction E_port_vec(space_op.GetNDSpace());
+      E_port_vec = 0.0;
+      E_port_vec.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+      E_port_vec.Real().GetTrueDofs(port_v_primary.at(port_idx).Real());
+    }
+    port_idx++;
+  }
+
+  mfem::BilinearForm g_ij_ports_id(&space_op.GetNDSpace().Get());
+  g_ij_ports_id.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(fb_i));
+  g_ij_ports_id.Assemble();
+
+  mfem::BilinearForm g_ij_ports_vec(&space_op.GetNDSpace().Get());
+  g_ij_ports_vec.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(fb_v));
+  g_ij_ports_vec.Assemble();
+
+  Eigen::MatrixXd boundary_overlap_i(V.size(), V.size());
+  Eigen::MatrixXd boundary_overlap_v(V.size(), V.size());
+  Eigen::MatrixXd boundary_overlap_primary(V.size(), V.size());
+  Eigen::MatrixXd direct_orthogonality_check(V.size(), V.size());
+
+  boundary_overlap_primary.setZero();
+
+  for (long i = 0; i < V.size(); i++)
+  {
+    for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
+    {
+      boundary_overlap_i(i, j) = g_ij_ports_id.InnerProduct(V[i], port_v_primary[j].Real());
+      boundary_overlap_v(i, j) =
+          g_ij_ports_vec.InnerProduct(V[i], port_v_primary[j].Real());
+    }
+    for (long j = space_op.GetLumpedPortOp().Size(); j < V.size(); j++)
+    {
+      boundary_overlap_i(i, j) = g_ij_ports_id.InnerProduct(V[i], V[j]);
+      boundary_overlap_v(i, j) = g_ij_ports_vec.InnerProduct(V[i], V[j]);
+    }
+  }
+
+  for (long i = 0; i < space_op.GetLumpedPortOp().Size(); i++)
+  {
+    for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
+    {
+      boundary_overlap_primary(i, j) =
+          g_ij_ports_id.InnerProduct(port_v_primary[i].Real(), port_v_primary[j].Real());
+    }
+  }
+  Vector mass_V_j;
+  mass_V_j.SetSize(V[0].Size());
+  mass_V_j.UseDevice(true);
+
+  for (long i = 0; i < V.size(); i++)
+  {
+    for (long j = 0; j < V.size(); j++)
+    {
+      M_inner_product_weight_base->Mult(V[j], mass_V_j);
+      direct_orthogonality_check(i, j) = V[i] * mass_V_j;
+    }
+  }
+
+  print_table(boundary_overlap_i, "boundary_overlap_i.csv");
+  print_table(boundary_overlap_v, "boundary_overlap_v.csv");
+  print_table(boundary_overlap_primary, "boundary_overlap_primary.csv");
+  print_table(direct_orthogonality_check, "direct_orthogonality_check.csv");
 }
 
 }  // namespace palace

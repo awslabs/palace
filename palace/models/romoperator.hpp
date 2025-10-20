@@ -11,6 +11,7 @@
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -66,6 +67,19 @@ private:
   // - The non-quadratic operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
   // - Need to recompute RHS1 when excitation index changes.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
+  std::unique_ptr<ComplexOperator> Kinnerproduct, Minnerproduct, Cinnerproduct,
+      A2innerproduct;
+
+  std::unique_ptr<Operator> M_inner_product_weight_base;
+  std::unique_ptr<ParOperator> M_inner_product_weight_ksp;
+
+  std::vector<std::unique_ptr<mfem::LinearForm>> port_forms;
+  Eigen::MatrixXcd port_form_overlap;
+
+  // mfem::BilinearForm g_bulk;
+  // std::unique_ptr<ComplexParOperator> M_inner_product_weight_complex;
+  // std::unique_ptr<ComplexOperator> M_inner_product_weight;
+
   ComplexVector RHS1, RHS2, r;
 
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
