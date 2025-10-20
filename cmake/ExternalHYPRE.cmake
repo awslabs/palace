@@ -58,6 +58,7 @@ set(HYPRE_OPTIONS
   "--prefix=${CMAKE_INSTALL_PREFIX}"
   "--disable-fortran"
   "--with-MPI"
+  "--with-cxxstandard=17"
 )
 if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
   list(APPEND HYPRE_OPTIONS "--enable-debug")
