@@ -16,6 +16,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     homepage = "https://github.com/awslabs/palace"
     git = "https://github.com/awslabs/palace.git"
+    license("Apache-2.0")
 
     maintainers("hughcars", "simlap", "cameronrutherford")
 
