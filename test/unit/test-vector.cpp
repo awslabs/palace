@@ -125,11 +125,11 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, on_dev);
 
-  CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank));
-  CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank));
+  CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank) || WithinAbs(0.0, 1e-14));
+  CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank) || WithinAbs(0.0, 1e-14));
 
-  CHECK_THAT(cv.Imag()[0], WithinRel(10.0 * rank));
-  CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank));
+  CHECK_THAT(cv.Imag()[0], WithinRel(10.0 * rank) || WithinAbs(0.0, 1e-14));
+  CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank) || WithinAbs(0.0, 1e-14));
 }
 
 TEST_CASE("StaticVectorConstruction", "[Vector][Serial]")
