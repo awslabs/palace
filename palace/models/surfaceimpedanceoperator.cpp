@@ -87,7 +87,20 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
+      // Compute a scaling factor to account for increased area when using mesh cracking.
+      if (iodata.boundaries.cracked_attributes.find(attr) !=
+          iodata.boundaries.cracked_attributes.end())
+      {
+        bdr.scaling = 2.0;
+      }
+      MFEM_VERIFY((iodata.boundaries.cracked_attributes.find(attr) !=
+                   iodata.boundaries.cracked_attributes.end()) ||
+                      (bdr.scaling == 1.0),
+                  "Impedance boundary has both cracked and uncracked attributes!");
     }
+    bdr.Ls *= bdr.scaling;
+    bdr.Rs *= bdr.scaling;
+    bdr.Cs /= bdr.scaling;
   }
 }
 
@@ -113,15 +126,18 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
       to(" {:d}:", attr);
       if (std::abs(bdr.Rs) > 0.0)
       {
-        to(" Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs));
+        to(" Rs = {:.3e} Ω/sq,",
+           iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs / bdr.scaling));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
-        to(" Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls));
+        to(" Ls = {:.3e} H/sq,",
+           iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls / bdr.scaling));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
-        to(" Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs));
+        to(" Cs = {:.3e} F/sq,",
+           iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs * bdr.scaling));
       }
       to(" n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }
