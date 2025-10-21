@@ -59,7 +59,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(const IoData &, std::unique_ptr<mfem::Mesh> &,
+int AddInterfaceBdrElements(IoData &, std::unique_ptr<mfem::Mesh> &,
                             std::unordered_map<int, int> &, MPI_Comm comm);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
@@ -80,7 +80,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
 {
   // If possible on root, read the serial mesh (converting format if necessary), and do all
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
@@ -238,6 +238,30 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
     // Generate the mesh partitioning.
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+  }
+
+  // Broadcast cracked boundary attributes to other ranks.
+  if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
+  {
+    int size = iodata.boundaries.cracked_attributes.size();
+    Mpi::Broadcast(1, &size, 0, comm);
+    std::vector<int> data;
+    if (Mpi::Root(comm))
+    {
+      data.assign(iodata.boundaries.cracked_attributes.begin(),
+                  iodata.boundaries.cracked_attributes.end());
+    }
+    else
+    {
+      data.resize(size);
+    }
+    Mpi::Broadcast(size, data.data(), 0, comm);
+
+    if (!Mpi::Root(comm))
+    {
+      iodata.boundaries.cracked_attributes.clear();
+      iodata.boundaries.cracked_attributes.insert(data.begin(), data.end());
+    }
   }
 
   // Distribute the mesh.
@@ -1867,7 +1891,7 @@ struct UnorderedPairHasher
   }
 };
 
-int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
+int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
   // Exclude some internal boundary conditions for which cracking would give invalid
@@ -1875,6 +1899,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   const auto crack_boundary_attributes = [&iodata]()
   {
     auto cba = iodata.boundaries.attributes;
+    // Remove lumped port attributes.
     for (const auto &[idx, data] : iodata.boundaries.lumpedport)
     {
       for (const auto &e : data.elements)
@@ -1887,6 +1912,16 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
+    // Remove impedance attributes.
+    // for (const auto &data : iodata.boundaries.impedance)
+    //{
+    //  auto attr_in_bc = [&](auto x)
+    //  {
+    //    return std::find(data.attributes.begin(), data.attributes.end(), x) !=
+    //    data.attributes.end();
+    //  };
+    //  cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_bc), cba.end());
+    //}
     return cba;
   }();
 
@@ -1926,6 +1961,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
         if (e1 >= 0 && e2 >= 0)
         {
           crack_bdr_elem.insert(be);
+          iodata.boundaries.cracked_attributes.insert(orig_mesh->GetBdrAttribute(be));
         }
       }
     }

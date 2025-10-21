@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "labels.hpp"
@@ -650,6 +651,9 @@ struct BoundaryData
 public:
   // List of all boundary attributes (excluding postprocessing).
   std::vector<int> attributes = {};
+
+  // List of all boundary attributes affected by mesh cracking.
+  std::unordered_set<int> cracked_attributes = {};
 
   // Boundary objects.
   PecBoundaryData pec = {};
