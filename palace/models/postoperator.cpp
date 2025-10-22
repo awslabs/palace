@@ -178,7 +178,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   if constexpr (HasEGridFunction<solver_t>())
   {
     // E will be dimensionalized when the coefficient is evaluated, so the scaling
-    // only need to account for the remaining ε_0 = D / E.
+    // only needs to account for the remaining ε_0 = D / E.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
 
@@ -204,7 +204,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   if constexpr (HasBGridFunction<solver_t>())
   {
     // B will be dimensionalized when the coefficient is evaluated, so the scaling
-    // only need to account for the remaining μ⁻¹ = H / B.
+    // only needs to account for the remaining μ⁻¹ = H / B.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
 
@@ -232,7 +232,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // Poynting Vector.
     // S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
     // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
-    // only need to account for the remaining μ⁻¹ = H / B.
+    // only needs to account for the remaining μ⁻¹ = H / B.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
     S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),

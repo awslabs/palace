@@ -105,9 +105,9 @@ ParaView is recommended to visualize large simulations in parallel. The grid fun
 format can be useful to embed visualizations in webpages with its
 [Javascript version](https://github.com/GLVis/glvis-js/).
 
-All fields are written out in SI units. The specific quantities available vary by
-[simulation type](problem.md#Problem-Types), but the variable names and corresponding units for
-various possible postprocessed scalar and vector are:
+All fields are written out in SI units and the post-processing mesh has the same units of `config["Model"]["L0"]` m
+as the input mesh. The specific quantities available vary by [simulation type](problem.md#Problem-Types),
+but the variable names and corresponding units for various possible postprocessed scalar and vector are:
 
   - Electric field: `E`, `E_real`, and `E_imag` (V/m)
   - Magnetic flux density: `B`, `B_real`, and `B_imag` (Wb/m²)
