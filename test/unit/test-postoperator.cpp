@@ -510,11 +510,10 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   int order = 1;
   mfem::H1_FECollection h1_fec(order, mesh.Dimension());
   mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
-  mfem::ParGridFunction gridfunc_h1(&h1_fespace);
+  mfem::ParGridFunction gridfunc_Ue(&h1_fespace), gridfunc_Um(&h1_fespace);
 
   mfem::ND_FECollection nd_fec(order, mesh.Dimension());
   mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_fec);
-  mfem::ParGridFunction gridfunc_nd(&nd_fespace);
 
   mfem::RT_FECollection rt_fec(order, mesh.Dimension());
   mfem::ParFiniteElementSpace rt_fespace(&mesh.Get(), &rt_fec);
@@ -529,10 +528,10 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   // Create fields, initialize them, and set the corresponding gridfunctions.
   ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
   Vector a(rt_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
-  e = std::complex<double>(1.0, 1.0);
-  b = std::complex<double>(1.0, 1.0);
-  a = 1.0;
-  v = 1.0;
+  linalg::SetRandom(comm, e);
+  linalg::SetRandom(comm, b);
+  linalg::SetRandom(comm, a);
+  linalg::SetRandom(comm, v);
 
   E->Real().SetFromTrueDofs(e.Real());
   E->Imag().SetFromTrueDofs(e.Imag());
@@ -541,17 +540,18 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   A->Real().SetFromTrueDofs(a);
   V->Real().SetFromTrueDofs(v);
 
+  // Copy original gridfunctions
+  mfem::ParGridFunction Er0(E->Real()), Ei0(E->Imag()), Br0(B->Real()), Bi0(B->Real()),
+      V0(V->Real()), A0(A->Real());
+
   // Create some coefficients.
   MaterialOperator mat_op(iodata, mesh);
   std::unique_ptr<mfem::VectorCoefficient> S;
   std::unique_ptr<mfem::Coefficient> U_e, U_m;
 
-  const double scaling = 1.0;
-  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
-                                                                                scaling);
-  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
-                                                                                scaling);
-  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
 
   // Expected scalings.
   auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
@@ -564,7 +564,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
   // A [A/m].
   auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
-  // Ue = 1/2 ε_0 Eᴴ E.
+  // U_e = 1/2 ε_0 Eᴴ E.
   auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
                     iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
   // U_m = 1/2 μ⁻¹ Bᴴ B.
@@ -586,12 +586,12 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
     values.push_back(B->Imag().Max());
     values.push_back(V->Real().Max());
     values.push_back(A->Real().Max());
-    gridfunc_h1 = 0.0;
-    gridfunc_h1.ProjectCoefficient(*U_e.get());
-    values.push_back(gridfunc_h1.Max());
-    gridfunc_h1 = 0.0;
-    gridfunc_h1.ProjectCoefficient(*U_m.get());
-    values.push_back(gridfunc_h1.Max());
+    gridfunc_Ue = 0.0;
+    gridfunc_Ue.ProjectCoefficient(*U_e.get());
+    values.push_back(gridfunc_Ue.Max());
+    gridfunc_Um = 0.0;
+    gridfunc_Um.ProjectCoefficient(*U_m.get());
+    values.push_back(gridfunc_Um.Max());
     gridfunc_rt = 0.0;
     gridfunc_rt.ProjectCoefficient(*S.get());
     values.push_back(gridfunc_rt.Max());
@@ -603,8 +603,8 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 
   // Dimensionalize.
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), true, E, B, V, A);
-  DimensionalizeGridFunctions(iodata.units, true, E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(iodata.units, E, B, V, A);
   std::vector<double> dim_values = get_max_values();
   // Check values are as expected.
   for (size_t i = 0; i < dim_values.size(); i++)
@@ -614,8 +614,8 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 
   // Nondimensionalize.
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), true, E, B, V, A);
-  NondimensionalizeGridFunctions(iodata.units, true, E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
   std::vector<double> values_after = get_max_values();
   // Check values are back to initial values.
   for (size_t i = 0; i < dim_values.size(); i++)

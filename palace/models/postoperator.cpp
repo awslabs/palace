@@ -177,10 +177,13 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
   if constexpr (HasEGridFunction<solver_t>())
   {
-    // Electric Energy Density.
-    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
+    // E will be dimensionalized when the coefficient is evaluated, so the scaling
+    // only need to account for the remaining ε_0 = D / E.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+
+    // Electric Energy Density.
+    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
         *E, fem_op->GetMaterialOp(), scaling);
 
@@ -200,8 +203,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
   if constexpr (HasBGridFunction<solver_t>())
   {
+    // B will be dimensionalized when the coefficient is evaluated, so the scaling
+    // only need to account for the remaining μ⁻¹ = H / B.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+
     // Magnetic Energy Density.
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
@@ -225,6 +231,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     // Poynting Vector.
     // S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
+    // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
+    // only need to account for the remaining μ⁻¹ = H / B.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
     S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
@@ -377,8 +385,9 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 }
 
-template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
+void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
+                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
+                        std::unique_ptr<GridFunction> &A)
 {
   // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
   // the mesh which would carry into the fields during the mapping from reference to
@@ -393,7 +402,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
     // Piola transform: J^-T
     E->Real() *= L;
     E->Real().FaceNbrData() *= L;
-    if (imag)
+    if (E->HasImag())
     {
       E->Imag() *= L;
       E->Imag().FaceNbrData() *= L;
@@ -405,7 +414,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
     const auto Ld = std::pow(L, dim - 1);
     B->Real() *= Ld;
     B->Real().FaceNbrData() *= Ld;
-    if (imag)
+    if (B->HasImag())
     {
       B->Imag() *= Ld;
       B->Imag().FaceNbrData() *= Ld;
@@ -419,69 +428,49 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
   }
 }
 
-template <typename T>
-void DimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A)
+void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                 std::unique_ptr<GridFunction> &B,
+                                 std::unique_ptr<GridFunction> &V,
+                                 std::unique_ptr<GridFunction> &A)
 {
   if (E)
   {
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
-    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Real().FaceNbrData());
-    if (imag)
-    {
-      units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Imag().FaceNbrData());
-    }
   }
   if (B)
   {
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
-    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Real().FaceNbrData());
-    if (imag)
-    {
-      units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Imag().FaceNbrData());
-    }
   }
   if (A)
   {
     units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
-    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real().FaceNbrData());
   }
   if (V)
   {
     units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
-    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real().FaceNbrData());
   }
 }
 
-template <typename T>
-void NondimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A)
+void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                    std::unique_ptr<GridFunction> &B,
+                                    std::unique_ptr<GridFunction> &V,
+                                    std::unique_ptr<GridFunction> &A)
 {
   if (E)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
-    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Real().FaceNbrData());
-    if (imag)
-    {
-      units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(E->Imag().FaceNbrData());
-    }
   }
   if (B)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
-    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Real().FaceNbrData());
-    if (imag)
-    {
-      units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(B->Imag().FaceNbrData());
-    }
   }
   if (A)
   {
     units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
-    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real().FaceNbrData());
   }
   if (V)
   {
     units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
-    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real().FaceNbrData());
   }
 }
 
@@ -496,9 +485,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
-                     V, A);
-  DimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(units, E, B, V, A);
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -506,9 +494,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
-                     E, B, V, A);
-  NondimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -609,9 +596,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
-                     V, A);
-  DimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(units, E, B, V, A);
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -708,9 +694,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
-                     E, B, V, A);
-  NondimensionalizeGridFunctions(units, HasComplexGridFunction<solver_t>(), E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -1420,17 +1405,5 @@ PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRI
 
 template auto
 PostOperator<ProblemType::DRIVEN>::InitializeParaviewDataCollection(int ex_idx) -> void;
-
-template void ScaleGridFunctions<std::unique_ptr<GridFunction>>(
-    double, int, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
-    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
-
-template void DimensionalizeGridFunctions<std::unique_ptr<GridFunction>>(
-    Units &, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
-    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
-
-template void NondimensionalizeGridFunctions<std::unique_ptr<GridFunction>>(
-    Units &, bool, std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &,
-    std::unique_ptr<GridFunction> &, std::unique_ptr<GridFunction> &);
 
 }  // namespace palace

@@ -961,7 +961,7 @@ WavePortData::GetModeExcitationCoefficientImag() const
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetModeFieldCoefficientReal(const double scaling) const
+WavePortData::GetModeFieldCoefficientReal(double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
@@ -970,7 +970,7 @@ WavePortData::GetModeFieldCoefficientReal(const double scaling) const
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetModeFieldCoefficientImag(const double scaling) const
+WavePortData::GetModeFieldCoefficientImag(double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<

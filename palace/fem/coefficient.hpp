@@ -30,7 +30,7 @@ namespace palace
 
 // Base class for coefficients which need to evaluate a GridFunction in a domain element
 // attached to a boundary element, or both domain elements on either side for internal
-// boundaries.
+// boundaries, with optional scaling factor.
 class BdrGridFunctionCoefficient
 {
 protected:
@@ -39,6 +39,7 @@ protected:
   const mfem::ParMesh &mesh;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
+  const double scaling;  // scaling factor used for unit conversions
 
   bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip)
   {
@@ -48,7 +49,10 @@ protected:
   }
 
 public:
-  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh) : mesh(mesh) {}
+  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh, const double scaling = 1.0)
+    : mesh(mesh), scaling(scaling)
+  {
+  }
 
   // For a boundary element, return the element transformation objects for the neighboring
   // domain elements. FET.Elem2 may be nullptr if the boundary is a true one-sided boundary,
@@ -84,15 +88,14 @@ class BdrSurfaceCurrentVectorCoefficient : public mfem::VectorCoefficient,
 private:
   const mfem::ParGridFunction &B;
   const MaterialOperator &mat_op;
-  const double scaling;
 
 public:
   BdrSurfaceCurrentVectorCoefficient(const mfem::ParGridFunction &B,
                                      const MaterialOperator &mat_op,
                                      const double scaling = 1.0)
     : mfem::VectorCoefficient(B.VectorDim()),
-      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh()), B(B), mat_op(mat_op),
-      scaling(scaling)
+      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh(), scaling), B(B),
+      mat_op(mat_op)
   {
   }
 
@@ -144,17 +147,16 @@ private:
   const MaterialOperator &mat_op;
   bool two_sided;
   const mfem::Vector &x0;
-  const double scaling;
-
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
 public:
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
                             const mfem::Vector &x0, const double scaling = 1.0)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
-                                                        : *B->ParFESpace()->GetParMesh()),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), scaling(scaling)
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(
+          E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -461,14 +463,14 @@ class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctio
 private:
   const GridFunction &U;
   const MaterialOperator &mat_op;
-  const double scaling;
   double GetLocalEnergyDensity(mfem::ElementTransformation &T) const;
 
 public:
   EnergyDensityCoefficient(const GridFunction &U, const MaterialOperator &mat_op,
                            const double scaling = 1.0)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U),
-      mat_op(mat_op), scaling(scaling)
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh(), scaling), U(U),
+      mat_op(mat_op)
   {
   }
 
@@ -541,7 +543,6 @@ class PoyntingVectorCoefficient : public mfem::VectorCoefficient,
 private:
   const GridFunction &E, &B;
   const MaterialOperator &mat_op;
-  const double scaling;
 
   void GetLocalPower(mfem::ElementTransformation &T, mfem::Vector &V) const
   {
@@ -566,8 +567,8 @@ public:
   PoyntingVectorCoefficient(const GridFunction &E, const GridFunction &B,
                             const MaterialOperator &mat_op, const double scaling = 1.0)
     : mfem::VectorCoefficient(E.VectorDim()),
-      BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E), B(B), mat_op(mat_op),
-      scaling(scaling)
+      BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh(), scaling), E(E), B(B),
+      mat_op(mat_op)
   {
   }
 

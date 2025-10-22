@@ -71,16 +71,21 @@ constexpr bool HasBGridFunction()
 }
 
 // Scale gridfunctions after redimensionalizing the mesh.
-template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A);
+void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
+                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
+                        std::unique_ptr<GridFunction> &A);
 
 // Scale gridfunctions from non-dimensional to SI units.
-template <typename T>
-void DimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A);
+void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                 std::unique_ptr<GridFunction> &B,
+                                 std::unique_ptr<GridFunction> &V,
+                                 std::unique_ptr<GridFunction> &A);
 
 // Scale gridfunctions from SI units to non-dimensional.
-template <typename T>
-void NondimensionalizeGridFunctions(Units &units, bool imag, T &E, T &B, T &V, T &A);
+void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                    std::unique_ptr<GridFunction> &B,
+                                    std::unique_ptr<GridFunction> &V,
+                                    std::unique_ptr<GridFunction> &A);
 
 //
 // A class to handle solution postprocessing for all solvers.
