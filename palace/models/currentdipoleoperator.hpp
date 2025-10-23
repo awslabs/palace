@@ -50,6 +50,9 @@ private:
   // Vector of current dipole data structures.
   std::vector<CurrentDipoleData> dipoles;
 
+  // Storage for integrator coefficients to manage their lifetime
+  mutable std::vector<std::unique_ptr<mfem::VectorDeltaCoefficient>> dipole_integrator_coeffs;
+
   void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
@@ -69,10 +72,9 @@ public:
   std::vector<mfem::Vector> GetMoments() const;
   std::vector<mfem::Vector> GetCenters() const;
 
-  // Add contributions to the right-hand side source term vector for current dipole
-  // excitations in the domain.
-  void AddExcitationDomainCoefficients(SumVectorCoefficient &fd);
-  void AddExcitationDomainCoefficients(int idx, SumVectorCoefficient &fd);
+  // Add integrators directly to a LinearForm (following MFEM volta_solver approach)
+  void AddExcitationDomainIntegrators(mfem::LinearForm &rhs);
+  void AddExcitationDomainIntegrators(int idx, mfem::LinearForm &rhs);
 };
 
 }  // namespace palace

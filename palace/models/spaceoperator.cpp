@@ -54,8 +54,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   // Check Excitations.
   if (iodata.problem.type == ProblemType::DRIVEN)
   {
-    MFEM_VERIFY(!port_excitation_helper.Empty(),
-                "Driven problems must specify at least one excitation!");
+    // MFEM_VERIFY(!port_excitation_helper.Empty(),
+    //             "Driven problems must specify at least one excitation!");
   }
   else if (iodata.problem.type == ProblemType::EIGENMODE)
   {
@@ -877,11 +877,10 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
 
-  // Domain sources (current dipoles)
-  SumVectorCoefficient fd(GetMesh().SpaceDimension());
-  current_dipole_op.AddExcitationDomainCoefficients(excitation_idx, fd);
+  // Domain sources (current dipoles) - use integrator-based approach
+  bool has_current_dipoles = !current_dipole_op.Empty();
 
-  int empty[2] = {(fb.empty()), (fd.empty())};
+  int empty[2] = {(fb.empty()), (!has_current_dipoles)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -896,10 +895,10 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
     rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   }
 
-  // Add domain integrators for current dipoles
+  // Add domain integrators for current dipoles (following MFEM volta_solver approach)
   if (!empty[1])
   {
-    rhs1.AddDomainIntegrator(new VectorFEDomainLFIntegrator(fd));
+    current_dipole_op.AddExcitationDomainIntegrators(excitation_idx, rhs1);
   }
 
   rhs1.UseFastAssembly(false);

@@ -109,28 +109,29 @@ std::vector<mfem::Vector> CurrentDipoleOperator::GetCenters() const
   return centers;
 }
 
-void CurrentDipoleOperator::AddExcitationDomainCoefficients(SumVectorCoefficient &fd)
+void CurrentDipoleOperator::AddExcitationDomainIntegrators(mfem::LinearForm &rhs)
 {
-  // Construct the RHS source term for current dipole sources, which looks like
-  // -J_dipole for a current dipole source.
+  // Add each dipole as a separate integrator
   for (const auto &data : dipoles)
   {
-    // Create a copy of the VectorDeltaCoefficient for this dipole
+    // Create a VectorDeltaCoefficient for this dipole with negative sign (RHS = -J_source)
     auto dipole_coeff = std::make_unique<mfem::VectorDeltaCoefficient>(data.moment);
     dipole_coeff->SetDeltaCenter(data.center);
+    dipole_coeff->SetScale(-1.0);
 
-    // Add to the sum with negative sign (RHS = -J_source)
-    // TODO: I am not sure about this
-    fd.AddCoefficient(std::move(dipole_coeff), -1.0);
+    // Add as domain integrator
+    rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(*dipole_coeff));
+
+    // Store the coefficient to prevent deletion (LinearForm doesn't take ownership of coefficient)
+    dipole_integrator_coeffs.push_back(std::move(dipole_coeff));
   }
 }
 
-void CurrentDipoleOperator::AddExcitationDomainCoefficients(int idx,
-                                                            SumVectorCoefficient &fd)
+void CurrentDipoleOperator::AddExcitationDomainIntegrators(int idx, mfem::LinearForm &rhs)
 {
   // For current dipoles, the index doesn't matter for now. Just call the main function that
   // adds all dipoles
-  AddExcitationDomainCoefficients(fd);
+  AddExcitationDomainIntegrators(rhs);
 }
 
 }  // namespace palace
