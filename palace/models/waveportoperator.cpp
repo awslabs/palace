@@ -332,7 +332,7 @@ public:
   BdrSubmeshEVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems,
-                               const double scaling = 1.0)
+                               double scaling = 1.0)
     : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), submesh(submesh),
       submesh_parent_elems(submesh_parent_elems), scaling(scaling)
   {

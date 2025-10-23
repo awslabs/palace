@@ -489,7 +489,6 @@ auto CompareGridFunctions(std::vector<mfem::ParGridFunction> &gf1,
                           std::vector<mfem::ParGridFunction> &gf2,
                           const std::vector<double> &expected_ratios, double rtol)
 {
-  // std::vector<double> ratios;
   CHECK(gf1.size() == gf2.size());
   CHECK(gf1.size() == expected_ratios.size());
   for (auto i = 0; i < gf1.size(); i++)
@@ -497,12 +496,7 @@ auto CompareGridFunctions(std::vector<mfem::ParGridFunction> &gf1,
     // Get the gridfunction data.
     Vector v1 = gf1[i].GetTrueVector();
     Vector v2 = gf2[i].GetTrueVector();
-    // Compute the ratio v2 = v2/v1.
-    v1.UseDevice(true);
-    v2.UseDevice(true);
-    auto d_v1 = v1.Read();
-    auto d_v2 = v2.ReadWrite();
-    mfem::forall(v1.Size(), [=] MFEM_HOST_DEVICE(int i) { d_v2[i] /= d_v1[i]; });
+    v2 /= v1;
     // Get the min/max of the ratio.
     double min = v2.Min();
     double max = v2.Max();
@@ -572,46 +566,71 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 
   // Create some coefficients.
   MaterialOperator mat_op(iodata, mesh);
-  std::unique_ptr<mfem::VectorCoefficient> S;
-  std::unique_ptr<mfem::Coefficient> Ue, Um;
+  std::unique_ptr<mfem::VectorCoefficient> S_nondim, S_dim;
+  std::unique_ptr<mfem::Coefficient> Ue_nondim, Ue_dim, Um_nondim, Um_dim;
 
-  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
-  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
-  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
+  // Omit scaling argument (e.g. scaling = 1.0) for non-dimensional coefficients.
+  Ue_nondim =
+      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+  Um_nondim =
+      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+  S_nondim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
 
-  // Expected scalings.
+  // Use same scaling as in postoperator.cpp for dimensional coefficients.
+  auto scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                 iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  Ue_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+      *E, mat_op, scaling);
+  scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+  Um_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+      *B, mat_op, scaling);
+  S_dim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
+
+  // Expected scalings (including both units dimensionalization and mesh scaling Lc0 =
+  // Lc/L0). See comment in ScaleGridFunctions() in postoperator.cpp for mesh scaling
+  // factor.
   auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
-  // E [V/m].
+  // E [V/m], H(curl) requires * L.
   auto scaling_E = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) * mesh_Lc0;
-  // B [Wb/m²].
+  // B [Wb/m²], H(div) requires * L^2.
   auto scaling_B =
       iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 * mesh_Lc0;
-  // V [V].
+  // V [V], H1 requires no mesh scaling.
   auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-  // A [A/m].
+  // A [A/m], H(curl) requires * L.
   auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
-  // U_e = 1/2 ε_0 Eᴴ E.
-  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
+  // U_e = 1/2 Dᴴ E, H1 requires no mesh scaling.
+  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) *
                     iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
-  // U_m = 1/2 μ⁻¹ Bᴴ B.
-  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) *
+  // U_m = 1/2 Hᴴ B, H1 requires no mesh scaling.
+  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) *
                     iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-  // S = Re{E x μ⁻¹B⋆}.
+  // S = Re{E x H⋆}, H(div) requires * L^2.
   auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
-                   iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 *
+                   iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) * mesh_Lc0 *
                    mesh_Lc0;
   std::vector<double> expected_scaling = {scaling_E,  scaling_E,  scaling_B,
                                           scaling_B,  scaling_V,  scaling_A,
                                           scaling_Ue, scaling_Um, scaling_S};
 
-  auto update_coeff_gridfunctions = [&]()
+  auto update_coeff_gridfunctions = [&](bool dimensional)
   {
     Ue_gf = 0.0;
-    Ue_gf.ProjectCoefficient(*Ue.get());
     Um_gf = 0.0;
-    Um_gf.ProjectCoefficient(*Um.get());
     S_gf = 0.0;
-    S_gf.ProjectCoefficient(*S.get());
+    if (dimensional)
+    {
+      Ue_gf.ProjectCoefficient(*Ue_dim.get());
+      Um_gf.ProjectCoefficient(*Um_dim.get());
+      S_gf.ProjectCoefficient(*S_dim.get());
+    }
+    else
+    {
+      Ue_gf.ProjectCoefficient(*Ue_nondim.get());
+      Um_gf.ProjectCoefficient(*Um_nondim.get());
+      S_gf.ProjectCoefficient(*S_nondim.get());
+    }
   };
 
   auto copy_gridfunctions = [&]()
@@ -624,14 +643,14 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   };
 
   // Copy gridfunctions before dimensionalizing.
-  update_coeff_gridfunctions();
+  update_coeff_gridfunctions(false);
   std::vector<mfem::ParGridFunction> gf_before = copy_gridfunctions();
 
   // Dimensionalize.
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(iodata.units, E, B, V, A);
-  update_coeff_gridfunctions();
+  update_coeff_gridfunctions(true);
   std::vector<mfem::ParGridFunction> gf_dim = copy_gridfunctions();
   CompareGridFunctions(gf_before, gf_dim, expected_scaling, rtol);
 
@@ -639,7 +658,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
-  update_coeff_gridfunctions();
+  update_coeff_gridfunctions(false);
   std::vector<mfem::ParGridFunction> gf_after = copy_gridfunctions();
   CompareGridFunctions(gf_before, gf_after, std::vector<double>(gf_after.size(), 1.0),
                        rtol);

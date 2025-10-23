@@ -49,7 +49,7 @@ protected:
   }
 
 public:
-  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh, const double scaling = 1.0)
+  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh, double scaling = 1.0)
     : mesh(mesh), scaling(scaling)
   {
   }
@@ -91,8 +91,7 @@ private:
 
 public:
   BdrSurfaceCurrentVectorCoefficient(const mfem::ParGridFunction &B,
-                                     const MaterialOperator &mat_op,
-                                     const double scaling = 1.0)
+                                     const MaterialOperator &mat_op, double scaling = 1.0)
     : mfem::VectorCoefficient(B.VectorDim()),
       BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh(), scaling), B(B),
       mat_op(mat_op)
@@ -152,7 +151,7 @@ private:
 public:
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0, const double scaling = 1.0)
+                            const mfem::Vector &x0, double scaling = 1.0)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
@@ -467,7 +466,7 @@ private:
 
 public:
   EnergyDensityCoefficient(const GridFunction &U, const MaterialOperator &mat_op,
-                           const double scaling = 1.0)
+                           double scaling = 1.0)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh(), scaling), U(U),
       mat_op(mat_op)
@@ -565,7 +564,7 @@ private:
 
 public:
   PoyntingVectorCoefficient(const GridFunction &E, const GridFunction &B,
-                            const MaterialOperator &mat_op, const double scaling = 1.0)
+                            const MaterialOperator &mat_op, double scaling = 1.0)
     : mfem::VectorCoefficient(E.VectorDim()),
       BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh(), scaling), E(E), B(B),
       mat_op(mat_op)
