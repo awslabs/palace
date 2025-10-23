@@ -70,6 +70,23 @@ constexpr bool HasBGridFunction()
   return solver_t != ProblemType::ELECTROSTATIC;
 }
 
+// Scale gridfunctions after redimensionalizing the mesh.
+void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
+                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
+                        std::unique_ptr<GridFunction> &A);
+
+// Scale gridfunctions from non-dimensional to SI units.
+void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                 std::unique_ptr<GridFunction> &B,
+                                 std::unique_ptr<GridFunction> &V,
+                                 std::unique_ptr<GridFunction> &A);
+
+// Scale gridfunctions from SI units to non-dimensional.
+void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                    std::unique_ptr<GridFunction> &B,
+                                    std::unique_ptr<GridFunction> &V,
+                                    std::unique_ptr<GridFunction> &A);
+
 //
 // A class to handle solution postprocessing for all solvers.
 //
