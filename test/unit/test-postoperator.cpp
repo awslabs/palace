@@ -14,6 +14,7 @@
 #include "utils/units.hpp"
 
 using namespace palace;
+using namespace Catch::Matchers;
 using json = nlohmann::json;
 // Helpers
 
@@ -482,4 +483,183 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
     check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
   }
+}
+
+auto CompareGridFunctions(std::vector<mfem::ParGridFunction> &gf1,
+                          std::vector<mfem::ParGridFunction> &gf2,
+                          const std::vector<double> &expected_ratios, double rtol)
+{
+  CHECK(gf1.size() == gf2.size());
+  CHECK(gf1.size() == expected_ratios.size());
+  for (auto i = 0; i < gf1.size(); i++)
+  {
+    // Get the gridfunction data.
+    Vector v1 = gf1[i].GetTrueVector();
+    Vector v2 = gf2[i].GetTrueVector();
+    v2 /= v1;
+    // Get the min/max of the ratio.
+    double min = v2.Min();
+    double max = v2.Max();
+    // Check that min == max == expected_ratio.
+    CHECK_THAT(min, Catch::Matchers::WithinRel(max, rtol));
+    CHECK_THAT(min, Catch::Matchers::WithinRel(expected_ratios[i], rtol));
+  }
+}
+
+TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
+{
+  constexpr double rtol = 1.0e-10;
+
+  // Create iodata.
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+
+  // Create serial mesh.
+  int resolution = 3;
+  double length = 12.2;
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
+                                  mfem::Element::TETRAHEDRON, length, length, length));
+
+  // Create parallel mesh.
+  auto comm = Mpi::World();
+  int size = Mpi::Size(comm);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  Mesh mesh(std::move(par_mesh));
+
+  // Create gridfunctions.
+  int order = 1;
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
+  mfem::ParGridFunction Ue_gf(&h1_fespace), Um_gf(&h1_fespace);
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_fec);
+
+  mfem::RT_FECollection rt_fec(order, mesh.Dimension());
+  mfem::ParFiniteElementSpace rt_fespace(&mesh.Get(), &rt_fec);
+  mfem::ParGridFunction S_gf(&rt_fespace);
+
+  std::unique_ptr<GridFunction> E, B, V, A;
+  E = std::make_unique<GridFunction>(nd_fespace, true);
+  B = std::make_unique<GridFunction>(rt_fespace, true);
+  A = std::make_unique<GridFunction>(nd_fespace);
+  V = std::make_unique<GridFunction>(h1_fespace);
+
+  // Create fields, initialize them to random values, and set the corresponding
+  // gridfunctions.
+  ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
+  Vector a(rt_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
+  linalg::SetRandom(comm, e);
+  linalg::SetRandom(comm, b);
+  linalg::SetRandom(comm, a);
+  linalg::SetRandom(comm, v);
+
+  E->Real().SetFromTrueDofs(e.Real());
+  E->Imag().SetFromTrueDofs(e.Imag());
+  B->Real().SetFromTrueDofs(b.Real());
+  B->Imag().SetFromTrueDofs(b.Imag());
+  A->Real().SetFromTrueDofs(a);
+  V->Real().SetFromTrueDofs(v);
+
+  // Create some coefficients.
+  MaterialOperator mat_op(iodata, mesh);
+  std::unique_ptr<mfem::VectorCoefficient> S_nondim, S_dim;
+  std::unique_ptr<mfem::Coefficient> Ue_nondim, Ue_dim, Um_nondim, Um_dim;
+
+  // Omit scaling argument (e.g. scaling = 1.0) for non-dimensional coefficients.
+  Ue_nondim =
+      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+  Um_nondim =
+      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+  S_nondim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
+
+  // Use same scaling as in postoperator.cpp for dimensional coefficients.
+  auto scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                 iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  Ue_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+      *E, mat_op, scaling);
+  scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+  Um_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+      *B, mat_op, scaling);
+  S_dim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
+
+  // Expected scalings (including both units dimensionalization and mesh scaling Lc0 =
+  // Lc/L0). See comment in ScaleGridFunctions() in postoperator.cpp for mesh scaling
+  // factor.
+  auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
+  // E [V/m], H(curl) requires * L.
+  auto scaling_E = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) * mesh_Lc0;
+  // B [Wb/m²], H(div) requires * L^2.
+  auto scaling_B =
+      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 * mesh_Lc0;
+  // V [V], H1 requires no mesh scaling.
+  auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+  // A [A/m], H(curl) requires * L.
+  auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
+  // U_e = 1/2 Dᴴ E, H1 requires no mesh scaling.
+  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) *
+                    iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  // U_m = 1/2 Hᴴ B, H1 requires no mesh scaling.
+  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) *
+                    iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+  // S = Re{E x H⋆}, H(div) requires * L^2.
+  auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
+                   iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) * mesh_Lc0 *
+                   mesh_Lc0;
+  std::vector<double> expected_scaling = {scaling_E,  scaling_E,  scaling_B,
+                                          scaling_B,  scaling_V,  scaling_A,
+                                          scaling_Ue, scaling_Um, scaling_S};
+
+  auto update_coeff_gridfunctions = [&](bool dimensional)
+  {
+    Ue_gf = 0.0;
+    Um_gf = 0.0;
+    S_gf = 0.0;
+    if (dimensional)
+    {
+      Ue_gf.ProjectCoefficient(*Ue_dim.get());
+      Um_gf.ProjectCoefficient(*Um_dim.get());
+      S_gf.ProjectCoefficient(*S_dim.get());
+    }
+    else
+    {
+      Ue_gf.ProjectCoefficient(*Ue_nondim.get());
+      Um_gf.ProjectCoefficient(*Um_nondim.get());
+      S_gf.ProjectCoefficient(*S_nondim.get());
+    }
+  };
+
+  auto copy_gridfunctions = [&]()
+  {
+    mfem::ParGridFunction Er_copy(E->Real()), Ei_copy(E->Imag()), Br_copy(B->Real()),
+        Bi_copy(B->Real()), V_copy(V->Real()), A_copy(A->Real()), Ue_copy(Ue_gf),
+        Um_copy(Um_gf), S_copy(S_gf);
+    return std::vector<mfem::ParGridFunction>(
+        {Er_copy, Ei_copy, Br_copy, Bi_copy, V_copy, A_copy, Ue_copy, Um_copy, S_copy});
+  };
+
+  // Copy gridfunctions before dimensionalizing.
+  update_coeff_gridfunctions(false);
+  std::vector<mfem::ParGridFunction> gf_before = copy_gridfunctions();
+
+  // Dimensionalize.
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(iodata.units, E, B, V, A);
+  update_coeff_gridfunctions(true);
+  std::vector<mfem::ParGridFunction> gf_dim = copy_gridfunctions();
+  CompareGridFunctions(gf_before, gf_dim, expected_scaling, rtol);
+
+  // Nondimensionalize.
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
+  update_coeff_gridfunctions(false);
+  std::vector<mfem::ParGridFunction> gf_after = copy_gridfunctions();
+  CompareGridFunctions(gf_before, gf_after, std::vector<double>(gf_after.size(), 1.0),
+                       rtol);
 }

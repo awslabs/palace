@@ -41,6 +41,8 @@ The format of this changelog is based on
     `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
     vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [PR
     471](https://github.com/awslabs/palace/pull/471).
+  - Changed Paraview and GLVis output fields from nondimensional to SI units
+    [PR 532](https://github.com/awslabs/palace/pull/532).
 
 #### Bug Fixes
 
