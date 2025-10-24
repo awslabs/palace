@@ -594,6 +594,74 @@ the radial terms (i.e., those proportional to ``\mathbf{r}_0``, in the wave zone
 there are only transverse fields) to arrive at the equation presented in the
 previous section and implemented in *Palace*.
 
+## Units
+
+Three unit systems are used within any given *Palace* simulation.
+
+First, the mesh comes with its own unit of length. Users specify the conversion
+between one unit of length on the mesh to meters through the
+[`config["Model"]["L0"]`](config/problem.md#config%5B%Model%22%5D) parameter.
+
+Second, *Palace* defines a system of non-dimensional units where the actual
+solver operates.
+
+Third, postprocessing occurs in a custom variant of SI units where the unit of
+time is nanoseconds instead of seconds and frequencies are measured in GHz/rad
+instead of Hz (i.e., frequency is angular frequency).
+
+### Non-dimensional unit system
+
+The non-dimensional unit system is constructed as follows:
+
+Length: Lengths are measured in units of the characteristic length `Lc`, which is
+typically the mesh size in mesh units. The extent of the mesh is 1 in these units
+(unless `Lc` is manually specified in
+[`config["Model"]["Lc"]`](config/problem.md#config%5B%Model%22%5D)).
+
+Time: One unit of non-dimensional time is the time it takes light to travel one
+`Lc` (equivalently, speed of light is 1 in these units).
+
+Units of other non-electromagnetic quantities are constructed from these two.
+
+Units of electromagnetic quantities are constructed assuming that the impedance
+of free space is 1 and choosing the units of magnetic field strength `H` in the
+following way. The unit of magnetic field strength `H` is defined so that the
+power flowing through a surface of area `Lc²` perpendicular to the direction of
+propagation in vacuum with a uniform magnetic field of strength 1 is exactly 1
+(`P = H^2 * Z * L^2`).
+
+An equivalent mental model about non-dimensional quantities in *Palace* is to
+think in terms of characteristic values instead of units: you can think that
+non-dimensional quantities are physical quantities normalized by some reference
+value. For example The magnetic field strength `H` solved for is actually
+`H/Hc`, where `Hc` satisfies `Hc² × Z₀ × Lc² = 1 W`. Similarly, the
+non-dimensional electric field `E` is `E/Ec` with `Ec = Z₀ × Hc`.
+
+!!! note "Example: converting times and distances"
+    
+    Consider a spherical mesh with `L0` of 1 micron and radius of 3 in mesh units.
+    Then:
+    
+      - Mesh size in mesh units: 6
+      - Mesh size in non-dimensional units: 1
+      - Mesh radius in dimensional units: 6e-6
+      - Speed of light in non-dimensional units: 1
+      - Speed of light in dimensional units: 0.3
+      - Time for light to cross the sphere in non-dimensional units: 1
+      - Time for light to cross the sphere in dimensional units: 2e-5
+
+!!! warning "Non-SI time units"
+    
+    The dimensional unit system uses nanoseconds for time and GHz/rad for
+    frequency, not standard SI units. This affects unit combinations:
+    `units::POWER * units::TIME` is not equivalent to `units::ENERGY`.
+
+!!! warning "Finite element considerations"
+    
+    Changing mesh units requires additional rescaling for fields defined on
+    H(curl) and H(div) spaces to convert them to proper physical units. See the
+    `ScaleGridFunctions` function for details.
+
 ## References
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
