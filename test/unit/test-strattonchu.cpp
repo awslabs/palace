@@ -236,9 +236,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   SurfacePostOperator surf_post_op(iodata, mat_op, nd_fespace, nd_fespace);
 
   auto thetaphis = GenerateSphericalTestPoints();
-  // NOTE: units.Nondimensionalize<Units::ValueType::FREQUENCY> adds a factor of 2pi!
   double omega_rad_per_time =
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
   auto rE_computed =
       surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);

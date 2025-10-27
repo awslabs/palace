@@ -74,7 +74,7 @@ public:
     }
     else if constexpr (unit == ValueType::FREQUENCY)
     {
-      return 1.0 / (2.0 * M_PI * tc_ns);  // [GHz/rad]
+      return 1.0 / tc_ns;  // [GHz]
     }
     else if constexpr (unit == ValueType::LENGTH)
     {

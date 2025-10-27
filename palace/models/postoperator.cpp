@@ -1171,7 +1171,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
-  omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
+  omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
   if (ShouldWriteParaviewFields(step))
   {
@@ -1224,9 +1224,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.col_options = {6, 6};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()));
+                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
+        (2 * M_PI);
     table.insert(Column("f_im", "Im{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag()));
+                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
+        (2 * M_PI);
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
