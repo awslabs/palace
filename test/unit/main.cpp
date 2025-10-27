@@ -85,6 +85,14 @@ int main(int argc, char *argv[])
   if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
   {
     cfg.testsOrTags.emplace_back("[GPU]");
+    if (ceed_backend == "/cpu/self")
+    {
+      // TODO: We pick magma because this is what Palace main does. We might
+      // want to double check if this is the best default backend to choose.
+      // Note that magma is a non-deterministic backend.
+      ceed_backend =
+          device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda/magma" : "/gpu/hip/magma";
+    }
   }
   // Check if we are running with more than 1 MPI process, if yes, add the
   // [Parallel] tag, if not add the [Serial] tag.
