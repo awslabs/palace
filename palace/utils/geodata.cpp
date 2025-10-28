@@ -1912,16 +1912,6 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
-    // Remove impedance attributes.
-    // for (const auto &data : iodata.boundaries.impedance)
-    //{
-    //  auto attr_in_bc = [&](auto x)
-    //  {
-    //    return std::find(data.attributes.begin(), data.attributes.end(), x) !=
-    //    data.attributes.end();
-    //  };
-    //  cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_bc), cba.end());
-    //}
     return cba;
   }();
 
