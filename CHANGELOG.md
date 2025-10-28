@@ -46,7 +46,7 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
-  - Change wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
+  - Changed wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
     The first mode now has the largest propagation constant, closest to the TEM limit, and
     subsequent modes are ordered by decreasing propagation constant. [PR
     448](https://github.com/awslabs/palace/pull/448).
@@ -63,6 +63,8 @@ The format of this changelog is based on
     [PR 510](https://github.com/awslabs/palace/pull/510) and [PR 526](https://github.com/awslabs/palace/pull/526).
   - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants 2022
     [PR 525](https://github.com/awslabs/palace/pull/525).
+  - Scaled Rs/Ls/Cs of impedance boundary conditions affected by mesh cracking, fixing bug where
+    `"CrackInternalBoundaryElements"` would lead to incorrect results. [PR 544](https://github.com/awslabs/palace/pull/544).
 
 ## [0.14.0] - 2025-08-20
 
