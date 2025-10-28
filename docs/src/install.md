@@ -28,8 +28,19 @@ and run:
 spack install palace
 ```
 
-More information about the available configuration options and dependencies can
-be found using `spack info palace`.
+This will install the default version of *Palace*. Spack supports installing
+_variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
+MUMPS and SLEPc, call
+
+```bash
+spack install palace +mumps +slepc +cuda cuda_arch=90
+```
+
+where `cuda_arch` is determined by the [generation of your
+GPU](https://developer.nvidia.com/cuda-gpus). More information about the
+available configuration options and dependencies can be found using `spack info palace`. See the [official
+tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
+for an introduction.
 
 ## Build using Singularity/Apptainer
 
