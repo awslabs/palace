@@ -1224,11 +1224,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.col_options = {6, 6};
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
-        (2 * M_PI);
+                 << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
+                        (2 * M_PI));
     table.insert(Column("f_im", "Im{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
-        (2 * M_PI);
+                 << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
+                        (2 * M_PI));
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);

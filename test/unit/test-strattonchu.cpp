@@ -21,7 +21,6 @@
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
 #include <complex>
-#include <string>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -343,7 +342,7 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
 
-  auto comm = Mpi::World();
+  MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
   const int dim = serial_mesh->Dimension();

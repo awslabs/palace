@@ -71,7 +71,8 @@ space. Similarly, the non-dimensional electric field `E` is `E/Ec` with `Ec = Zâ
 
 !!! warning "Non-SI time units"
     
-    The dimensional unit system uses nanoseconds for time, not seconds.
+    The dimensional unit system uses nanoseconds for time, not seconds. This affects
+    unit combinations: `units::POWER * units::TIME` is not equivalent to `units::ENERGY`.
 
 !!! warning "Omega instead of Frequency"
     
