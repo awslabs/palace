@@ -26,6 +26,9 @@ namespace mesh
 // object, which should be destroyed by the user.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
+// Helper that returns list of attributes that will be cracked if mesh cracking is enabled.
+std::vector<int> CollectBoundaryAttributesToCrack(const IoData &iodata);
+
 // Refine the provided mesh according to the data in the input file. If levels of refinement
 // are requested, the refined meshes are stored in order of increased refinement. Ownership
 // of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.

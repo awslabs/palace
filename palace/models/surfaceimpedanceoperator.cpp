@@ -80,6 +80,7 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
     bdr.Ls = data.Ls;
     bdr.Cs = data.Cs;
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    auto cracked_boundary_attributes = mesh::CollectBoundaryAttributesToCrack(iodata);
     for (auto attr : data.attributes)
     {
       if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
@@ -87,15 +88,15 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
+
       // Compute a scaling factor to account for increased area when using mesh cracking.
-      if (iodata.boundaries.cracked_attributes.find(attr) !=
-          iodata.boundaries.cracked_attributes.end())
+      auto it = std::find(cracked_boundary_attributes.begin(),
+                          cracked_boundary_attributes.end(), attr);
+      if (iodata.model.crack_bdr_elements && it != cracked_boundary_attributes.end())
       {
         bdr.scaling = 2.0;
       }
-      MFEM_VERIFY((iodata.boundaries.cracked_attributes.find(attr) !=
-                   iodata.boundaries.cracked_attributes.end()) ||
-                      (bdr.scaling == 1.0),
+      MFEM_VERIFY((it != cracked_boundary_attributes.end()) || (bdr.scaling == 1.0),
                   "Impedance boundary has both cracked and uncracked attributes!");
     }
     bdr.Ls *= bdr.scaling;

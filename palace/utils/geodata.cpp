@@ -59,7 +59,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(IoData &, std::unique_ptr<mfem::Mesh> &,
+int AddInterfaceBdrElements(const IoData &, std::unique_ptr<mfem::Mesh> &,
                             std::unordered_map<int, int> &, MPI_Comm comm);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
@@ -240,30 +240,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
   }
 
-  // Broadcast cracked boundary attributes to other ranks.
-  if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
-  {
-    int size = iodata.boundaries.cracked_attributes.size();
-    Mpi::Broadcast(1, &size, 0, comm);
-    std::vector<int> data;
-    if (Mpi::Root(comm))
-    {
-      data.assign(iodata.boundaries.cracked_attributes.begin(),
-                  iodata.boundaries.cracked_attributes.end());
-    }
-    else
-    {
-      data.resize(size);
-    }
-    Mpi::Broadcast(size, data.data(), 0, comm);
-
-    if (!Mpi::Root(comm))
-    {
-      iodata.boundaries.cracked_attributes.clear();
-      iodata.boundaries.cracked_attributes.insert(data.begin(), data.end());
-    }
-  }
-
   // Distribute the mesh.
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (use_mesh_partitioner)
@@ -347,6 +323,26 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   }
 
   return pmesh;
+}
+
+// Helper that returns list of attributes that will be cracked. Returns empty if cracking is
+// disabled.
+std::vector<int> CollectBoundaryAttributesToCrack(const IoData &iodata)
+{
+  auto cba = iodata.boundaries.attributes;
+  // Remove lumped port attributes.
+  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  {
+    for (const auto &e : data.elements)
+    {
+      auto attr_in_elem = [&](auto x)
+      {
+        return std::find(e.attributes.begin(), e.attributes.end(), x) != e.attributes.end();
+      };
+      cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
+    }
+  }
+  return cba;
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
@@ -1891,29 +1887,12 @@ struct UnorderedPairHasher
   }
 };
 
-int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
+int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
   // Exclude some internal boundary conditions for which cracking would give invalid
   // results: lumpedports in particular.
-  const auto crack_boundary_attributes = [&iodata]()
-  {
-    auto cba = iodata.boundaries.attributes;
-    // Remove lumped port attributes.
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
-    {
-      for (const auto &e : data.elements)
-      {
-        auto attr_in_elem = [&](auto x)
-        {
-          return std::find(e.attributes.begin(), e.attributes.end(), x) !=
-                 e.attributes.end();
-        };
-        cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
-      }
-    }
-    return cba;
-  }();
+  const auto crack_boundary_attributes = mesh::CollectBoundaryAttributesToCrack(iodata);
 
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_boundary_attributes.empty() && !iodata.model.add_bdr_elements)
@@ -1951,7 +1930,6 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         if (e1 >= 0 && e2 >= 0)
         {
           crack_bdr_elem.insert(be);
-          iodata.boundaries.cracked_attributes.insert(orig_mesh->GetBdrAttribute(be));
         }
       }
     }
