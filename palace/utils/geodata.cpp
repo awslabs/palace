@@ -1941,6 +1941,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
         crack_boundary_attributes, true);
+    std::unordered_set<int> external_attributes;
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       if (crack_bdr_marker[orig_mesh->GetBdrAttribute(be) - 1])
@@ -1953,12 +1954,27 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           crack_bdr_elem.insert(be);
           iodata.boundaries.cracked_attributes.insert(orig_mesh->GetBdrAttribute(be));
         }
+        else
+        {
+          external_attributes.insert(orig_mesh->GetBdrAttribute(be));
+        }
       }
     }
     MFEM_VERIFY(crack_bdr_elem.empty() || !orig_mesh->Nonconforming(),
                 "Duplicating internal boundary elements for interior boundaries is not "
                 "supported for nonconforming meshes!");
-
+    std::vector<int> mixed_attributes;
+    std::set_intersection(iodata.boundaries.cracked_attributes.begin(),
+                          iodata.boundaries.cracked_attributes.end(),
+                          external_attributes.begin(), external_attributes.end(),
+                          std::back_inserter(mixed_attributes));
+    if (!mixed_attributes.empty())
+    {
+      MFEM_WARNING("Found boundary attribute with internal and external boundary elements: "
+                   << fmt::format("{}", fmt::join(mixed_attributes, " "))
+                   << ". Impedance boundary conditions for these attributes will give "
+                      "erroneous results, consider separating into different attributes!");
+    }
     vert_to_elem.reset(orig_mesh->GetVertexToElementTable());  // Owned by caller
     const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
     int new_nv_dups = 0;
