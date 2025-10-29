@@ -116,6 +116,10 @@ jobs:
                 require: ~hdf5
               rocblas:
                 require: ~tensile
+              # TODO: Remove this when
+              # https://github.com/spack/spack-packages/pull/2144/ is merged
+              fast-float:
+                require: "@6"
             repos:
             - spack_repo/local
             mirrors:
