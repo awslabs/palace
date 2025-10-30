@@ -29,6 +29,7 @@ private:
   {
     double Rs, Ls, Cs;
     mfem::Array<int> attr_list;
+    double scaling = 1.0;
   };
   std::vector<ImpedanceData> boundaries;
 

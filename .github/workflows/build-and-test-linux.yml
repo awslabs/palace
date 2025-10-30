@@ -361,6 +361,9 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
+
       - uses: julia-actions/setup-julia@v2
         if: needs.filter.outputs.test == 'true'
         with:
