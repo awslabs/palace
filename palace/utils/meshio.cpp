@@ -804,7 +804,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
             }
 
             // Parse all element geometry tags (stored at beginning of element nodes). For
-            // geometric entites in < 3D, the exported COMSOL tags are 0-based and need
+            // geometric entities in < 3D, the exported COMSOL tags are 0-based and need
             // correcting to 1-based for Gmsh.
             int i = 0;
             const int geom_start =

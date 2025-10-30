@@ -1378,7 +1378,7 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
          measurement_cache.domain_H_field_energy_all;
 }
 
-// Explict template instantiation.
+// Explicit template instantiation.
 
 template class PostOperator<ProblemType::DRIVEN>;
 template class PostOperator<ProblemType::EIGENMODE>;
@@ -1386,7 +1386,7 @@ template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
 
-// Function explict instantiation.
+// Function explicit instantiation.
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(

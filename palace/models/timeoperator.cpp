@@ -65,7 +65,7 @@ public:
     C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
-    // Already asserted that only that time dependant solver only has a single excitation.
+    // Already asserted that only that time dependent solver only has a single excitation.
     auto excitation_helper = space_op.GetPortExcitations();
     auto excitation_idx = excitation_helper.excitations.begin()->first;
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time

@@ -29,7 +29,7 @@ struct SurfaceCurrentData;
 class SurfaceCurrentData
 {
 public:
-  // To accomodate multielement surface current sources, a current source may be made up
+  // To accommodate multielement surface current sources, a current source may be made up
   // of elements with different attributes and directions which add to deliver the same
   // total source current.
   std::vector<std::unique_ptr<LumpedElementData>> elems;

@@ -798,7 +798,7 @@ BuildParSumOperator(const std::array<double, N> &coeff,
     }
     const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
 
-    // Check other existant essential dof arrays are references.
+    // Check other existent essential dof arrays are references.
     MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
                             [&](auto p)
                             {
@@ -885,7 +885,7 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
     }
     const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
 
-    // Check other existant essential dof arrays are references.
+    // Check other existent essential dof arrays are references.
     MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
                             [&](auto p)
                             {

@@ -179,7 +179,7 @@ the equator, and minimum along the z axis.
     The `plot_radiation_pattern.jl` requires a number of Julia packages (including
     the plotting library). The simplest way to ensure that you have all the required
     packages is to use the `Project.toml` included with the examples. To install this
-    enviroment, navigate to the `examples` folder and run
+    environment, navigate to the `examples` folder and run
     
     ```bash
     julia --project -e 'using Pkg; Pkg.instantiate();'

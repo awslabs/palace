@@ -143,7 +143,7 @@ For magnetostatic simulations,
 the user should specify a number of source current boundaries. For each current source, a
 magnetostatic field is computed by applying a unit current to the source index of interest,
 leaving all other sources open with no excitation. Surfaces which are expected to carry
-current should be labeled as perfectly conducting, which prescibes a zero magnetic flux, or
+current should be labeled as perfectly conducting, which prescribes a zero magnetic flux, or
 [magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
 boundary condition. The resulting fields are used to compute the inductance matrix and its
 inverse, which are written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`,

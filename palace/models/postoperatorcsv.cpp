@@ -344,7 +344,7 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
                           file));
 
   auto err_msg = fmt::format("The results table loaded from path {} contains pre-existing "
-                             "data, but it doest not match the "
+                             "data, but it does not match the "
                              "expected table structure.",
                              file);
   if (t_base.n_cols() != t_ref.n_cols())
@@ -1376,7 +1376,7 @@ template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
 
-// Function explict needed testing since everywhere it's through PostOperator.
+// Function explicit needed testing since everywhere it's through PostOperator.
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(

@@ -181,7 +181,7 @@ void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
   {
     MFEM_VERIFY(y[b] && ((b < y.size() - 1 && offset + y[b]->Size() < Size()) ||
                          (b == y.size() - 1 && offset + y[b]->Size() == Size())),
-                "Mistmatch between sum of block dimensions and parent vector dimension!");
+                "Mismatch between sum of block dimensions and parent vector dimension!");
     const double sr = s.empty() ? 1.0 : s[b].real();
     const double si = s.empty() ? 0.0 : s[b].imag();
     const bool use_dev = UseDevice() || y[b]->UseDevice();

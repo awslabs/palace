@@ -101,15 +101,15 @@ the sphere region will be marked for refinement.
 `"Levels" [0]` : Levels of parallel mesh refinement inside the specified refinement region.
 
 `"BoundingBoxMin" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the minimum coordinates of the axis-aligned bounding box for this
+dimension specifying the minimum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"BoundingBoxMax" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the maximum coordinates of the axis-aligned bounding box for this
+dimension specifying the maximum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"Center" [None]` : Floating point array of length equal to the model spatial dimension
-specfiying the center coordinates of the sphere for this sphere refinement region.
+specifying the center coordinates of the sphere for this sphere refinement region.
 Specified in mesh length units.
 
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in

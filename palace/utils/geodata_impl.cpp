@@ -526,7 +526,7 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
     std::iota(indices.begin(), indices.end(), 0);
 
     // Acceleration from https://informatica.vu.lt/journal/INFORMATICA/article/1251. Allow
-    // for duplicate points and just add the 4 points to the end of the indicies list to be
+    // for duplicate points and just add the 4 points to the end of the indices list to be
     // considered first. The two points are not necessarily the maximizer of the distance
     // between all pairs, but they should be a good estimate.
     {

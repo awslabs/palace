@@ -113,7 +113,7 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 {
   ComplexVector cv(2);
 
-  // Set requires explicitely specifying on_dev depending on the device.
+  // Set requires explicitly specifying on_dev depending on the device.
   bool on_dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   cv.UseDevice(on_dev);
 

@@ -385,7 +385,7 @@ given by
 where ``t_j`` is the thickness of the layer and ``\bm{D} = \varepsilon_{r,j}\bm{E}`` is the
 electric displacement field in the layer evaluated using the relative permittivity of the
 interface ``\varepsilon_{r,j}``. For an internal boundary, this integral is evaluated on a
-single side to resolve abiguity due to the discontinuity of ``\bm{E}`` across the boundary.
+single side to resolve ambiguity due to the discontinuity of ``\bm{E}`` across the boundary.
 
 The above formula for interface dielectric loss can be specialized for the case of a
 metal-air, metal-substrate, or substrate-air interface [[4]](#References). In each case, the
