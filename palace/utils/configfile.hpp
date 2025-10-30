@@ -875,7 +875,7 @@ public:
   bool pc_mat_real = false;
 
   // For frequency domain applications, precondition linear systems with a shifted matrix
-  // (makes the preconditoner matrix SPD).
+  // (makes the preconditioner matrix SPD).
   int pc_mat_shifted = -1;
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse

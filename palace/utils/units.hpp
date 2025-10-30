@@ -130,7 +130,7 @@ public:
     }
     else
     {
-      static_assert(always_false<unit>::value, "ValueType unkown");
+      static_assert(always_false<unit>::value, "ValueType unknown");
     }
   }
 

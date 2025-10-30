@@ -1785,7 +1785,7 @@ template <typename T>
 class EdgeRefinementMesh : public mfem::Mesh
 {
 private:
-  // Container with keys being pairs of vertex indicies (match row/column indices of v_to_v)
+  // Container with keys being pairs of vertex indices (match row/column indices of v_to_v)
   // of edges which we desire to be refined.
   const T &refinement_edges;
 
@@ -2117,7 +2117,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
         for (const auto &[e, count] : elem_to_refine)
         {
           // Tetrahedral bisection (vs. default octasection) will result in fewer added
-          // elements at the cost of a potential minor mesh quality degredation.
+          // elements at the cost of a potential minor mesh quality degradation.
           refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
           // refinements.Append(mfem::Refinement(e, (count > 1) ? mfem::Refinement::XY
           //                                                    : mfem::Refinement::X));

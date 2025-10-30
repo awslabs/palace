@@ -454,7 +454,7 @@ TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][S
   CHECK(_impl::table_expected_filling(2, 2, 5, 3) == vs{5, 5, 5, 2});
 }
 
-// Could also use METHOD_AS_TEST_CASE with fixture. This resuses fixture class, *without*
+// Could also use METHOD_AS_TEST_CASE with fixture. This reuses fixture class, *without*
 // inheriting from it, so friendship assignment works.
 TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
 {

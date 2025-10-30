@@ -49,7 +49,7 @@ end
 
 Extract E-plane (xz-plane) radiation pattern data.
 
-This is done by idenfying points with φ = 0° and φ = 180° within the given
+This is done by identifying points with φ = 0° and φ = 180° within the given
 tolerance.
 
 We have to be a little careful here because we need to offset the θs by 180°
@@ -87,7 +87,7 @@ end
 
 Extract H-plane (xy-plane) radiation pattern data.
 
-This is done by idenfying points with θ = 90° within the given tolerance.
+This is done by identifying points with θ = 90° within the given tolerance.
 """
 function extract_hplane(df, tolerance_deg=1)
     # H-plane: theta = 90°.

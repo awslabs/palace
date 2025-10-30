@@ -136,7 +136,7 @@ private:
   // attributes).
   mfem::Array<int> attr_mat;
 
-  // Material propetry coefficients, ordered by material index.
+  // Material property coefficients, ordered by material index.
   mfem::DenseTensor mat_coeff;
 
 public:

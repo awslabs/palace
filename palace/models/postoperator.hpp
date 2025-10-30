@@ -243,7 +243,7 @@ protected:
   void MeasureProbes() const;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
-  // dependant measurements.
+  // dependent measurements.
   void MeasureAllImpl() const
   {
     MeasureDomainFieldEnergy();

@@ -52,13 +52,13 @@ private:
   // Reference to HDM discretization (not owned).
   SpaceOperator &space_op;
 
-  // Used for constructing & resuse of RHS1.
+  // Used for constructing & reuse of RHS1.
   int excitation_idx_cache = 0;
 
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  // Defaults: will be toggeled by SetExcitationIndex & SolveHDM.
+  // Defaults: will be toggled by SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
   bool has_RHS2 = true;

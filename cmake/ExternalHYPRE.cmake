@@ -34,7 +34,7 @@ if(PALACE_WITH_HIP)
   set(HYPRE_CXXFLAGS "${HYPRE_CXXFLAGS} -isystem ${ROCM_DIR}/include")
 endif()
 
-# Need to manually specificy MPI flags for test program compilation/linkage during configure
+# Need to manually specify MPI flags for test program compilation/linkage during configure
 if(NOT MPI_FOUND)
   message(FATAL_ERROR "MPI is not found when trying to build HYPRE")
 endif()
