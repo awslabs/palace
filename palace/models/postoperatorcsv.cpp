@@ -22,7 +22,8 @@ Measurement Measurement::Dimensionalize(const Units &units,
 {
   Measurement measurement_cache;
   measurement_cache.freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq) /
+      (2.0 * M_PI);
   measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
@@ -75,7 +76,8 @@ Measurement Measurement::Dimensionalize(const Units &units,
           units.Dimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
 
       dim[k].mode_port_kappa =
-          units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+          units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) /
+          (2 * M_PI);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -130,7 +132,8 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 {
   Measurement measurement_cache;
   measurement_cache.freq =
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq);
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq) *
+      (2 * M_PI);
   measurement_cache.ex_idx = dim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
@@ -183,7 +186,8 @@ Measurement Measurement::Nondimensionalize(const Units &units,
           units.Nondimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
 
       dim[k].mode_port_kappa =
-          units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa);
+          units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) *
+          (2 * M_PI);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
