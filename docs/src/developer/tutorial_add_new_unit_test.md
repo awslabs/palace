@@ -70,7 +70,7 @@ Then, build and run:
 make palace-tests
 
 # Run this specific test
-palace-build/test/unit/unit-tests "[myvector]"
+bin/palace-unit-tests "[myvector]"
 ```
 
 We should see that `All tests passed`.

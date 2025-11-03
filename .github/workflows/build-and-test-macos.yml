@@ -247,9 +247,9 @@ jobs:
           cd $(pwd)/palace-build/palace-build/test/unit
 
           # Run Serial tests
-          ./unit-tests --skip-benchmarks
+          ./palace-unit-tests --skip-benchmarks
           # Run Parallel tests
-          mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
+          mpirun -np $NUM_PROC_TEST_MAX ./palace-unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true'

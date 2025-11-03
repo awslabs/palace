@@ -99,9 +99,10 @@ ExternalProject_Add(palace
 # Add target for Palace unit tests
 ExternalProject_Add_Step(palace tests
   COMMAND           ${CMAKE_MAKE_PROGRAM} unit-tests
+  COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
   DEPENDEES         install
   DEPENDERS         ""
-  COMMENT           "Building unit tests for 'palace'"
+  COMMENT           "Building and installing unit tests for 'palace'"
   WORKING_DIRECTORY <BINARY_DIR>
   EXCLUDE_FROM_MAIN TRUE
 )

@@ -91,9 +91,9 @@ jobs:
 
           # Develop requires ^compiler, not %compiler
           if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
           else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           fi
 
           # Spack.yaml with most / all settings configured
@@ -187,7 +187,13 @@ jobs:
         # We use `--no-cache` in order to force a rebuild
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
-      # TODO: Should we run unit tests as well here?
+      - name: Run Unit Tests
+        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
+        run: |
+          eval $(spack -e . load --sh palace)
+          palace-unit-tests --skip-benchmarks
+          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
+
       - name: Run Integration Tests
         if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
         env:

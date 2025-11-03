@@ -31,35 +31,36 @@ test assertions. If you want to also measure test coverage, turn
 `PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
 for more details on this.
 
-Once the build completes, run the tests with:
+Once the build completes, the `palace-unit-tests` executable will be installed in the
+same `bin/` directory as the main `palace` executable. Run the tests with:
 
 ```bash
-palace-build/test/unit/unit-tests
+bin/palace-unit-tests
 ```
 
 This runs all the `Serial` tests. To run `Parallel` tests, call
 
 ```bash
-mpirun -np 2 palace-build/test/unit/unit-tests
+mpirun -np 2 bin/palace-unit-tests
 ```
 
 To run the `GPU` tests (this can be combined with `mpirun`):
 
 ```bash
-palace-build/test/unit/unit-tests --device cuda
+bin/palace-unit-tests --device cuda
 ```
 
 If you are interested in running only a subset of tests, you can use filters.
 For example, to run the tests tagged with `[vector]`, call
 
 ```bash
-palace-build/test/unit/unit-tests [vector]
+bin/palace-unit-tests [vector]
 ```
 
 To run a specific test by name:
 
 ```bash
-palace-build/test/unit/unit-tests "Vector Sum - Real"
+bin/palace-unit-tests "Vector Sum - Real"
 ```
 
 #### Benchmarks
@@ -67,11 +68,11 @@ palace-build/test/unit/unit-tests "Vector Sum - Real"
 The unit test application also includes a small number of benchmarks to compare
 performance between MFEM's legacy assembly backend, MFEM's partial assembly
 backend, and the specified libCEED backend (specified with the `--backend`
-option, use `-h`/`--help` to list all command line options for the `unit-tests`
+option, use `-h`/`--help` to list all command line options for the `palace-unit-tests`
 executable). These can be run using, for example:
 
 ```bash
-palace-build/test/unit/unit-tests "[Benchmark]" --benchmark-samples 10
+bin/palace-unit-tests "[Benchmark]" --benchmark-samples 10
 ```
 
 These benchmarks can be accelerated using MPI and/or OpenMP parallelism (when
@@ -196,17 +197,17 @@ Run the test suite in all configurations and capture coverage data:
 
 ```sh
 # Serial tests
-palace-build/test/unit/unit-tests
+bin/palace-unit-tests
 lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage1.info
 
 # Parallel tests
-mpirun -np 2 palace-build/test/unit/unit-tests
+mpirun -np 2 bin/palace-unit-tests
 lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage2.info
 
 # GPU tests (if available)
 # (command -v nvidia-smi is for your convenience, so that you can copy this block of code
 #  and use it as-is even when a GPU is not available)
-command -v nvidia-smi && palace-build/test/unit/unit-tests --device cuda
+command -v nvidia-smi && bin/palace-unit-tests --device cuda
 command -v nvidia-smi && lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage3.info
 
 # Merge all coverage files (works whether coverage3.info exists or not)
@@ -231,15 +232,15 @@ Execute the test suite in all configurations:
 
 ```sh
 # Serial tests
-palace-build/test/unit/unit-tests
+bin/palace-unit-tests
 
 # Parallel tests
-mpirun -np 2 palace-build/test/unit/unit-tests
+mpirun -np 2 bin/palace-unit-tests
 
 # GPU tests (if available)
 # (command -v nvidia-smi is for your convenience, so that you can copy this block of code
 #  and use it as-is even when a GPU is not available)
-command -v nvidia-smi && palace-build/test/unit/unit-tests --device cuda
+command -v nvidia-smi && bin/palace-unit-tests --device cuda
 ```
 
 This generates multiple `coverage-<pid>.profraw` files, where `<pid>` represents
@@ -250,7 +251,7 @@ each process ID. These raw files must be merged and converted to LCOV format:
 llvm-profdata merge -output=coverage.profdata coverage*.profraw
 
 # Export to JSON format
-llvm-cov export -format text -instr-profile coverage.profdata palace-build/test/unit/unit-tests > coverage_llvm.json
+llvm-cov export -format text -instr-profile coverage.profdata bin/palace-unit-tests > coverage_llvm.json
 
 # Convert to LCOV format
 llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
