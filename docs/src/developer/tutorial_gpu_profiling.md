@@ -43,7 +43,7 @@ Make sure that we have a working and compiled version of *Palace*:
 ```sh
 cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_WITH_CUDA=yes ..
 make -j $(nproc)
-palace-build/test/unit/unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
+bin/palace-unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
 ```
 
 This will show something along the lines of
@@ -63,7 +63,7 @@ Now, run this under `nsys`:
 
 ```sh
 nsys profile --trace=cuda,cublas --force-overwrite=true -o myprofile.nsys-rep \
-  palace-build/test/unit/unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
+  bin/palace-unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
 ```
 
 You can open the report with `nsys-ui myprofile.nsys-rep`. You should be greeted with a window like this:
@@ -169,7 +169,7 @@ add other useful components to track:
 ```sh
 nsys profile --trace=nvtx,cuda,cublas,mpi --nvtx-capture=range \
   --force-overwrite=true -o myprofile.nsys-rep \
-  palace-build/test/unit/unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
+  bin/palace-unit-tests "Vector Sum - Complex" --device gpu --backend /gpu/cuda/magma
 ```
 
 Now, if we open the new profile, we will see some differences:

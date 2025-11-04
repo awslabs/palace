@@ -43,6 +43,8 @@ The format of this changelog is based on
     471](https://github.com/awslabs/palace/pull/471).
   - Changed Paraview and GLVis output fields from nondimensional to SI units
     [PR 532](https://github.com/awslabs/palace/pull/532).
+  - The name of the unit test executable is now `palace-unit-tests` (instead of `unit-tests`)
+    [PR 549](https://github.com/awslabs/palace/pull/549).
 
 #### Bug Fixes
 

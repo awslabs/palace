@@ -50,6 +50,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
     )
+    variant("tests", default=False, description="Build and install unit tests")
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
@@ -205,6 +206,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
 
+    with when("+tests"):
+            depends_on("catch2@3:")
+
     def cmake_args(self):
         args = [
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
@@ -221,6 +225,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
+            self.define_from_variant("PALACE_MFEM_USE_EXCEPTIONS", "tests"),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -272,6 +277,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         return args
+
+    def build(self, spec, prefix):
+        with working_dir(self.build_directory):
+            if spec.satisfies("+tests"):
+                make("palace-tests")
+            else:
+                make()
 
     def install(self, spec, prefix):
         # No install phase for Palace (always performed during build)
