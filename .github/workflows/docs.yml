@@ -56,6 +56,8 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
+            repos:
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
