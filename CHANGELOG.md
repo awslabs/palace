@@ -68,8 +68,22 @@ The format of this changelog is based on
     [PR 510](https://github.com/awslabs/palace/pull/510) and [PR 526](https://github.com/awslabs/palace/pull/526).
   - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants 2022
     [PR 525](https://github.com/awslabs/palace/pull/525).
+  - Fix compatibility with CUDA 12 and GCC 14+. [PR 535](https://github.com/awslabs/palace/pull/535).
   - Scaled Rs/Ls/Cs of impedance boundary conditions affected by mesh cracking, fixing bug where
     `"CrackInternalBoundaryElements"` would lead to incorrect results. [PR 544](https://github.com/awslabs/palace/pull/544).
+
+#### Build system
+
+  - When building on a machine with a GPU, `CMAKE_CUDA_ARCHITECTURES` has now a
+    default value that is automatically determined to be the consistent with the
+    GPU. [PR 530](https://github.com/awslabs/palace/pull/530).
+  - The spack Palace build now supports a new variant `+tests` to compile and
+    install the unit tests. [PR
+    549](https://github.com/awslabs/palace/pull/549).
+  - MFEM is no longer unconditionally compiled alongside of Palace and can now
+    be built separately. This is used in the Palace spack build, which now
+    explicitely depends on MFEM. [PR
+    550](https://github.com/awslabs/palace/pull/550).
 
 ## [0.14.0] - 2025-08-20
 

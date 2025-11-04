@@ -36,13 +36,19 @@ jobs:
           buildcache: true
           color: true
 
+        # https://github.com/spack/spack/issues/51505
+      - name: Overwrite builtin Palace package
+        run: |
+          cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
+          cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
+
       - name: Setup Environment
         run: |
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace # we install this without a cache each time
+              - palace@develop # we install this without a cache each time
             view: false
             config:
               install_tree:
@@ -56,8 +62,6 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
-            repos:
-            - spack_repo/local
             mirrors:
               spack:
                 binary: true
@@ -98,7 +102,7 @@ jobs:
       - name: Concretize Spack
         run: |
           # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
           spack -e . concretize -f
 
         # Relies on cache-hit(s)
@@ -111,7 +115,7 @@ jobs:
         run: |
           spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
         # If you want to use the branch-local source instead (should we always do this?)
-        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+        # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Build and deploy
         env:

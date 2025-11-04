@@ -147,8 +147,7 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 
 TEST_CASE("TetToHex", "[geodata][Serial]")
 {
-  // Pull from the mfem externals data folder.
-  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+  auto ref_tet_path = fs::path(PALACE_TEST_MESH_DIR) / "ref-tetrahedron.mesh";
   mfem::Mesh single_tet(ref_tet_path.string());
 
   SECTION("Linear")
@@ -303,7 +302,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
 
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
-  auto torus_path = fs::path(MFEM_DATA_PATH) / "periodic-torus-sector.msh";
+  auto torus_path = fs::path(PALACE_TEST_MESH_DIR) / "periodic-torus-sector.msh";
   std::ifstream fi(torus_path.string());
   std::unique_ptr<mfem::Mesh> mesh = std::make_unique<mfem::Mesh>(fi, false, false, true);
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
@@ -327,9 +326,8 @@ TEST_CASE("Default IOData", "[iodata][Serial]")
   iodata.domains.materials.back().attributes = {0};
 
   // Pull from the mfem externals data folder.
-  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
-  mfem::Mesh single_tet(ref_tet_path.string());
-  mfem::ParMesh pmesh(Mpi::World(), single_tet);
+  mfem::Mesh mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh pmesh(Mpi::World(), mesh);
 
   MaterialOperator mat_op(iodata, pmesh);
 

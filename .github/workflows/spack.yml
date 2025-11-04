@@ -51,8 +51,9 @@ jobs:
         compiler: [gcc] #, clang, intel]
         gpu: [none] #, cuda, rocm]
         blas: [openblas] # ,intel-oneapi-mkl]
-        spack_version: [develop] # ,v0.23.1]
         mpi: [openmpi] #, mpich, mvapich]
+        eigensolver: [arpack, slepc]
+        solver: [mumps, strumpack, superlu-dist]
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
@@ -89,12 +90,7 @@ jobs:
             GPU_VARIANT=""
           fi
 
-          # Develop requires ^compiler, not %compiler
-          if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
-          else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
-          fi
+          PALACE_SPEC="palace@develop+${{ matrix.solver }}+${{ matrix.eigensolver }} +tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
 
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
@@ -116,8 +112,6 @@ jobs:
                 require: ~hdf5
               rocblas:
                 require: ~tensile
-            repos:
-            - spack_repo/local
             mirrors:
               spack:
                 binary: true
@@ -130,6 +124,13 @@ jobs:
                   id_variable: GITHUB_USER
                   secret_variable: GITHUB_TOKEN
           EOF
+
+        # https://github.com/spack/spack/issues/51505
+      - name: Overwrite builtin Palace package
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
+          cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
 
       - name: Configure External Packages
         if: needs.filter.outputs.test == 'true'
@@ -167,7 +168,7 @@ jobs:
         # Unfortunately it then becomes difficult to know when to re-concretize.
         run: |
           # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
           spack -e . concretize -f
 
       - name: Build Dependencies
@@ -187,6 +188,14 @@ jobs:
           eval $(spack -e . load --sh palace)
           palace-unit-tests --skip-benchmarks
           mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
+
+      - uses: julia-actions/setup-julia@v2
+        if: needs.filter.outputs.test == 'true'
+        with:
+          version: '1'
 
       - name: Run Integration Tests
         if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds

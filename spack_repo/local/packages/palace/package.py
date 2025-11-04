@@ -144,6 +144,33 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~cuda", when="~cuda")
     depends_on("hypre~rocm", when="~rocm")
 
+    with when("@develop"):
+        depends_on(
+            "mfem+mpi+metis cxxstd=17 commit=0c4c006ef86dc2b2cf415e5bc4ed9118c9768652",
+            patches=[
+                "patch_mesh_vis_dev.diff",
+                "patch_par_tet_mesh_fix_dev.diff",
+                "patch_gmsh_parser_performance.diff",
+                "patch_race_condition_fix.diff",
+            ],
+        )
+        depends_on("mfem+shared", when="+shared")
+        depends_on("mfem~shared", when="~shared")
+        depends_on("mfem+openmp", when="+openmp")
+        depends_on("mfem~openmp", when="~openmp")
+        depends_on("mfem+superlu-dist", when="+superlu-dist")
+        depends_on("mfem~superlu-dist", when="~superlu-dist")
+        depends_on("mfem+strumpack", when="+strumpack")
+        depends_on("mfem~strumpack", when="~strumpack")
+        depends_on("mfem+mumps", when="+mumps")
+        depends_on("mfem~mumps", when="~mumps")
+        depends_on("mfem+sundials", when="+sundials")
+        depends_on("mfem~sundials", when="~sundials")
+        depends_on("mfem+gslib", when="+gslib")
+        depends_on("mfem~gslib", when="~gslib")
+
+        depends_on("mfem+exceptions", when="+tests")
+
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
         depends_on("libxsmm@=main blas=0")
@@ -190,6 +217,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
             depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"mfem{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
@@ -200,6 +228,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"mfem{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
@@ -225,8 +254,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
-            self.define_from_variant("PALACE_MFEM_USE_EXCEPTIONS", "tests"),
         ]
+
+
+        with when("@:0.14"):
+            self.define_from_variant("PALACE_MFEM_USE_EXCEPTIONS", "tests")
 
         # We guarantee that there are arch specs with conflicts above
         if self.spec.satisfies("+cuda"):
