@@ -6,12 +6,20 @@
 #
 
 # Add Catch2
-Include(FetchContent)
-FetchContent_Declare(Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.8.1
-)
-FetchContent_MakeAvailable(Catch2)
+if(PALACE_BUILD_EXTERNAL_DEPS)
+  Include(FetchContent)
+  FetchContent_Declare(Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.8.1
+  )
+  FetchContent_MakeAvailable(Catch2)
+else()
+  find_package(Catch2 3 QUIET)
+  if(NOT Catch2_FOUND)
+    message(WARNING "Catch2 not found, unit-tests target will not be available")
+    return()
+  endif()
+endif()
 
 # Add executable target
 add_executable(unit-tests
@@ -100,11 +108,13 @@ target_compile_definitions(
 message(STATUS "Configured unit-tests target for unit tests using Catch2")
 
 # Install Catch2 libraries
-install(
-  TARGETS Catch2
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-)
+if(PALACE_BUILD_EXTERNAL_DEPS)
+  install(
+    TARGETS Catch2
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+  )
+endif()
 
 # Install unit-tests executable to bin directory
 install(

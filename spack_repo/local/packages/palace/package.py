@@ -206,6 +206,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
 
+    with when("+tests"):
+            depends_on(f"catch2@3")
+
     def cmake_args(self):
         args = [
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
