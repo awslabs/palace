@@ -56,12 +56,8 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
-              # TODO: Remove this when
-              # https://github.com/spack/spack-packages/pull/2144/ is merged
-              fast-float:
-                require: "@6"
-              hypre:
-                require: "@2"
+            repos:
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
