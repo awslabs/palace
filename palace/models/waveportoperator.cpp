@@ -693,7 +693,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           {
 #if defined(MFEM_USE_SUPERLU)
             auto slu = std::make_unique<SuperLUSolver>(
-                port_comm, SymbolicFactorization::DEFAULT, false, data.verbose - 1);
+                port_comm, SymbolicFactorization::DEFAULT, false, true, data.verbose - 1);
             // slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
             return slu;
 #endif
@@ -703,7 +703,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_STRUMPACK)
             auto strumpack = std::make_unique<StrumpackSolver>(
                 port_comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE, 0.0, 0,
-                0, data.verbose - 1);
+                0, true, data.verbose - 1);
             // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
             return strumpack;
 #endif
@@ -713,7 +713,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
                 port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
-                0.0, data.verbose - 1);
+                0.0, true, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
@@ -721,6 +721,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           return {};
         }());
     pc->SetSaveAssembled(false);
+    pc->SetDropSmallEntries(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.

@@ -81,6 +81,16 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       PtAPi->StealParallelAssemble();
     }
+    if (drop_small_entries)
+    {
+      const auto nnz_before = A->NNZ();
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+      const auto nnz_after = A->NNZ();
+      Mpi::Print(
+          " Dropping {} small entries in complex sparse matrix out of {} ({:.1f}%)\n",
+          (nnz_before - nnz_after), nnz_before,
+          (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+    }
     pc->SetOperator(*A);
     if (!save_assembled)
     {
@@ -89,7 +99,21 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAr)
   {
-    pc->SetOperator(*hAr);
+    if (drop_small_entries)
+    {
+      A = std::make_unique<mfem::HypreParMatrix>(*hAr);
+      const auto nnz_before = A->NNZ();
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+      const auto nnz_after = A->NNZ();
+      Mpi::Print(" Dropping {} small entries in real sparse matrix out of {} ({:.1f}%)\n",
+                 (nnz_before - nnz_after), nnz_before,
+                 (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+      pc->SetOperator(*A);
+    }
+    else
+    {
+      pc->SetOperator(*hAr);
+    }
     if (PtAPr && !save_assembled)
     {
       PtAPr->StealParallelAssemble();
@@ -97,7 +121,22 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   }
   else if (hAi)
   {
-    pc->SetOperator(*hAi);
+    if (drop_small_entries)
+    {
+      A = std::make_unique<mfem::HypreParMatrix>(*hAi);
+      const auto nnz_before = A->NNZ();
+      A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+      const auto nnz_after = A->NNZ();
+      Mpi::Print(
+          " Dropping {} small entries in imaginary sparse matrix out of {} ({:.1f}%)\n",
+          (nnz_before - nnz_after), nnz_before,
+          (double)(nnz_before - nnz_after) / nnz_before * 100.0);
+      pc->SetOperator(*A);
+    }
+    else
+    {
+      pc->SetOperator(*hAi);
+    }
     if (PtAPi && !save_assembled)
     {
       PtAPi->StealParallelAssemble();
