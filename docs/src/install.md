@@ -42,6 +42,9 @@ available configuration options and dependencies can be found using `spack info 
 tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
 for an introduction.
 
+If you are developing *Palace*, refer to the [Working with
+Spack](developer/spack.md) page.
+
 ## Build using Singularity/Apptainer
 
 *Palace* can be built in a
