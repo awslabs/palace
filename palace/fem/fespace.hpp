@@ -200,9 +200,10 @@ public:
 class FiniteElementSpaceHierarchy
 {
 protected:
-  std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
+  mutable std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
-
+  mutable std::vector<std::unique_ptr<Operator>> refine_op, rebalance_op, transfer_op; // tests!!??
+  //int rebalance_level;
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
@@ -218,6 +219,15 @@ public:
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
+    refine_op.push_back(nullptr); // tests???
+    rebalance_op.push_back(nullptr);
+    transfer_op.push_back(nullptr);
+  }
+
+  void UpdateLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
+  {
+    fespaces.pop_back();
+    fespaces.push_back(std::move(fespace));
   }
 
   auto &GetFESpaceAtLevel(std::size_t l)

@@ -135,9 +135,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   }();
   if (use_amr && mesh.size() > 1)
   {
-    Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
-               "the sequence of a priori refinements\n");
-    mesh.erase(mesh.begin(), mesh.end() - 1);
+    Mpi::Print("\n\n\n basesolver.cpp bypassing mesh flattening!!!! \n\n\n");
+    //Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
+    //           "the sequence of a priori refinements\n");
+    //mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
 
@@ -198,6 +199,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
+      mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // TEST: add refined mesh to sequence
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
@@ -210,6 +212,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Optionally rebalance and write the adapted mesh to file.
     {
+      /**/
+      // Try adding rebalanced mesh as a separate mesh in the vector
+      //Mpi::Print("calling update after refinement, before rebalancing\n");
+      //mesh.back()->Update(); // update
+      mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // add last mesh to sequence and then rebalance it
+      Mpi::Print("calling rebalance\n");
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
       if (ratio_pre > refinement.maximum_imbalance)
       {
@@ -221,7 +229,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
+        //Mpi::Print(" Flattening mesh sequence after rebalance\n");
+        //mesh.erase(mesh.begin(), mesh.end() - 1);
       }
+      else
+      {
+        // if we did not rebalance, delete last mesh since it's there twice
+        mesh.pop_back();
+      }
+      /**/
+      Mpi::Print("calling update after rebalance\n");
       mesh.back()->Update();
     }
 

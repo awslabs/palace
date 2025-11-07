@@ -100,10 +100,47 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
                                                            dbc_tdof_lists->emplace_back());
   }
 
+  // test copying mesh?
+  Mpi::Print("multigrid.hpp L104\n");
+std::vector<std::unique_ptr<Mesh>> internal_mesh;
+Mpi::Print("multigrid.hpp L106\n");
+internal_mesh.reserve(mesh.size());
+Mpi::Print("multigrid.hpp L108\n");
+for (const auto& m : mesh) {
+  Mpi::Print("multigrid.hpp L110\n");
+    internal_mesh.push_back(std::make_unique<Mesh>(*m));
+}
+Mpi::Print("multigrid.hpp L113\n");
+
   // h-refinement.
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
-    fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
+    Mpi::Print("l: {}, previous mesh NE: {}, current mesh NE: {}\n", l, mesh[l - 1]->Get().GetGlobalNE(), mesh[l]->Get().GetGlobalNE());
+    if (mesh[l - 1]->Get().GetGlobalNE() == mesh[l]->Get().GetGlobalNE())
+    {
+      // Rebalance
+      Mpi::Print("Mesh level {} is a rebalancing, compute transfer operator\n", l);
+      auto refine_op = std::make_unique<mfem::TransferOperator>(fespaces.GetFESpaceAtLevel(l - 2), fespaces.GetFESpaceAtLevel(l - 1));
+
+      fespaces.GetFESpaceAtLevel(l - 1).GetParMesh().Rebalance();//? This is bad, modifies the refined but not rebalanced mesh[l - 1]!
+      fespaces.GetFESpaceAtLevel(l - 1).GetMesh().Update(); // not sure needed
+      fespaces.GetFESpaceAtLevel(l - 1).Update(); // not sure needed
+      //auto reb_fe = std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get());
+      //auto rebalance_op[l].reset(const_cast<Operator*>(reb_fe.Get().GetUpdateOperator()));
+      //auto rebalance_op = const_cast<Operator*>(reb_fe->Get().GetUpdateOperator());
+      auto rebalance_op = const_cast<Operator*>(fespaces.GetFESpaceAtLevel(l - 1).Get().GetUpdateOperator());
+      std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
+                << " rebalance  width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
+      fespaces.UpdateLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get())); // pass refine and rebalance op too!
+      if (dbc_attr && dbc_tdof_lists)
+      {
+        dbc_tdof_lists->pop_back();
+      }
+    }
+    else
+    {
+      fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
+    }
     if (dbc_attr && dbc_tdof_lists)
     {
       fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(

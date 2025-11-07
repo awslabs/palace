@@ -228,18 +228,55 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
   MFEM_VERIFY(l + 1 < GetNumLevels(),
               "Can only construct a finite element space prolongation with more than one "
               "space in the hierarchy!");
+  Mpi::Print("BuildProlongation at level: {}\n", l);
   if (&fespaces[l]->GetMesh() != &fespaces[l + 1]->GetMesh())
   {
+    /*
+    Mpi::Print("fespace.cpp L233 different meshes get refine transfer operator?\n");
+    refine_op[l] = std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]);
+    std::cout << "refine_op rank: " << Mpi::Rank(fespaces[l + 1]->GetComm()) << " width/height: " << refine_op[l]->Width() << " " << refine_op[l]->Height() << "\n";
+    Mpi::Print("fespace.cpp L235 fespaces[l + 1]->GetParMesh().Rebalance()!\n");
+    fespaces[l + 1]->GetParMesh().Rebalance();
+    fespaces[l + 1]->GetMesh().Update(); //not sure if needed
+    fespaces[l + 1]->Update(); // not sure if needed...
+    Mpi::Print("fespace.cpp L239 GetUpdateOperator\n");
+    rebalance_op[l].reset(const_cast<Operator*>(fespaces[l + 1]->Get().GetUpdateOperator()));
+    std::cout << "rebalance_op rank: " << Mpi::Rank(fespaces[l + 1]->GetComm()) << " width/height: " << rebalance_op[l]->Width() << " " << rebalance_op[l]->Height() << "\n";
+    Mpi::Print("fespace.cpp L241 combine refine and rebalance operators\n");
+    transfer_op[l] = std::make_unique<ProductOperator>(*rebalance_op[l], *refine_op[l]);
+    std::cout << "transfer_op rank: " << Mpi::Rank(fespaces[l + 1]->GetComm()) << " width/height: " << transfer_op[l]->Width() << " " << transfer_op[l]->Height() << "\n";
+    // reconstruct fespace?
+    //FiniteElementSpace h1d_fespace(h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), space_dim, mfem::Ordering::byVDIM);
+    auto mesh = fespaces[l + 1]->GetMesh();
+    auto fecoll = &fespaces[l + 1]->GetFEColl();
+    //FiniteElementSpace test_space(mesh, fecoll);
+    //fespaces[l + 1] = std::make_unique<FiniteElementSpace>(mesh, fecoll);//
+    fespaces[l + 1].reset(new FiniteElementSpace(mesh, fecoll));//
+    Mpi::Print("fespace.cpp L243 create P[l]\n");
+    */
     P[l] = std::make_unique<ParOperator>(
-        std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]),
+        std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]), // transferoperator is problematic if a rebalance happened
+        //std::make_unique<ProductOperator>(*rebalance_op[l], *refine_op[l]),
         *fespaces[l], *fespaces[l + 1], true);
+    Mpi::Print("fespace.cpp L248\n");
   }
   else
   {
+    Mpi::Print("fespace.cpp L255 same mesh, calling update?\n");
+    fespaces[l + 1]->GetMesh().Update(); // not sure if needed?
+    fespaces[l + 1]->Update(); // not sure if needed...
+    fespaces[l + 1]->Get().Update(); // not sure if needed...
+    fespaces[l]->GetMesh().Update(); // not sure if needed?
+    fespaces[l]->Update(); // not sure if needed...
+    fespaces[l]->Get().Update(); // not sure if needed...
+    Mpi::Print("fespace.cpp L258 discrete linear operator\n");
     DiscreteLinearOperator p(*fespaces[l], *fespaces[l + 1]);
+    Mpi::Print("fespace.cpp L260\n");
     p.AddDomainInterpolator<IdentityInterpolator>();
+    Mpi::Print("fespace.cpp L262\n");
     P[l] = std::make_unique<ParOperator>(p.PartialAssemble(), *fespaces[l],
                                          *fespaces[l + 1], true);
+    Mpi::Print("fespace.cpp L265\n");
   }
 
   return *P[l];

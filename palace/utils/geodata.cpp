@@ -406,10 +406,11 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   if (element_types.has_simplices && uniform_ref_levels > 0 &&
       (max_region_ref_levels > 0 || iodata.model.refinement.max_it > 0))
   {
+    Mpi::Print("\n\n\n geodata.cpp bypassing mesh flattening (but still calling finalize on last mesh)!!!! \n\n\n");
     constexpr bool refine = true, fix_orientation = false;
-    Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
-               "final uniformly-refined mesh\n");
-    mesh.erase(mesh.begin(), mesh.end() - 1);
+    //Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
+    //           "final uniformly-refined mesh\n");
+    //mesh.erase(mesh.begin(), mesh.end() - 1);
     mesh.back()->Finalize(refine, fix_orientation);
   }
 
@@ -1409,10 +1410,12 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
   {
     if (mesh->Nonconforming())
     {
+      std::cout << "Rebalancing nonconforming mesh with mesh->Rebalance()\n";
       mesh->Rebalance();
     }
     else
     {
+      std::cout << "Rebalancing conformal mesh with RebalanceConformalMesh(mesh)\n";
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
       RebalanceConformalMesh(mesh);
