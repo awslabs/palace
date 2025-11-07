@@ -39,6 +39,10 @@ jobs:
         # https://github.com/spack/spack/issues/51505
       - name: Overwrite builtin Palace package
         run: |
+          # Bug with OpenMP and libceed
+          # TODO: Remove when https://github.com/spack/spack-packages/pull/2361 is merged
+          cp -r spack_repo/local/packages/libceed/package.py "$(spack location --repo builtin)/packages/libceed/"
+
           cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
           cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
 
@@ -117,13 +121,13 @@ jobs:
         # If you want to use the branch-local source instead (should we always do this?)
         # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
-      - uses: julia-actions/cache@v2
-        if: needs.filter.outputs.test == 'true'
-
       - uses: julia-actions/setup-julia@v2
         if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Build and deploy
         env:

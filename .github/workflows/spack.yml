@@ -84,17 +84,16 @@ jobs:
         #   solver: +strumpack
         #   cuda: ~cuda
 
-        # test-libceed gives wrong results
-        # - arch: arm
-        #   compiler: gcc
-        #   mpi: mpich
-        #   math-libs: armpl-gcc
-        #   shared: +shared
-        #   int: +int64
-        #   openmp: +openmp
-        #   eigensolver: +arpack
-        #   solver: +strumpack
-        #   cuda: ~cuda
+        - arch: arm
+          compiler: gcc
+          mpi: mpich
+          math-libs: armpl-gcc
+          shared: +shared
+          int: +int64
+          openmp: +openmp
+          eigensolver: +arpack
+          solver: +strumpack
+          cuda: ~cuda
 
         # Fails building libxsmm with ifx error None not found
         # - arch: x86
@@ -155,17 +154,16 @@ jobs:
         #   solver: +mumps
         #   cuda: ~cuda
 
-        # test-libceed gives wrong results
-        # - arch: arm
-        #   compiler: llvm
-        #   mpi: mpich
-        #   math-libs: openblas
-        #   shared: +shared
-        #   int: ~int64
-        #   openmp: +openmp
-        #   eigensolver: +arpack
-        #   solver: +superlu-dist
-        #   cuda: ~cuda
+        - arch: arm
+          compiler: llvm
+          mpi: mpich
+          math-libs: openblas
+          shared: +shared
+          int: ~int64
+          openmp: +openmp
+          eigensolver: +arpack
+          solver: +superlu-dist
+          cuda: ~cuda
 
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-24.04-arm' }}
     steps:
@@ -228,7 +226,7 @@ jobs:
               mpi:
                 require: ${{ matrix.mpi }}
               blas:
-                require: ${{ matrix.math-libs }}
+                require: ${{ matrix.math-libs }} threads=openmp
               c:
                 require: [${{ matrix.compiler }}]
               cxx:
@@ -259,8 +257,13 @@ jobs:
       - name: Overwrite builtin Palace package
         if: needs.filter.outputs.test == 'true'
         run: |
+          # Bug with OpenMP and libceed
+          # TODO: Remove when https://github.com/spack/spack-packages/pull/2361 is merged
+          cp -r spack_repo/local/packages/libceed/package.py "$(spack location --repo builtin)/packages/libceed/"
+
           cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
           cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
+
 
       - name: Remove Android NDK # it confuses the Intel compiler
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel-oneapi-compilers'
@@ -350,13 +353,13 @@ jobs:
           palace-unit-tests --skip-benchmarks
           mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
 
-      - uses: julia-actions/cache@v2
-        if: needs.filter.outputs.test == 'true'
-
       - uses: julia-actions/setup-julia@v2
         if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Run Integration Tests
         if: needs.filter.outputs.test == 'true'
