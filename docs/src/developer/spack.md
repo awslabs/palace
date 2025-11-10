@@ -111,7 +111,8 @@ run:
 spack repo add ~/repos/palace/spack_repo/local
 ```
 
-You should see a confirmation message like `==> Added repo with namespace 'local'.` The namespace `local` is significant because it allows you to
+You should see a confirmation message like `==> Added repo with namespace
+'local'.` The namespace `local` is significant because it allows you to
 distinguish between your development version of the package and the official one
 in Spack's built-in repository. When you refer to `local.palace`, you're
 explicitly using the recipe from your personal repository, while
@@ -125,8 +126,12 @@ and change the docstring to all capital letters. Then run:
 spack info local.palace | head -n 4
 ```
 
-You should see your modified docstring. Compare this with the output of `spack info builtin.palace | head -n 4` to see the difference between your local
-version and the official one.
+You should see your modified docstring. Compare this with the output of `spack
+info builtin.palace | head -n 4` to see the difference between your local
+version and the official one. 
+
+A shortcut to end the `package.py` is calling `spack edit local.palace`, which
+will open the file with your `$EDITOR`.
 
 One important detail is that the `local` repository takes priority over
 `builtin`. This means that if you just run `spack info palace` without a prefix,

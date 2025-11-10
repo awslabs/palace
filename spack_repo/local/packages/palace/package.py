@@ -150,9 +150,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~cuda", when="~cuda")
     depends_on("hypre~rocm", when="~rocm")
 
-    depends_on("libceed+openmp", when="+openmp")
-    depends_on("libceed~openmp", when="~openmp")
-
     with when("@0.15:"):
         # +lapack means: use external lapack
         depends_on(
@@ -195,10 +192,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     depends_on("libceed@0.13:", when="@0.14:")
+    depends_on("libceed+openmp", when="+openmp")
+    depends_on("libceed~openmp", when="~openmp")
 
     with when("+sundials @0.14:"):
-        depends_on("sundials+mpi+lapack")
-        depends_on("sundials~examples~examples-install")
+        depends_on("sundials+mpi+lapack~examples~examples-install")
         depends_on("sundials+shared", when="+shared")
         depends_on("sundials~shared", when="~shared")
         depends_on("sundials+openmp", when="+openmp")

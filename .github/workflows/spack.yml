@@ -48,7 +48,16 @@ jobs:
     strategy:
       fail-fast: false # don't have one build stop others from finishing
       matrix:
-        include:  # Pairwise testing (from generate_test_matrix.py)
+        include:
+          # Instead of testing every combination of the various matrix options,
+          # we do all-pairs testing. This means that we ensure we cover every
+          # single pair of parameter values at least once.
+
+          # The following YAML block is generated with the
+          # generate_test_matrix.py script, which also enforces various
+          # constraints (given that not all the combination of parameters make
+          # sense, e.g., armpl with x86)
+
         - arch: x86
           compiler: gcc
           mpi: openmpi
@@ -72,17 +81,18 @@ jobs:
         #   solver: +superlu-dist
         #   cuda: ~cuda
 
-        # Fails building MFEM with `FC` not found
-        # - arch: arm
-        #   compiler: llvm
-        #   mpi: openmpi
-        #   math-libs: openblas
-        #   shared: ~shared
-        #   int: ~int64
-        #   openmp: ~openmp
-        #   eigensolver: +slepc
-        #   solver: +strumpack
-        #   cuda: ~cuda
+        # This requires the env_vars file to work, otherwise fails building MFEM
+        # with `FC` not found
+        - arch: arm
+          compiler: llvm
+          mpi: openmpi
+          math-libs: openblas
+          shared: ~shared
+          int: ~int64
+          openmp: ~openmp
+          eigensolver: +slepc
+          solver: +strumpack
+          cuda: ~cuda
 
         - arch: arm
           compiler: gcc
@@ -165,6 +175,17 @@ jobs:
           solver: +superlu-dist
           cuda: ~cuda
 
+        - arch: x86
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          shared: +shared
+          int: +int64
+          openmp: +openmp
+          eigensolver: +slepc+arpack
+          solver: +superlu-dist+mumps+sundials+strumpack
+          cuda: ~cuda
+
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-24.04-arm' }}
     steps:
       - uses: actions/checkout@v4
@@ -186,16 +207,21 @@ jobs:
             SOLVER_VARIANTS="+strumpack~superlu-dist~mumps"
           elif [[ "${{ matrix.solver }}" == "+mumps" ]]; then
             SOLVER_VARIANTS="+mumps~superlu-dist~strumpack"
-          else
+          elif [[ "${{ matrix.solver }}" == "+superlu-dist" ]]; then
             SOLVER_VARIANTS="+superlu-dist~strumpack~mumps"
+          else
+            SOLVER_VARIANTS="${{ matrix.solver }}"
           fi
+
           if [[ "${{ matrix.eigensolver }}" == "+arpack" ]]; then
             EIGEN_VARIANTS="+arpack~slepc"
-          else
+          elif [[ "${{ matrix.eigensolver }}" == "+slepc" ]]; then
             EIGEN_VARIANTS="+slepc~arpack"
+          else
+            EIGEN_VARIANTS="${{ matrix.eigensolver }}"
           fi
           
-          PALACE_SPEC="palace@develop${SOLVER_VARIANTS}${EIGEN_VARIANTS}${{ matrix.shared }}${{ matrix.int }}${{ matrix.openmp }}${{ matrix.cuda }}+tests"
+          PALACE_SPEC="local.palace@develop${SOLVER_VARIANTS}${EIGEN_VARIANTS}${{ matrix.shared }}${{ matrix.int }}${{ matrix.openmp }}${{ matrix.cuda }}+tests"
 
           # LLVM does not provide flang by default, so we use gcc
           if [[ "${{ matrix.compiler }}" == "llvm" ]]; then
@@ -226,7 +252,7 @@ jobs:
               mpi:
                 require: ${{ matrix.mpi }}
               blas:
-                require: ${{ matrix.math-libs }} threads=openmp
+                require: ${{ matrix.math-libs }}
               c:
                 require: [${{ matrix.compiler }}]
               cxx:
@@ -240,6 +266,8 @@ jobs:
                 require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
               parmetis:
                 require: ldflags=-lc
+            repos:
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
@@ -253,17 +281,26 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-        # https://github.com/spack/spack/issues/51505
-      - name: Overwrite builtin Palace package
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # Bug with OpenMP and libceed
-          # TODO: Remove when https://github.com/spack/spack-packages/pull/2361 is merged
-          cp -r spack_repo/local/packages/libceed/package.py "$(spack location --repo builtin)/packages/libceed/"
+          # MFEM with LLVM+gfortran fails with FC not found without this
+          if [[ "${{ matrix.compiler }}" == "llvm" ]]; then
+            FC_PATH=$(spack compiler info ${FORTRAN_COMPILER} | grep 'fortran:' | awk '{print $2}')
+            cat << ENVEOF > env_vars.yaml
+          env_vars:
+            set:
+              FC: ${FC_PATH}
+          ENVEOF
+          fi
 
-          cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
-          cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
+      # Workaround for https://github.com/spack/spack/issues/51505
+      # 
+      # Currently not needed because we have a full copy of mfem and libceed
+      # because of https://github.com/spack/spack-packages/pull/2361
 
+      # - name: Overwrite builtin Palace package
+      #   if: needs.filter.outputs.test == 'true'
+      #   run: |
+      #     ln -s "$(spack location --repo builtin)/packages/libceed" spack_repo/local/packages/
+      #     ln -s "$(spack location --repo builtin)/packages/mfem" spack_repo/local/packages/
 
       - name: Remove Android NDK # it confuses the Intel compiler
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel-oneapi-compilers'
