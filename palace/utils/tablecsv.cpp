@@ -100,13 +100,12 @@ void Table::reserve(size_t n_rows, size_t n_cols)
 // Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
-  auto it = std::find_if(cols.begin(), cols.end(),
-                         [&column](auto &c) { return c.name == column.name; });
-  if (it != cols.end())
+  if (col_names.find(column.name) != col_names.end())
   {
     return false;
   }
   auto &col = cols.emplace_back(std::move(column));
+  col_names.insert(col.name);
   if (reserve_n_rows > 0)
   {
     col.data.reserve(reserve_n_rows);
