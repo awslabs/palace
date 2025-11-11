@@ -38,8 +38,10 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   // finite element space was provided.
   for (std::size_t l = 1; l < n_levels; l++)
   {
+    std::cout << "gmg.cpp L41 l: " << l << "\n";
     if (G)
     {
+      std::cout << "gmg.cpp L44 if G true\n";
       const int cheby_smooth_it = 1;
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
           comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
@@ -47,6 +49,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     }
     else
     {
+      std::cout << "gmg.cpp L52 else (G is null)\n";
       const int cheby_smooth_it = smooth_it;
       if (cheby_4th_kind)
       {
@@ -95,10 +98,11 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     {
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
-
+    std::cout << "gmg.cpp L98 l: " << l << "\n";
     auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get());
     if (dist_smoother)
     {
+      std::cout << "gmg.cpp L102 dist_smoother true\n";
       MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
                   "Distributive relaxation smoother relies on both primary space and "
                   "auxiliary space operators for multigrid smoothing!");
@@ -107,6 +111,7 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     }
     else
     {
+      std::cout << "gmg.cpp L111 dist_smoother false\n";
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 
@@ -133,10 +138,13 @@ void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) cons
               "Single-level geometric multigrid will not work with multiple iterations!");
 
   // Apply V-cycle. The initial guess for y is zero'd at the first pre-smooth iteration.
+  std::cout << "gmg.cpp L141\n";
   X.back() = x;
   for (int it = 0; it < pc_it; it++)
   {
+    std::cout << "gmg.cpp L145 it: " << it << "\n";
     VCycle(n_levels - 1, (it > 0));
+    std::cout << "gmg.cpp L147\n";
   }
   y = Y.back();
 }
@@ -174,34 +182,44 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at
   // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
+  std::cout << "gmg.cpp L185 l: " << l << "\n";
   B[l]->SetInitialGuess(initial_guess);
   if (l == 0)
   {
+    std::cout << "gmg.cpp L189 l: " << l << "\n";
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
     B[l]->Mult(X[l], Y[l]);
     return;
   }
+  std::cout << "gmg.cpp L194 l: " << l << "\n";
   B[l]->Mult2(X[l], Y[l], R[l]);
-
+std::cout << "gmg.cpp L196 l: " << l << "\n";
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
+  std::cout << "gmg.cpp L199 l: " << l << "\n";
   linalg::AXPBY(1.0, X[l], -1.0, R[l]);
-
+std::cout << "gmg.cpp L201 l: " << l << "\n";
   // Coarse grid correction.
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
+  std::cout << "gmg.cpp L204 l: " << l << "\n";
   if (dbc_tdof_lists[l - 1])
   {
     linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
   }
+  std::cout << "gmg.cpp L209 l: " << l << "\n";
   VCycle(l - 1, false);
-
+std::cout << "gmg.cpp L211 l: " << l << "\n";
   // Prolongate and add.
+  std::cout << "gmg.cpp L213 l: " << l << "\n";
   RealMult(*P[l - 1], Y[l - 1], R[l]);
+  std::cout << "gmg.cpp L215 l: " << l << "\n";
   Y[l] += R[l];
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
+  std::cout << "gmg.cpp L220 l: " << l << "\n";
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
+  std::cout << "gmg.cpp L222 l: " << l << "\n";
 }
 
 template class GeometricMultigridSolver<Operator>;

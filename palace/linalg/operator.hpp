@@ -201,8 +201,11 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override
   {
+    std::cout << "operator.hpp L204\n";
     B.Mult(x, z);
+    std::cout << "operator.hpp L206\n";
     A.Mult(z, y);
+    std::cout << "operator.hpp L208\n";
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override

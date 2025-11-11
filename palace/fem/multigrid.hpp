@@ -135,27 +135,20 @@ Mpi::Print("multigrid.hpp L114\n");
       // Rebalance
       Mpi::Print("Mesh level {} is a rebalancing (n_rebal: {}), compute transfer operator\n", l, n_rebal);
       auto refine_op = std::make_unique<mfem::TransferOperator>(fespaces.GetFESpaceAtLevel(l - 2 - n_rebal - n_skipped), fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped));
-     // Mpi::Print("call mesh[l-1]->Update()\n");
-     // mesh[l - 1]->Update();
-     // Mpi::Print("mesh[l - 1] sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", mesh[l - 1]->Get().GetSequence(), mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REFINE, mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REBALANCE);
-     // //Mpi::Print("create mesh_copy\n");
-     // //auto mesh_copy = std::make_unique<Mesh>(false, *mesh[l - 1]);
-     // Mpi::Print("create pmesh_copy\n");
-     // auto pmesh_copy = std::make_unique<mfem::ParMesh>(*mesh[l - 1]);
-     // Mpi::Print("pmesh_copy sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", pmesh_copy->GetSequence(), pmesh_copy->GetLastOperation() == mfem::Mesh::REFINE, pmesh_copy->GetLastOperation() == mfem::Mesh::REBALANCE);
+      Vector t1(refine_op->Width());
+      Vector t2(refine_op->Height());
+      t1 = 1.0; t2 = 0.0;
+      refine_op->Mult(t1, t2);
+      Mpi::Print("before rebalance t2 min/max: {}, {}\n", t2.Min(), t2.Max());
       Mpi::Print("call fespace[{}] rebalance()\n", l - 1 - n_rebal - n_skipped);
-      fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped).GetParMesh().Rebalance();//? This is bad, modifies the refined but not rebalanced mesh[l - 1]!
+      fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped).GetParMesh().Rebalance();
+      //^^^is bad, modifies the refined but not rebalanced mesh[l - 1] and probably messes up refine_op which depends on fespaces[l - 1 - n_rebal - n_skipped]
+      t1 = 1.0; t2 = 0.0;
+      refine_op->Mult(t1, t2);
+      Mpi::Print("after rebalance t2 min/max: {}, {}\n", t2.Min(), t2.Max());
       Mpi::Print("get rebalance_op\n");
       auto rebalance_op = std::unique_ptr<Operator>(const_cast<Operator*>(fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped).Get().GetUpdateOperator()));
-     // Mpi::Print("replace modified mesh by its copy\n");
-     // //mesh[l - 1] = std::move(mesh_copy);
-     // //mesh[l - 1] = std::make_unique<Mesh>(false, std::move(pmesh_copy));
-     // mesh[l - 1] = std::make_unique<Mesh>(std::move(pmesh_copy), false);
-     // Mpi::Print("mesh[l - 1] sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", mesh[l - 1]->Get().GetSequence(), mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REFINE, mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REBALANCE);
-     //Mpi::Print("Removing l-1 element of vector \n");
-     // mesh.erase(mesh.begin() + l - 1); // error container overflow?
-      //Mpi::Print("call mesh[l-1]->Update() ??\n");
-      //mesh[l - 1]->Update();
+
       std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
                 << " rebalance width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
       fespaces.UpdateLevel(

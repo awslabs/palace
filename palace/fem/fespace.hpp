@@ -200,7 +200,7 @@ public:
 class FiniteElementSpaceHierarchy
 {
 protected:
-  mutable std::vector<std::unique_ptr<FiniteElementSpace>> fespaces, intermediate_fespaces;
+  mutable std::vector<std::unique_ptr<FiniteElementSpace>> fespaces, copy_fespaces, intermediate_fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
   mutable std::vector<std::unique_ptr<Operator>> refine_ops, rebalance_ops; // tests!!??
   const Operator &BuildProlongationAtLevel(std::size_t l) const;

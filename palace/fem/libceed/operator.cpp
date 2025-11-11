@@ -460,6 +460,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
   PalacePragmaOmp(parallel if (op.Size() > 1))
   {
     const int id = utils::GetThreadNum();
+    std::cout << "operator.cpp L463 id: " << id << "\n";
     MFEM_ASSERT(static_cast<std::size_t>(id) < op.Size(),
                 "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
