@@ -38,11 +38,11 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
         iodata.solver.linear.mg_coarsening, false)),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 0, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 1, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
-        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh, 2,
         rt_fecs)),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),

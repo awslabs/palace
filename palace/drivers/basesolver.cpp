@@ -199,14 +199,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
-      Mpi::Print("Stupidly looping over the refine step to get multiple copies of the same mesh lol\n");
+      int n_copies = 6;
+      Mpi::Print("Stupidly looping over the refine step {} times to get multiple copies of the same mesh LOL\n", n_copies);
       size_t mesh_size = mesh.size();
-      for (int i = 0; i < 3; i++)
+      for (int i = 0; i < n_copies; i++)
       {
       //mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // TEST: add refined mesh to sequence
         mesh.emplace_back(std::make_unique<Mesh>(*mesh[mesh_size - 1])); // TEST: add refined mesh to sequence
       }
-      for (int i = 0; i < 3; i++)
+      for (int i = 0; i < n_copies; i++)
       {
       mfem::ParMesh &fine_mesh = *mesh[mesh_size + i]; //*mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();

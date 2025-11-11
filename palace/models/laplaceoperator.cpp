@@ -31,10 +31,10 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
         iodata.solver.linear.mg_coarsening, false)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 0, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
     nd_fespace(*mesh.back(), nd_fec.get()),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
-        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh, 1,
         rt_fecs)),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {

@@ -222,9 +222,14 @@ public:
     rebalance_ops.push_back(nullptr);
   }
 
+  void CopyLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
+  {
+    copy_fespaces.push_back(std::move(fespace));
+  }
+
   void UpdateLevel(std::unique_ptr<FiniteElementSpace> &&fespace, std::unique_ptr<Operator> refine_op, std::unique_ptr<Operator> rebalance_op)
   {
-    // Save modified fespace.
+    // Save modified fespace (needed since the rebalance op depends on it).
     intermediate_fespaces.push_back(std::move(fespaces.back()));
     // Remove last fespace and refine/rebalnace operators.
     fespaces.pop_back();
@@ -238,17 +243,17 @@ public:
     std::cout << "inside updatelevel rank: " << Mpi::Rank(fespaces.back()->GetComm()) << " rebalance width/height: " << rebalance_ops.back()->Width() << " " << rebalance_ops.back()->Height() << "\n";
   }
 
-  auto &GetFESpaceAtLevel(std::size_t l)
+  auto &GetFESpaceAtLevel(std::size_t l, bool copy = false)
   {
     MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
-    return *fespaces[l];
+    return l == 0 ? *fespaces[0] : (copy ? *copy_fespaces[l-1] : *fespaces[l]);
   }
-  const auto &GetFESpaceAtLevel(std::size_t l) const
+  const auto &GetFESpaceAtLevel(std::size_t l, bool copy = false) const
   {
     MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
-    return *fespaces[l];
+    return l == 0 ? *fespaces[0] : (copy ? *copy_fespaces[l-1] : *fespaces[l]);
   }
 
   auto &GetFinestFESpace()
