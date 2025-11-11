@@ -180,7 +180,7 @@ jobs:
           mpi: openmpi
           math-libs: openblas
           shared: +shared
-          int: +int64
+          int: ~int64
           openmp: +openmp
           eigensolver: +slepc+arpack
           solver: +superlu-dist+mumps+sundials+strumpack
