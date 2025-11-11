@@ -23,7 +23,7 @@ namespace palace
 {
 
 std::pair<ErrorIndicator, long long int>
-TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+TransientSolver::Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   BlockTimer bt0(Timer::CONSTRUCT);

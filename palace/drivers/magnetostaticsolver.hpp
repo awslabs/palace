@@ -31,7 +31,7 @@ private:
                             const std::vector<double> &I_inc) const;
 
   std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+  Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;

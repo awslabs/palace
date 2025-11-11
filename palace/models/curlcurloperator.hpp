@@ -51,7 +51,7 @@ private:
   void CheckBoundaryProperties();
 
 public:
-  CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  CurlCurlOperator(const IoData &iodata, /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }

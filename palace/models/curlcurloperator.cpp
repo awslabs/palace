@@ -20,7 +20,7 @@ namespace palace
 {
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
-                                   const std::vector<std::unique_ptr<Mesh>> &mesh)
+                                   /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,

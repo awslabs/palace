@@ -36,7 +36,7 @@ protected:
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
   virtual std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const = 0;
+  Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const = 0;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

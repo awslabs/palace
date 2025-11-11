@@ -29,7 +29,7 @@ private:
   ErrorIndicator SweepAdaptive(SpaceOperator &space_op) const;
 
   std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+  Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;

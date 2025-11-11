@@ -69,14 +69,20 @@ private:
 
 public:
   template <typename... T>
-  Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
+  Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...), true)
+  {
+  }
+  template <typename... T>
+  Mesh(bool update, T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...), update)
   {
   }
   template <typename T>
-  Mesh(std::unique_ptr<T> &&mesh) : mesh(std::move(mesh))
+  Mesh(std::unique_ptr<T> &&mesh, bool update = true) : mesh(std::move(mesh))
   {
+    std::cout << "mesh.hpp L79 update: " << update << "\n";
     this->mesh->EnsureNodes();
-    Update();
+    if (!update) std::cout << "mesh.hpp skipping Update() in Mesh constructor\n";
+    if (update) Update();
   }
   ~Mesh() { ResetCeedObjects(); }
 

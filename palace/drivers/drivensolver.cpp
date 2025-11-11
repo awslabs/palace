@@ -30,7 +30,7 @@ namespace palace
 using namespace std::complex_literals;
 
 std::pair<ErrorIndicator, long long int>
-DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+DrivenSolver::Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);

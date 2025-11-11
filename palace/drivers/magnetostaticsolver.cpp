@@ -20,7 +20,7 @@ namespace palace
 {
 
 std::pair<ErrorIndicator, long long int>
-MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+MagnetostaticSolver::Solve(/*const*/ std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding

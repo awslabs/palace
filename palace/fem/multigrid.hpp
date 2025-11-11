@@ -76,7 +76,7 @@ ConstructFECollections(int p, int dim, int mg_max_levels, MultigridCoarsening mg
 // element collections. Additionally, Dirichlet boundary conditions are marked.
 template <typename FECollection>
 inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    int mg_max_levels, const std::vector<std::unique_ptr<Mesh>> &mesh,
+    int mg_max_levels, /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> *dbc_attr = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
@@ -99,39 +99,73 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(dbc_marker,
                                                            dbc_tdof_lists->emplace_back());
   }
-
+  Mpi::Print("In ConstructFiniteElementSpaceHierarchy\n");
+/*
   // test copying mesh?
   Mpi::Print("multigrid.hpp L104\n");
+//std::vector<Mesh> internal_mesh;
 std::vector<std::unique_ptr<Mesh>> internal_mesh;
 Mpi::Print("multigrid.hpp L106\n");
 internal_mesh.reserve(mesh.size());
 Mpi::Print("multigrid.hpp L108\n");
-for (const auto& m : mesh) {
+for (const auto& m : mesh)
+{
   Mpi::Print("multigrid.hpp L110\n");
-    internal_mesh.push_back(std::make_unique<Mesh>(*m));
+  internal_mesh.emplace_back(std::make_unique<Mesh>(*m));
+  //internal_mesh.emplace_back(Mesh(*m));
+  Mpi::Print("multigrid.hpp L112\n");
 }
-Mpi::Print("multigrid.hpp L113\n");
-
+Mpi::Print("multigrid.hpp L114\n");
+*/
+  int n_rebal = 0;
+  int n_skipped = 0;
+  int prev_sequence = mesh[coarse_mesh_l]->Get().GetSequence();
   // h-refinement.
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
-    Mpi::Print("l: {}, previous mesh NE: {}, current mesh NE: {}\n", l, mesh[l - 1]->Get().GetGlobalNE(), mesh[l]->Get().GetGlobalNE());
-    if (mesh[l - 1]->Get().GetGlobalNE() == mesh[l]->Get().GetGlobalNE())
+    Mpi::Print("l: {}, previous mesh NE: {}, current mesh NE: {}, sequence: {}, last op is refine: {}, last op is rebalance: {}, \n", l, mesh[l - 1]->Get().GetGlobalNE(), mesh[l]->Get().GetGlobalNE(), mesh[l]->Get().GetSequence(), (mesh[l]->Get().GetLastOperation() == mfem::Mesh::REFINE), (mesh[l]->Get().GetLastOperation() == mfem::Mesh::REBALANCE));
+    if (mesh[l]->Get().GetSequence() != prev_sequence + 1)
+    {
+      Mpi::Print("Skipping it because prev_sequence: {}\n", prev_sequence);
+      n_skipped++;
+      continue; // duplicate mesh, skipping it!
+    }
+    else if (mesh[l]->Get().GetLastOperation() == mfem::Mesh::REBALANCE)
     {
       // Rebalance
-      Mpi::Print("Mesh level {} is a rebalancing, compute transfer operator\n", l);
-      auto refine_op = std::make_unique<mfem::TransferOperator>(fespaces.GetFESpaceAtLevel(l - 2), fespaces.GetFESpaceAtLevel(l - 1));
-
-      fespaces.GetFESpaceAtLevel(l - 1).GetParMesh().Rebalance();//? This is bad, modifies the refined but not rebalanced mesh[l - 1]!
-      fespaces.GetFESpaceAtLevel(l - 1).GetMesh().Update(); // not sure needed
-      fespaces.GetFESpaceAtLevel(l - 1).Update(); // not sure needed
-      //auto reb_fe = std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get());
-      //auto rebalance_op[l].reset(const_cast<Operator*>(reb_fe.Get().GetUpdateOperator()));
-      //auto rebalance_op = const_cast<Operator*>(reb_fe->Get().GetUpdateOperator());
-      auto rebalance_op = const_cast<Operator*>(fespaces.GetFESpaceAtLevel(l - 1).Get().GetUpdateOperator());
+      Mpi::Print("Mesh level {} is a rebalancing (n_rebal: {}), compute transfer operator\n", l, n_rebal);
+      auto refine_op = std::make_unique<mfem::TransferOperator>(fespaces.GetFESpaceAtLevel(l - 2 - n_rebal - n_skipped), fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped));
+     // Mpi::Print("call mesh[l-1]->Update()\n");
+     // mesh[l - 1]->Update();
+     // Mpi::Print("mesh[l - 1] sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", mesh[l - 1]->Get().GetSequence(), mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REFINE, mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REBALANCE);
+     // //Mpi::Print("create mesh_copy\n");
+     // //auto mesh_copy = std::make_unique<Mesh>(false, *mesh[l - 1]);
+     // Mpi::Print("create pmesh_copy\n");
+     // auto pmesh_copy = std::make_unique<mfem::ParMesh>(*mesh[l - 1]);
+     // Mpi::Print("pmesh_copy sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", pmesh_copy->GetSequence(), pmesh_copy->GetLastOperation() == mfem::Mesh::REFINE, pmesh_copy->GetLastOperation() == mfem::Mesh::REBALANCE);
+      Mpi::Print("call fespace[{}] rebalance()\n", l - 1 - n_rebal - n_skipped);
+      fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped).GetParMesh().Rebalance();//? This is bad, modifies the refined but not rebalanced mesh[l - 1]!
+      Mpi::Print("get rebalance_op\n");
+      auto rebalance_op = std::unique_ptr<Operator>(const_cast<Operator*>(fespaces.GetFESpaceAtLevel(l - 1 - n_rebal - n_skipped).Get().GetUpdateOperator()));
+     // Mpi::Print("replace modified mesh by its copy\n");
+     // //mesh[l - 1] = std::move(mesh_copy);
+     // //mesh[l - 1] = std::make_unique<Mesh>(false, std::move(pmesh_copy));
+     // mesh[l - 1] = std::make_unique<Mesh>(std::move(pmesh_copy), false);
+     // Mpi::Print("mesh[l - 1] sequence: {}, last operation == REFINE: {}, == REBALANCE: {}\n", mesh[l - 1]->Get().GetSequence(), mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REFINE, mesh[l - 1]->Get().GetLastOperation() == mfem::Mesh::REBALANCE);
+     //Mpi::Print("Removing l-1 element of vector \n");
+     // mesh.erase(mesh.begin() + l - 1); // error container overflow?
+      //Mpi::Print("call mesh[l-1]->Update() ??\n");
+      //mesh[l - 1]->Update();
       std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
-                << " rebalance  width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
-      fespaces.UpdateLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get())); // pass refine and rebalance op too!
+                << " rebalance width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
+      fespaces.UpdateLevel(
+        std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()),
+        std::move(refine_op),
+        std::move(rebalance_op)
+      );
+      prev_sequence++;
+      Mpi::Print("After fespaces.UpdateLevel, num levels: {}\n", fespaces.GetNumLevels());
+      n_rebal++;
       if (dbc_attr && dbc_tdof_lists)
       {
         dbc_tdof_lists->pop_back();
@@ -139,7 +173,9 @@ Mpi::Print("multigrid.hpp L113\n");
     }
     else
     {
+      prev_sequence++;
       fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
+      Mpi::Print("fespaces added level {}: with mesh level {}\n", fespaces.GetNumLevels(), l);
     }
     if (dbc_attr && dbc_tdof_lists)
     {

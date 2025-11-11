@@ -200,10 +200,9 @@ public:
 class FiniteElementSpaceHierarchy
 {
 protected:
-  mutable std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
+  mutable std::vector<std::unique_ptr<FiniteElementSpace>> fespaces, intermediate_fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
-  mutable std::vector<std::unique_ptr<Operator>> refine_op, rebalance_op, transfer_op; // tests!!??
-  //int rebalance_level;
+  mutable std::vector<std::unique_ptr<Operator>> refine_ops, rebalance_ops; // tests!!??
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
@@ -219,15 +218,24 @@ public:
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
-    refine_op.push_back(nullptr); // tests???
-    rebalance_op.push_back(nullptr);
-    transfer_op.push_back(nullptr);
+    refine_ops.push_back(nullptr); // tests???
+    rebalance_ops.push_back(nullptr);
   }
 
-  void UpdateLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
+  void UpdateLevel(std::unique_ptr<FiniteElementSpace> &&fespace, std::unique_ptr<Operator> refine_op, std::unique_ptr<Operator> rebalance_op)
   {
+    // Save modified fespace.
+    intermediate_fespaces.push_back(std::move(fespaces.back()));
+    // Remove last fespace and refine/rebalnace operators.
     fespaces.pop_back();
+    refine_ops.pop_back();
+    rebalance_ops.pop_back();
+    // Update fespace and refine/rebalance operators.
     fespaces.push_back(std::move(fespace));
+    refine_ops.push_back(std::move(refine_op));
+    rebalance_ops.push_back(std::move(rebalance_op));
+    std::cout << "inside updatelevel rank: " << Mpi::Rank(fespaces.back()->GetComm()) << " refine width/height: " << refine_ops.back()->Width() << " " << refine_ops.back()->Height() << "\n";
+    std::cout << "inside updatelevel rank: " << Mpi::Rank(fespaces.back()->GetComm()) << " rebalance width/height: " << rebalance_ops.back()->Width() << " " << rebalance_ops.back()->Height() << "\n";
   }
 
   auto &GetFESpaceAtLevel(std::size_t l)

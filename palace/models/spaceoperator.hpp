@@ -104,7 +104,7 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
 public:
-  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  SpaceOperator(const IoData &iodata, /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

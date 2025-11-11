@@ -254,21 +254,36 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
     fespaces[l + 1].reset(new FiniteElementSpace(mesh, fecoll));//
     Mpi::Print("fespace.cpp L243 create P[l]\n");
     */
-    P[l] = std::make_unique<ParOperator>(
+    if ((refine_ops[l + 1] != nullptr ) && (rebalance_ops[l + 1] != nullptr)) // l or l + 1??
+    {
+      //Mpi::Print("Try to get refine_op\n");
+      //auto refine_op = std::make_unique<mfem::TransferOperator>(*refine_ops[l + 1]);
+      //Mpi::Print("Try to get rebalance_op\n");
+      //auto rebalance_op = std::make_unique<mfem::HypreParMatrix>(*rebalance_ops[l + 1]);
+      Mpi::Print("Using rebalance * refine op at l: {}\n", l);
+      P[l] = std::make_unique<ParOperator>(
+          std::make_unique<ProductOperator>(*rebalance_ops[l + 1], *refine_ops[l + 1]),
+          *fespaces[l], *fespaces[l + 1], true);
+    }
+    else
+    {
+      Mpi::Print("Using transfer op at l: {}\n", l);
+      P[l] = std::make_unique<ParOperator>(
         std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]), // transferoperator is problematic if a rebalance happened
         //std::make_unique<ProductOperator>(*rebalance_op[l], *refine_op[l]),
         *fespaces[l], *fespaces[l + 1], true);
+    }
     Mpi::Print("fespace.cpp L248\n");
   }
   else
   {
     Mpi::Print("fespace.cpp L255 same mesh, calling update?\n");
-    fespaces[l + 1]->GetMesh().Update(); // not sure if needed?
-    fespaces[l + 1]->Update(); // not sure if needed...
-    fespaces[l + 1]->Get().Update(); // not sure if needed...
-    fespaces[l]->GetMesh().Update(); // not sure if needed?
-    fespaces[l]->Update(); // not sure if needed...
-    fespaces[l]->Get().Update(); // not sure if needed...
+    //fespaces[l + 1]->GetMesh().Update(); // not sure if needed?
+    //fespaces[l + 1]->Update(); // not sure if needed...
+    //fespaces[l + 1]->Get().Update(); // not sure if needed...
+    //fespaces[l]->GetMesh().Update(); // not sure if needed?
+    //fespaces[l]->Update(); // not sure if needed...
+    //fespaces[l]->Get().Update(); // not sure if needed...
     Mpi::Print("fespace.cpp L258 discrete linear operator\n");
     DiscreteLinearOperator p(*fespaces[l], *fespaces[l + 1]);
     Mpi::Print("fespace.cpp L260\n");

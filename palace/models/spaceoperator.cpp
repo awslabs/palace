@@ -23,7 +23,7 @@ namespace palace
 using namespace std::complex_literals;
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
-                             const std::vector<std::unique_ptr<Mesh>> &mesh)
+                             /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(iodata.solver.linear.pc_mat_real),
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
     print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
@@ -698,21 +698,29 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
           Mpi::Print("\n");
         }
       }
+      Mpi::Print("GetPreconditionerMatrix L701\n");
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
+      Mpi::Print("GetPreconditionerMatrix L704\n");
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      Mpi::Print("GetPreconditionerMatrix L706\n");
       if (aux)
       {
+        Mpi::Print("GetPreconditionerMatrix L709\n");
         B->AddAuxiliaryOperator(std::move(B_l));
+        Mpi::Print("GetPreconditionerMatrix L711\n");
       }
       else
       {
+        Mpi::Print("GetPreconditionerMatrix L715\n");
         B->AddOperator(std::move(B_l));
+        Mpi::Print("GetPreconditionerMatrix L717\n");
       }
     }
   }
 
   print_prec_hdr = false;
+  Mpi::Print("Done with GetPreconditionerMatrix\n");
   return B;
 }
 

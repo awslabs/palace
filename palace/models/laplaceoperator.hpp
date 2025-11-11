@@ -52,7 +52,7 @@ private:
   std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata);
 
 public:
-  LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  LaplaceOperator(const IoData &iodata, /*const*/ std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
