@@ -8,7 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 namespace palace
@@ -81,8 +81,9 @@ class Table
   // Future: allow int and other output, allow non-owning memory via span.
   std::vector<Column> cols;
 
-  // Set of column names to avoid duplicate column names.
-  std::unordered_set<std::string> col_names;
+  // Map of column name to column index to avoid duplicate column names and allow
+  // fast retrieval by name.
+  std::unordered_map<std::string, std::size_t> name_to_index;
 
   // Cache value to reserve vector space by default.
   std::size_t reserve_n_rows = 0;

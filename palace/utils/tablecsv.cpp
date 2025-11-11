@@ -100,12 +100,12 @@ void Table::reserve(size_t n_rows, size_t n_cols)
 // Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
-  if (col_names.find(column.name) != col_names.end())
+  if (name_to_index.find(column.name) != name_to_index.end())
   {
     return false;
   }
+  name_to_index[column.name] = cols.size();
   auto &col = cols.emplace_back(std::move(column));
-  col_names.insert(col.name);
   if (reserve_n_rows > 0)
   {
     col.data.reserve(reserve_n_rows);
@@ -115,13 +115,12 @@ bool Table::insert(Column &&column)
 
 Column &Table::operator[](std::string_view name)
 {
-  auto it =
-      std::find_if(cols.begin(), cols.end(), [&name](auto &c) { return c.name == name; });
-  if (it == cols.end())
+  auto it = name_to_index.find(std::string(name));
+  if (it == name_to_index.end())
   {
     throw std::out_of_range(fmt::format("Column {} not found in table", name).c_str());
   }
-  return *it;
+  return cols[it->second];
 }
 
 // TODO: Improve all the functions below with ranges in C++20.
