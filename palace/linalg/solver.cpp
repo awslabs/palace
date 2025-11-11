@@ -179,29 +179,24 @@ void MfemWrapperSolver<OperType>::DropSmallEntries()
   const auto nnz_before = A->NNZ();
   A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
   const auto nnz_after = A->NNZ();
-  if (reorder_reuse && (num_dropped_entries != 0) &&
-      (num_dropped_entries != (nnz_before - nnz_after)))
-  {
 #if defined(MFEM_USE_MUMPS)
-    // MUMPS errors out if there are any changes to the symmetry pattern after the first
-    // factorization so we don't reuse the reordering if the number of dropped entries has
-    // changed.
-    if (auto *mumps = dynamic_cast<MumpsSolver *>(&pc))
+  if (auto *mumps = dynamic_cast<MumpsSolver *>(pc.get()))
+  {
+    if (reorder_reuse && (num_dropped_entries != 0) &&
+        (num_dropped_entries != (nnz_before - nnz_after)))
     {
+      // MUMPS errors out if there are any changes to the symmetry pattern after the first
+      // factorization so we don't reuse the reordering if the number of dropped entries has
+      // changed.
       mumps->SetReorderReuse(false);
     }
-#endif
-  }
-  else if (reorder_reuse && (num_dropped_entries == (nnz_before - nnz_after)))
-  {
-#if defined(MFEM_USE_MUMPS)
-    // Reuse the column ordering if the number of dropped has not changed.
-    if (auto *mumps = dynamic_cast<MumpsSolver *>(&pc))
+    else if (reorder_reuse && (num_dropped_entries == (nnz_before - nnz_after)))
     {
+      // Reuse the column ordering if the number of dropped entries has not changed.
       mumps->SetReorderReuse(true);
     }
-#endif
   }
+#endif
   num_dropped_entries = nnz_before - nnz_after;
   Mpi::Print(" Dropping {} small entries in sparse matrix out of {} ({:.1f}%)\n",
              num_dropped_entries, nnz_before,
