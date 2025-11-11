@@ -157,6 +157,13 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
   hypre_CSRMatrixDestroy(csr);
 }
 
+template <typename StrumpackSolverType>
+void StrumpackSolverBase<StrumpackSolverType>::SetReorderReuse(bool reorder_reuse)
+{
+  StrumpackSolverType::SetReorderingReuse(
+      reorder_reuse);  // If true repeated calls use same sparsity pattern
+}
+
 template class StrumpackSolverBase<mfem::STRUMPACKSolver>;
 template class StrumpackSolverBase<mfem::STRUMPACKMixedPrecisionSolver>;
 

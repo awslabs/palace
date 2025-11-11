@@ -39,6 +39,8 @@ public:
   }
 
   void SetOperator(const Operator &op) override;
+
+  void SetReorderReuse(bool reorder_reuse);
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;

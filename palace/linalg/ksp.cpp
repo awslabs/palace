@@ -119,7 +119,8 @@ auto MakeWrapperSolver(const IoData &iodata, U &&...args)
                                     false);
   return std::make_unique<MfemWrapperSolver<OperType>>(
       std::make_unique<T>(iodata, std::forward<U>(args)...), save_assembled,
-      iodata.solver.linear.complex_coarse_solve, iodata.solver.linear.drop_small_entries);
+      iodata.solver.linear.complex_coarse_solve, iodata.solver.linear.drop_small_entries,
+      iodata.solver.linear.reorder_reuse);
 }
 
 template <typename OperType>

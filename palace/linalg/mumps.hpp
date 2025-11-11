@@ -39,6 +39,8 @@ public:
           iodata.solver.linear.reorder_reuse, print)
   {
   }
+
+  void SetReorderReuse(bool reorder_reuse);
 };
 
 }  // namespace palace
