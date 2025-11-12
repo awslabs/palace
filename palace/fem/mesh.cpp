@@ -198,7 +198,6 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed, CeedVectorDestroy(&elem_attr_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&attr_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&attr_basis));
-
   return data;
 }
 
