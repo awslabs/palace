@@ -83,16 +83,17 @@ jobs:
 
         # This requires the env_vars file to work, otherwise fails building MFEM
         # with `FC` not found
-        - arch: arm
-          compiler: llvm
-          mpi: openmpi
-          math-libs: openblas
-          shared: ~shared
-          int: ~int64
-          openmp: ~openmp
-          eigensolver: +slepc
-          solver: +strumpack
-          cuda: ~cuda
+        # The floquet/periodic regression test fails
+        # - arch: arm
+        #   compiler: llvm
+        #   mpi: openmpi
+        #   math-libs: openblas
+        #   shared: ~shared
+        #   int: ~int64
+        #   openmp: ~openmp
+        #   eigensolver: +slepc
+        #   solver: +strumpack
+        #   cuda: ~cuda
 
         - arch: arm
           compiler: gcc

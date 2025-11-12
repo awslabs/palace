@@ -274,6 +274,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         if self.spec.satisfies("@0.15:"):
             args.append(self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"))
 
+            # TODO: Remove when MFEM moves to cmake
+            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
+
         # We guarantee that there are arch specs with conflicts above
         if self.spec.satisfies("+cuda"):
             args.append(
