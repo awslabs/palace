@@ -1333,13 +1333,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
-    WriteParaviewFields(double(step) / output_delta_post, time);
+    WriteParaviewFields(time, double(step) / output_delta_post);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
   if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
-    WriteMFEMGridFunctions(double(step) / output_delta_post, time);
+    WriteMFEMGridFunctions(time, double(step) / output_delta_post);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
