@@ -135,9 +135,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   }();
   if (use_amr && mesh.size() > 1)
   {
-    Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
-               "the sequence of a priori refinements\n");
-    mesh.erase(mesh.begin(), mesh.end() - 1);
+    Mpi::Print("basesolver.cpp bypassing mesh flattening!!!! \n");
+    //Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
+    //           "the sequence of a priori refinements\n");
+    //mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
 
@@ -198,6 +199,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
+      mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // add refined mesh to mesh hierarchy
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
@@ -210,6 +212,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Optionally rebalance and write the adapted mesh to file.
     {
+      /*
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
       if (ratio_pre > refinement.maximum_imbalance)
       {
@@ -222,6 +225,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                    "(new ratio = {:.3f})\n",
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
+      */
       mesh.back()->Update();
     }
 
