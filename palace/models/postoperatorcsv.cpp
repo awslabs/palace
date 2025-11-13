@@ -23,7 +23,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq) /
-      (2.0 * M_PI);
+      (2 * M_PI);
   measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE

@@ -546,6 +546,9 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.t /= units.GetMeshLengthRelativeScale();
   }
 
+  // Convert from GHz to non-dimensional angular frequency (adds the 2pi):
+  // 1/ns -> rad/ns -> non-dim units.
+
   // For eigenmode simulations:
   solver.eigenmode.target =
       2 * M_PI *

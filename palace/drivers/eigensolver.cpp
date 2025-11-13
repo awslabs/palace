@@ -276,7 +276,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // closest to the specified target, σ.
   {
     const double f_target =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2.0 * M_PI);
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
   if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)

@@ -32,16 +32,18 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
 
   Units units(0.496, 1.453);
   IoData iodata = IoData(units);
+  iodata.model.Lc = 1.0;  // Keep spatial conversions simple.
 
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
 
-  // Make mesh for a cube [0, 1] x [0, 1] x [0, 1].
+  // Make mesh for a cube [0, sz] x [0, sy] x [0, sz].
+  constexpr double sx = 1.1, sy = 2.5, sz = 3.8;
   MPI_Comm comm = Mpi::World();
   constexpr int resolution = 20;
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON, sx, sy, sz));
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
 
@@ -56,7 +58,7 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
 
   DomainPostOperator dom_post_op(iodata, mat_op, nd_fespace, rt_fespace);
 
-  // Create uniform electric field E = E0 * z_hat (SI units: V/m)
+  // Create uniform electric field E = E0 * z_hat (SI units: V/m).
   constexpr double E0_SI = 1.0e6;  // 1 MV/m
 
   auto E_uniform = [&](const mfem::Vector &x, mfem::Vector &E)
@@ -75,10 +77,12 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   double energy_nondim = dom_post_op.GetElectricFieldEnergy(*E_field);
   double energy_SI = units.Dimensionalize<Units::ValueType::ENERGY>(energy_nondim);
 
-  // Expected: U = (ε₀ * E₀² * L³) / 2.
-  double L_SI = units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  // Expected: U = (ε₀ * E₀² * sx * sy * sz) / 2.
+  double sx_SI = units.Dimensionalize<Units::ValueType::LENGTH>(sx);
+  double sy_SI = units.Dimensionalize<Units::ValueType::LENGTH>(sy);
+  double sz_SI = units.Dimensionalize<Units::ValueType::LENGTH>(sz);
   double expected_energy_SI =
-      0.5 * electromagnetics::epsilon0_ * E0_SI * E0_SI * L_SI * L_SI * L_SI;
+      0.5 * electromagnetics::epsilon0_ * E0_SI * E0_SI * sx_SI * sy_SI * sz_SI;
 
   CHECK_THAT(energy_SI, WithinRel(expected_energy_SI, 0.01));
 }
