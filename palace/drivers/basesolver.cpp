@@ -159,6 +159,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Main AMR loop.
   int it = 0;
+  size_t last_copy = mesh.size() - 1;
   while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
@@ -199,17 +200,37 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
-      int n_copies = 6;
+      int n_copies = 2 * (refinement.max_it - (it - 1)) + 1;
       Mpi::Print("Stupidly looping over the refine step {} times to get multiple copies of the same mesh LOL\n", n_copies);
       size_t mesh_size = mesh.size();
+      Mpi::Print("mesh vector currently has size: {}\n", mesh.size());
+      Mpi::Print("copying mesh[{}] {} times\n", mesh_size-1, n_copies);
       for (int i = 0; i < n_copies; i++)
       {
-      //mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // TEST: add refined mesh to sequence
-        mesh.emplace_back(std::make_unique<Mesh>(*mesh[mesh_size - 1])); // TEST: add refined mesh to sequence
+        Mpi::Print("before emplace_back with last_copy: {}\n", last_copy);
+        // mesh.emplace_back(std::make_unique<Mesh>(*mesh[mesh_size - 1])); // TEST: add last mesh to vector? call Update() or not?
+        // emplace_back mesh_size - 1 fails if the last mesh is a rebalance...
+        // but we could instead use a refined (but not yet rebalanced) mesh from the previous iter
+        // copy it, then rebalance it, then refine it!
+        // It's SOOO MANY rebalance calls though...
+        mesh.emplace_back(std::make_unique<Mesh>(*mesh[last_copy]));
+        Mpi::Print("after emplace_back\n");
+        if (it > 1)
+        {
+          Mpi::Print("test calling rebalance on mesh?\n");
+          mfem::ParMesh &last_mesh = *mesh.back();
+          last_mesh.Rebalance();
+          Mpi::Print("after callingr rebalance\n");
+          mesh.back()->Update();
+          Mpi::Print("after calling mesh.back()->Update()\n");
+        }
       }
+       Mpi::Print("mesh vector currently has size: {}\n", mesh.size());
       for (int i = 0; i < n_copies; i++)
       {
+      Mpi::Print("Refine mesh[{}]\n", mesh_size + i);
       mfem::ParMesh &fine_mesh = *mesh[mesh_size + i]; //*mesh.back();
+        Mpi::Print("Last mesh operation is refine: {}, is rebalance: {}\n", fine_mesh.GetLastOperation() == mfem::Mesh::REFINE, fine_mesh.GetLastOperation() == mfem::Mesh::REBALANCE);
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
       const auto final_elem_count = fine_mesh.GetGlobalNE();
@@ -218,21 +239,14 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
       }
-
+      last_copy = mesh_size;
     }
 
     // Optionally rebalance and write the adapted mesh to file.
     {
       /**/
-      // Try adding rebalanced mesh as a separate mesh in the vector
-      //Mpi::Print("calling update after refinement, before rebalancing\n");
-      //mesh.back()->Update(); // update
-      //Mpi::Print("calling update a second time\n");
-      //mesh.back()->Update(); // update
       Mpi::Print("adding refined mesh to mesh vector before rebalancing\n");
       mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // add last mesh to sequence and then rebalance it
-      //Mpi::Print("calling update on the n - 2 mesh?\n");
-      //mesh[mesh.size() - 2]->Update();
       Mpi::Print("calling rebalance\n");
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
       if (ratio_pre > refinement.maximum_imbalance)
@@ -254,13 +268,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         mesh.pop_back();
       }
       /**/
-      //Mpi::Print("calling update after rebalance\n");
-      //mesh.back()->Update();
-      for (int i = 0; i < mesh.size(); i++)
-      {
-        Mpi::Print("calling update on mesh[{}]\n", i);
-        mesh[i]->Update();
-      }
+      Mpi::Print("calling update after rebalance\n");
+      mesh.back()->Update();
+      //for (int i = 0; i < mesh.size(); i++)
+      //{
+      //  Mpi::Print("calling update on mesh[{}]\n", i);
+      //  mesh[i]->Update();
+      //}
     }
 
     // Solve + estimate.

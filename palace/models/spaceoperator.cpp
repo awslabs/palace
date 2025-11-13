@@ -38,11 +38,11 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
         iodata.solver.linear.mg_coarsening, false)),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, 0, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 0, iodata.model.refinement.max_it, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, 1, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 1, iodata.model.refinement.max_it, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
-        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh, 2,
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh, 2, iodata.model.refinement.max_it,
         rt_fecs)),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
@@ -698,29 +698,21 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
           Mpi::Print("\n");
         }
       }
-      Mpi::Print("GetPreconditionerMatrix L701\n");
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
-      Mpi::Print("GetPreconditionerMatrix L704\n");
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
-      Mpi::Print("GetPreconditionerMatrix L706\n");
       if (aux)
       {
-        Mpi::Print("GetPreconditionerMatrix L709\n");
         B->AddAuxiliaryOperator(std::move(B_l));
-        Mpi::Print("GetPreconditionerMatrix L711\n");
       }
       else
       {
-        Mpi::Print("GetPreconditionerMatrix L715\n");
         B->AddOperator(std::move(B_l));
-        Mpi::Print("GetPreconditionerMatrix L717\n");
       }
     }
   }
 
   print_prec_hdr = false;
-  Mpi::Print("Done with GetPreconditionerMatrix\n");
   return B;
 }
 

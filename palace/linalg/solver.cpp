@@ -160,7 +160,7 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  std::cout << "solver.cpp L163 begin coarse solve\n";
+  //std::cout << "solver.cpp L163 begin coarse solve\n";
   if (pc->Height() == x.Size())
   {
     mfem::Array<const Vector *> X(2);
@@ -188,7 +188,7 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
     y.Real() = yr;
     y.Imag() = yi;
   }
-  std::cout << "solver.cpp L191 end coarse solve\n";
+  //std::cout << "solver.cpp L191 end coarse solve\n";
 }
 
 }  // namespace palace

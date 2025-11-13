@@ -167,24 +167,19 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    std::cout << "bilinearform L170 l: " << l << "\n";
     if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
                       &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
     {
-      std::cout << "bilinearform L173\n";
       pa_ops.push_back(
           ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));
-      std::cout << "bilinearform L176\n";
     }
     else
     {
-      std::cout << "bilinearform L180\n";
       pa_ops.push_back(
           PartialAssemble(fespaces.GetFESpaceAtLevel(l), fespaces.GetFESpaceAtLevel(l)));
-      std::cout << "bilinearform L183\n";
     }
   }
-std::cout << "bilinearform L186 l0: " << l0 << "\n";
+
   // Construct the final operators using full or partial assemble as needed. We do not
   // force the coarse-level operator to be fully assembled always, it will be only assembled
   // as needed for parallel assembly.
@@ -192,21 +187,16 @@ std::cout << "bilinearform L186 l0: " << l0 << "\n";
   ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    std::cout << "bilinear form L195 l: " << l << "\n";
     if (UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold))
     {
-      std::cout << "bilinear form L198\n";
       ops.push_back(FullAssemble(*pa_ops[l - l0], skip_zeros));
-      std::cout << "bilinear form L200\n";
     }
     else
     {
-      std::cout << "bilinear form L204\n";
       ops.push_back(std::move(pa_ops[l - l0]));
-      std::cout << "bilinear form L206\n";
     }
   }
-std::cout << "bilinear form L209\n";
+
   return ops;
 }
 

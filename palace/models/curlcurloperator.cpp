@@ -31,9 +31,9 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
                                                    mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, 0, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, mesh, 0, iodata.model.refinement.max_it, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, 1, h1_fecs)),
+        iodata.solver.linear.mg_max_levels, mesh, 1, iodata.model.refinement.max_it, h1_fecs)),
     rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, *mesh.back())
 {

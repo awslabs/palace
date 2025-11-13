@@ -245,9 +245,9 @@ inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y,
 {
   BlockTimer bt(Timer::KSP_PRECONDITIONER, use_timer);
   MFEM_ASSERT(B, "Missing preconditioner in ApplyB!");
-  std::cout << "iterative.cpp L248\n";
+  //std::cout << "iterative.cpp L248\n";
   B->Mult(x, y);
-  std::cout << "iterative.cpp L250\n";
+  //std::cout << "iterative.cpp L250\n";
 }
 
 template <typename OperType, typename VecType>
@@ -256,36 +256,36 @@ inline void InitialResidual(PreconditionerSide side, const OperType *A,
                             VecType &r, VecType &z, bool initial_guess,
                             bool use_timer = true)
 {
-  std::cout << "iterative.cpp L257\n";
+  //std::cout << "iterative.cpp L257\n";
   if (B && side == PreconditionerSide::LEFT)
   {
     if (initial_guess)
     {
-      std::cout << "iterative.cpp L262\n";
+      //std::cout << "iterative.cpp L262\n";
       A->Mult(x, z);
-      std::cout << "iterative.cpp L264\n";
+      //std::cout << "iterative.cpp L264\n";
       linalg::AXPBY(1.0, b, -1.0, z);
-      std::cout << "iterative.cpp L266\n";
+      //std::cout << "iterative.cpp L266\n";
       ApplyB(B, z, r, use_timer);
-      std::cout << "iterative.cpp L268\n";
+      //std::cout << "iterative.cpp L268\n";
     }
     else
     {
-      std::cout << "iterative.cpp L272\n";
+      //std::cout << "iterative.cpp L272\n";
       ApplyB(B, b, r, use_timer);
-      std::cout << "iterative.cpp L274\n";
+      //std::cout << "iterative.cpp L274\n";
       x = 0.0;
-      std::cout << "iterative.cpp L276\n";
+      //std::cout << "iterative.cpp L276\n";
     }
   }
   else  // !B || side == PreconditionerSide::RIGHT
   {
     if (initial_guess)
     {
-      std::cout << "iterative.cpp L283\n";
+      //std::cout << "iterative.cpp L283\n";
       A->Mult(x, r);
       linalg::AXPBY(1.0, b, -1.0, r);
-      std::cout << "iterative.cpp L286\n";
+      //std::cout << "iterative.cpp L286\n";
     }
     else
     {
@@ -558,11 +558,11 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   for (; it < max_it; restart++)
   {
-    std::cout << "iterative.cpp L549\n";
+    //std::cout << "iterative.cpp L549\n";
     // Initialize.
     InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
                     this->use_timer);
-    std::cout << "iterative.cpp L553\n";
+    //std::cout << "iterative.cpp L553\n";
     true_beta = linalg::Norml2(comm, r);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
@@ -603,12 +603,12 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       converged = true;
       break;
     }
-    std::cout << "iterative.cpp L594\n";
+    //std::cout << "iterative.cpp L594\n";
     V[0] = 0.0;
     V[0].Add(1.0 / beta, r);
     std::fill(s.begin(), s.end(), 0.0);
     s[0] = beta;
-std::cout << "iterative.cpp L599\n";
+    //std::cout << "iterative.cpp L599\n";
     int j = 0;
     for (;; j++, it++)
     {
