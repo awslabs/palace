@@ -183,10 +183,19 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed,
                  CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * geom_data_size,
                                   &data.geom_data));
+
+  // Modified strides to store all data for each quadrature point together.
+  // Differs from the "optimal" backend for data that requires transformation.
+  CeedInt strides[3] = {
+      geom_data_size,                    // Stride between components at same q-point
+      geom_data_size * num_qpts,         // Stride between elements
+      1                                  // Stride between q-points
+  };
+
   PalaceCeedCall(
       ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
                                              (CeedSize)num_elem * num_qpts * geom_data_size,
-                                             CEED_STRIDES_BACKEND, &data.geom_data_restr));
+                                             strides, &data.geom_data_restr));
 
   // Compute the required geometry factors at quadrature points.
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
