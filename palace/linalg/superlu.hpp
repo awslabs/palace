@@ -56,6 +56,8 @@ public:
   {
     solver.ArrayMultTranspose(X, Y);
   }
+
+  void SetReorderReuse(bool reorder_reuse_) { reorder_reuse = reorder_reuse_; }
 };
 
 }  // namespace palace

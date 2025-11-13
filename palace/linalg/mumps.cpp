@@ -48,6 +48,11 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   }
 }
 
+void MumpsSolver::SetReorderReuse(bool reorder_reuse)
+{
+  SetReorderingReuse(reorder_reuse);  // If true repeated calls use same sparsity pattern
+}
+
 }  // namespace palace
 
 #endif
