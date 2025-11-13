@@ -11,27 +11,28 @@
 CEED_QFUNCTION(f_apply_l2mass_21)(void *__restrict__ ctx, CeedInt Q,
                                   const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1],
-                   *u = in[2], *divu = in[3];
+  const CeedScalar *qdata = in[0], *qw = in[1], *u = in[2], *divu = in[3];
   CeedScalar *__restrict__ v = out[0], *__restrict__ divv = out[1];
 
+  const CeedInt stride = 2 + 2; // [attr, w * |J|, adjJt_11, adjJt_12]_i, lumped by quad point
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar *qdata_i = qdata + i * stride;
     {
+      const CeedScalar* adjJt_loc = qdata_i + 2;
       const CeedScalar u_loc[1] = {u[i + Q * 0]};
-      CeedScalar coeff[4], adjJt_loc[2], J_loc[2], v_loc[1];
-      CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
-      MatUnpack21(adjJt + i, Q, adjJt_loc);
+      CeedScalar coeff[4], J_loc[2], v_loc[1];
+      CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
       AdjJt21(adjJt_loc, J_loc);
       MultAtBCx21(J_loc, coeff, J_loc, u_loc, v_loc);
 
-      v[i + Q * 0] = wdetJ[i] * v_loc[0];
+      v[i + Q * 0] = qdata_i[1] * v_loc[0];
     }
     {
       const CeedScalar coeff =
-          CoeffUnpack1(CoeffPairSecond<2>((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
+          CoeffUnpack1(CoeffPairSecond<2>((const CeedIntScalar *)ctx), (CeedInt)qdata_i[0]);
 
-      divv[i] = (coeff * qw[i] * qw[i] / wdetJ[i]) * divu[i];
+      divv[i] = (coeff * qw[i] * qw[i] / qdata_i[1]) * divu[i];
     }
   }
   return 0;
