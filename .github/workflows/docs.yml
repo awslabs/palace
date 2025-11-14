@@ -36,18 +36,29 @@ jobs:
           buildcache: true
           color: true
 
+      # Workaround for https://github.com/spack/spack/issues/51505
+      # 
+      # Currently not needed because we have a full copy of mfem and libceed
+      # because of https://github.com/spack/spack-packages/pull/2361
+
+      # - name: Overwrite builtin Palace package
+      #   if: needs.filter.outputs.test == 'true'
+      #   run: |
+      #     ln -s "$(spack location --repo builtin)/packages/libceed" spack_repo/local/packages/
+      #     ln -s "$(spack location --repo builtin)/packages/mfem" spack_repo/local/packages/
+
       - name: Setup Environment
         run: |
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace # we install this without a cache each time
+              - local.palace@develop # we install this without a cache each time
             view: false
             config:
               install_tree:
                 root: /opt/spack
-                padded_length: False
+                padded_length: false
             concretizer:
               reuse: false
               unify: true
@@ -98,7 +109,7 @@ jobs:
       - name: Concretize Spack
         run: |
           # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
           spack -e . concretize -f
 
         # Relies on cache-hit(s)
@@ -111,7 +122,15 @@ jobs:
         run: |
           spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
         # If you want to use the branch-local source instead (should we always do this?)
-        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+        # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
+
+      - uses: julia-actions/setup-julia@v2
+        if: needs.filter.outputs.test == 'true'
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Build and deploy
         env:

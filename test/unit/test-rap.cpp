@@ -26,8 +26,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   IoData iodata(units);
   iodata.domains.materials.emplace_back().attributes = {1};
 
-  // Pull from the mfem externals data folder.
-  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+  auto ref_tet_path = fs::path(PALACE_TEST_MESH_DIR) / "ref-tetrahedron.mesh";
   auto comm = Mpi::World();
   mfem::Mesh mfem_mesh(ref_tet_path.string());
   while (mfem_mesh.GetNE() < Mpi::Size(comm))

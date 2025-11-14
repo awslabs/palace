@@ -137,19 +137,31 @@ find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
 
 # Find MFEM (recent MFEM targets link to target Threads::Threads, for some reason)
-if(NOT "${MFEM_DIR}" STREQUAL "")
-  set(MFEM_ROOT ${MFEM_DIR})
-endif()
 find_package(Threads REQUIRED)
-find_package(MFEM REQUIRED CONFIG)
-message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
-if(NOT MFEM_USE_MPI)
-  message(FATAL_ERROR "Build requires MFEM with MPI support")
+
+# MFEM in Spack is currently using autotools, and this find_package will fail
+# (hence the QUIET), but this is not a problem.
+if(NOT "${MFEM_DIR}" STREQUAL "")
+  # MFEM_DIR provided, assume MFEM is available (e.g., from Spack with autotools)
+  set(MFEM_ROOT ${MFEM_DIR})
+  message(STATUS "Using MFEM from ${MFEM_DIR}")
+else()
+  # Try to find MFEM via CMake config
+  find_package(MFEM QUIET CONFIG)
+  if(MFEM_FOUND)
+    message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
+    if(NOT MFEM_USE_MPI)
+      message(FATAL_ERROR "Build requires MFEM with MPI support")
+    endif()
+  else()
+    message(FATAL_ERROR "MFEM not found. Set MFEM_DIR or ensure MFEM is on CMAKE_PREFIX_PATH")
+  endif()
 endif()
-# if(MFEM_CXX_FLAGS)
-#   # Pull compiler flags from MFEM for OpenMP and optimizations
-#   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MFEM_CXX_FLAGS}")
-# endif()
+
+
+if(NOT "${HYPRE_DIR}" STREQUAL "")
+  set(HYPRE_ROOT ${HYPRE_DIR})
+endif()
 
 # Find libCEED
 include(PkgConfigHelpers)
@@ -327,6 +339,97 @@ target_link_libraries(${LIB_TARGET_NAME}
   PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
+
+if(NOT PALACE_BUILD_EXTERNAL_DEPS)
+  # Link ZLIB
+  find_package(ZLIB)
+  if(ZLIB_FOUND)
+    message(STATUS "Found ZLIB: ${ZLIB_VERSION_STRING}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ZLIB::ZLIB)
+  endif()
+
+  # Link HYPRE
+  # TODO: Switch to find_package when moving to HYPRE 3
+  if(TARGET HYPRE::HYPRE)
+    message(STATUS "Found HYPRE target")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC HYPRE::HYPRE)
+  else()
+    find_library(HYPRE_LIBRARY NAMES HYPRE)
+    if(HYPRE_LIBRARY)
+      message(STATUS "Found HYPRE: ${HYPRE_LIBRARY}")
+      target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${HYPRE_LIBRARY})
+    endif()
+  endif()
+
+  # Link STRUMPACK and dependencies. STRUMPACK doesn't seem to correctly include
+  # its dependencies when built statically
+  if(PALACE_WITH_STRUMPACK)
+    find_package(strumpack REQUIRED)
+    # Scalapack is treated differently in strumpack
+    find_library(SCALAPACK_LIBRARIES scalapack REQUIRED)
+    message(STATUS "Found STRUMPACK with SCALAPACK: ${SCALAPACK_LIBRARIES}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC strumpack ${SCALAPACK_LIBRARIES})
+    
+    find_package(ButterflyPACK QUIET)
+    if(ButterflyPACK_FOUND)
+      message(STATUS "Found ButterflyPACK for STRUMPACK")
+      target_link_libraries(${LIB_TARGET_NAME} PUBLIC 
+        ButterflyPACK::zbutterflypack ButterflyPACK::dbutterflypack 
+        ButterflyPACK::cbutterflypack ButterflyPACK::sbutterflypack)
+    endif()
+    
+    foreach(pkg zfp slate lapackpp blaspp ptscotch)
+      find_package(${pkg} QUIET)
+      if(${pkg}_FOUND)
+        message(STATUS "Found ${pkg} for STRUMPACK")
+        target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg})
+      endif()
+    endforeach()
+  endif()
+
+  # Link SUNDIALS
+  if(PALACE_WITH_SUNDIALS)
+    # Sundials needs MPI_C, but MPI is not a valid target because we only
+    # specify CXX as language for palace.
+    if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
+      add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
+    endif()
+    find_package(SUNDIALS QUIET)
+    if(SUNDIALS_FOUND)
+      message(STATUS "Found SUNDIALS: ${SUNDIALS_VERSION}")
+      # Check if we are building static or shared libraries.
+      if(TARGET SUNDIALS::arkode)
+        set(_sundials_suffix "")
+      else()
+        set(_sundials_suffix "_static")
+      endif()
+      target_link_libraries(${LIB_TARGET_NAME} PUBLIC 
+        SUNDIALS::arkode${_sundials_suffix} SUNDIALS::cvodes${_sundials_suffix}
+        SUNDIALS::kinsol${_sundials_suffix} SUNDIALS::nvecparallel${_sundials_suffix}
+        SUNDIALS::nvecmpiplusx${_sundials_suffix})
+    else()
+      message(FATAL_ERROR "SUNDIALS NOT FOUND")
+    endif()
+  endif()
+
+  # Link GSLIB
+  if(PALACE_WITH_GSLIB)
+    find_library(GSLIB_LIBRARY NAMES gs gslib REQUIRED)
+    message(STATUS "Found GSLIB: ${GSLIB_LIBRARY}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${GSLIB_LIBRARY})
+  endif()
+
+  # Link MUMPS
+  if(PALACE_WITH_MUMPS)
+    find_library(DMUMPS_LIBRARY NAMES dmumps REQUIRED)
+    find_library(MUMPS_COMMON_LIBRARY NAMES mumps_common REQUIRED)
+    find_library(PORD_LIBRARY NAMES pord REQUIRED)
+    message(STATUS "Found MUMPS: ${DMUMPS_LIBRARY}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC 
+      ${DMUMPS_LIBRARY} ${MUMPS_COMMON_LIBRARY} ${PORD_LIBRARY})
+  endif()
+endif()
+
 target_link_libraries(
   ${LIB_TARGET_NAME}
   PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>

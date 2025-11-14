@@ -135,6 +135,9 @@ jobs:
         with:
           version: '1'
 
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
+
       - name: Configure Open MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
         run: |
