@@ -106,29 +106,27 @@ jobs:
           solver: +strumpack
           cuda: ~cuda
 
-        # Fails building libxsmm with ifx error None not found
-        # - arch: x86
-        #   compiler: intel-oneapi-compilers
-        #   mpi: intel-oneapi-mpi
-        #   math-libs: intel-oneapi-mkl
-        #   shared: +shared
-        #   int: +int64
-        #   openmp: ~openmp
-        #   eigensolver: +slepc
-        #   solver: +superlu-dist
-        #   cuda: ~cuda
+        - arch: x86
+          compiler: intel-oneapi-compilers
+          mpi: intel-oneapi-mpi
+          math-libs: intel-oneapi-mkl
+          shared: +shared
+          int: +int64
+          openmp: ~openmp
+          eigensolver: +slepc
+          solver: +superlu-dist
+          cuda: ~cuda
 
-        # Fails building libxsmm with ifx error None not found
-        # - arch: x86
-        #   compiler: intel-oneapi-compilers
-        #   mpi: intel-oneapi-mpi
-        #   math-libs: intel-oneapi-mkl
-        #   shared: ~shared
-        #   int: ~int64
-        #   openmp: +openmp
-        #   eigensolver: +arpack
-        #   solver: +mumps
-        #   cuda: ~cuda
+        - arch: x86
+          compiler: intel-oneapi-compilers
+          mpi: intel-oneapi-mpi
+          math-libs: intel-oneapi-mkl
+          shared: ~shared
+          int: ~int64
+          openmp: +openmp
+          eigensolver: +arpack
+          solver: +mumps
+          cuda: ~cuda
 
         - arch: x86
           compiler: llvm
@@ -282,13 +280,16 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-          # MFEM with LLVM+gfortran fails with FC not found without this
-          if [[ "${{ matrix.compiler }}" == "llvm" ]]; then
+          # MFEM with LLVM+gfortran fails with FC not found without this,
+          # and compiler-wrapper does not recognize ifx otherwise.
+          if [[ "${{ matrix.compiler }}" != gcc ]]; then
             FC_PATH=$(spack compiler info ${FORTRAN_COMPILER} | grep 'fortran:' | awk '{print $2}')
             cat << ENVEOF > env_vars.yaml
           env_vars:
             set:
               FC: ${FC_PATH}
+              SPACK_FC: ${FC_PATH}
+              SPACK_F77: ${FC_PATH}
           ENVEOF
           fi
 
@@ -320,6 +321,11 @@ jobs:
                                   intel-oneapi-compiler-fortran \
                                   intel-oneapi-mpi \
                                   intel-oneapi-mpi-devel
+
+          source /opt/intel/oneapi/setvars.sh
+
+          which ifx
+          ifx --version
 
       - name: Install OpenMP for LLVM
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'llvm'
@@ -367,6 +373,10 @@ jobs:
         # In theory we can re-use a concretization and pin a spack to speed this up.
         # Unfortunately it then becomes difficult to know when to re-concretize.
         run: |
+          if [[ "${{ matrix.compiler }}" == "intel-oneapi-compilers" ]]; then
+            . /opt/intel/oneapi/setvars.sh
+          fi
+
           # Using `spack develop` in order to have an in-source build
           spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
           spack -e . concretize -f
