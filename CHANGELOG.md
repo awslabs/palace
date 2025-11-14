@@ -70,6 +70,7 @@ The format of this changelog is based on
     [PR 525](https://github.com/awslabs/palace/pull/525).
   - Scaled Rs/Ls/Cs of impedance boundary conditions affected by mesh cracking, fixing bug where
     `"CrackInternalBoundaryElements"` would lead to incorrect results. [PR 544](https://github.com/awslabs/palace/pull/544).
+  - Fixed Paraview/MFEM output for transient simulations. [PR 561](https://github.com/awslabs/palace/pull/561).
 
 ## [0.14.0] - 2025-08-20
 
