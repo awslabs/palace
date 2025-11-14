@@ -19,7 +19,7 @@ CEED_QFUNCTION(f_build_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
     const CeedScalar *qdata_i = qdata + i * stride;
     const CeedScalar* adjJt_loc = qdata_i + 2;
 
-    CeedScalar coeff[4], adjJt_loc[2], qd_loc[1];
+    CeedScalar coeff[4], qd_loc[1];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
     MultAtBA21(adjJt_loc, coeff, qd_loc);
 

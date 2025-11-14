@@ -13,7 +13,9 @@
   "Model":
   {
     "Mesh": "mesh/spheres.msh",
-    "L0": 1.0e-2  // cm
+    // "Mesh": "/Users/hughcars/AWS/mfem/data/ref-tetrahedron.mesh",
+    "L0": 1.0e-2,  // cm
+    // "Refinement": {"UniformLevels": 5, "Nonconformal": false, "MaxIts": 0}
   },
   "Domains":
   {
@@ -78,8 +80,10 @@
   },
   "Solver":
   {
-    "Order": 3,
-    "Device": "CPU",
+    "Order": 2,
+    // "Device": "CPU",
+    "Backend": "/cpu/self/ref/blocked",
+    // "Backend": "/cpu/self/ref/serial",
     "Electrostatic":
     {
       "Save": 2
@@ -89,7 +93,8 @@
       "Type": "BoomerAMG",
       "KSPType": "CG",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 100,
+      // "MGMaxLevels": 1
     }
   }
 }

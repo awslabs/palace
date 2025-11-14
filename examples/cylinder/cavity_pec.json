@@ -7,8 +7,9 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cylinder_hex.msh",
+    "Mesh": "/Users/hughcars/AWS/mfem/data/ref-tetrahedron.mesh",
     "L0": 1.0e-2,  // cm
+    "Refinement": {"UniformLevels": 1}
   },
   "Domains":
   {
@@ -41,7 +42,7 @@
   },
   "Solver":
   {
-    "Order": 4,
+    "Order": 1,
     "Device": "CPU",
     "Eigenmode":
     {

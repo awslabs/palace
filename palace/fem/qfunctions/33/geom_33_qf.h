@@ -13,6 +13,15 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *, CeedInt Q, const CeedScalar *cons
   // CeedScalar *qd_attr = out[0], *qd_wdetJ = out[0] + Q, *qd_adjJt = out[0] + 2 * Q;
   CeedScalar *qdata = out[0];
 
+
+  // printf("Q: %d\nAs double:\n", Q);
+  // CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  // {
+  //   for (CeedInt j = 0; j < stride; j++)
+  //     printf("qdata[%d][%d] %0.3e ", i, j, qdata[i * stride + j]);
+  //   printf("\n");
+  // }
+
   const CeedInt stride = 2 + 9; // attr, w * |J|, (adjJt / |J|) colwise
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -32,6 +41,9 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *, CeedInt Q, const CeedScalar *cons
     // qd_adjJt[i + Q * 7] = adjJt_loc[7] / detJ;
     // qd_adjJt[i + Q * 8] = adjJt_loc[8] / detJ;
 
+    // assert(attr[i] == 1.0);
+    if ((CeedInt) attr[i] != 1)
+      printf("%d : %d\n", i, (CeedInt)attr[i]);
     qdata[i * stride +  0] = attr[i]; // attribute
     qdata[i * stride +  1] = qw[i] * detJ; // w * |J|
     qdata[i * stride +  2] = adjJt_loc[0] / detJ; // (adjJt / |J|)_11
@@ -44,6 +56,7 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *, CeedInt Q, const CeedScalar *cons
     qdata[i * stride +  9] = adjJt_loc[7] / detJ; // (adjJt / |J|)_23
     qdata[i * stride + 10] = adjJt_loc[8] / detJ; // (adjJt / |J|)_33
   }
+  // printf("\n");
   return 0;
 }
 
