@@ -66,7 +66,7 @@ Singularity/Apptainer documentation.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.21 or later
+  - [CMake](https://cmake.org/download) version 3.24 or later
   - C++17 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution

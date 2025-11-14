@@ -74,7 +74,7 @@ public:
     }
     else if constexpr (unit == ValueType::FREQUENCY)
     {
-      return 1.0 / (2.0 * M_PI * tc_ns);  // [GHz/rad]
+      return 1.0 / tc_ns;  // [GHz]
     }
     else if constexpr (unit == ValueType::LENGTH)
     {
@@ -110,7 +110,7 @@ public:
     }
     else if constexpr (unit == ValueType::ENERGY)
     {
-      return Hc * Hc * electromagnetics::Z0_ * Lc_m * Lc_m * tc_ns;  // [J]
+      return 1.0e-9 * Hc * Hc * electromagnetics::Z0_ * Lc_m * Lc_m * tc_ns;  // [J]
     }
     else if constexpr (unit == ValueType::FIELD_E)
     {
