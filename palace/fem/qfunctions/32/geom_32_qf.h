@@ -32,10 +32,10 @@ CEED_QFUNCTION(f_build_geom_factor_32)(void *, CeedInt Q, const CeedScalar *cons
     qdata[i * stride + 0] = attr[i]; // attribute
     qdata[i * stride + 1] = qw[i] * detJ; // w * |J|
     qdata[i * stride + 2] = adjJt_loc[0] / detJ; // (adjJt / |J|)_11
-    qdata[i * stride + 3] = adjJt_loc[1] / detJ; // (adjJt / |J|)_12
-    qdata[i * stride + 4] = adjJt_loc[2] / detJ; // (adjJt / |J|)_21
-    qdata[i * stride + 5] = adjJt_loc[3] / detJ; // (adjJt / |J|)_22
-    qdata[i * stride + 6] = adjJt_loc[4] / detJ; // (adjJt / |J|)_31
+    qdata[i * stride + 3] = adjJt_loc[1] / detJ; // (adjJt / |J|)_21
+    qdata[i * stride + 4] = adjJt_loc[2] / detJ; // (adjJt / |J|)_31
+    qdata[i * stride + 5] = adjJt_loc[3] / detJ; // (adjJt / |J|)_12
+    qdata[i * stride + 6] = adjJt_loc[4] / detJ; // (adjJt / |J|)_22
     qdata[i * stride + 7] = adjJt_loc[5] / detJ; // (adjJt / |J|)_32
   }
   return 0;

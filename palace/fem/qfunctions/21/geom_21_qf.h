@@ -26,8 +26,8 @@ CEED_QFUNCTION(f_build_geom_factor_21)(void *, CeedInt Q, const CeedScalar *cons
     // qd_adjJt[i + Q * 1] = adjJt_loc[1] / detJ;
     qdata[i * stride + 0] = attr[i]; // attribute
     qdata[i * stride + 1] = qw[i] * detJ; // w * |J|
-    qdata[i * stride + 2] = adjJt_loc[0] / detJ; // (adjJt / |J|)_1
-    qdata[i * stride + 3] = adjJt_loc[1] / detJ; // (adjJt / |J|)_2
+    qdata[i * stride + 2] = adjJt_loc[0] / detJ; // (adjJt / |J|)_11
+    qdata[i * stride + 3] = adjJt_loc[1] / detJ; // (adjJt / |J|)_21
   }
   return 0;
 }
