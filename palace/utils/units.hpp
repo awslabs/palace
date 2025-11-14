@@ -110,7 +110,7 @@ public:
     }
     else if constexpr (unit == ValueType::ENERGY)
     {
-      return Hc * Hc * electromagnetics::Z0_ * Lc_m * Lc_m * tc_ns;  // [J]
+      return 1.0e-9 * Hc * Hc * electromagnetics::Z0_ * Lc_m * Lc_m * tc_ns;  // [J]
     }
     else if constexpr (unit == ValueType::FIELD_E)
     {
