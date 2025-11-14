@@ -10,34 +10,34 @@
 CEED_QFUNCTION(f_apply_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1],
-                   *curlu = in[2];
+  const CeedScalar *qdata = in[0], *u = in[1], *curlu = in[2];
   CeedScalar *__restrict__ v = out[0], *__restrict__ curlv = out[1];
 
+  const CeedInt stride = 2 + 9; // attr, w * |J|, (adjJt / |J|) colwise
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar adjJt_loc[9];
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    const CeedScalar *qdata_i = qdata + i * stride;
+    const CeedScalar* adjJt_loc = qdata_i + 2;
     {
       const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
       CeedScalar coeff[9], v_loc[3];
-      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+      CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
       MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
-      v[i + Q * 0] = wdetJ[i] * v_loc[0];
-      v[i + Q * 1] = wdetJ[i] * v_loc[1];
-      v[i + Q * 2] = wdetJ[i] * v_loc[2];
+      v[i + Q * 0] = qdata_i[1] * v_loc[0];
+      v[i + Q * 1] = qdata_i[1] * v_loc[1];
+      v[i + Q * 2] = qdata_i[1] * v_loc[2];
     }
     {
       const CeedScalar u_loc[3] = {curlu[i + Q * 0], curlu[i + Q * 1], curlu[i + Q * 2]};
       CeedScalar coeff[9], J_loc[9], v_loc[3];
-      CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
+      CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)qdata_i[0], coeff);
       AdjJt33(adjJt_loc, J_loc);
       MultAtBCx33(J_loc, coeff, J_loc, u_loc, v_loc);
 
-      curlv[i + Q * 0] = wdetJ[i] * v_loc[0];
-      curlv[i + Q * 1] = wdetJ[i] * v_loc[1];
-      curlv[i + Q * 2] = wdetJ[i] * v_loc[2];
+      curlv[i + Q * 0] = qdata_i[1] * v_loc[0];
+      curlv[i + Q * 1] = qdata_i[1] * v_loc[1];
+      curlv[i + Q * 2] = qdata_i[1] * v_loc[2];
     }
   }
   return 0;

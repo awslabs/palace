@@ -10,20 +10,22 @@
 CEED_QFUNCTION(f_apply_hcurlh1d_33)(void *__restrict__ ctx, CeedInt Q,
                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  const CeedScalar *qdata = in[0], *u = in[1];
   CeedScalar *v = out[0];
 
+  const CeedInt stride = 2 + 9; // attr, w * |J|, (adjJt / |J|) colwise
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar *qdata_i = qdata + i * stride;
+    const CeedScalar* adjJt_loc = qdata_i + 2;
     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-    CeedScalar coeff[9], adjJt_loc[9], v_loc[3];
-    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    CeedScalar coeff[9], v_loc[3];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
     MultBAx33(adjJt_loc, coeff, u_loc, v_loc);
 
-    v[i + Q * 0] = wdetJ[i] * v_loc[0];
-    v[i + Q * 1] = wdetJ[i] * v_loc[1];
-    v[i + Q * 2] = wdetJ[i] * v_loc[2];
+    v[i + Q * 0] = qdata_i[1] * v_loc[0];
+    v[i + Q * 1] = qdata_i[1] * v_loc[1];
+    v[i + Q * 2] = qdata_i[1] * v_loc[2];
   }
   return 0;
 }

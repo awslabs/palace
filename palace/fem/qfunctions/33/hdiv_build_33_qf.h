@@ -10,26 +10,28 @@
 CEED_QFUNCTION(f_build_hdiv_33)(void *__restrict__ ctx, CeedInt Q,
                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
+  const CeedScalar *qdata = in[0];
   CeedScalar *qd = out[0];
 
+  const CeedInt stride = 2 + 9; // attr, w * |J|, (adjJt / |J|) colwise
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[9], adjJt_loc[9], J_loc[9], qd_loc[9];
-    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    const CeedScalar *qdata_i = qdata + i * stride;
+    const CeedScalar* adjJt_loc = qdata_i + 2;
+    CeedScalar coeff[9], J_loc[9], qd_loc[9];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
     AdjJt33(adjJt_loc, J_loc);
     MultAtBA33(J_loc, coeff, qd_loc);
 
-    qd[i + Q * 0] = wdetJ[i] * qd_loc[0];
-    qd[i + Q * 1] = wdetJ[i] * qd_loc[1];
-    qd[i + Q * 2] = wdetJ[i] * qd_loc[2];
-    qd[i + Q * 3] = wdetJ[i] * qd_loc[3];
-    qd[i + Q * 4] = wdetJ[i] * qd_loc[4];
-    qd[i + Q * 5] = wdetJ[i] * qd_loc[5];
-    qd[i + Q * 6] = wdetJ[i] * qd_loc[6];
-    qd[i + Q * 7] = wdetJ[i] * qd_loc[7];
-    qd[i + Q * 8] = wdetJ[i] * qd_loc[8];
+    qd[i + Q * 0] = qdata_i[1] * qd_loc[0];
+    qd[i + Q * 1] = qdata_i[1] * qd_loc[1];
+    qd[i + Q * 2] = qdata_i[1] * qd_loc[2];
+    qd[i + Q * 3] = qdata_i[1] * qd_loc[3];
+    qd[i + Q * 4] = qdata_i[1] * qd_loc[4];
+    qd[i + Q * 5] = qdata_i[1] * qd_loc[5];
+    qd[i + Q * 6] = qdata_i[1] * qd_loc[6];
+    qd[i + Q * 7] = qdata_i[1] * qd_loc[7];
+    qd[i + Q * 8] = qdata_i[1] * qd_loc[8];
   }
   return 0;
 }
