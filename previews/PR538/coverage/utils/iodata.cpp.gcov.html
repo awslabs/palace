@@ -1,0 +1,647 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - utils/iodata.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">utils</a> - iodata.cpp<span style="font-size: 80%;"> (source / <a href="iodata.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">69.5&nbsp;%</td>
+            <td class="headerCovTableEntry">200</td>
+            <td class="headerCovTableEntry">139</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;iodata.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;charconv&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;fstream&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;functional&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;iostream&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;regex&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;sstream&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;stack&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;string&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &lt;string_view&gt;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &lt;nlohmann/json.hpp&gt;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;fem/bilinearform.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;fem/integrator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : namespace palace</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC tlaBgGNC">          26 : std::stringstream PreprocessFile(const char *filename)</span></span>
+<span id="L26"><span class="lineNum">      26</span>              : {</span>
+<span id="L27"><span class="lineNum">      27</span>              :   // Read configuration file into memory and return as a stringstream.</span>
+<span id="L28"><span class="lineNum">      28</span>              :   std::string file;</span>
+<span id="L29"><span class="lineNum">      29</span>              :   {</span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">          26 :     std::ifstream fi(filename);</span></span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">          26 :     std::stringstream buf;</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">          26 :     if (!fi.is_open())</span></span>
+<span id="L33"><span class="lineNum">      33</span>              :     {</span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaUNC tlaBgUNC">           0 :       MFEM_ABORT(&quot;Unable to open configuration file \&quot;&quot; &lt;&lt; filename &lt;&lt; &quot;\&quot;!&quot;);</span></span>
+<span id="L35"><span class="lineNum">      35</span>              :     }</span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC tlaBgGNC">          26 :     buf &lt;&lt; fi.rdbuf();</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">          26 :     fi.close();</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">          26 :     file = buf.str();</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">          26 :   }</span></span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span>              :   // Strip C and C++ style comments (//, /* */) using regex. Correctly handles comments</span>
+<span id="L42"><span class="lineNum">      42</span>              :   // within strings and escaped comment markers (see tinyurl.com/2s3n8dkr). An alternative</span>
+<span id="L43"><span class="lineNum">      43</span>              :   // for the middle line is: R&quot;(|(\/\*([^*]|[\r\n]|(\*+([^*\/]|[\r\n])))*\*+\/))&quot;, but this</span>
+<span id="L44"><span class="lineNum">      44</span>              :   // seems to sometimes lead to issues with std::regex_replace for long files.</span>
+<span id="L45"><span class="lineNum">      45</span>              :   {</span>
+<span id="L46"><span class="lineNum">      46</span>              :     std::regex rgx(R&quot;((([\&quot;'])(?:(?=(\\?))\3.)*?\2))&quot;</span>
+<span id="L47"><span class="lineNum">      47</span>              :                    R&quot;(|(\/\*(.|[\r\n])*?\*\/))&quot;</span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">          26 :                    R&quot;(|(\/\/.*))&quot;);</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">          26 :     file = std::regex_replace(file, rgx, &quot;$1&quot;);</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">          26 :   }</span></span>
+<span id="L51"><span class="lineNum">      51</span>              : </span>
+<span id="L52"><span class="lineNum">      52</span>              :   // Also strip whitespace.</span>
+<span id="L53"><span class="lineNum">      53</span>              :   {</span>
+<span id="L54"><span class="lineNum">      54</span>              :     std::regex rgx(R&quot;((([\&quot;'])(?:(?=(\\?))\3.)*?\2))&quot;</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">          26 :                    R&quot;(|(\s+))&quot;);</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">          26 :     file = std::regex_replace(file, rgx, &quot;$1&quot;);</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">          26 :   }</span></span>
+<span id="L58"><span class="lineNum">      58</span>              : </span>
+<span id="L59"><span class="lineNum">      59</span>              :   // Also strip erroneous trailing commas.</span>
+<span id="L60"><span class="lineNum">      60</span>              :   {</span>
+<span id="L61"><span class="lineNum">      61</span>              :     std::regex rgx(R&quot;((([\&quot;'])(?:(?=(\\?))\3.)*?\2))&quot;</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">          26 :                    R&quot;(|,+(?=\s*?[\}\]]))&quot;);</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">          26 :     file = std::regex_replace(file, rgx, &quot;$1&quot;);</span></span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">          26 :   }</span></span>
+<span id="L65"><span class="lineNum">      65</span>              : </span>
+<span id="L66"><span class="lineNum">      66</span>              :   // Perform integer range expansion for arrays ([a - b, c] = [a-b,c] =</span>
+<span id="L67"><span class="lineNum">      67</span>              :   // [a,a+1,...,b-1,b,c]). The whole file is now one line and arrays have no spaces after</span>
+<span id="L68"><span class="lineNum">      68</span>              :   // whitespace stripping.</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">          26 :   std::stringstream output;</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">        1114 :   auto RangeExpand = [](std::string_view str) -&gt; std::string</span></span>
+<span id="L71"><span class="lineNum">      71</span>              :   {</span>
+<span id="L72"><span class="lineNum">      72</span>              :     // Handle the given string which is only numeric with possible hyphens.</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">        1114 :     if (str.empty())</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :     {</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC tlaBgUNC">           0 :       return &quot;&quot;;</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :     }</span>
+<span id="L77"><span class="lineNum">      77</span>              :     int num;</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC tlaBgGNC">        1114 :     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.length(), num);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">        1114 :     MFEM_VERIFY(</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :         ec == std::errc(),</span>
+<span id="L81"><span class="lineNum">      81</span>              :         &quot;Invalid integer conversion in range expansion&quot;</span>
+<span id="L82"><span class="lineNum">      82</span>              :             &lt;&lt; (ec == std::errc::result_out_of_range ? &quot; (integer out of range)!&quot; : &quot;!&quot;));</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">        1114 :     if (ptr == str.data() + str.length())</span></span>
+<span id="L84"><span class="lineNum">      84</span>              :     {</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">        1114 :       return std::string(str);</span></span>
+<span id="L86"><span class="lineNum">      86</span>              :     }</span>
+<span id="L87"><span class="lineNum">      87</span>              :     // Range specified, expand the bounds.</span>
+<span id="L88"><span class="lineNum">      88</span>              :     int num2;</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC tlaBgUNC">           0 :     auto [ptr2, ec2] = std::from_chars(ptr + 1, str.data() + str.length(), num2);</span></span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(</span></span>
+<span id="L91"><span class="lineNum">      91</span>              :         ec2 == std::errc(),</span>
+<span id="L92"><span class="lineNum">      92</span>              :         &quot;Invalid integer conversion in range expansion&quot;</span>
+<span id="L93"><span class="lineNum">      93</span>              :             &lt;&lt; (ec2 == std::errc::result_out_of_range ? &quot; (integer out of range)!&quot; : &quot;!&quot;));</span>
+<span id="L94"><span class="lineNum">      94</span>              :     std::string rng;</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaUNC">           0 :     while (num &lt; num2)</span></span>
+<span id="L96"><span class="lineNum">      96</span>              :     {</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaUNC">           0 :       rng += std::to_string(num++) + &quot;,&quot;;</span></span>
+<span id="L98"><span class="lineNum">      98</span>              :     }</span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaUNC">           0 :     rng += std::to_string(num);</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaUNC">           0 :     return rng;</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :   };</span>
+<span id="L102"><span class="lineNum">     102</span>              :   {</span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC tlaBgGNC">          26 :     const std::string range_vals = &quot;-0123456789,&quot;;</span></span>
+<span id="L104"><span class="lineNum">     104</span>              :     auto start = file.begin();</span>
+<span id="L105"><span class="lineNum">     105</span>              :     bool inside = false;</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">       84362 :     for (auto it = start; it != file.end(); ++it)</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :     {</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">       84336 :       if (inside)</span></span>
+<span id="L109"><span class="lineNum">     109</span>              :       {</span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">        3304 :         if (*it == ']')</span></span>
+<span id="L111"><span class="lineNum">     111</span>              :         {</span>
+<span id="L112"><span class="lineNum">     112</span>              :           // Apply integer range expansion (as needed) to the array, which includes only</span>
+<span id="L113"><span class="lineNum">     113</span>              :           // digits, commas, and '-'. Exclude the outer square brackets.</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">        1066 :           std::string_view str(file.data() + (start - file.cbegin() + 1), it - start - 1);</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :           std::size_t s = 0, pos;</span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">        1066 :           output &lt;&lt; '[';</span></span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">        1114 :           while ((pos = str.find(',', s)) != std::string::npos)</span></span>
+<span id="L118"><span class="lineNum">     118</span>              :           {</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          96 :             output &lt;&lt; RangeExpand(str.substr(s, pos - s)) &lt;&lt; ',';</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">          48 :             s = pos + 1;</span></span>
+<span id="L121"><span class="lineNum">     121</span>              :           }</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">        3198 :           output &lt;&lt; RangeExpand(str.substr(s)) &lt;&lt; ']';</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :           start = it + 1;</span>
+<span id="L124"><span class="lineNum">     124</span>              :           inside = false;</span>
+<span id="L125"><span class="lineNum">     125</span>              :         }</span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaGNC">        2238 :         else if (*it == '[')</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :         {</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaUNC tlaBgUNC">           0 :           output &lt;&lt; std::string(start, it);</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :           start = it;</span>
+<span id="L130"><span class="lineNum">     130</span>              :         }</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC tlaBgGNC">        2238 :         else if (range_vals.find(*it) == std::string::npos)</span></span>
+<span id="L132"><span class="lineNum">     132</span>              :         {</span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">        1998 :           output &lt;&lt; std::string(start, it);</span></span>
+<span id="L134"><span class="lineNum">     134</span>              :           start = it;</span>
+<span id="L135"><span class="lineNum">     135</span>              :           inside = false;</span>
+<span id="L136"><span class="lineNum">     136</span>              :         }</span>
+<span id="L137"><span class="lineNum">     137</span>              :       }</span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">       81032 :       else if (*it == '[')</span></span>
+<span id="L139"><span class="lineNum">     139</span>              :       {</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">        5196 :         output &lt;&lt; std::string(start, it);</span></span>
+<span id="L141"><span class="lineNum">     141</span>              :         start = it;</span>
+<span id="L142"><span class="lineNum">     142</span>              :         inside = true;</span>
+<span id="L143"><span class="lineNum">     143</span>              :       }</span>
+<span id="L144"><span class="lineNum">     144</span>              :     }</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">          78 :     output &lt;&lt; std::string(start, file.end());</span></span>
+<span id="L146"><span class="lineNum">     146</span>              :   }</span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">          26 :   return output;</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC tlaBgUNC">           0 : }</span></span>
+<span id="L149"><span class="lineNum">     149</span>              : </span>
+<span id="L150"><span class="lineNum">     150</span>              : using json = nlohmann::json;</span>
+<span id="L151"><span class="lineNum">     151</span>              : </span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC tlaBgGNC">           8 : IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)</span></span>
+<span id="L153"><span class="lineNum">     153</span>              : {</span>
+<span id="L154"><span class="lineNum">     154</span>              :   // Open configuration file and preprocess: strip whitespace, comments, and expand integer</span>
+<span id="L155"><span class="lineNum">     155</span>              :   // ranges.</span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">           8 :   std::stringstream buffer = PreprocessFile(filename);</span></span>
+<span id="L157"><span class="lineNum">     157</span>              : </span>
+<span id="L158"><span class="lineNum">     158</span>              :   // Parse the configuration file. Use a callback function to detect and throw errors for</span>
+<span id="L159"><span class="lineNum">     159</span>              :   // duplicate keys.</span>
+<span id="L160"><span class="lineNum">     160</span>              :   json config;</span>
+<span id="L161"><span class="lineNum">     161</span>              :   std::stack&lt;std::set&lt;json&gt;&gt; parse_stack;</span>
+<span id="L162"><span class="lineNum">     162</span>              :   json::parser_callback_t check_duplicate_keys =</span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">        1932 :       [&amp;](int, json::parse_event_t event, json &amp;parsed)</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :   {</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">        1932 :     switch (event)</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :     {</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">         192 :       case json::parse_event_t::object_start:</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">         192 :         parse_stack.push(std::set&lt;json&gt;());</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">         192 :         break;</span></span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">         192 :       case json::parse_event_t::object_end:</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">         192 :         parse_stack.pop();</span></span>
+<span id="L172"><span class="lineNum">     172</span>              :         break;</span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">         650 :       case json::parse_event_t::key:</span></span>
+<span id="L174"><span class="lineNum">     174</span>              :         {</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">         650 :           const auto result = parse_stack.top().insert(parsed);</span></span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">         650 :           if (!result.second)</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :           {</span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC tlaBgUNC">           0 :             MFEM_ABORT(&quot;Error parsing configuration file!\nDuplicate key &quot;</span></span>
+<span id="L179"><span class="lineNum">     179</span>              :                        &lt;&lt; parsed &lt;&lt; &quot; was already seen in this object!&quot;);</span>
+<span id="L180"><span class="lineNum">     180</span>              :             return false;</span>
+<span id="L181"><span class="lineNum">     181</span>              :           }</span>
+<span id="L182"><span class="lineNum">     182</span>              :         }</span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC tlaBgGNC">         650 :         break;</span></span>
+<span id="L184"><span class="lineNum">     184</span>              :       default:</span>
+<span id="L185"><span class="lineNum">     185</span>              :         break;</span>
+<span id="L186"><span class="lineNum">     186</span>              :     }</span>
+<span id="L187"><span class="lineNum">     187</span>              :     return true;</span>
+<span id="L188"><span class="lineNum">     188</span>              :   };</span>
+<span id="L189"><span class="lineNum">     189</span>              :   try</span>
+<span id="L190"><span class="lineNum">     190</span>              :   {</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">           8 :     config = json::parse(buffer, check_duplicate_keys);</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :   }</span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaUNC tlaBgUNC">           0 :   catch (json::parse_error &amp;e)</span></span>
+<span id="L194"><span class="lineNum">     194</span>              :   {</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Error parsing configuration file!\n  &quot; &lt;&lt; e.what());</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC tlaBgGNC">           8 :   if (print)</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :   {</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaUNC tlaBgUNC">           0 :     Mpi::Print(&quot;\n{}\n&quot;, config.dump(2));</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :   }</span>
+<span id="L201"><span class="lineNum">     201</span>              : </span>
+<span id="L202"><span class="lineNum">     202</span>              :   // Set up configuration option data structures.</span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC tlaBgGNC">           8 :   problem.SetUp(config);</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">           8 :   model.SetUp(config);</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">           8 :   domains.SetUp(config);</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">           8 :   boundaries.SetUp(config);</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">           8 :   solver.SetUp(config);</span></span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span>              :   // Cleanup and error checking.</span>
+<span id="L210"><span class="lineNum">     210</span>              :   config.erase(&quot;Problem&quot;);</span>
+<span id="L211"><span class="lineNum">     211</span>              :   config.erase(&quot;Model&quot;);</span>
+<span id="L212"><span class="lineNum">     212</span>              :   config.erase(&quot;Domains&quot;);</span>
+<span id="L213"><span class="lineNum">     213</span>              :   config.erase(&quot;Boundaries&quot;);</span>
+<span id="L214"><span class="lineNum">     214</span>              :   config.erase(&quot;Solver&quot;);</span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">           8 :   MFEM_VERIFY(config.empty(), &quot;Found an unsupported configuration file section!\n&quot;</span></span>
+<span id="L216"><span class="lineNum">     216</span>              :                                   &lt;&lt; config.dump(2));</span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :   // Check compatibility of configuration file and problem type.</span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">           8 :   CheckConfiguration();</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">           8 : }</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">           8 : void IoData::CheckConfiguration()</span></span>
+<span id="L223"><span class="lineNum">     223</span>              : {</span>
+<span id="L224"><span class="lineNum">     224</span>              :   // Check that the provided domain and boundary objects are all supported by the requested</span>
+<span id="L225"><span class="lineNum">     225</span>              :   // problem type.</span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">           8 :   if (problem.type == ProblemType::DRIVEN)</span></span>
+<span id="L227"><span class="lineNum">     227</span>              :   {</span>
+<span id="L228"><span class="lineNum">     228</span>              :     // No unsupported domain or boundary objects for frequency domain driven simulations.</span>
+<span id="L229"><span class="lineNum">     229</span>              :   }</span>
+<span id="L230"><span class="lineNum">     230</span>              :   else if (problem.type == ProblemType::EIGENMODE)</span>
+<span id="L231"><span class="lineNum">     231</span>              :   {</span>
+<span id="L232"><span class="lineNum">     232</span>              :     // No unsupported domain or boundary objects for frequency domain driven simulations.</span>
+<span id="L233"><span class="lineNum">     233</span>              :   }</span>
+<span id="L234"><span class="lineNum">     234</span>              :   else if (problem.type == ProblemType::ELECTROSTATIC)</span>
+<span id="L235"><span class="lineNum">     235</span>              :   {</span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaUNC tlaBgUNC">           0 :     if (!boundaries.farfield.empty())</span></span>
+<span id="L237"><span class="lineNum">     237</span>              :     {</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :           &quot;Electrostatic problem type does not support absorbing boundary conditions!\n&quot;);</span>
+<span id="L240"><span class="lineNum">     240</span>              :     }</span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :     if (!boundaries.conductivity.empty())</span></span>
+<span id="L242"><span class="lineNum">     242</span>              :     {</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Electrostatic problem type does not support surface conductivity &quot;</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :                    &quot;boundary conditions!\n&quot;);</span>
+<span id="L245"><span class="lineNum">     245</span>              :     }</span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :     if (!boundaries.impedance.empty())</span></span>
+<span id="L247"><span class="lineNum">     247</span>              :     {</span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Electrostatic problem type does not support surface impedance boundary &quot;</span></span>
+<span id="L249"><span class="lineNum">     249</span>              :                    &quot;conditions!\n&quot;);</span>
+<span id="L250"><span class="lineNum">     250</span>              :     }</span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaUNC">           0 :     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :     {</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L254"><span class="lineNum">     254</span>              :           &quot;Electrostatic problem type does not support wave port boundary conditions!\n&quot;);</span>
+<span id="L255"><span class="lineNum">     255</span>              :     }</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaUNC">           0 :     if (!boundaries.current.empty())</span></span>
+<span id="L257"><span class="lineNum">     257</span>              :     {</span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L259"><span class="lineNum">     259</span>              :           &quot;Electrostatic problem type does not support surface current excitation!\n&quot;);</span>
+<span id="L260"><span class="lineNum">     260</span>              :     }</span>
+<span id="L261"><span class="lineNum">     261</span>              :   }</span>
+<span id="L262"><span class="lineNum">     262</span>              :   else if (problem.type == ProblemType::MAGNETOSTATIC)</span>
+<span id="L263"><span class="lineNum">     263</span>              :   {</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC">           0 :     if (!boundaries.farfield.empty())</span></span>
+<span id="L265"><span class="lineNum">     265</span>              :     {</span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L267"><span class="lineNum">     267</span>              :           &quot;Magnetostatic problem type does not support absorbing boundary conditions!\n&quot;);</span>
+<span id="L268"><span class="lineNum">     268</span>              :     }</span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaUNC">           0 :     if (!boundaries.conductivity.empty())</span></span>
+<span id="L270"><span class="lineNum">     270</span>              :     {</span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Magnetostatic problem type does not support surface conductivity &quot;</span></span>
+<span id="L272"><span class="lineNum">     272</span>              :                    &quot;boundary conditions!\n&quot;);</span>
+<span id="L273"><span class="lineNum">     273</span>              :     }</span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 :     if (!boundaries.impedance.empty())</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :     {</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Magnetostatic problem type does not support surface impedance boundary &quot;</span></span>
+<span id="L277"><span class="lineNum">     277</span>              :                    &quot;conditions!\n&quot;);</span>
+<span id="L278"><span class="lineNum">     278</span>              :     }</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaUNC">           0 :     if (!boundaries.lumpedport.empty())</span></span>
+<span id="L280"><span class="lineNum">     280</span>              :     {</span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L282"><span class="lineNum">     282</span>              :           &quot;Magnetostatic problem type does not support lumped port boundary conditions!\n&quot;);</span>
+<span id="L283"><span class="lineNum">     283</span>              :     }</span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaUNC">           0 :     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())</span></span>
+<span id="L285"><span class="lineNum">     285</span>              :     {</span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L287"><span class="lineNum">     287</span>              :           &quot;Magnetostatic problem type does not support wave port boundary conditions!\n&quot;);</span>
+<span id="L288"><span class="lineNum">     288</span>              :     }</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaUNC">           0 :     if (!boundaries.postpro.dielectric.empty())</span></span>
+<span id="L290"><span class="lineNum">     290</span>              :     {</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Magnetostatic problem type does not support boundary interface &quot;</span></span>
+<span id="L292"><span class="lineNum">     292</span>              :                    &quot;dielectric loss postprocessing!\n&quot;);</span>
+<span id="L293"><span class="lineNum">     293</span>              :     }</span>
+<span id="L294"><span class="lineNum">     294</span>              :   }</span>
+<span id="L295"><span class="lineNum">     295</span>              :   else if (problem.type == ProblemType::TRANSIENT)</span>
+<span id="L296"><span class="lineNum">     296</span>              :   {</span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaUNC">           0 :     if (!boundaries.conductivity.empty())</span></span>
+<span id="L298"><span class="lineNum">     298</span>              :     {</span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Transient problem type does not support surface conductivity boundary &quot;</span></span>
+<span id="L300"><span class="lineNum">     300</span>              :                    &quot;conditions!\n&quot;);</span>
+<span id="L301"><span class="lineNum">     301</span>              :     }</span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())</span></span>
+<span id="L303"><span class="lineNum">     303</span>              :     {</span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :       Mpi::Warning(</span></span>
+<span id="L305"><span class="lineNum">     305</span>              :           &quot;Transient problem type does not support wave port boundary conditions!\n&quot;);</span>
+<span id="L306"><span class="lineNum">     306</span>              :     }</span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC">           0 :     if (!boundaries.farfield.empty() &amp;&amp; boundaries.farfield.order &gt; 1)</span></span>
+<span id="L308"><span class="lineNum">     308</span>              :     {</span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaUNC">           0 :       Mpi::Warning(&quot;Transient problem type does not support absorbing boundary conditions &quot;</span></span>
+<span id="L310"><span class="lineNum">     310</span>              :                    &quot;with order &gt; 1!\n&quot;);</span>
+<span id="L311"><span class="lineNum">     311</span>              :     }</span>
+<span id="L312"><span class="lineNum">     312</span>              :   }</span>
+<span id="L313"><span class="lineNum">     313</span>              : </span>
+<span id="L314"><span class="lineNum">     314</span>              :   // Resolve default values in configuration file.</span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC tlaBgGNC">           8 :   if (solver.linear.type == LinearSolver::DEFAULT)</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :   {</span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">           8 :     if (problem.type == ProblemType::ELECTROSTATIC)</span></span>
+<span id="L318"><span class="lineNum">     318</span>              :     {</span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaUNC tlaBgUNC">           0 :       solver.linear.type = LinearSolver::BOOMER_AMG;</span></span>
+<span id="L320"><span class="lineNum">     320</span>              :     }</span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC tlaBgGNC">           8 :     else if (problem.type == ProblemType::MAGNETOSTATIC ||</span></span>
+<span id="L322"><span class="lineNum">     322</span>              :              problem.type == ProblemType::TRANSIENT)</span>
+<span id="L323"><span class="lineNum">     323</span>              :     {</span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaUNC tlaBgUNC">           0 :       solver.linear.type = LinearSolver::AMS;</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :     }</span>
+<span id="L326"><span class="lineNum">     326</span>              :     else</span>
+<span id="L327"><span class="lineNum">     327</span>              :     {</span>
+<span id="L328"><span class="lineNum">     328</span>              :       // Prefer sparse direct solver for frequency domain problems if available.</span>
+<span id="L329"><span class="lineNum">     329</span>              : #if defined(MFEM_USE_SUPERLU)</span>
+<span id="L330"><span class="lineNum">     330</span>              :       solver.linear.type = LinearSolver::SUPERLU;</span>
+<span id="L331"><span class="lineNum">     331</span>              : #elif defined(MFEM_USE_STRUMPACK)</span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC tlaBgGNC">           8 :       solver.linear.type = LinearSolver::STRUMPACK;</span></span>
+<span id="L333"><span class="lineNum">     333</span>              : #elif defined(MFEM_USE_MUMPS)</span>
+<span id="L334"><span class="lineNum">     334</span>              :       solver.linear.type = LinearSolver::MUMPS;</span>
+<span id="L335"><span class="lineNum">     335</span>              : #else</span>
+<span id="L336"><span class="lineNum">     336</span>              :       solver.linear.type = LinearSolver::AMS;</span>
+<span id="L337"><span class="lineNum">     337</span>              : #endif</span>
+<span id="L338"><span class="lineNum">     338</span>              :     }</span>
+<span id="L339"><span class="lineNum">     339</span>              :   }</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">           8 :   if (solver.linear.krylov_solver == KrylovSolver::DEFAULT)</span></span>
+<span id="L341"><span class="lineNum">     341</span>              :   {</span>
+<span id="L342"><span class="lineNum">     342</span>              :     // Problems with SPD operators use CG by default, else GMRES.</span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaUNC tlaBgUNC">           0 :     if (problem.type == ProblemType::ELECTROSTATIC ||</span></span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC">           0 :         problem.type == ProblemType::MAGNETOSTATIC ||</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :         problem.type == ProblemType::TRANSIENT)</span>
+<span id="L346"><span class="lineNum">     346</span>              :     {</span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaUNC">           0 :       solver.linear.krylov_solver = KrylovSolver::CG;</span></span>
+<span id="L348"><span class="lineNum">     348</span>              :     }</span>
+<span id="L349"><span class="lineNum">     349</span>              :     else</span>
+<span id="L350"><span class="lineNum">     350</span>              :     {</span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaUNC">           0 :       solver.linear.krylov_solver = KrylovSolver::GMRES;</span></span>
+<span id="L352"><span class="lineNum">     352</span>              :     }</span>
+<span id="L353"><span class="lineNum">     353</span>              :   }</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaGNC tlaBgGNC">           8 :   if (solver.linear.max_size &lt; 0)</span></span>
+<span id="L355"><span class="lineNum">     355</span>              :   {</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaGNC">           8 :     solver.linear.max_size = solver.linear.max_it;</span></span>
+<span id="L357"><span class="lineNum">     357</span>              :   }</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">           8 :   if (solver.linear.initial_guess &lt; 0)</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :   {</span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaGNC">           8 :     if ((problem.type == ProblemType::DRIVEN &amp;&amp; solver.driven.adaptive_tol &lt;= 0.0) ||</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaUNC tlaBgUNC">           0 :         problem.type == ProblemType::TRANSIENT ||</span></span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaUNC">           0 :         problem.type == ProblemType::ELECTROSTATIC ||</span></span>
+<span id="L363"><span class="lineNum">     363</span>              :         problem.type == ProblemType::MAGNETOSTATIC)</span>
+<span id="L364"><span class="lineNum">     364</span>              :     {</span>
+<span id="L365"><span class="lineNum">     365</span>              :       // Default true only driven simulations without adaptive frequency sweep, transient</span>
+<span id="L366"><span class="lineNum">     366</span>              :       // simulations, electrostatics, or magnetostatics.</span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC tlaBgGNC">           8 :       solver.linear.initial_guess = 1;</span></span>
+<span id="L368"><span class="lineNum">     368</span>              :     }</span>
+<span id="L369"><span class="lineNum">     369</span>              :     else</span>
+<span id="L370"><span class="lineNum">     370</span>              :     {</span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaUNC tlaBgUNC">           0 :       solver.linear.initial_guess = 0;</span></span>
+<span id="L372"><span class="lineNum">     372</span>              :     }</span>
+<span id="L373"><span class="lineNum">     373</span>              :   }</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC tlaBgGNC">           8 :   if (solver.linear.pc_mat_shifted &lt; 0)</span></span>
+<span id="L375"><span class="lineNum">     375</span>              :   {</span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">           8 :     if (problem.type == ProblemType::DRIVEN &amp;&amp; solver.linear.type == LinearSolver::AMS)</span></span>
+<span id="L377"><span class="lineNum">     377</span>              :     {</span>
+<span id="L378"><span class="lineNum">     378</span>              :       // Default true only driven simulations using AMS (false for most cases).</span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaUNC tlaBgUNC">           0 :       solver.linear.pc_mat_shifted = 1;</span></span>
+<span id="L380"><span class="lineNum">     380</span>              :     }</span>
+<span id="L381"><span class="lineNum">     381</span>              :     else</span>
+<span id="L382"><span class="lineNum">     382</span>              :     {</span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC tlaBgGNC">           8 :       solver.linear.pc_mat_shifted = 0;</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :     }</span>
+<span id="L385"><span class="lineNum">     385</span>              :   }</span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">           8 :   if (solver.linear.mg_smooth_aux &lt; 0)</span></span>
+<span id="L387"><span class="lineNum">     387</span>              :   {</span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">           8 :     if (problem.type == ProblemType::ELECTROSTATIC ||</span></span>
+<span id="L389"><span class="lineNum">     389</span>              :         problem.type == ProblemType::MAGNETOSTATIC)</span>
+<span id="L390"><span class="lineNum">     390</span>              :     {</span>
+<span id="L391"><span class="lineNum">     391</span>              :       // Disable auxiliary space smoothing using distributive relaxation by default for</span>
+<span id="L392"><span class="lineNum">     392</span>              :       // problems which don't need it.</span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaUNC tlaBgUNC">           0 :       solver.linear.mg_smooth_aux = 0;</span></span>
+<span id="L394"><span class="lineNum">     394</span>              :     }</span>
+<span id="L395"><span class="lineNum">     395</span>              :     else</span>
+<span id="L396"><span class="lineNum">     396</span>              :     {</span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaGNC tlaBgGNC">           8 :       solver.linear.mg_smooth_aux = 1;</span></span>
+<span id="L398"><span class="lineNum">     398</span>              :     }</span>
+<span id="L399"><span class="lineNum">     399</span>              :   }</span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaGNC">           8 :   if (solver.linear.mg_smooth_order &lt; 0)</span></span>
+<span id="L401"><span class="lineNum">     401</span>              :   {</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC">           8 :     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);</span></span>
+<span id="L403"><span class="lineNum">     403</span>              :   }</span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">           8 :   if (solver.linear.ams_singular_op &lt; 0)</span></span>
+<span id="L405"><span class="lineNum">     405</span>              :   {</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">           8 :     solver.linear.ams_singular_op = (problem.type == ProblemType::MAGNETOSTATIC);</span></span>
+<span id="L407"><span class="lineNum">     407</span>              :   }</span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaGNC">           8 :   if (solver.linear.amg_agg_coarsen &lt; 0)</span></span>
+<span id="L409"><span class="lineNum">     409</span>              :   {</span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaGNC">           8 :     solver.linear.amg_agg_coarsen = (problem.type == ProblemType::ELECTROSTATIC ||</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaGNC">           8 :                                      problem.type == ProblemType::MAGNETOSTATIC ||</span></span>
+<span id="L412"><span class="lineNum">     412</span>              :                                      problem.type == ProblemType::TRANSIENT);</span>
+<span id="L413"><span class="lineNum">     413</span>              :   }</span>
+<span id="L414"><span class="lineNum">     414</span>              : </span>
+<span id="L415"><span class="lineNum">     415</span>              :   // Configure settings for quadrature rules and partial assembly.</span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">           8 :   BilinearForm::pa_order_threshold = solver.pa_order_threshold;</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">           8 :   fem::DefaultIntegrationOrder::p_trial = solver.order;</span></span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">           8 :   fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;</span></span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">           8 :   fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;</span></span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">           8 :   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;</span></span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">           8 : }</span></span>
+<span id="L422"><span class="lineNum">     422</span>              : </span>
+<span id="L423"><span class="lineNum">     423</span>              : namespace</span>
+<span id="L424"><span class="lineNum">     424</span>              : {</span>
+<span id="L425"><span class="lineNum">     425</span>              : </span>
+<span id="L426"><span class="lineNum">     426</span>              : template &lt;std::size_t N&gt;</span>
+<span id="L427"><span class="lineNum">     427</span>              : constexpr config::SymmetricMatrixData&lt;N&gt; &amp;operator/=(config::SymmetricMatrixData&lt;N&gt; &amp;data,</span>
+<span id="L428"><span class="lineNum">     428</span>              :                                                      double s)</span>
+<span id="L429"><span class="lineNum">     429</span>              : {</span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">         104 :   for (auto &amp;x : data.s)</span></span>
+<span id="L431"><span class="lineNum">     431</span>              :   {</span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC">          78 :     x /= s;</span></span>
+<span id="L433"><span class="lineNum">     433</span>              :   }</span>
+<span id="L434"><span class="lineNum">     434</span>              :   return data;</span>
+<span id="L435"><span class="lineNum">     435</span>              : }</span>
+<span id="L436"><span class="lineNum">     436</span>              : </span>
+<span id="L437"><span class="lineNum">     437</span>              : }  // namespace</span>
+<span id="L438"><span class="lineNum">     438</span>              : </span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">          26 : void IoData::NondimensionalizeInputs(mfem::ParMesh &amp;mesh)</span></span>
+<span id="L440"><span class="lineNum">     440</span>              : {</span>
+<span id="L441"><span class="lineNum">     441</span>              :   // Nondimensionalization of the equations is based on a given length Lc in [m], typically</span>
+<span id="L442"><span class="lineNum">     442</span>              :   // the largest domain dimension. Configuration file lengths and the mesh coordinates are</span>
+<span id="L443"><span class="lineNum">     443</span>              :   // provided with units of model.L0 x [m].</span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaGNC">          26 :   MFEM_VERIFY(!init, &quot;NondimensionalizeInputs should only be called once!&quot;);</span></span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaGNC">          26 :   init = true;</span></span>
+<span id="L446"><span class="lineNum">     446</span>              : </span>
+<span id="L447"><span class="lineNum">     447</span>              :   // Calculate the reference length and time. A user specified model.Lc is in mesh length</span>
+<span id="L448"><span class="lineNum">     448</span>              :   // units.</span>
+<span id="L449"><span class="lineNum">     449</span> <span class="tlaGNC">          26 :   if (model.Lc &lt;= 0.0)</span></span>
+<span id="L450"><span class="lineNum">     450</span>              :   {</span>
+<span id="L451"><span class="lineNum">     451</span>              :     mfem::Vector bbmin, bbmax;</span>
+<span id="L452"><span class="lineNum">     452</span> <span class="tlaGNC">          26 :     mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);</span></span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaGNC">          26 :     bbmax -= bbmin;</span></span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">          26 :     model.Lc = *std::max_element(bbmax.begin(), bbmax.end());</span></span>
+<span id="L455"><span class="lineNum">     455</span>              :   }</span>
+<span id="L456"><span class="lineNum">     456</span>              :   // Define units now mesh length set. Note: In model field Lc is measured in units of L0.</span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">          26 :   units = Units(model.L0, model.Lc * model.L0);</span></span>
+<span id="L458"><span class="lineNum">     458</span>              : </span>
+<span id="L459"><span class="lineNum">     459</span>              :   // Mesh refinement parameters.</span>
+<span id="L460"><span class="lineNum">     460</span>              :   auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)</span>
+<span id="L461"><span class="lineNum">     461</span> <span class="tlaGNC">          96 :   { return val / Lc0; };</span></span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">          26 :   for (auto &amp;box : model.refinement.GetBoxes())</span></span>
+<span id="L463"><span class="lineNum">     463</span>              :   {</span>
+<span id="L464"><span class="lineNum">     464</span>              :     std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),</span>
+<span id="L465"><span class="lineNum">     465</span>              :                    DivideLengthScale);</span>
+<span id="L466"><span class="lineNum">     466</span>              :     std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),</span>
+<span id="L467"><span class="lineNum">     467</span>              :                    DivideLengthScale);</span>
+<span id="L468"><span class="lineNum">     468</span>              :   }</span>
+<span id="L469"><span class="lineNum">     469</span> <span class="tlaGNC">          26 :   for (auto &amp;sphere : model.refinement.GetSpheres())</span></span>
+<span id="L470"><span class="lineNum">     470</span>              :   {</span>
+<span id="L471"><span class="lineNum">     471</span> <span class="tlaUNC tlaBgUNC">           0 :     sphere.r /= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L472"><span class="lineNum">     472</span>              :     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),</span>
+<span id="L473"><span class="lineNum">     473</span>              :                    DivideLengthScale);</span>
+<span id="L474"><span class="lineNum">     474</span>              :   }</span>
+<span id="L475"><span class="lineNum">     475</span>              : </span>
+<span id="L476"><span class="lineNum">     476</span>              :   // Materials: conductivity and London penetration depth.</span>
+<span id="L477"><span class="lineNum">     477</span> <span class="tlaGNC tlaBgGNC">          52 :   for (auto &amp;data : domains.materials)</span></span>
+<span id="L478"><span class="lineNum">     478</span>              :   {</span>
+<span id="L479"><span class="lineNum">     479</span>              :     data.sigma /= units.GetScaleFactor&lt;Units::ValueType::CONDUCTIVITY&gt;();</span>
+<span id="L480"><span class="lineNum">     480</span> <span class="tlaGNC">          26 :     data.lambda_L /= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L481"><span class="lineNum">     481</span>              :   }</span>
+<span id="L482"><span class="lineNum">     482</span>              : </span>
+<span id="L483"><span class="lineNum">     483</span>              :   // Probe location coordinates.</span>
+<span id="L484"><span class="lineNum">     484</span> <span class="tlaGNC">          42 :   for (auto &amp;[idx, data] : domains.postpro.probe)</span></span>
+<span id="L485"><span class="lineNum">     485</span>              :   {</span>
+<span id="L486"><span class="lineNum">     486</span>              :     std::transform(data.center.begin(), data.center.end(), data.center.begin(),</span>
+<span id="L487"><span class="lineNum">     487</span>              :                    DivideLengthScale);</span>
+<span id="L488"><span class="lineNum">     488</span>              :   }</span>
+<span id="L489"><span class="lineNum">     489</span>              : </span>
+<span id="L490"><span class="lineNum">     490</span>              :   // Finite conductivity boundaries.</span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaGNC">          26 :   for (auto &amp;data : boundaries.conductivity)</span></span>
+<span id="L492"><span class="lineNum">     492</span>              :   {</span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC tlaBgUNC">           0 :     data.sigma /= units.GetScaleFactor&lt;Units::ValueType::CONDUCTIVITY&gt;();</span></span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :     data.h /= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :   }</span>
+<span id="L496"><span class="lineNum">     496</span>              : </span>
+<span id="L497"><span class="lineNum">     497</span>              :   // Impedance boundaries and lumped ports.</span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaGNC tlaBgGNC">          26 :   for (auto &amp;data : boundaries.impedance)</span></span>
+<span id="L499"><span class="lineNum">     499</span>              :   {</span>
+<span id="L500"><span class="lineNum">     500</span> <span class="tlaUNC tlaBgUNC">           0 :     data.Rs /= units.GetScaleFactor&lt;Units::ValueType::IMPEDANCE&gt;();</span></span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaUNC">           0 :     data.Ls /= units.GetScaleFactor&lt;Units::ValueType::INDUCTANCE&gt;();</span></span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaUNC">           0 :     data.Cs /= units.GetScaleFactor&lt;Units::ValueType::CAPACITANCE&gt;();</span></span>
+<span id="L503"><span class="lineNum">     503</span>              :   }</span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC tlaBgGNC">          50 :   for (auto &amp;[idx, data] : boundaries.lumpedport)</span></span>
+<span id="L505"><span class="lineNum">     505</span>              :   {</span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaGNC">          24 :     data.R /= units.GetScaleFactor&lt;Units::ValueType::IMPEDANCE&gt;();</span></span>
+<span id="L507"><span class="lineNum">     507</span> <span class="tlaGNC">          24 :     data.L /= units.GetScaleFactor&lt;Units::ValueType::INDUCTANCE&gt;();</span></span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaGNC">          24 :     data.C /= units.GetScaleFactor&lt;Units::ValueType::CAPACITANCE&gt;();</span></span>
+<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC">          24 :     data.Rs /= units.GetScaleFactor&lt;Units::ValueType::IMPEDANCE&gt;();</span></span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">          24 :     data.Ls /= units.GetScaleFactor&lt;Units::ValueType::INDUCTANCE&gt;();</span></span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">          24 :     data.Cs /= units.GetScaleFactor&lt;Units::ValueType::CAPACITANCE&gt;();</span></span>
+<span id="L512"><span class="lineNum">     512</span>              :   }</span>
+<span id="L513"><span class="lineNum">     513</span>              : </span>
+<span id="L514"><span class="lineNum">     514</span>              :   // Floquet periodic boundaries.</span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">         104 :   for (auto &amp;k : boundaries.periodic.wave_vector)</span></span>
+<span id="L516"><span class="lineNum">     516</span>              :   {</span>
+<span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">          78 :     k *= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L518"><span class="lineNum">     518</span>              :   }</span>
+<span id="L519"><span class="lineNum">     519</span>              : </span>
+<span id="L520"><span class="lineNum">     520</span>              :   // Wave port offset distance.</span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">          26 :   for (auto &amp;[idx, data] : boundaries.waveport)</span></span>
+<span id="L522"><span class="lineNum">     522</span>              :   {</span>
+<span id="L523"><span class="lineNum">     523</span> <span class="tlaUNC tlaBgUNC">           0 :     data.d_offset /= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L524"><span class="lineNum">     524</span>              :   }</span>
+<span id="L525"><span class="lineNum">     525</span>              : </span>
+<span id="L526"><span class="lineNum">     526</span>              :   // Center coordinates for surface flux.</span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaGNC tlaBgGNC">          42 :   for (auto &amp;[idx, data] : boundaries.postpro.flux)</span></span>
+<span id="L528"><span class="lineNum">     528</span>              :   {</span>
+<span id="L529"><span class="lineNum">     529</span>              :     std::transform(data.center.begin(), data.center.end(), data.center.begin(),</span>
+<span id="L530"><span class="lineNum">     530</span>              :                    DivideLengthScale);</span>
+<span id="L531"><span class="lineNum">     531</span>              :   }</span>
+<span id="L532"><span class="lineNum">     532</span>              : </span>
+<span id="L533"><span class="lineNum">     533</span>              :   // Dielectric interface thickness.</span>
+<span id="L534"><span class="lineNum">     534</span> <span class="tlaGNC">          50 :   for (auto &amp;[idx, data] : boundaries.postpro.dielectric)</span></span>
+<span id="L535"><span class="lineNum">     535</span>              :   {</span>
+<span id="L536"><span class="lineNum">     536</span> <span class="tlaGNC">          24 :     data.t /= units.GetMeshLengthRelativeScale();</span></span>
+<span id="L537"><span class="lineNum">     537</span>              :   }</span>
+<span id="L538"><span class="lineNum">     538</span>              : </span>
+<span id="L539"><span class="lineNum">     539</span>              :   // For eigenmode simulations:</span>
+<span id="L540"><span class="lineNum">     540</span> <span class="tlaGNC">          26 :   solver.eigenmode.target /= units.GetScaleFactor&lt;Units::ValueType::FREQUENCY&gt;();</span></span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaGNC">          26 :   solver.eigenmode.target_upper /= units.GetScaleFactor&lt;Units::ValueType::FREQUENCY&gt;();</span></span>
+<span id="L542"><span class="lineNum">     542</span>              : </span>
+<span id="L543"><span class="lineNum">     543</span>              :   // For driven simulations:</span>
+<span id="L544"><span class="lineNum">     544</span> <span class="tlaGNC">          74 :   for (auto &amp;f : solver.driven.sample_f)</span></span>
+<span id="L545"><span class="lineNum">     545</span> <span class="tlaGNC">          48 :     f /= units.GetScaleFactor&lt;Units::ValueType::FREQUENCY&gt;();</span></span>
+<span id="L546"><span class="lineNum">     546</span>              : </span>
+<span id="L547"><span class="lineNum">     547</span>              :   // For transient simulations:</span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">          26 :   solver.transient.pulse_f /= units.GetScaleFactor&lt;Units::ValueType::FREQUENCY&gt;();</span></span>
+<span id="L549"><span class="lineNum">     549</span> <span class="tlaGNC">          26 :   solver.transient.pulse_tau /= units.GetScaleFactor&lt;Units::ValueType::TIME&gt;();</span></span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">          26 :   solver.transient.max_t /= units.GetScaleFactor&lt;Units::ValueType::TIME&gt;();</span></span>
+<span id="L551"><span class="lineNum">     551</span> <span class="tlaGNC">          26 :   solver.transient.delta_t /= units.GetScaleFactor&lt;Units::ValueType::TIME&gt;();</span></span>
+<span id="L552"><span class="lineNum">     552</span>              : </span>
+<span id="L553"><span class="lineNum">     553</span>              :   // Scale mesh vertices for correct nondimensionalization.</span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">          26 :   mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());</span></span>
+<span id="L555"><span class="lineNum">     555</span>              : </span>
+<span id="L556"><span class="lineNum">     556</span>              :   // Print some information.</span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaGNC">          26 :   Mpi::Print(mesh.GetComm(),</span></span>
+<span id="L558"><span class="lineNum">     558</span>              :              &quot;\nCharacteristic length and time scales:\n L₀ = {:.3e} m, t₀ = {:.3e} ns\n&quot;,</span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaGNC">          26 :              units.GetScaleFactor&lt;Units::ValueType::LENGTH&gt;(),</span></span>
+<span id="L560"><span class="lineNum">     560</span> <span class="tlaGNC">          26 :              units.GetScaleFactor&lt;Units::ValueType::TIME&gt;());</span></span>
+<span id="L561"><span class="lineNum">     561</span> <span class="tlaGNC">          26 : }</span></span>
+<span id="L562"><span class="lineNum">     562</span>              : </span>
+<span id="L563"><span class="lineNum">     563</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
