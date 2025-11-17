@@ -53,6 +53,7 @@ jobs:
         blas: [openblas] # ,intel-oneapi-mkl]
         spack_version: [develop] # ,v0.23.1]
         mpi: [openmpi] #, mpich, mvapich]
+        transmon: [true, false]
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
@@ -89,11 +90,17 @@ jobs:
             GPU_VARIANT=""
           fi
 
+          if [[ "${{ matrix.transmon }}" == "true" ]]; then
+            TEST_VARIANT=""
+          else
+            TEST_VARIANT="+tests"
+          fi
+
           # Develop requires ^compiler, not %compiler
           if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps ${TEST_VARIANT} %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
           else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps${GPU_VARIANT}${TEST_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           fi
 
           # Spack.yaml with most / all settings configured
@@ -182,7 +189,7 @@ jobs:
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
       - name: Run Unit Tests
-        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
+        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none'  && matrix.transmon != true # Skip tests for GPU builds
         run: |
           eval $(spack -e . load --sh palace)
           palace-unit-tests --skip-benchmarks
@@ -196,7 +203,11 @@ jobs:
           eval $(spack -e . load --sh palace)
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test/examples --color=yes test/examples/runtests.jl
+          if [[ "${{ matrix.transmon }}" == "true" ]]; then
+            TEST_CASES=transmon julia --project=test/examples --color=yes test/examples/runtests.jl
+          else
+            julia --project=test/examples --color=yes test/examples/runtests.jl
+          fi
 
       # Push built binaries, even if the build fails
       # NOTE: This might fail as external fork PRs can't push to GHCR.
