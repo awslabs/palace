@@ -192,10 +192,10 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
     1,                         // Stride between components
     geom_data_size * num_qpts  // Stride between elements
   };
-  std::cout << "new strides " << strides[0] << ' ' << strides[1] << ' ' << strides[2] << '\n';
-  std::cout << "old strides " << CEED_STRIDES_BACKEND[0] << ' ' << CEED_STRIDES_BACKEND[1] << ' ' << CEED_STRIDES_BACKEND[2] << '\n';
+  // std::cout << "new strides " << strides[0] << ' ' << strides[1] << ' ' << strides[2] << '\n';
+  // std::cout << "old strides " << CEED_STRIDES_BACKEND[0] << ' ' << CEED_STRIDES_BACKEND[1] << ' ' << CEED_STRIDES_BACKEND[2] << '\n';
 
-  std::cout << "num_elem " << num_elem << " num_qpts " << num_qpts << " geom_data_size " << geom_data_size << '\n';
+  // std::cout << "num_elem " << num_elem << " num_qpts " << num_qpts << " geom_data_size " << geom_data_size << '\n';
   PalaceCeedCall(
       ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
                                              (CeedSize)num_elem * num_qpts * geom_data_size,

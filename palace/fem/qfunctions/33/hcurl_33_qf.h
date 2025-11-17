@@ -13,7 +13,7 @@
 CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,
                                  const CeedScalar *const *in, CeedScalar *const *out)
 {
-  static int num_of_calls = 0;
+  //static int num_of_calls = 0;
 
   const CeedScalar *qdata = in[0], *u = in[1];
   CeedScalar *v = out[0];
@@ -28,7 +28,7 @@ CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,
   //   printf("\n");
   // }
 
-  num_of_calls++;
+  //num_of_calls++;
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar *qdata_i = qdata + i * stride;
@@ -39,19 +39,18 @@ CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,
     // printf("hello: %d\n", i);
     // printf("qdata_i[0] %d\n", (CeedInt)qdata_i[0]);
     // printf("qdata_i[1] %f\n", qdata_i[1]);
-    if (qdata_i[0] != 1.0)
-    {
-
-      printf("Q: %d, %i:\n", Q, i);
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        for (CeedInt j = 0; j < stride; j++)
-          printf("qdata[%d][%d] %0.3e ", i, j, qdata[i * stride + j]);
-        printf("\n");
-      }
-      printf("num of calls : %d, num of qp: %d\n", num_of_calls, Q*num_of_calls);
-      return 1;
-    }
+    // if (qdata_i[0] != 1.0)
+    // {
+    //   printf("Q: %d, %i:\n", Q, i);
+    //   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    //   {
+    //     for (CeedInt j = 0; j < stride; j++)
+    //       printf("qdata[%d][%d] %0.3e ", i, j, qdata[i * stride + j]);
+    //     printf("\n");
+    //   }
+    //   printf("num of calls : %d, num of qp: %d\n", num_of_calls, Q*num_of_calls);
+    //   return 1;
+    // }
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)qdata_i[0], coeff);
     // return 1;
     MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);

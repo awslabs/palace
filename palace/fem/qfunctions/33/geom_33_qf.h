@@ -42,8 +42,8 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *, CeedInt Q, const CeedScalar *cons
     // qd_adjJt[i + Q * 8] = adjJt_loc[8] / detJ;
 
     // assert(attr[i] == 1.0);
-    if ((CeedInt) attr[i] != 1)
-      printf("%d : %d\n", i, (CeedInt)attr[i]);
+    // if ((CeedInt) attr[i] != 1)
+    //   printf("%d : %d\n", i, (CeedInt)attr[i]);
     qdata[i * stride +  0] = attr[i]; // attribute
     qdata[i * stride +  1] = qw[i] * detJ; // w * |J|
     qdata[i * stride +  2] = adjJt_loc[0] / detJ; // (adjJt / |J|)_11
