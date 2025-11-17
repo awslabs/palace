@@ -64,6 +64,7 @@ function generate_coaxial_mesh(;
 
     # Mesh parameters
     n_circum = 4 * 2^refinement # min 4 elements in round
+    # n_length = 20 * 2^refinement # min 4 elements on length
     n_length = 4 * 2^refinement # min 4 elements on length
 
     # Geometry
@@ -104,6 +105,7 @@ function generate_coaxial_mesh(;
 
     cylinder_0 = kernel.extrude(base_face_0, 0.0, 0.0, length_mm, [n_length], [1.0], true)
     cylinder_1 = kernel.extrude(base_face_1, 0.0, 0.0, length_mm, [n_length], [1.0], true)
+
     base_face_0 = last(first(base_face_0))
     base_face_1 = last(first(base_face_1))
     far_face_0 = last(cylinder_0[1])
@@ -111,12 +113,27 @@ function generate_coaxial_mesh(;
     far_face_1 = last(cylinder_1[1])
     cylinder_1 = last(cylinder_1[2])
 
+    println(far_face_0, ",", far_face_1)
+
+    cylinder_0a =
+        kernel.extrude([(2, far_face_0)], 0.0, 0.0, length_mm, [n_length], [1.0], true)
+    cylinder_1a =
+        kernel.extrude([(2, far_face_1)], 0.0, 0.0, length_mm, [n_length], [1.0], true)
+
+    far_face_0a = last(cylinder_0a[1])
+    cylinder_0a = last(cylinder_0a[2])
+    far_face_1a = last(cylinder_1a[1])
+    cylinder_1a = last(cylinder_1a[2])
+
+    println(cylinder_0a)
+    println(cylinder_1a)
+
     # Remove duplicates but preserves tags for non-removed objects
     kernel.fragment(kernel.getEntities(), [])
     kernel.synchronize()
 
     boundaries = []
-    for cylinder in [cylinder_0, cylinder_1]
+    for cylinder in [cylinder_0, cylinder_1, cylinder_0a, cylinder_1a]
         _, local_boundaries = gmsh.model.getAdjacencies(3, cylinder)
         local_idx = indexin(local_boundaries, boundaries)
         local_delete = []
@@ -129,18 +146,24 @@ function generate_coaxial_mesh(;
         end
         deleteat!(boundaries, sort(local_delete))
     end
+    println([base_face_0, base_face_1, far_face_0, far_face_1, far_face_0a, far_face_1a])
     deleteat!(
         boundaries,
-        sort(indexin([base_face_0, base_face_1, far_face_0, far_face_1], boundaries))
+        sort(indexin([base_face_0, base_face_1, far_face_0a, far_face_1a], boundaries))
     )
 
     # Add physical groups
-    cylinder_group =
-        gmsh.model.addPhysicalGroup(3, [cylinder_0, cylinder_1], -1, "cylinder")
+    cylinder_group = gmsh.model.addPhysicalGroup(
+        3,
+        [cylinder_0, cylinder_1, cylinder_0a, cylinder_1a],
+        -1,
+        "cylinder"
+    )
     boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
 
     port1_group = gmsh.model.addPhysicalGroup(2, [base_face_0, base_face_1], -1, "port1")
     port2_group = gmsh.model.addPhysicalGroup(2, [far_face_0, far_face_1], -1, "port2")
+    port3_group = gmsh.model.addPhysicalGroup(2, [far_face_0a, far_face_1a], -1, "port3")
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
@@ -167,6 +190,7 @@ function generate_coaxial_mesh(;
         println("Boundaries: ", boundary_group)
         println("Port 1: ", port1_group)
         println("Port 2: ", port2_group)
+        println("Port 2: ", port3_group)
         println()
     end
 
