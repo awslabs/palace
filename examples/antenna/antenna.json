@@ -3,7 +3,7 @@
     {
         "Type": "Driven",
         "Verbose": 2,
-        "Output": "postpro"
+        "Output": "postpro/antenna"
     }
     ,
     "Model":
