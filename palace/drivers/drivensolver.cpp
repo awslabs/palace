@@ -269,16 +269,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    auto &lumped_port_op = space_op.GetLumpedPortOp();
-    for (const auto &[port_idx, port_data] : lumped_port_op)
-    {
-      ComplexVector port_excitation_E;
-      port_excitation_E.UseDevice(true);
-      space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
-      prom_op.UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
-    }
-    const auto &orth_R = prom_op.GetRomOrthogonalityMatrix();
-    MFEM_VERIFY(orth_R.isDiagonal(), "Lumped port modes should have exactly zero overlap.");
+    prom_op.AddLumpedPortModesForSynthesis(iodata);
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency
@@ -382,8 +373,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    BlockTimer bt0(Timer::POSTPRO);
-    Mpi::Print(" Printing PROM Matrices to disk.\n");
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
 
