@@ -431,6 +431,31 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
+void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
+{
+  auto &lumped_port_op = space_op.GetLumpedPortOp();
+  for (const auto &[port_idx, port_data] : lumped_port_op)
+  {
+    ComplexVector port_excitation_E;
+    port_excitation_E.UseDevice(true);
+    space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
+    UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
+  }
+
+  // Check that the ports don't have any overlap.
+  MFEM_VERIFY(orth_R.isDiagonal(),
+              "Lumped port fields on the mesh should have exactly zero overlap. This may "
+              "be non-zero if attributes share edges.");
+
+  // // Debug Print
+  // if constexpr (false)
+  // {
+  //   fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
+  //   fs::create_directories(folder_tmp);
+  //   PrintPROMMatrices(iodata.units, folder_tmp);
+  // }
+}
+
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
@@ -572,6 +597,9 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
 
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
 {
+  BlockTimer bt0(Timer::POSTPRO);
+  Mpi::Print(" Printing PROM Matrices to disk.\n");
+
   if (!Mpi::Root(space_op.GetComm()))
   {
     return;
@@ -596,6 +624,13 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
   // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
+  //
+  // In more detail: there are two normalizations  associated with ports: alpha & beta in
+  // the notation of Marks and Williams  "A General Waveguide Circuit Theory" [J. Res. Natl.
+  // Inst. Stand. Technol. 97, 533 (1992)]. "alpha" is the normalization power through the
+  // port mode. Palace defines the input power to be normalized to 1 (see
+  // LumpedPortData::GetExcitationPower). "beta" is the normalization convention of the port
+  // voltage \beta * v_0 and current i_0 / \beta^* at constant power.
   auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
