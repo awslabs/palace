@@ -1,0 +1,66 @@
+{
+    "Problem":
+    {
+        "Type": "Driven",
+        "Verbose": 2,
+        "Output": "postpro/antenna_short_dipole"
+    },
+    "Model":
+    {
+        "Mesh": "mesh/antenna_short_dipole.msh",
+        "L0": 1.0
+    },
+    "Domains":
+    {
+        "Materials":
+        [
+            {
+                "Attributes": [2]
+            }
+        ],
+        "CurrentDipole": [
+            {
+                "Index": 1,
+                "Moment": [0.0, 0.0, 1],
+                "Center": [0.0, 0.0, 0.0]
+            }
+        ]
+    },
+    "Boundaries":
+    {
+        "Absorbing":
+        {
+            "Attributes": [1]
+        },
+        "Postprocessing": {
+            "FarField": {
+                "Attributes": [1],
+                "NSample": 100,
+                "ThetaPhis": [[35, 20]]
+            }
+        }
+    },
+    "Solver":
+    {
+        "Order": 2,
+        "Device": "CPU",
+        "Driven":
+        {
+            "Samples":
+            [
+                {
+                    "Type": "Point",
+                    "Freq": [0.0749],
+                    "SaveStep": 1
+                }
+            ]
+        },
+        "Linear":
+        {
+            "Type": "Default",
+            "KSPType": "GMRES",
+            "Tol": 1.0e-10,
+            "MaxIts": 1000
+        }
+    }
+}
