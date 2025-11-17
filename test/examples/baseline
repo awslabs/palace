@@ -12,7 +12,7 @@ Re-baseline regression tests
 Options:
   -h, --help                       Show this help message and exit
   -dry-run, --dry-run              Run examples and exit without overwriting test data
-  -np, --np NUM_PROCS              How many MPI processes to use, default is 1
+  -np, --np NUM_PROCS              How many MPI processes to use, default is the number of cores
   --julia COMMAND                  Executable command for julia
   --palace COMMAND                 Executable command for palace
   -e, --example <EXAMPLE_NAME>     Run a specified example (may be repeated)
@@ -99,6 +99,7 @@ TEST_DIRS=$(cat << EOF
 spheres
 rings
 antenna
+transmon
 cylinder/cavity_pec
 cylinder/cavity_impedance
 cylinder/waveguide

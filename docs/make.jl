@@ -44,6 +44,7 @@ makedocs(
             "examples/spheres.md",
             "examples/rings.md",
             "examples/antenna.md",
+            "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md"

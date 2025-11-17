@@ -141,6 +141,8 @@ function testcase(
         elseif (gridfunction_fields)
             @test length(dirs) == 1 && first(dirs) == "gridfunction" || (@show dirs; false)
         end
+        # When using AMR, `iterationN` directories are created
+        @test length(dirs) >= 1 && last(dirs) == "paraview" || (@show dirs; false)
         @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
               (@show metafiles; false)
         @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||

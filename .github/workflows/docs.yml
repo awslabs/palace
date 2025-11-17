@@ -134,6 +134,12 @@ jobs:
       - uses: julia-actions/cache@v2
         if: needs.filter.outputs.test == 'true'
 
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
