@@ -21,7 +21,6 @@
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
 #include <complex>
-#include <string>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -236,9 +235,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   SurfacePostOperator surf_post_op(iodata, mat_op, nd_fespace, nd_fespace);
 
   auto thetaphis = GenerateSphericalTestPoints();
-  // NOTE: units.Nondimensionalize<Units::ValueType::FREQUENCY> adds a factor of 2pi!
   double omega_rad_per_time =
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
   auto rE_computed =
       surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
@@ -344,7 +342,7 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
 
-  auto comm = Mpi::World();
+  MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
   const int dim = serial_mesh->Dimension();

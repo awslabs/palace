@@ -5,6 +5,96 @@
 
 # Developer Notes
 
+## Units
+
+For interactions with users (inputs and outputs), *Palace* mostly uses SI units,
+and where it doesn't it uses metric units (SI with prefix modifiers e.g. km, um,
+nJ). However, internally, there are three unit systems that are used within any
+given *Palace* simulation.
+
+First, the mesh comes with its own unit of length. Users specify the conversion
+between one unit of length on the mesh to meters through the
+[`config["Model"]["L0"]`](../config/problem.md#config%5B%Model%22%5D) parameter.
+
+Second, *Palace* defines a system of non-dimensional units where the actual
+solver operates.
+
+Third, postprocessing occurs in a custom variant of SI units where the unit of
+time is nanoseconds instead of seconds. This is more suitable for the problems
+*Palace* is designed to solve.
+
+The second and third systems are described by the `Units` class defined in
+`units.hpp`.
+
+### Non-dimensional unit system
+
+The non-dimensional unit system is constructed as follows:
+
+Length: Lengths are measured in units of the characteristic length `Lc`, which
+is the mesh size in mesh units, unless `Lc` is manually specified in
+[`config["Model"]["Lc"]`](../config/problem.md#config%5B%Model%22%5D). The extent
+of the mesh is 1 in these units, with extent defined as the largest single
+dimension (e.g., for a cuboid of size 10m x 20m x 40m, this would be 40m).
+
+Time: One unit of non-dimensional time is the time it takes light to travel one
+`Lc` (equivalently, the speed of light is 1 in these units).
+
+Electromagnetic quantities: *Palace* uses
+[Heaviside-Lorentz](https://en.wikipedia.org/wiki/Heaviside%E2%80%93Lorentz_units)
+units, essentially meaning that `ε₀ = μ₀ = 1` (so that in addition to setting `c = 1`, the impedance of free space `Z₀` is also 1).
+
+The final unit in the system is chosen so that the power flowing through a
+surface of area `Lc²` perpendicular to the direction of propagation in vacuum
+with a uniform magnetic field of strength 1 is exactly 1 (`P = H^2 * Z * L^2`,
+with `Z` impedance). This choice is related to the normalization of power across
+ports.
+
+An equivalent mental model about non-dimensional quantities in *Palace* is to
+think in terms of characteristic values instead of units: the non-dimensional
+quantities are physical quantities normalized by reference values. These
+reference values are effectively chosen to satisfy the constraints on space,
+time and power given above. For example, the magnetic field strength `H` solved
+for is actually `H/Hc`, where `Hc` satisfies `Hc² × Z₀ × Lc² = 1 W`, with `Z₀`
+impedance of free space. Similarly, the non-dimensional electric field `E` is
+`E/Ec` with `Ec = Z₀ × Hc`.
+
+!!! note "Example: converting times and distances"
+    
+    Consider a spherical mesh with `L0` of 1 micron and radius of 3 in mesh units.
+    Then:
+    
+      - Mesh size in mesh units: 6
+      - Mesh size in non-dimensional units: 1
+      - Mesh size in dimensional units: 6e-6
+      - Mesh size in SI: 6e-6 meters
+      - Speed of light in non-dimensional units: 1
+      - Speed of light in dimensional units: 0.3
+      - Speed of light in SI: 3e8 meters/seconds
+      - Time for light to cross the sphere in non-dimensional units: 1
+      - Time for light to cross the sphere in dimensional units: 2e-5
+      - Time for light to cross the sphere in SI: 2e-14 seconds
+
+!!! warning "Non-SI time units"
+    
+    The dimensional unit system uses nanoseconds for time, not seconds. This affects
+    unit combinations: `units::POWER * units::TIME` is not equivalent to `units::ENERGY`.
+    This choice of nanoseconds reflects a prioritization of the microwave engineering
+    domain within *Palace*, as the typical frequencies in GHz (which correspond to time
+    scales of nanoseconds).
+
+!!! warning "Omega instead of Frequency"
+    
+    Internally, *Palace* uses the angular frequency `omega` instead of the regular
+    frequency, with both names `omega` and `freq` being used.
+
+!!! warning "Finite element considerations"
+    
+    Changing mesh units requires additional rescaling for fields defined on
+    H(curl) and H(div) spaces to convert them to proper physical units. This is a
+    function of the length scales inherent to the reference element transformations
+    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
+    See the `ScaleGridFunctions` function in `PostOperator` for details.
+
 ## Style guide
 
 Automated source code formatting is performed using
