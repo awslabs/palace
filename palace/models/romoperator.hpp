@@ -125,6 +125,11 @@ public:
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
+  // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
+  // fields that are orthogonal to boundary overlap and primary fields, which may not be the
+  // same.
+  void AddLumpedPortModesForSynthesis(const IoData &iodata);
+
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
