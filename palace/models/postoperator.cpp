@@ -1171,8 +1171,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
-  omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
-  post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
+  std::complex<double> freq =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -1188,7 +1189,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::lower_bound(output_save_indices.begin(),
                                                   output_save_indices.end(), step));
-    WriteMFEMGridFunctions(omega.real(), ind);
+    WriteMFEMGridFunctions(freq.real(), ind);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +

@@ -50,11 +50,13 @@ with `Z` impedance). This choice is related to the normalization of power across
 ports.
 
 An equivalent mental model about non-dimensional quantities in *Palace* is to
-think in terms of characteristic values instead of units: you can think that
-non-dimensional quantities are physical quantities normalized by some reference
-value. For example, the magnetic field strength `H` solved for is actually
-`H/Hc`, where `Hc` satisfies `Hc² × Z₀ × Lc² = 1 W`, with `Z₀` impedance of free
-space. Similarly, the non-dimensional electric field `E` is `E/Ec` with `Ec = Z₀ × Hc`.
+think in terms of characteristic values instead of units: the non-dimensional
+quantities are physical quantities normalized by reference values. These
+reference values are effectively chosen to satisfy the constraints on space,
+time and power given above. For example, the magnetic field strength `H` solved
+for is actually `H/Hc`, where `Hc` satisfies `Hc² × Z₀ × Lc² = 1 W`, with `Z₀`
+impedance of free space. Similarly, the non-dimensional electric field `E` is
+`E/Ec` with `Ec = Z₀ × Hc`.
 
 !!! note "Example: converting times and distances"
     
