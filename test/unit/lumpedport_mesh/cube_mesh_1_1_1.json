@@ -1,0 +1,22 @@
+{
+  "Problem": {"Type": "Driven", "Verbose": 2, "Output": "phd_lumpedport_mesh/postpro/cube_mesh_1_1_1_hex"},
+  "Model": {
+    "Mesh": "phd_lumpedport_mesh/cube_mesh_1_1_1_hex.mesh",
+    "L0": 1.0e-6,
+    "Lc": 1.0,
+    "Refinement": {},
+    "CrackInternalBoundaryElements": false
+  },
+  "Domains": {
+    "Materials": [ { "Attributes": [1], "Permeability": 1.0, "Permittivity": 1.0, "LossTan": 0.0 } ]
+  },
+  "Boundaries": {
+    "LumpedPort": [ { "Index": 1, "R": 50.0, "Excitation": 1, "Attributes": [101], "Direction": "+X" } ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Driven": { "Samples": [ {"Type": "Linear", "MinFreq": 1.0, "MaxFreq": 1.0, "FreqStep": 1.0, "SaveStep": 1} ] },
+    "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 200}
+  }
+}
