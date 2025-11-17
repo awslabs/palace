@@ -138,7 +138,7 @@ The `plot_farfield.jl` Julia script processes this file and produces plots polar
 for the E- and H- planes (xz/xy-planes) and in the 3D.
 
 ```bash
-julia --project plot_radiation_pattern.jl postpro/farfield-rE.csv
+julia --project plot_farfield.jl postpro/farfield-rE.csv
 ```
 
 The results for the polar plot are shown below.
