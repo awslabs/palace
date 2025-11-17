@@ -54,6 +54,7 @@ arg_configs = [
         default=[
             "spheres",
             "rings",
+            # "transmon", # not included by default because of its cost
             "antenna",
             "cylinder/cavity_pec",
             "cylinder/cavity_impedance",
@@ -128,6 +129,44 @@ if "rings" in cases
         eigen_solver=eigensolver
     )
 end
+
+reltol = 1.0e-2
+
+if "transmon" in cases
+    @info "Testing single transmon..."
+    @time testcase(
+        "transmon",
+        "transmon.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Re{V[1]} (V)",
+            "Im{V[1]} (V)",
+            "Re{V[2]} (V)",
+            "Im{V[2]} (V)",
+            "Re{V[3]} (V)",
+            "Im{V[3]} (V)",
+            "Re{I[1]} (A)",
+            "Im{I[1]} (A)",
+            "Re{I[2]} (A)",
+            "Im{I[2]} (A)",
+            "Re{I[3]} (A)",
+            "Im{I[3]} (A)"
+        ],
+        skip_rowcount=true,
+        gridfunction_fields=true
+    )
+end
+
+reltol = 1.0e-4
 
 if "cylinder/cavity_pec" in cases
     @info "Testing cylinder/cavity (PEC)..."
