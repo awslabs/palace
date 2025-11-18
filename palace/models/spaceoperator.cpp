@@ -76,6 +76,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   // Finalize setup.
   CheckBoundaryProperties();
 
+  Mpi::Print("nd_dbc_tdof_lists.size(): {}, nd_fespaces.GetNumLevels(): {}\n", nd_dbc_tdof_lists.size(), nd_fespaces.GetNumLevels());
+
   // Print essential BC information.
   if (dbc_attr.Size())
   {

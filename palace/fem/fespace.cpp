@@ -245,18 +245,14 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
         std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]),
         *fespaces[l], *fespaces[l + 1], true);
     }
-    Mpi::Print("fespace.cpp L248\n");
   }
   else
   {
-    Mpi::Print("fespace.cpp L258 discrete linear operator\n");
+    Mpi::Print("fespace.cpp L258 discrete linear operator at level: {}\n", l);
     DiscreteLinearOperator p(*fespaces[l], *fespaces[l + 1]);
-    Mpi::Print("fespace.cpp L260\n");
     p.AddDomainInterpolator<IdentityInterpolator>();
-    Mpi::Print("fespace.cpp L262\n");
     P[l] = std::make_unique<ParOperator>(p.PartialAssemble(), *fespaces[l],
                                          *fespaces[l + 1], true);
-    Mpi::Print("fespace.cpp L265\n");
   }
 
   return *P[l];

@@ -218,7 +218,7 @@ public:
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
-    refine_ops.push_back(nullptr); // tests???
+    refine_ops.push_back(nullptr);
     rebalance_ops.push_back(nullptr);
   }
 
@@ -228,8 +228,9 @@ public:
   }
 
   void UpdateLevel(std::unique_ptr<FiniteElementSpace> &&fespace, std::unique_ptr<Operator> refine_op, std::unique_ptr<Operator> rebalance_op)
+  //void UpdateLevel(/*std::unique_ptr<FiniteElementSpace> &&fespace,*/ std::unique_ptr<Operator> refine_op, std::unique_ptr<Operator> rebalance_op)
   {
-    // Save modified fespace (needed since the rebalance op depends on it).
+    // Save modified fespace? Not sure if nreally needed...
     intermediate_fespaces.push_back(std::move(fespaces.back()));
     // Remove last fespace and refine/rebalnace operators.
     fespaces.pop_back();
@@ -239,8 +240,6 @@ public:
     fespaces.push_back(std::move(fespace));
     refine_ops.push_back(std::move(refine_op));
     rebalance_ops.push_back(std::move(rebalance_op));
-    std::cout << "inside updatelevel rank: " << Mpi::Rank(fespaces.back()->GetComm()) << " refine width/height: " << refine_ops.back()->Width() << " " << refine_ops.back()->Height() << "\n";
-    std::cout << "inside updatelevel rank: " << Mpi::Rank(fespaces.back()->GetComm()) << " rebalance width/height: " << rebalance_ops.back()->Width() << " " << rebalance_ops.back()->Height() << "\n";
   }
 
   auto &GetFESpaceAtLevel(std::size_t l, bool copy = false)

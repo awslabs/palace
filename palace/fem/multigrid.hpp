@@ -152,23 +152,102 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
       Mpi::Print("Verifying that mesh level {} is a rebalance: {}, ", l, mesh[l]->Get().GetLastOperation() == mfem::Mesh::REBALANCE);
       Mpi::Print("rebalancing and updating fespace {}\n", fe_idx);
       auto refine_op = std::make_unique<mfem::TransferOperator>(fespaces.GetFESpaceAtLevel(fe_idx - 1), fespaces.GetFESpaceAtLevel(fe_idx, true));
-      Vector t1(refine_op->Width()); Vector t2(refine_op->Height());
-      t1 = 1.0; t2 = 0.0;
-      refine_op->Mult(t1, t2); // refine_op is wrong at second AMR it between levels 1 and 2
-      Mpi::Print("before rebalance t2 min/max: {}, {}\n", t2.Min(), t2.Max());
+      mfem::ParGridFunction g1(&fespaces.GetFESpaceAtLevel(fe_idx - 1).Get()); g1 = 0.0;//g1 = fespaces.GetFESpaceAtLevel(fe_idx - 1).GetParMesh().GetMyRank() + 1;
+      mfem::ParGridFunction g2(&fespaces.GetFESpaceAtLevel(fe_idx, true).Get()); g2 = 0.0;
+      mfem::ParGridFunction g2_2(&fespaces.GetFESpaceAtLevel(fe_idx).Get()); g2_2 = 0.0;
+      //mfem::ParGridFunction g2_comp(&fespaces.GetFESpaceAtLevel(fe_idx, true).Get()); g2_comp = fespaces.GetFESpaceAtLevel(fe_idx, true).GetParMesh().GetMyRank() + 1;
+      mfem::VectorFunctionCoefficient vcoef(3, [](const Vector &x, Vector &v) {
+         v(0) = 1.0;//x(1);
+         v(1) = 2.0;//x(2);
+         v(2) = 3.0;//x(0);
+      });
+      mfem::FunctionCoefficient scoef([](const Vector &x) {
+         return x(0) + 2 * x(1) + 3 * x(2);
+      });
+      if (fecs[0]->GetRangeType(3) == mfem::FiniteElement::VECTOR)
+      {
+        Mpi::Print("Vector FiniteElementSpace!\n");
+        g1.ProjectCoefficient(vcoef);
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx - 1).GetParMesh().GetMyRank() << " g1.Size(): " << g1.Size() << " g1 min/max: " << g1.Min() << " " << g1.Max() << " g1 max error: " << g1.ComputeMaxError(vcoef) << "\n";
+        refine_op->Mult(g1, g2);
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx, true).GetParMesh().GetMyRank() << " g2.Size(): " << g2.Size() << " rebal g2 min/max: " << g2.Min() << " " << g2.Max() << " g2 max error: " << g2.ComputeMaxError(vcoef) << "\n";
+        g2_2.ProjectCoefficient(vcoef); Mpi::Print("g2_2 max error before rebalance: {}\n", g2_2.ComputeMaxError(vcoef));
+      }
+      else
+      {
+        Mpi::Print("Scalar FiniteElementSpace!\n");
+        g1.ProjectCoefficient(scoef);
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx - 1).GetParMesh().GetMyRank() << " g1.Size(): " << g1.Size() << " g1 min/max: " << g1.Min() << " " << g1.Max() << " g1 max error: " << g1.ComputeMaxError(scoef) << "\n";
+        refine_op->Mult(g1, g2);
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx, true).GetParMesh().GetMyRank() << " g2.Size(): " << g2.Size() << " rebal g2 min/max: " << g2.Min() << " " << g2.Max() << " g2 max error: " << g2.ComputeMaxError(scoef) << "\n";
+        g2_2.ProjectCoefficient(scoef); Mpi::Print("g2_2 max error before rebalance: {}\n", g2_2.ComputeMaxError(scoef));
+      }
+      //g2_comp2 -= g2_comp;
+      //g2_comp -= g2;
+      //std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx, true).GetParMesh().GetMyRank() << " g2.Size(): " << g2.Size() << " rebal g2 min/max: " << g2.Min() << " " << g2.Max() << " g2_comp min/max: " << g2_comp.Min() << " " << g2_comp.Max() << "\n";
+
+      //std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() << " g2_comp2 min/max: " << g2_comp2.Min() << " " << g2_comp2.Max() << "\n";
       Mpi::Print("GetNumLevels: {}\n", fespaces.GetNumLevels());
       Mpi::Print("fespaces.GetFESpaceAtLevel({}).GetParMesh().GetLastOperation() == REFINE: {}\n", fe_idx, fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetLastOperation() == mfem::Mesh::REFINE);
       fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().Rebalance(); // modifies the mesh associated with that fespace!
       Mpi::Print("mesh {} was modified by rebalance_op\n", copy_idx + 2 * (amr_it - fe_idx) + call_id + 1);
-      t1 = 1.0; t2 = 0.0;
-      //refine_op->Mult(t1, t2);
-      //Mpi::Print("after rebalance t2 min/max: {}, {}\n", t2.Min(), t2.Max());
       Mpi::Print("get rebalance_op\n");
       auto rebalance_op = std::unique_ptr<Operator>(const_cast<Operator*>(fespaces.GetFESpaceAtLevel(fe_idx).Get().GetUpdateOperator()));
-      Mpi::Print("SetUpdateOperatorOwner to false\n");
-      fespaces.GetFESpaceAtLevel(fe_idx).Get().SetUpdateOperatorOwner(false); // test?
-      std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
+      // Mpi::Print("SetUpdateOperatorOwner to false\n");
+      fespaces.GetFESpaceAtLevel(fe_idx).Get().SetUpdateOperatorOwner(false); // test
+      //mfem::OperatorPtr T(mfem::Operator::Hypre_ParCSR); //make sure Operator type is correct...
+      //fespaces.GetFESpaceAtLevel(fe_idx).Get().Update(); // need to call Update() otherwise T.Ptr is null?!
+      //fespaces.GetFESpaceAtLevel(fe_idx).Get().GetUpdateOperator(T);
+      //mfem::HypreParMatrix *Thm = T.Is<mfem::HypreParMatrix>();
+      //std::cout << "rank " << Mpi::Rank(mesh[l]->GetComm()) << " T.Ptr() != nullptr: " << (T.Ptr() != nullptr) <<  " Thm != nullptr: " << (Thm != nullptr) << "\n";
+      //std::unique_ptr<Operator> rebalance_op;
+      //T.SetOperatorOwner(false); // should it be before or after assigning T.Ptr() to rebalance_op?
+      //rebalance_op.reset(T.Ptr());
+      //rebalance_op.reset(Thm);
+      std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " GetNE: " << mesh[l]->GetNE() << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
                 << " rebalance width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
+      mfem::ParGridFunction g3(&fespaces.GetFESpaceAtLevel(fe_idx).Get()); g3 = 0.0;
+      //mfem::ParGridFunction g3_comp(&fespaces.GetFESpaceAtLevel(fe_idx).Get()); g3_comp = fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() + 1;
+      //std::cout << "before rebalance_op->Mult rank: " << Mpi::Rank(mesh[l]->GetComm()) << "\n";
+      rebalance_op->Mult(g2, g3);
+      if (fecs[0]->GetRangeType(3) == mfem::FiniteElement::VECTOR)
+      {
+        g2_2.Update(); Mpi::Print("g2_2 max error after rebalance and update: {}\n", g2_2.ComputeMaxError(vcoef));
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() << " after rebal g3 min/max: " << g3.Min() << " " << g3.Max() << " g3 max error: " << g3.ComputeMaxError(vcoef) << "\n";
+      }
+      else
+      {
+        g2_2.Update(); Mpi::Print("g2_2 max edrror after rebalance and update: {}\n", g2_2.ComputeMaxError(scoef));
+        std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() << " after rebal g3 min/max: " << g3.Min() << " " << g3.Max() << " g3 max error: " << g3.ComputeMaxError(scoef) << "\n";
+      }
+      //std::cout << "after rebalance_op->Mult rank: " << Mpi::Rank(mesh[l]->GetComm()) << "\n";
+      //g3_comp -= g3;
+      //std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() << " after rebal g3 min/max: " << g3.Min() << " " << g3.Max() << " g3_comp min/max: " << g3_comp.Min() << " " << g3_comp.Max() << "\n";
+
+      Mpi::Print("Compare rebalanced meshes\n");
+      // Compare element counts per rank
+      int local_elements1 = mesh[l]->Get().GetNE();
+      int local_elements2 = fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetNE();
+      // Get global element numbering
+      mfem::Array<int> global_elem_ids1, global_elem_ids2;
+      mesh[l]->Get().GetGlobalElementIndices(global_elem_ids1);
+      fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetGlobalElementIndices(global_elem_ids2);
+      // Compare on each rank
+      bool identical = (local_elements1 == local_elements2);
+      if (identical && local_elements1 > 0) {
+        for (int i = 0; i < local_elements1; i++) {
+          if (global_elem_ids1[i] != global_elem_ids2[i]) {
+              identical = false;
+              break;
+          }
+        }
+      }
+      // Gather results across all ranks
+      int local_match = identical ? 1 : 0;
+      int global_match;
+      MPI_Allreduce(&local_match, &global_match, 1, MPI_INT, MPI_LAND, mesh[l]->GetComm());
+      Mpi::Print("Rebalanced meshes partionings are identical: {}\n", global_match);
+
       fespaces.UpdateLevel(
         std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()),
         std::move(refine_op),
@@ -198,6 +277,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   // p-refinement.
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
+    //fespaces.AddLevel(std::make_unique<FiniteElementSpace>(fespaces.GetFESpaceAtLevel(fe_idx-1).GetMesh(), fecs[l].get()));
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh.back(), fecs[l].get()));
     if (dbc_attr && dbc_tdof_lists)
     {

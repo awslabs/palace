@@ -200,6 +200,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
+      // TO DO: test uniform refinement instead of adaptive refinment?
       int n_copies = 2 * (refinement.max_it - (it - 1)) + 1;
       Mpi::Print("Stupidly looping over the refine step {} times to get multiple copies of the same mesh LOL\n", n_copies);
       size_t mesh_size = mesh.size();
@@ -233,6 +234,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         Mpi::Print("Last mesh operation is refine: {}, is rebalance: {}\n", fine_mesh.GetLastOperation() == mfem::Mesh::REFINE, fine_mesh.GetLastOperation() == mfem::Mesh::REBALANCE);
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      //fine_mesh.UniformRefinement(); // test uniform ref instead of adaptive
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
@@ -267,7 +269,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         // Delete duplicate mesh if no rebalance
         mesh.pop_back();
       }
-      /**/
+
       Mpi::Print("calling update after rebalance\n");
       mesh.back()->Update();
       //for (int i = 0; i < mesh.size(); i++)
