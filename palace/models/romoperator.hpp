@@ -134,7 +134,8 @@ public:
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  void UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                  double drop_degenerate_vector_norm_tol = 0.0);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.

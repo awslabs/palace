@@ -63,5 +63,5 @@ TEST_CASE("PortOrthogonalityAdaptivePROM", "[driven_solver][Serial][Parallel]")
                       utils::ConfigureOmp(), ""};
   CHECK_THROWS(solver.SolveEstimateMarkRefine(mesh_),
                Catch::Matchers::ContainsSubstring(
-                   "Lumped port modes should have exactly zero overlap"));
+                   "should have exactly zero overlap"));
 }
