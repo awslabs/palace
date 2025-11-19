@@ -324,6 +324,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
   : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
 {
+  // Always use refined CGS with adaptive synthesis for higher accuracy on print-out.
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    orthog_type = Orthogonalization::CGS2;
+  }
+
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogeneous, no special elimination is required on
@@ -429,19 +435,48 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
 void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
 {
-  auto &lumped_port_op = space_op.GetLumpedPortOp();
-  for (const auto &[port_idx, port_data] : lumped_port_op)
+  // Add modes for lumped port to use them a circuit matrices.
+  //
+  // The excitation vector that we expect to add to the PROM is just the primary vector e
+  // associated with that port. However, when computing the response (scattering) matrix, we
+  // have an overlap g * e, where g is the boundary bilinear form. For Nédélec elements e
+  // and g * e are not proportional to each other. This is true on simple tet meshes, for
+  // simple hex meshes they are equal empirically, but this was not tested generally (e.g.
+  // on non-conforming meshes).
+  //
+  // To preserve orthogonality while also extracting the "full" port profile, we add both to
+  // the PROM — first g * e and then e (orthogonalized to g * e), which accounts for a
+  // "finite element correction". When e and g * e are the same, we should only add a single
+  // vector to the PROM.
+
+  // Workspace vector: Lumped Ports are Real, but interface is complex.
+  ComplexVector vec;
+  vec.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  vec.UseDevice(true);
+  vec = 0.0;
+
+  // Add all dual vectors first: we want this port to be orthogonal to the outside world and
+  // check orthogonality internally.
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
-    ComplexVector port_excitation_E;
-    port_excitation_E.UseDevice(true);
-    space_op.GetLumpedPortExcitationVector(port_idx, port_excitation_E, true);
-    UpdatePROM(port_excitation_E, fmt::format("port_{:d}", port_idx));
+    space_op.GetLumpedPortExcitationVectorDual(port_idx, vec, true);
+    UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
 
   // Check that the ports don't have any overlap.
   MFEM_VERIFY(orth_R.isDiagonal(),
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
+
+  // Add primary vector second, since this needs to be orthogonalized to the dual
+  // "outside" vector.
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    space_op.GetLumpedPortExcitationVectorPrimary(port_idx, vec, true);
+    // Drop if primary vector is same as dual vector.
+    auto orthog_condition = ORTHOG_TOL * linalg::Norml2(space_op.GetComm(), vec.Real());
+    UpdatePROM(vec, fmt::format("port_{:d}_correction", port_idx), orthog_condition);
+  }
 
   // // Debug Print
   // if constexpr (false)
@@ -452,7 +487,8 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   // }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                             double drop_degenerate_vector_norm_tol)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
@@ -466,30 +502,44 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  const std::size_t dim_V_new =
+  std::size_t dim_V_new =
       V.size() + static_cast<std::size_t>(has_real) + static_cast<std::size_t>(has_imag);
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
-  auto add_real_vector_to_basis = [this](const Vector &vector)
+  auto add_real_vector_to_basis = [this, drop_degenerate_vector_norm_tol](
+                                      const Vector &vector, std::string_view node_label)
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
     OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
                         dim_V);
     orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    if (orth_R(dim_V, dim_V) < drop_degenerate_vector_norm_tol)
+    {
+      V.pop_back();
+      return false;
+    }
     v *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(node_label);
+    return true;
   };
 
   if (has_real)
   {
-    add_real_vector_to_basis(u.Real());
-    v_node_label.emplace_back(fmt::format("{}_re", node_label));
+    add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label));
   }
   if (has_imag)
   {
-    add_real_vector_to_basis(u.Imag());
-    v_node_label.emplace_back(fmt::format("{}_im", node_label));
+    add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
+  }
+
+  // Vectors might have been dropped due to orthogonality check.
+  dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);  // Might shrink
+  if (dim_V_new == dim_V_old)
+  {
+    return;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
