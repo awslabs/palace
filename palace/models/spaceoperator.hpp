@@ -220,6 +220,11 @@ public:
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
 
+  bool GetLumpedPortExcitationVectorPrimary(int port_idx, ComplexVector &RHS_primary,
+                                            bool zero_metal);
+  bool GetLumpedPortExcitationVectorDual(int port_idx, ComplexVector &RHS_dual,
+                                         bool zero_metal);
+
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.
   void GetRandomInitialVector(ComplexVector &v);

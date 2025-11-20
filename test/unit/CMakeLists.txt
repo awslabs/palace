@@ -27,12 +27,15 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-drivensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
@@ -52,6 +55,7 @@ target_link_libraries(unit-tests
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
   ${CMAKE_SOURCE_DIR}/fem/libceed/operator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
