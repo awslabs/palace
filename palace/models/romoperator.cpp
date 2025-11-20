@@ -622,14 +622,30 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
   // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
-  //
-  // In more detail: there are two normalizations  associated with ports: alpha & beta in
-  // the notation of Marks and Williams  "A General Waveguide Circuit Theory" [J. Res. Natl.
-  // Inst. Stand. Technol. 97, 533 (1992)]. "alpha" is the normalization power through the
-  // port mode. Palace defines the input power to be normalized to 1 (see
-  // LumpedPortData::GetExcitationPower). "beta" is the normalization convention of the port
-  // voltage \beta * v_0 and current i_0 / \beta^* at constant power.
-  auto v_d = orth_R.diagonal().cwiseInverse().asDiagonal();
+
+  // TODO(C++23): Replace this with std::ranges::starts_with instead.
+  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
+  {
+    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
+  };
+
+  // De-normalize port voltages. Define so that 1.0 on port i corresponds to full
+  // (un-normalized solution).
+  // TODO: Add extra shape factor
+  Eigen::VectorXd v_conc(v_node_label.size());
+  for (long j = 0; j < v_node_label.size(); j++)
+  {
+    if (starts_with(v_node_label[j], "port"))
+    {
+      v_conc[j] = orth_R(j, j);
+    }
+    else
+    {
+      v_conc[j] = 1.0;
+    }
+  }
+  // Lazy diagonal representation of inverse.
+  auto v_d = v_conc.cwiseInverse().asDiagonal();
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
   // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
