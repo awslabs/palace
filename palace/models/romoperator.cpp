@@ -443,7 +443,7 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   }
 
   // Debug Print ROM Matrices
-  if constexpr (true)  // ignore
+  if constexpr (false)  // ignore
   {
     fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
     fs::create_directories(folder_tmp);
@@ -453,7 +453,6 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   const auto &orth_R = GetRomOrthogonalityMatrix();
   MFEM_VERIFY(orth_R.isDiagonal(), "Lumped port modes should have exactly zero overlap.");
 }
-
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
