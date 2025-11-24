@@ -55,8 +55,9 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   {
     if (complex_matrix)
     {
-      // A = [Ar, -Ai]
-      //     [Ai,  Ar]
+      // A = [Ar, Ai]
+      //     [Ai, -Ar]
+      // We solve A [xr; -xi] = [br; bi]
       mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
       mfem::Array2D<double> block_coeffs(2, 2);
       blocks(0, 0) = hAr;
@@ -64,9 +65,9 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       blocks(1, 0) = hAi;
       blocks(1, 1) = hAr;
       block_coeffs(0, 0) = 1.0;
-      block_coeffs(0, 1) = -1.0;
+      block_coeffs(0, 1) = 1.0;
       block_coeffs(1, 0) = 1.0;
-      block_coeffs(1, 1) = 1.0;
+      block_coeffs(1, 1) = -1.0;
       A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
     }
     else
@@ -168,6 +169,8 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
     Y.ReadWrite();
     yr.MakeRef(Y, 0, Ny);
     yi.MakeRef(Y, Ny, Ny);
+    // [yr; yi] is the complex conjugate of the solution
+    yi *= -1.0;
     y.Real() = yr;
     y.Imag() = yi;
   }
