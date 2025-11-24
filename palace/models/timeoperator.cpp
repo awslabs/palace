@@ -217,7 +217,7 @@ public:
 
     // k3 = rhs3 - dt curl k2
     k3 = RHS3;
-    Curl.AddMult(k2, RHS3, -dt);
+    Curl.AddMult(k2, k3, -dt);
   }
 
   void ExplicitMult(const Vector &u, Vector &v) const override { Mult(u, v); }
