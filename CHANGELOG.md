@@ -76,6 +76,9 @@ The format of this changelog is based on
   - Fixed units of energy. Results were incorrectly reported in joules, while the correct
     unit was nanojoules. Results are now correctly in joules. [PR
     541](https://github.com/awslabs/palace/pull/541).
+  - Fixed a bug in transient solver implicit formulation affecting the magnetic flux density fields computed with
+    `"GeneralizedAlpha"` or `"RungeKutta"` transient solver types (`config["Solver"]["Transient"]["Type"]`)
+    [PR 568](https://github.com/awslabs/palace/pull/568).
 
 ## [0.14.0] - 2025-08-20
 
