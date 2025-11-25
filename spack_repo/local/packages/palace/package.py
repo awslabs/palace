@@ -83,7 +83,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis~cuda~rocm")
+        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist~cuda", when="~cuda")
+        depends_on("superlu-dist~rocm", when="~rocm")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -93,7 +95,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("+strumpack"):
         depends_on("fortran", type="build")
-        depends_on("strumpack+butterflypack+zfp+parmetis~cuda~rocm")
+        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack~cuda", when="~cuda")
+        depends_on("strumpack~rocm", when="~rocm")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
@@ -195,6 +199,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
             depends_on(f"slepc{cuda_variant}", when=f"+slepc{cuda_variant}")
             depends_on(f"petsc{cuda_variant}", when=f"+slepc{cuda_variant}")
+            depends_on(f"superlu-dist{cuda_variant}", when=f"+superlu-dist{cuda_variant}")
+            depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
         for arch in ROCmPackage.amdgpu_targets:
@@ -205,6 +211,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
             depends_on(f"slepc{rocm_variant}", when=f"+slepc{rocm_variant}")
             depends_on(f"petsc{rocm_variant}", when=f"+slepc{rocm_variant}")
+            depends_on(f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}")
+            depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
+
 
     with when("+tests"):
             depends_on("catch2@3:")
