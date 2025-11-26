@@ -873,7 +873,7 @@ bool SpaceOperator::GetLumpedPortExcitationVectorPrimary(int port_idx,
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs.Real(), RHS_primary.Real());
   if (zero_metal)
   {
-    linalg::SetSubVector(RHS_primary.Real(), nd_dbc_tdof_lists.back(), 0.0);
+    linalg::SetSubVector(RHS_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
   return true;
 }
@@ -913,7 +913,7 @@ bool SpaceOperator::GetLumpedPortExcitationVectorDual(int port_idx, ComplexVecto
 
   if (zero_metal)
   {
-    linalg::SetSubVector(RHS_dual.Real(), nd_dbc_tdof_lists.back(), 0.0);
+    linalg::SetSubVector(RHS_dual.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
   return true;
 }
