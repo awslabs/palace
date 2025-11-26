@@ -39,6 +39,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
 )
 
 # Set output name for installed binary
