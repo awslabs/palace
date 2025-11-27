@@ -5,9 +5,13 @@
 
 #include <Eigen/SVD>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "linalg/orthog.hpp"
+#include "linalg/rap.hpp"
+#include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -33,22 +37,58 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
 template <typename VecType, typename ScalarType>
-inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
+inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm, Operator *weight,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
                                 int j)
 {
   // Orthogonalize w against the leading j columns of V.
-  switch (type)
+  if (weight == nullptr)
   {
-    case Orthogonalization::MGS:
-      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
-      break;
-    case Orthogonalization::CGS:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
-      break;
-    case Orthogonalization::CGS2:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
-      break;
+    switch (type)
+    {
+      case Orthogonalization::MGS:
+        linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
+        break;
+      case Orthogonalization::CGS:
+        linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
+        break;
+      case Orthogonalization::CGS2:
+        linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
+        break;
+    }
+  }
+  else
+  {
+    // Need temporary weight — just copy existing vector.
+    VecType temp_v = w;
+    switch (type)
+    {
+      case Orthogonalization::MGS:
+        linalg::OrthogonalizeColumnMGSWeighted(comm, *weight, V, w, Rj, j, temp_v);
+        break;
+      case Orthogonalization::CGS:
+        linalg::OrthogonalizeColumnCGSWeighted(comm, *weight, V, w, Rj, j, temp_v);
+        break;
+      case Orthogonalization::CGS2:
+        linalg::OrthogonalizeColumnCGSWeighted(comm, *weight, V, w, Rj, j, temp_v, true);
+        break;
+    }
+  }
+}
+
+// Weight should be a Hermitian operator so that norm is real.
+template <typename VecType>
+inline auto Norml2Weighted(MPI_Comm comm, Operator *weight, const VecType &x)
+{
+  if (weight == nullptr)
+  {
+    return linalg::Norml2(comm, x);
+  }
+  else
+  {
+    VecType x_tmp = x;
+    weight->Mult(x, x_tmp);
+    return std::sqrt(std::abs(linalg::Dot(comm, x, x_tmp)));
   }
 }
 
@@ -210,7 +250,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
   }
-  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  OrthogonalizeColumn(orthog_type, comm, nullptr, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
@@ -360,6 +400,77 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
+
+    // Build inner-product weight matrix. This is essential the mass matrix of the domain
+    // and port boundaries summed together. However, we zero out the domain mass matrix on
+    // the dof of the boundary, for correct boundary orthogonality. Additionally, we don't
+    // weight by material coefficients so that is fully real and corresponds to to full
+    // space overlap (except excised bulk part).
+
+    // Use Palace material machinery for ceed construction put trivialize to get direct
+    // overlap.
+
+    const auto &mat_op = space_op.GetMaterialOp();
+
+    // Ports:
+    BilinearForm w_port(space_op.GetNDSpace());
+    // To zero out true dof corresponding to attrs in bulk
+    mfem::Array<int> port_attr_list, port_tdof_list;
+    {
+      MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
+      for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+      {
+        for (const auto &elem : data.elems)
+        {
+          fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
+                                      1.0);
+          port_attr_list.Append(elem->GetAttrList());
+        }
+      }
+      w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+    }
+    auto W_port =
+        std::make_unique<ParOperator>(w_port.Assemble(false), space_op.GetNDSpace());
+    W_inner_product_weight_port = std::move(W_port);
+
+    // Convert port_attr_list into essential tdof
+    int bdr_attr_max = space_op.GetMesh().Get().bdr_attributes.Size()
+                           ? space_op.GetMesh().Get().bdr_attributes.Max()
+                           : 0;
+    auto port_attr_marker = mesh::AttrToMarker(bdr_attr_max, port_attr_list);
+    space_op.GetNDSpace().Get().GetEssentialTrueDofs(port_attr_marker, port_tdof_list);
+
+    // Bulk:
+    // (CHECK(phdum): This should have support on every degree of freedom).
+    BilinearForm w_bulk(space_op.GetNDSpace());
+    {
+      MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
+      mfem::DenseTensor eps_id = mat_op.GetPermittivityReal();
+      eps_id = 0.0;
+      for (size_t k = 0; k < eps_id.SizeK(); k++)
+      {
+        for (std::size_t i = 0; i < eps_id.SizeI(); i++)
+        {
+          eps_id(i, i, k) = 1.0;
+        }
+      }
+
+      f_bulk.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
+      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
+    }
+    auto W_bulk =
+        std::make_unique<ParOperator>(w_bulk.Assemble(false), space_op.GetNDSpace());
+
+    // Zero out port dofs. Don't need to zero of PEC, since vectors entering inner product
+    // should already have the PEC contribution removed.
+    W_bulk->SetEssentialTrueDofs(port_tdof_list, Operator::DIAG_ZERO);
+    W_inner_product_weight_bulk = std::move(W_bulk);
+
+    // These are the usual PEC. Should not be needed since vectors entering inner
+    // product satisfy PEC.
+    W_inner_product_weight = BuildParSumOperator(
+        {1.0, 1.0}, {W_inner_product_weight_bulk.get(), W_inner_product_weight_port.get()},
+        false);
   }
 
   // Reserve empty vectors.
@@ -382,8 +493,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
     return;
   }
 
-  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
-  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
+  // Set up RHS vector (linear in frequency part) for the incident field at port
+  // boundaries, and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
   has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
   if (!has_RHS1)
@@ -442,16 +553,16 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   // Add modes for lumped port to use them a circuit matrices.
   //
   // The excitation vector that we expect to add to the PROM is just the primary vector e
-  // associated with that port. However, when computing the response (scattering) matrix, we
-  // have an overlap g * e, where g is the boundary bilinear form. For Nédélec elements e
-  // and g * e are not proportional to each other. This is true on simple tet meshes, for
-  // simple hex meshes they are equal empirically, but this was not tested generally (e.g.
-  // on non-conforming meshes).
+  // associated with that port. However, when computing the response (scattering) matrix,
+  // we have an overlap g * e, where g is the boundary bilinear form. For Nédélec elements
+  // e and g * e are not proportional to each other. This is true on simple tet meshes,
+  // for simple hex meshes they are equal empirically, but this was not tested generally
+  // (e.g. on non-conforming meshes).
   //
-  // To preserve orthogonality while also extracting the "full" port profile, we add both to
-  // the PROM — first g * e and then e (orthogonalized to g * e), which accounts for a
-  // "finite element correction". When e and g * e are the same, we should only add a single
-  // vector to the PROM.
+  // To preserve orthogonality while also extracting the "full" port profile, we add both
+  // to the PROM — first g * e and then e (orthogonalized to g * e), which accounts for a
+  // "finite element correction". When e and g * e are the same, we should only add a
+  // single vector to the PROM.
 
   // Workspace vector: Lumped Ports are Real, but interface is complex.
   ComplexVector vec;
@@ -459,11 +570,11 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   vec.UseDevice(true);
   vec = 0.0;
 
-  // Add all dual vectors first: we want this port to be orthogonal to the outside world and
-  // check orthogonality internally.
+  // Add primary port vectors. Weight matrix for PROM orthogonalisation is
+  // hybrid bulk-boundary.
   for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
-    space_op.GetLumpedPortExcitationVectorDual(port_idx, vec, true);
+    space_op.GetLumpedPortExcitationVectorPrimary(port_idx, vec, true);
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
 
@@ -471,16 +582,6 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   MFEM_VERIFY(orth_R.isDiagonal(),
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
-
-  // Add primary vector second, since this needs to be orthogonalized to the dual
-  // "outside" vector.
-  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
-  {
-    space_op.GetLumpedPortExcitationVectorPrimary(port_idx, vec, true);
-    // Drop if primary vector is same as dual vector.
-    auto orthog_condition = ORTHOG_TOL * linalg::Norml2(space_op.GetComm(), vec.Real());
-    UpdatePROM(vec, fmt::format("port_{:d}_correction", port_idx), orthog_condition);
-  }
 
   // // Debug Print
   // if constexpr (false)
@@ -516,9 +617,10 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
-    OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
-                        dim_V);
-    orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    OrthogonalizeColumn(orthog_type, space_op.GetComm(), W_inner_product_weight.get(), V, v,
+                        orth_R.col(dim_V).data(), dim_V);
+    orth_R(dim_V, dim_V) =
+        Norml2Weighted(space_op.GetComm(), W_inner_product_weight.get(), v);
     if (orth_R(dim_V, dim_V) < drop_degenerate_vector_norm_tol)
     {
       V.pop_back();
@@ -672,8 +774,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     out.WriteFullTableTrunc();
   };
 
-  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on port
-  // i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C directly.
+  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on
+  // port i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C
+  // directly.
 
   // TODO(C++23): Replace this with std::ranges::starts_with instead.
   auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
@@ -699,8 +802,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // Lazy diagonal representation of inverse.
   auto v_d = v_conc.cwiseInverse().asDiagonal();
 
-  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is a
-  // nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
+  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is
+  // a nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 
   auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
@@ -733,6 +836,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
   print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
+
+  // Debug Print Boundary overlap
 }
 
 }  // namespace palace
