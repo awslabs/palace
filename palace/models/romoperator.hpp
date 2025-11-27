@@ -68,6 +68,12 @@ private:
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
 
+  // Weight operator for PROM basis if doing synthesis, in order to have correct
+  // orthogonality to port vectors and converge with mesh / order. Default nullptr.
+  std::unique_ptr<Operator> W_inner_product_weight_bulk = {};
+  std::unique_ptr<Operator> W_inner_product_weight_port = {};
+  std::unique_ptr<Operator> W_inner_product_weight = {};
+
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
