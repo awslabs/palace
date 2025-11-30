@@ -37,7 +37,7 @@ else
     cases = [
         "spheres",
         "rings",
-        "antenna",
+        "antenna/antenna_halfwave_dipole",
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -197,12 +197,12 @@ end
 reltol = 2.0e-2
 abstol = 1.0e-10
 
-if "antenna" in cases
-    @info "Testing antenna..."
+if "antenna/antenna_halfwave_dipole" in cases
+    @info "Testing antenna/antenna_halfwave_dipole"
     @time testcase(
         "antenna",
-        "antenna.json",
-        "";
+        "antenna_halfwave_dipole.json",
+        "antenna_halfwave_dipole";
         palace=palace,
         np=numprocs,
         rtol=reltol,
