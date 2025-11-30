@@ -83,7 +83,7 @@ aligned on the xz-plane and spans the diameter of the cylindrical conductors.
 ## Configuration File
 
 The configuration file for the *Palace* simulation is found in
-[`antenna.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna.json).
+[`antenna_halfwave_dipole.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_halfwave_dipole.json).
 The simulation is performed in the frequency domain using the `"Driven"` solver
 type, operating at a single frequency of ``0.0749\text{ GHz}``.
 
