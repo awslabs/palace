@@ -329,9 +329,11 @@ namespace
 // size k, returning a ComplexVector of size n.
 ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y)
 {
-  MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of input vectors!");
-  const size_t k = X.size();
-  const size_t n = X[0].Size();
+  // Cast to avoid compiler warnings about types.
+  MFEM_ASSERT(static_cast<Eigen::Index>(X.size()) == y.size(),
+              "Mismatch in dimension of input vectors!");
+  const int k = X.size();
+  const int n = X[0].Size();
   const bool use_dev = X[0].UseDevice();
   ComplexVector z;
   z.SetSize(n);

@@ -133,7 +133,7 @@ protected:
   bool ShouldWriteFields() const { return AnyOutputFormats() && AnythingToSave(); }
 
   // Whether any fields should be written for this step.
-  bool ShouldWriteFields(std::size_t step) const
+  bool ShouldWriteFields(int step) const
   {
     return AnyOutputFormats() &&
            ((output_delta_post > 0 && step % output_delta_post == 0) ||
@@ -147,7 +147,7 @@ protected:
   {
     return enable_paraview_output && AnythingToSave();
   }
-  bool ShouldWriteParaviewFields(std::size_t step) const
+  bool ShouldWriteParaviewFields(int step) const
   {
     return enable_paraview_output && ShouldWriteFields(step);
   }
@@ -155,7 +155,7 @@ protected:
   {
     return enable_gridfunction_output && AnythingToSave();
   }
-  bool ShouldWriteGridFunctionFields(std::size_t step) const
+  bool ShouldWriteGridFunctionFields(int step) const
   {
     return enable_gridfunction_output && ShouldWriteFields(step);
   }
