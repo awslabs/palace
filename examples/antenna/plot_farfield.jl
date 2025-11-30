@@ -126,16 +126,18 @@ end
 Return angles and patterns for theoretical dipole radiation pattern.
 
 Arguments:
-    model_type - "antenna_short_dipole" for electrical current dipole or "antenna_halfwave_dipole" for half-wave dipole
+model_type - "antenna_short_dipole" for electrical current dipole or "antenna_halfwave_dipole" for half-wave dipole
 
 For antenna_short_dipole (z-oriented electrical current dipole):
 Based on geosci.xyz far-field analytical solution for z-oriented dipole.
-- E-plane (xz): |E_θ|² ∝ |sin(θ)|² (nulls along dipole axis, maxima perpendicular)
-- H-plane (xy): |H_φ|² ∝ constant (omnidirectional)
+
+  - E-plane (xz): |E_θ|² ∝ |sin(θ)|² (nulls along dipole axis, maxima perpendicular)
+  - H-plane (xy): |H_φ|² ∝ constant (omnidirectional)
 
 For antenna_halfwave_dipole:
-- E-plane: [cos(π/2 * cos(θ)) / sin(θ)]²
-- H-plane: omnidirectional (constant)
+
+  - E-plane: [cos(π/2 * cos(θ)) / sin(θ)]²
+  - H-plane: omnidirectional (constant)
 """
 function generate_theoretical_dipole(model_type="antenna_halfwave_dipole")
     angles = 0:360
@@ -161,7 +163,9 @@ function generate_theoretical_dipole(model_type="antenna_halfwave_dipole")
             end
         end
     else
-        error("Unknown model_type: $model_type. Use 'antenna_short_dipole' or 'antenna_halfwave_dipole'")
+        error(
+            "Unknown model_type: $model_type. Use 'antenna_short_dipole' or 'antenna_halfwave_dipole'"
+        )
     end
 
     # H-plane: omnidirectional
@@ -175,7 +179,12 @@ end
 
 Plot the polar radiation patterns and the expected dipole pattern.
 """
-function polar_plots(data, label, model_type="halfwave_dipole", filename="farfield_polar.png")
+function polar_plots(
+    data,
+    label,
+    model_type="halfwave_dipole",
+    filename="farfield_polar.png"
+)
     e_angles, e_mag = extract_eplane(data)
     h_angles, h_mag = extract_hplane(data)
 
@@ -294,8 +303,12 @@ function main()
                 has_file = true
             else
                 println("Error: Invalid argument '$arg'")
-                println("Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]")
-                println("Valid model types: 'antenna_short_dipole', 'antenna_halfwave_dipole'")
+                println(
+                    "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+                )
+                println(
+                    "Valid model types: 'antenna_short_dipole', 'antenna_halfwave_dipole'"
+                )
                 println("Examples:")
                 println("  julia plot_farfield.jl")
                 println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
@@ -305,8 +318,12 @@ function main()
 
         # Ensure both arguments were provided
         if !has_model || !has_file
-            println("Error: If arguments are provided, both model= and file= must be specified")
-            println("Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]")
+            println(
+                "Error: If arguments are provided, both model= and file= must be specified"
+            )
+            println(
+                "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+            )
             println("Examples:")
             println("  julia plot_farfield.jl")
             println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
@@ -314,7 +331,9 @@ function main()
         end
     else
         println("Error: If arguments are provided, both model= and file= must be specified")
-        println("Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
         println("Examples:")
         println("  julia plot_farfield.jl")
         println("  julia plot_farfield.jl model=antenna_short_dipole file=data.csv")
@@ -324,13 +343,17 @@ function main()
     if !(model_type in ["antenna_short_dipole", "antenna_halfwave_dipole"])
         println("Error: Invalid model_type '$model_type'")
         println("Valid options: 'antenna_short_dipole', 'antenna_halfwave_dipole'")
-        println("Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
         return
     end
 
     if !isfile(filename)
         println("Error: File '$filename' not found")
-        println("Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]")
+        println(
+            "Usage: julia --project plot_farfield.jl [model=<model_type> file=<filename>]"
+        )
         return
     end
 
