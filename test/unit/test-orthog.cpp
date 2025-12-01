@@ -8,6 +8,7 @@
 #include <catch2/matchers/catch_matchers_vector.hpp>
 
 #include <complex>
+#include <memory>
 #include <vector>
 
 #include "linalg/operator.hpp"
@@ -31,7 +32,7 @@ public:
   template <typename VecType, typename ScalarType,
             typename InnerProductW = linalg::InnerProductStandard>
   void operator()(MPI_Comm comm, const std::vector<VecType> &V, VecType &w, ScalarType *H,
-                  int m, const InnerProductW &dot_op = {}) const
+                  std::size_t m, const InnerProductW &dot_op = {}) const
   {
     switch (orthgo_type)
     {
