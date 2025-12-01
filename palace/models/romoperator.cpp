@@ -43,17 +43,17 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 int j, const InnerProductW &dot_op = {})
 {
   // Orthogonalize w against the leading j columns of V.
-    switch (type)
-    {
-      case Orthogonalization::MGS:
+  switch (type)
+  {
+    case Orthogonalization::MGS:
       linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j, dot_op);
-        break;
-      case Orthogonalization::CGS:
+      break;
+    case Orthogonalization::CGS:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, false, dot_op);
-        break;
-      case Orthogonalization::CGS2:
+      break;
+    case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true, dot_op);
-        break;
+      break;
   }
 }
 
@@ -395,24 +395,26 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
     // Ports:
     BilinearForm w_port(space_op.GetNDSpace());
+    MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
     // To zero out true dof corresponding to attrs in bulk
-    mfem::Array<int> port_attr_list, port_tdof_list;
+    mfem::Array<int> port_attr_list{}, port_tdof_list{};
+
+    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
     {
-      MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
-      for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+      for (const auto &elem : data.elems)
       {
-        for (const auto &elem : data.elems)
-        {
-          fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                                      1.0);
-          port_attr_list.Append(elem->GetAttrList());
-        }
+        fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
+                                    1.0);
+        port_attr_list.Append(elem->GetAttrList());
       }
-      w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
     }
-    auto W_port =
-        std::make_unique<ParOperator>(w_port.Assemble(false), space_op.GetNDSpace());
-    W_inner_product_weight_port = std::move(W_port);
+    MFEM_VERIFY(
+        !fb_port.empty(),
+        "Internal error, can't have adaptive_circuit_synthesis without lumped ports.")
+    w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+    auto w_port_assemble = w_port.Assemble(false);
+    auto w_port_assemble_parop =
+        std::make_unique<ParOperator>(std::move(w_port_assemble), space_op.GetNDSpace());
 
     // Convert port_attr_list into essential tdof
     int bdr_attr_max = space_op.GetMesh().Get().bdr_attributes.Size()
@@ -422,36 +424,27 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     space_op.GetNDSpace().Get().GetEssentialTrueDofs(port_attr_marker, port_tdof_list);
 
     // Bulk:
-    // (CHECK(phdum): This should have support on every degree of freedom).
     BilinearForm w_bulk(space_op.GetNDSpace());
+    MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
+    mfem::DenseTensor eps_id = mat_op.GetPermittivityReal();
+    eps_id = 0.0;
+    for (int k = 0; k < eps_id.SizeK(); k++)
     {
-      MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
-      mfem::DenseTensor eps_id = mat_op.GetPermittivityReal();
-      eps_id = 0.0;
-      for (size_t k = 0; k < eps_id.SizeK(); k++)
+      for (int i = 0; i < eps_id.SizeI(); i++)
       {
-        for (std::size_t i = 0; i < eps_id.SizeI(); i++)
-        {
-          eps_id(i, i, k) = 1.0;
-        }
+        eps_id(i, i, k) = 1.0;
       }
-
-      f_bulk.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
-      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
     }
-    auto W_bulk =
-        std::make_unique<ParOperator>(w_bulk.Assemble(false), space_op.GetNDSpace());
 
-    // Zero out port dofs. Don't need to zero of PEC, since vectors entering inner product
-    // should already have the PEC contribution removed.
-    W_bulk->SetEssentialTrueDofs(port_tdof_list, Operator::DIAG_ZERO);
-    W_inner_product_weight_bulk = std::move(W_bulk);
+    f_bulk.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
+    w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
+    auto w_bulk_assemble = w_bulk.Assemble(false);
+    auto w_bulk_assemble_parop =
+        std::make_unique<ParOperator>(std::move(w_bulk_assemble), space_op.GetNDSpace());
 
-    // These are the usual PEC. Should not be needed since vectors entering inner
-    // product satisfy PEC.
-    W_inner_product_weight = BuildParSumOperator(
-        {1.0, 1.0}, {W_inner_product_weight_bulk.get(), W_inner_product_weight_port.get()},
-        false);
+    // Zero out port dofs of bulk in ctor.
+    weight_op_W = {std::move(port_tdof_list), std::move(w_bulk_assemble_parop),
+                   std::move(w_port_assemble_parop)};
   }
 
   // Reserve empty vectors.
@@ -468,7 +461,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
   // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
-  // excitation index, so this is triggered the first time it is called in drivensolver.
+  // excitation index, so this is triggered the first time it is called in drivensolver.cpp.
   if (excitation_idx_cache == excitation_idx)
   {
     return;
@@ -598,10 +591,22 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
-    OrthogonalizeColumn(orthog_type, space_op.GetComm(), W_inner_product_weight.get(), V, v,
-                        orth_R.col(dim_V).data(), dim_V);
-    orth_R(dim_V, dim_V) =
-        Norml2Weighted(space_op.GetComm(), W_inner_product_weight.get(), v);
+    if (weight_op_W.has_value())
+    {
+      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
+                          dim_V, *weight_op_W);
+
+      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
+    }
+    else
+    {
+      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
+                          dim_V);
+      orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    }
+
+    // Don't add the same exact vector multiple times.
     if (orth_R(dim_V, dim_V) < drop_degenerate_vector_norm_tol)
     {
       V.pop_back();
