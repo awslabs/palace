@@ -4,7 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 

@@ -3,9 +3,13 @@
 
 #include "romoperator.hpp"
 
-#include <Eigen/SVD>
+#include <memory>
+#include <utility>
+// #include <Eigen/SVD>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
@@ -40,7 +44,7 @@ template <typename VecType, typename ScalarType,
           typename InnerProductW = linalg::InnerProductStandard>
 inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
-                                int j, const InnerProductW &dot_op = {})
+                                std::size_t j, const InnerProductW &dot_op = {})
 {
   // Orthogonalize w against the leading j columns of V.
   switch (type)

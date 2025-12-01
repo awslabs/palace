@@ -6,13 +6,16 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
+#include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
 

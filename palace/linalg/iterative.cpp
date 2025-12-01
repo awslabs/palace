@@ -306,7 +306,7 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
 template <typename VecType, typename ScalarType>
 inline void OrthogonalizeIteration(Orthogonalization type, MPI_Comm comm,
                                    const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *Hj, int j)
+                                   ScalarType *Hj, std::size_t j)
 {
   // Orthogonalize w against the leading j + 1 columns of V.
   switch (type)
