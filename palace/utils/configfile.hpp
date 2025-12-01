@@ -888,7 +888,7 @@ public:
 
   // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
   // solver.
-  bool drop_small_entries = true;
+  bool drop_small_entries = false;
 
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;
