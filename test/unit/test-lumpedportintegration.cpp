@@ -1,9 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
 #include <string>
 #include <Eigen/Core>
 #include <Eigen/Dense>
@@ -23,7 +20,6 @@
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
-#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -34,9 +30,6 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/meshio.hpp"
-#include "utils/omp.hpp"
-#include "utils/outputdir.hpp"
 
 using namespace palace;
 using namespace nlohmann;

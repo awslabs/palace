@@ -220,7 +220,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
   int convergence_memory = iodata.solver.driven.adaptive_memory;
-  int max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
+  auto max_size_per_excitation =
+      static_cast<std::size_t>(iodata.solver.driven.adaptive_max_size);
   int nprom_indices = static_cast<int>(iodata.solver.driven.prom_indices.size());
   MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_indices,
               "Adaptive frequency sweep must sample at least " << nprom_indices
