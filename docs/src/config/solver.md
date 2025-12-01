@@ -498,7 +498,7 @@ the sign for the mass matrix contribution, which can help performance at high fr
 `"ComplexCoarseSolve" [false]` : When set to `true`, the coarse-level solver uses the true
 complex-valued system matrix. When set to `false`, the real-valued approximation is used.
 
-`"DropSmallEntries" [true]` : When set to `true`, entries smaller than the double precision
+`"DropSmallEntries" [false]` : When set to `true`, entries smaller than the double precision
 machine epsilon are dropped from the system matrix used in the sparse direct solver.
 
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
