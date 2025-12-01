@@ -1410,12 +1410,10 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
   {
     if (mesh->Nonconforming())
     {
-      std::cout << "Rebalancing nonconforming mesh with mesh->Rebalance()\n";
       mesh->Rebalance();
     }
     else
     {
-      std::cout << "Rebalancing conformal mesh with RebalanceConformalMesh(mesh)\n";
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
       RebalanceConformalMesh(mesh);
