@@ -36,43 +36,24 @@ namespace
 
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
-template <typename VecType, typename ScalarType>
-inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm, Operator *weight,
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = linalg::InnerProductStandard>
+inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
-                                int j)
+                                int j, const InnerProductW &dot_op = {})
 {
   // Orthogonalize w against the leading j columns of V.
-  if (weight == nullptr)
-  {
     switch (type)
     {
       case Orthogonalization::MGS:
-        linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
+      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j, dot_op);
         break;
       case Orthogonalization::CGS:
-        linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, false, dot_op);
         break;
       case Orthogonalization::CGS2:
-        linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true, dot_op);
         break;
-    }
-  }
-  else
-  {
-    // Need temporary weight — just copy existing vector.
-    VecType temp_v = w;
-    switch (type)
-    {
-      case Orthogonalization::MGS:
-        linalg::OrthogonalizeColumnMGSWeighted(comm, *weight, V, w, Rj, j, temp_v);
-        break;
-      case Orthogonalization::CGS:
-        linalg::OrthogonalizeColumnCGSWeighted(comm, *weight, V, w, Rj, j, temp_v);
-        break;
-      case Orthogonalization::CGS2:
-        linalg::OrthogonalizeColumnCGSWeighted(comm, *weight, V, w, Rj, j, temp_v, true);
-        break;
-    }
   }
 }
 
@@ -246,7 +227,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
   }
-  OrthogonalizeColumn(orthog_type, comm, nullptr, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
