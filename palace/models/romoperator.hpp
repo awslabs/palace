@@ -11,6 +11,7 @@
 #include <Eigen/Dense>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -20,6 +21,74 @@ namespace palace
 
 class IoData;
 class SpaceOperator;
+
+// Helper classs to define inner product used in the PROM when doing circuit synthesis. The
+// weight matrix is the simple domain mass matrix of the space with the tdof of the port
+// zeroed out (using the diag policy materials) and replaced by the boundary port matrix.
+//
+// This 'hybrid' approach is different from the conventional mass matrix $M_{ab} = (v,
+// w)_{\Omega} + \sum_i (v, w)_{\Gamma_i}$ where the tdof of the port contributed both to
+// the domain $\Omega$ overlap and the port overlap $\Gamma_i$. Our method basically the
+// tdof on the ports fully with $\Gamma_i$. This ensures correct orthogonality of PROM basis
+// with the boundary form used when calculating the system response matrix (S-Matrix).
+//
+// The ParSumOperator defined in linalg/rap.hpp can only have a single diag policy so we
+// can't use that approach here.
+struct InnerProductHybridBulkBoundary
+{
+  // Need this since SetEssentialTrueDofs makes pointer to these values, even though it
+  // looks like it is passing by references.
+  mfem::Array<int> port_tdof_list;
+
+  std::unique_ptr<ParOperator> W_inner_product_weight_bulk = {};
+  std::unique_ptr<ParOperator> W_inner_product_weight_port = {};
+
+  mutable Vector v_workspace = {};
+
+  InnerProductHybridBulkBoundary(
+      mfem::Array<int> &&port_tdof_list_,
+      std::unique_ptr<ParOperator> &&W_inner_product_weight_bulk_,
+      std::unique_ptr<ParOperator> &&W_inner_product_weight_port_)
+    : port_tdof_list{std::move(port_tdof_list_)},
+      W_inner_product_weight_bulk{std::move(W_inner_product_weight_bulk_)},
+      W_inner_product_weight_port{std::move(W_inner_product_weight_port_)}
+  {
+    // Don't need to zero of PEC, since vectors entering inner product should already have
+    // the PEC contribution removed.
+    W_inner_product_weight_bulk->SetEssentialTrueDofs(port_tdof_list, Operator::DIAG_ZERO);
+    MFEM_VERIFY((W_inner_product_weight_bulk->NumCols() ==
+                 W_inner_product_weight_bulk->NumCols()) &&
+                    (W_inner_product_weight_bulk->NumCols() ==
+                     W_inner_product_weight_bulk->NumCols()),
+                "Mismatch sizes of inner product matrices!")
+  }
+
+  inline auto NumCols() const { return W_inner_product_weight_bulk->NumCols(); }
+
+  inline auto NumRows() const { return W_inner_product_weight_bulk->NumRows(); }
+
+  inline void Mult(const Vector &x, Vector &y) const
+  {
+    W_inner_product_weight_bulk->Mult(x, y);
+    W_inner_product_weight_port->AddMult(x, y);
+  }
+
+  inline double InnerProduct(const Vector &x, const Vector &y) const
+  {
+    v_workspace.SetSize(x.Size());
+    v_workspace.UseDevice(x.UseDevice());
+    //
+    Mult(x, v_workspace);
+    return linalg::LocalDot(y, v_workspace);
+  }
+
+  inline double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
+  {
+    auto dot = InnerProduct(x, y);
+    Mpi::GlobalSum(1, &dot, comm);
+    return dot;
+  }
+};
 
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and for selecting the next frequency sample points in PROM
@@ -51,7 +120,7 @@ public:
 //
 class RomOperator
 {
-private:
+protected:
   // Reference to HDM discretization (not owned).
   // TODO(C++20): Use std::reference_wrapper with incomplete types.
   SpaceOperator &space_op;
@@ -63,16 +132,10 @@ private:
   // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
-  // - The non-quadratic operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
-  // - Need to recompute RHS1 when excitation index changes.
+  // - The non-quadratic in ω operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-
-  // Weight operator for PROM basis if doing synthesis, in order to have correct
-  // orthogonality to port vectors and converge with mesh / order. Default nullptr.
-  std::unique_ptr<Operator> W_inner_product_weight_bulk = {};
-  std::unique_ptr<Operator> W_inner_product_weight_port = {};
-  std::unique_ptr<Operator> W_inner_product_weight = {};
 
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
@@ -88,13 +151,18 @@ private:
   Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
 
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
-  // SolvePROM. Define them here so memory allocation is reused in "online" evaluation.
+  // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
   Eigen::MatrixXcd Ar;
   Eigen::VectorXcd RHSr;
 
   // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
   Orthogonalization orthog_type;
+
+  // Weight operator for PROM basis if doing synthesis, in order to have correct
+  // orthogonality to port vectors and converge with mesh / order. Default empty, which
+  // means the identity weight in the finite element basis.
+  std::optional<InnerProductHybridBulkBoundary> weight_op_W = {};
 
   // Label to distinguish port modes from solution projection and to print PROM matrices.
   std::vector<std::string> v_node_label;
