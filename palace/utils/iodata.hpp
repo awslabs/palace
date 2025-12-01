@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <nlohmann/json.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
@@ -43,6 +44,9 @@ private:
 
 public:
   IoData(const Units &units) : units(units), init(false) {}
+
+  // Take parsed json and override options defaults.
+  IoData(nlohmann::json &&config);
 
   // Parse command line arguments and override options defaults.
   IoData(const char *filename, bool print);
