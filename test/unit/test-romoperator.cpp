@@ -1,17 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <fstream>
 #include <iostream>
-#include <iterator>
-#include <sstream>
 #include <string>
 #include <vector>
 #include <Eigen/Core>
 #include <Eigen/Dense>
-#include <Eigen/src/Core/IO.h>
-#include <fmt/format.h>
-#include <fmt/ostream.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -22,12 +16,10 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
-#include "catch2/matchers/catch_matchers_floating_point.hpp"
 #include "drivers/drivensolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
-#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -35,13 +27,9 @@
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/meshio.hpp"
-#include "utils/omp.hpp"
-#include "utils/outputdir.hpp"
 
 using namespace palace;
 using namespace nlohmann;
@@ -210,7 +198,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial][Parallel]
   }
 
   Eigen::IOFormat HeavyFmt(Eigen::StreamPrecision, 0, ", ", ";\n", "[", "]", "[", "]");
-  std::cout << print_mat.format(HeavyFmt) << std::endl;
+  std::cout << print_mat.format(HeavyFmt) << "\n";
 
   std::cout << "Print bulk:\n";
   for (int i = 0; i < 12; i++)
@@ -233,7 +221,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial][Parallel]
     }
   }
 
-  std::cout << print_mat.format(HeavyFmt) << std::endl;
+  std::cout << print_mat.format(HeavyFmt) << "\n";
 
   std::cout << "Print combo:\n";
   for (int i = 0; i < 12; i++)
@@ -256,5 +244,5 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial][Parallel]
     }
   }
 
-  std::cout << print_mat.format(HeavyFmt) << std::endl;
+  std::cout << print_mat.format(HeavyFmt) << "\n";
 }
