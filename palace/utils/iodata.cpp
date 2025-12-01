@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stack>
 #include <string>
@@ -189,7 +190,7 @@ IoData::IoData(const char *filename, bool print)
             switch (event)
             {
               case json::parse_event_t::object_start:
-                parse_stack.push(std::set<json>());
+                parse_stack.emplace();
                 break;
               case json::parse_event_t::object_end:
                 parse_stack.pop();

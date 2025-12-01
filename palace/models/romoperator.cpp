@@ -3,18 +3,29 @@
 
 #include "romoperator.hpp"
 
-#include <Eigen/SVD>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <memory>
+#include <string_view>
+#include <tuple>
+#include <utility>
+// #include <Eigen/SVD>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
+#include "utils/units.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
 // for this.
@@ -40,7 +51,7 @@ template <typename VecType, typename ScalarType,
           typename InnerProductW = linalg::InnerProductStandard>
 inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
-                                int j, const InnerProductW &dot_op = {})
+                                std::size_t j, const InnerProductW &dot_op = {})
 {
   // Orthogonalize w against the leading j columns of V.
   switch (type)
@@ -226,7 +237,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {1.0 + 0i, 1i * omega};
+    std::vector<std::complex<double>> s = {{1.0, 0.0}, {0.0, omega}};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
@@ -669,7 +680,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // only nonzero on boundaries, will be empty if not needed.
 
   // No basis states ill-defined: return zero vector to match current behaviour.
-  if (V.size() == 0)
+  if (V.empty())
   {
     u = 0.0;
     return;
