@@ -744,6 +744,53 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   return {};
 }
 
+std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
+           std::unique_ptr<Eigen::MatrixXcd>>
+RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
+{
+  using mat_t = decltype(Kr);
+  std::unique_ptr<mat_t> m_Linv = {};
+  std::unique_ptr<mat_t> m_Rinv = {};
+  std::unique_ptr<mat_t> m_C = {};
+
+  // TODO(C++23): Replace this with std::ranges::starts_with instead.
+  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
+  {
+    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
+  };
+
+  Eigen::VectorXd v_conc(v_node_label.size());
+  for (long j = 0; j < v_node_label.size(); j++)
+  {
+    if (starts_with(v_node_label[j], "port"))
+    {
+      v_conc[j] = orth_R(j, j);
+    }
+    else
+    {
+      v_conc[j] = 1.0;
+    }
+  }
+  // Lazy diagonal representation of inverse.
+  auto v_d = v_conc.cwiseInverse().asDiagonal();
+
+  auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  m_Linv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
+
+  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  m_C = std::make_unique<mat_t>(((unit_farad * v_d) * Mr * v_d).eval());
+
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
+  {
+    auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    m_Rinv = std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr * v_d).eval());
+  }
+
+  return std::make_tuple(std::move(m_Linv), std::move(m_Rinv), std::move(m_C));
+}
+
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -771,63 +818,40 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     out.WriteFullTableTrunc();
   };
 
-  // De-normalize PROM matrices voltages (both port and sampled). Define so that 1.0 on
-  // port i corresponds to full (un-normalized solution), so you can use Linv, Rinv, C
-  // directly.
-
-  // TODO(C++23): Replace this with std::ranges::starts_with instead.
-  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
-  {
-    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
-  };
-
-  // De-normalize port voltages. Define so that 1.0 on port i corresponds to full
-  // (un-normalized solution).
-  // TODO: Add extra shape factor
-  Eigen::VectorXd v_conc(v_node_label.size());
-  for (long j = 0; j < v_node_label.size(); j++)
-  {
-    if (starts_with(v_node_label[j], "port"))
-    {
-      v_conc[j] = orth_R(j, j);
-    }
-    else
-    {
-      v_conc[j] = 1.0;
-    }
-  }
-  // Lazy diagonal representation of inverse.
-  auto v_d = v_conc.cwiseInverse().asDiagonal();
+  const auto [m_Linv, m_Rinv, m_C] = CalculateNormalizedPROMMatrices(units);
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is
   // a nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 
-  auto unit_henry = units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  auto m_Linv = ((1.0 / unit_henry) * v_d) * Kr * v_d;
-  print_table(m_Linv.real(), "rom-Linv-re.csv");
+  if (K->Real())
+  {
+    print_table(m_Linv->real(), "rom-Linv-re.csv");
+  }
   if (K->Imag())
   {
-    print_table(m_Linv.imag(), "rom-Linv-im.csv");
+    print_table(m_Linv->imag(), "rom-Linv-im.csv");
   }
 
-  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  auto m_C = (unit_farad * v_d) * Mr * v_d;
-  print_table(m_C.real(), "rom-C-re.csv");
+  if (M->Real())
+  {
+    print_table(m_C->real(), "rom-C-re.csv");
+  }
   if (M->Imag())
   {
-    print_table(m_C.imag(), "rom-C-im.csv");
+    print_table(m_C->imag(), "rom-C-im.csv");
   }
 
   // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
   // since we need dissipative ports for a driven response, but this may change.
   if (C)
   {
-    auto unit_ohm = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    auto m_Rinv = ((1.0 / unit_ohm) * v_d) * Cr * v_d;
-    print_table(m_Rinv.real(), "rom-Rinv-re.csv");
+    if (C->Real())
+    {
+      print_table(m_Rinv->real(), "rom-Rinv-re.csv");
+    }
     if (C->Imag())
     {
-      print_table(m_Rinv.imag(), "rom-Rinv-im.csv");
+      print_table(m_Rinv->imag(), "rom-Rinv-im.csv");
     }
   }
 
