@@ -91,7 +91,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -111,7 +111,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -137,7 +137,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -180,7 +180,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
@@ -195,7 +195,7 @@ public:
         CHECK(post_op_csv.row_i == 5);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -220,7 +220,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
 
@@ -304,7 +304,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -354,7 +354,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         // No throw since 1 restart just overwrite existing table.
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -370,7 +370,7 @@ public:
         CHECK(post_op_csv.row_i == 1);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -396,7 +396,7 @@ public:
         CHECK(post_op_csv.row_i == 4);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
