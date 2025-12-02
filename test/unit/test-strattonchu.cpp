@@ -162,7 +162,7 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
 
-  IoData iodata = IoData(units);
+  IoData iodata{units};
   // We need to have at least one material. By default it's vacuum.
   iodata.domains.materials.emplace_back().attributes = {1};
   // We also need to have a non-empty farfield and a compatible problem type, or
@@ -170,6 +170,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
 
@@ -332,7 +334,7 @@ TEST_CASE("PostOperator", "[strattonchu][Serial]")
 TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu][Serial]")
 {
   Units units(0.496, 1.453);
-  IoData iodata = IoData(units);
+  IoData iodata{units};
 
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
@@ -341,6 +343,8 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   iodata.boundaries.postpro.farfield.attributes = {1};
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.CheckConfiguration();
 
   MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
