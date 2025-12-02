@@ -155,8 +155,9 @@ IoData::IoData(const Units &units) : units(units), init(false)
   fem::DefaultIntegrationOrder::p_trial = -1;
 }
 
-IoData::IoData(nlohmann::json &&config) : units(1.0, 1.0), init(false)
+IoData::IoData(nlohmann::json &&config_) : units(1.0, 1.0), init(false)
 {
+  auto config = std::move(config_);
   // Set up configuration option data structures.
   problem.SetUp(config);
   model.SetUp(config);

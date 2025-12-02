@@ -44,10 +44,10 @@ public:
   // Exposed for testing; not intended for general use.
   void CheckConfiguration();
 
-  IoData(const Units &units);
+  explicit IoData(const Units &units);
 
   // Take parsed json and override options defaults.
-  IoData(nlohmann::json &&config);
+  explicit IoData(nlohmann::json &&config);
 
   // Parse command line arguments and override options defaults.
   IoData(const char *filename, bool print);
