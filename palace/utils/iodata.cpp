@@ -150,8 +150,9 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
-IoData::IoData(nlohmann::json &&config) : units(1.0, 1.0), init(false)
+IoData::IoData(nlohmann::json &&config_) : units(1.0, 1.0), init(false)
 {
+  auto config = std::move(config_);
   // Set up configuration option data structures.
   problem.SetUp(config);
   model.SetUp(config);

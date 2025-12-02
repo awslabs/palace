@@ -43,10 +43,10 @@ private:
   void CheckConfiguration();
 
 public:
-  IoData(const Units &units) : units(units), init(false) {}
+  explicit IoData(const Units &units) : units(units), init(false) {}
 
   // Take parsed json and override options defaults.
-  IoData(nlohmann::json &&config);
+  explicit IoData(nlohmann::json &&config);
 
   // Parse command line arguments and override options defaults.
   IoData(const char *filename, bool print);
