@@ -177,6 +177,14 @@ protected:
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
 
+  // Helper function that normalizes PROM matrices so that they correspond to proper
+  // admittance matrices on the ports. Also does unit conversion to physical (input) units.
+  // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
+  // use Linv, Rinv, C directly.
+  std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
+             std::unique_ptr<Eigen::MatrixXcd>>
+  CalculateNormalizedPROMMatrices(const Units &units) const;
+
 public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
@@ -192,9 +200,6 @@ public:
   {
     return mri.at(excitation_idx).GetSamplePoints();
   }
-
-  // Upper-triangular matrix of from orthogonalization of HDM fields added to PROM.
-  const auto &GetRomOrthogonalityMatrix() const { return orth_R; }
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
