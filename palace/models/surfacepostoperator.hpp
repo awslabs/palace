@@ -73,7 +73,7 @@ private:
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
                  const mfem::Array<int> &bdr_attr_marker);
 
-    size_t size() const { return thetaphis.size(); }
+    std::size_t size() const { return thetaphis.size(); }
   };
 
   // Reference to material property operator (not owned).
