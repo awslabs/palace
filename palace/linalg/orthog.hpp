@@ -5,6 +5,7 @@
 #define PALACE_LINALG_ORTHOG_HPP
 
 #include <complex>
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include "linalg/operator.hpp"
