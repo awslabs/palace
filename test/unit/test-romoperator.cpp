@@ -170,21 +170,21 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   const auto &W_bulk = weight_op->W_inner_product_weight_bulk;
   const auto &W_port = weight_op->W_inner_product_weight_port;
 
-      std::size_t nr_tdof_expected = 0;
-      std::size_t nr_tdof_port_expected = 0;
+  std::size_t nr_tdof_expected = 0;
+  std::size_t nr_tdof_port_expected = 0;
   if (mesh_is_hex)
   {
     // Reference vales for nr elements for vector Nédélec elements of the first kind.
-        auto nr_tdof_ref_hex = std::vector<std::size_t>{0, 12, 54, 144}.at(order);
-        auto nr_tdof_ref_squ = std::vector<std::size_t>{0, 4, 12, 24}.at(order);
+    auto nr_tdof_ref_hex = std::vector<std::size_t>{0, 12, 54, 144}.at(order);
+    auto nr_tdof_ref_squ = std::vector<std::size_t>{0, 4, 12, 24}.at(order);
 
     nr_tdof_expected = nr_tdof_ref_hex;
     nr_tdof_port_expected = nr_tdof_ref_squ;
   }
   else
   {
-        auto nr_tdof_ref_tet = std::vector<std::size_t>{0, 6, 20, 45}.at(order);
-        auto nr_tdof_ref_tri = std::vector<std::size_t>{0, 3, 8, 15}.at(order);
+    auto nr_tdof_ref_tet = std::vector<std::size_t>{0, 6, 20, 45}.at(order);
+    auto nr_tdof_ref_tri = std::vector<std::size_t>{0, 3, 8, 15}.at(order);
 
     // Counting tdofs
     // 3D: There are 6 tets in a cube. Remove edges.
@@ -226,7 +226,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
   // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
   // matrix is zero.
-      std::size_t nr_rows_count = 0;
+  std::size_t nr_rows_count = 0;
   for (int i = 0; i < W_port_eigen.rows(); i++)
   {
     if (W_port_eigen.row(i).norm() > 0.0)
@@ -242,7 +242,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   }
   CHECK(nr_rows_count == nr_tdof_port_expected);
 
-      std::size_t nr_cols_count = 0;
+  std::size_t nr_cols_count = 0;
   for (int j = 0; j < W_port_eigen.cols(); j++)
   {
 
@@ -342,3 +342,62 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 // double port_ref_L = 1.486e-20;
 //                                               {"C", port_ref_C},
 //                                               {"L", port_ref_L},
+
+// Checks failure mode that neighbouring ports have overlap because they share and edge
+// degree of freedom. Ports in ROM must be orthogonal for conventional scattering matrix
+// interpretation to be meaningful.
+TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+                                         "lumpedport_mesh/cube_mesh_1_1_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+                                          "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"));
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+
+  // Port on neighbouring attributes along same direction will have overlap.
+  setup_json["Boundaries"] = {
+      {"PEC", json::object({{"Attributes", json::array({})}})},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}}),
+                                  json::object({{"Index", 2},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(0)},
+                                                {"Attributes", json::array({102})},
+                                                {"Direction", "+X"}})})}};
+
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
+
+  IoData iodata(std::move(setup_json));
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  std::size_t max_size_per_excitation = 100;
+
+  RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+  CHECK_THROWS(prom_op.AddLumpedPortModesForSynthesis(iodata),
+               Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
+}
