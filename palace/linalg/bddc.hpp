@@ -19,25 +19,25 @@
 namespace palace
 {
 
+class FiniteElementSpace;
+
 //
 // A wrapper for PETSc's BDDC solver.
 //
-class BDDCSolver : public mfem::Solver //PetscBDDCSolver
+class BDDCSolver : public mfem::Solver
 {
 private:
   MPI_Comm comm;
   std::unique_ptr<mfem::PetscBDDCSolver> solver;
+  mfem::Array<int> ess_tdof_list, nat_tdof_list;
+  FiniteElementSpace &fespace;
 
 public:
-  BDDCSolver(MPI_Comm comm, int print = 0); // figure out what we need to construct...
-  BDDCSolver(const IoData &iodata, MPI_Comm comm, int print)
-    : BDDCSolver(comm, print)
-  {
-  }
+  BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int print = 0);
 
   void SetOperator(const Operator &op) override;
 
-  void Mult(const Vector &x, Vector &y) const override { std::cout << "bddc.hpp before mult \n"; solver->Mult(x, y);  std::cout << "bddc.hpp after mult \n";}
+  void Mult(const Vector &x, Vector &y) const override { solver->Mult(x, y); }
 };
 
 }  // namespace palace

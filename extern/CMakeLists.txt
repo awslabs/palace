@@ -45,12 +45,6 @@ if(PALACE_WITH_SLEPC)
   include(ExternalSLEPc)
 endif()
 
-# Add PETSc (real scalars)
-if(PALACE_WITH_PETSC)
-  message(STATUS "=============== Configuring PETSc (real) dependency ===============")
-  include(ExternalPETSc)
-endif()
-
 # Add ARPACK
 if(PALACE_WITH_ARPACK)
   message(STATUS "==================== Configuring ARPACK dependency =====================")
@@ -66,6 +60,12 @@ endif()
 # Add HYPRE
 message(STATUS "===================== Configuring HYPRE dependency =====================")
 include(ExternalHYPRE)
+
+# Add PETSc (real scalars)
+if(PALACE_WITH_PETSC)
+  message(STATUS "=============== Configuring PETSc (real) dependency ===============")
+  include(ExternalPETSc)
+endif()
 
 # Add JSON
 message(STATUS "================= Configuring nlohmann/json dependency =================")

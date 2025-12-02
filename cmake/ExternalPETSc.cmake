@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(PETSC_DEPENDENCIES)
+set(PETSC_DEPENDENCIES hypre)
 
 # First build PETSc
 set(PETSC_OPTIONS
@@ -20,6 +20,9 @@ set(PETSC_OPTIONS
   "--with-precision=double"
   "--with-clanguage=c"
   "--with-x=0"
+  # "--download-hypre"
+  # "--download-hypre-configure-arguments=--disable-fortran --with-MPI"
+  "--with-hypre-dir=${CMAKE_INSTALL_PREFIX}"
   # "--with-petsc4py=1"
 )
 if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
@@ -58,6 +61,9 @@ if(NOT CMAKE_CXX_COMPILER STREQUAL MPI_CXX_COMPILER)
   list(APPEND PETSC_OPTIONS
     "--with-mpi-lib=[${PETSC_MPI_LIBRARIES}]"
     "--with-mpi-include=[${PETSC_MPI_INCLUDE_DIRS}]"
+    "CFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
+    "CXXFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
+    # "--download-hypre-configure-arguments=--disable-fortran --with-MPI CFLAGS=-I${PETSC_MPI_INCLUDE_DIRS} CXXFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
   )
 endif()
 

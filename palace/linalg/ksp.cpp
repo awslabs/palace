@@ -185,8 +185,7 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       pc = std::make_unique<JacobiSmoother<OperType>>(comm);
       break;
     case LinearSolver::BDDC:
-      //MFEM_ABORT("PETSc BDDC solver not yet implemented!");
-      pc = MakeWrapperSolver<OperType, BDDCSolver>(iodata, comm, print);
+      pc = MakeWrapperSolver<OperType, BDDCSolver>(iodata, fespaces.GetFESpaceAtLevel(0), print);
       break;
     case LinearSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
