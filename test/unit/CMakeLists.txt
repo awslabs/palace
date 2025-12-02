@@ -27,9 +27,9 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-drivensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
@@ -39,7 +39,6 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
 )
 
 # Set output name for installed binary
