@@ -21,7 +21,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.14.0)
+project(palace LANGUAGES CXX VERSION 0.15.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
@@ -91,7 +91,7 @@ if(PALACE_BUILD_WITH_COVERAGE)
   add_library(coverage_flags INTERFACE)
   target_compile_options(
     coverage_flags
-    INTERFACE 
+    INTERFACE
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
         $<$<CXX_COMPILER_ID:GNU>:--coverage>
@@ -99,7 +99,7 @@ if(PALACE_BUILD_WITH_COVERAGE)
   )
   target_link_options(
     coverage_flags
-    INTERFACE 
+    INTERFACE
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
         $<$<CXX_COMPILER_ID:GNU>:--coverage>
