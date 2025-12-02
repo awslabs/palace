@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/bddc.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
@@ -182,6 +183,10 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       break;
     case LinearSolver::JACOBI:
       pc = std::make_unique<JacobiSmoother<OperType>>(comm);
+      break;
+    case LinearSolver::BDDC:
+      //MFEM_ABORT("PETSc BDDC solver not yet implemented!");
+      pc = MakeWrapperSolver<OperType, BDDCSolver>(iodata, comm, print);
       break;
     case LinearSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");

@@ -119,7 +119,8 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
                                           {LinearSolver::SUPERLU, "SuperLU"},
                                           {LinearSolver::STRUMPACK, "STRUMPACK"},
                                           {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
-                                          {LinearSolver::JACOBI, "Jacobi"}})
+                                          {LinearSolver::JACOBI, "Jacobi"},
+                                          {LinearSolver::BDDC, "BDDC"}})
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                           {KrylovSolver::CG, "CG"},
                                           {KrylovSolver::MINRES, "MINRES"},

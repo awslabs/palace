@@ -32,6 +32,7 @@ set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct sol
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
+set(PALACE_WITH_PETSC OFF CACHE BOOL "Build with PETSc (real)")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
 set(PALACE_WITH_MAGMA ON CACHE BOOL "Build with MAGMA backend for libCEED")

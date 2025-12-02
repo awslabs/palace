@@ -2,22 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# Build PETSc and SLEPc
+# Build PETSc
 #
 
 # Force build order
 set(PETSC_DEPENDENCIES)
-set(SLEPC_DEPENDENCIES petsc_complex)
 
 # First build PETSc
 set(PETSC_OPTIONS
   "COPTFLAGS=${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${BUILD_TYPE_UPPER}}"
   "CXXOPTFLAGS=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${BUILD_TYPE_UPPER}}"
-  "--prefix=${CMAKE_INSTALL_PREFIX}/petsc_complex"
+  "--prefix=${CMAKE_INSTALL_PREFIX}"
   "--with-cc=${CMAKE_C_COMPILER}"
   "--with-cxx=${CMAKE_CXX_COMPILER}"
   "--with-fc=0"
-  "--with-scalar-type=complex"
+  "--with-scalar-type=real"
   "--with-precision=double"
   "--with-clanguage=c"
   "--with-x=0"
@@ -96,46 +95,17 @@ string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
 include(ExternalProject)
-ExternalProject_Add(petsc_complex
+ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_PETSC_URL}
   GIT_TAG             ${EXTERN_PETSC_GIT_TAG}
-  SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/petsc_complex
-  INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}/petsc_complex
-  PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc_complex-cmake
+  SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/petsc
+  INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
+  PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
   CONFIGURE_COMMAND   ./configure ${PETSC_OPTIONS}
   # TEST_COMMAND        ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected PETSC_DIR/PETSC_ARCH
-  TEST_COMMAND        ""
-  TEST_BEFORE_INSTALL TRUE
-)
-
-# Configure SLEPc eigenvalue solver (most options come from PETSc)
-set(SLEPC_OPTIONS
-  "--prefix=${CMAKE_INSTALL_PREFIX}"
-  "--with-feast=0"
-  "--with-arpack=0"
-  # "--with-slepc4py=1
-)
-
-string(REPLACE ";" "; " SLEPC_OPTIONS_PRINT "${SLEPC_OPTIONS}")
-message(STATUS "SLEPC_OPTIONS: ${SLEPC_OPTIONS_PRINT}")
-
-include(ExternalProject)
-ExternalProject_Add(slepc
-  DEPENDS             ${SLEPC_DEPENDENCIES}
-  GIT_REPOSITORY      ${EXTERN_SLEPC_URL}
-  GIT_TAG             ${EXTERN_SLEPC_GIT_TAG}
-  SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/slepc
-  INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
-  PREFIX              ${CMAKE_BINARY_DIR}/extern/slepc-cmake
-  BUILD_IN_SOURCE     TRUE
-  UPDATE_COMMAND      ""
-  CONFIGURE_COMMAND   SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX}/petsc_complex PETSC_ARCH= ./configure ${SLEPC_OPTIONS}
-  BUILD_COMMAND       SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX}/petsc_complex PETSC_ARCH= ${CMAKE_MAKE_PROGRAM}
-  INSTALL_COMMAND     SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX}/petsc_complex PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} install
-  # TEST_COMMAND        SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX}/petsc_complex PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} check
   TEST_COMMAND        ""
   TEST_BEFORE_INSTALL TRUE
 )

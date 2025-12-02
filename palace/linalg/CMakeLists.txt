@@ -10,6 +10,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/bddc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp

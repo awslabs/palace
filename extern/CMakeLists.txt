@@ -41,8 +41,14 @@ endif()
 
 # Add PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
-  message(STATUS "=============== Configuring PETSc and SLEPc dependencies ===============")
+  message(STATUS "=============== Configuring PETSc (complex) and SLEPc dependencies ===============")
   include(ExternalSLEPc)
+endif()
+
+# Add PETSc (real scalars)
+if(PALACE_WITH_PETSC)
+  message(STATUS "=============== Configuring PETSc (real) dependency ===============")
+  include(ExternalPETSc)
 endif()
 
 # Add ARPACK
@@ -92,4 +98,3 @@ endif()
 # Add libCEED
 message(STATUS "==================== Configuring libCEED dependency ====================")
 include(ExternalLibCEED)
-
