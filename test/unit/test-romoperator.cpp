@@ -170,21 +170,21 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   const auto &W_bulk = weight_op->W_inner_product_weight_bulk;
   const auto &W_port = weight_op->W_inner_product_weight_port;
 
-  size_t nr_tdof_expected = 0;
-  size_t nr_tdof_port_expected = 0;
+      std::size_t nr_tdof_expected = 0;
+      std::size_t nr_tdof_port_expected = 0;
   if (mesh_is_hex)
   {
     // Reference vales for nr elements for vector Nédélec elements of the first kind.
-    auto nr_tdof_ref_hex = std::vector<size_t>{0, 12, 54, 144}.at(order);
-    auto nr_tdof_ref_squ = std::vector<size_t>{0, 4, 12, 24}.at(order);
+        auto nr_tdof_ref_hex = std::vector<std::size_t>{0, 12, 54, 144}.at(order);
+        auto nr_tdof_ref_squ = std::vector<std::size_t>{0, 4, 12, 24}.at(order);
 
     nr_tdof_expected = nr_tdof_ref_hex;
     nr_tdof_port_expected = nr_tdof_ref_squ;
   }
   else
   {
-    auto nr_tdof_ref_tet = std::vector<size_t>{0, 6, 20, 45}.at(order);
-    auto nr_tdof_ref_tri = std::vector<size_t>{0, 3, 8, 15}.at(order);
+        auto nr_tdof_ref_tet = std::vector<std::size_t>{0, 6, 20, 45}.at(order);
+        auto nr_tdof_ref_tri = std::vector<std::size_t>{0, 3, 8, 15}.at(order);
 
     // Counting tdofs
     // 3D: There are 6 tets in a cube. Remove edges.
@@ -226,7 +226,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
   // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
   // matrix is zero.
-  size_t nr_rows_count = 0;
+      std::size_t nr_rows_count = 0;
   for (int i = 0; i < W_port_eigen.rows(); i++)
   {
     if (W_port_eigen.row(i).norm() > 0.0)
@@ -242,7 +242,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   }
   CHECK(nr_rows_count == nr_tdof_port_expected);
 
-  size_t nr_cols_count = 0;
+      std::size_t nr_cols_count = 0;
   for (int j = 0; j < W_port_eigen.cols(); j++)
   {
 

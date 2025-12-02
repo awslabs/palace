@@ -283,7 +283,7 @@ void QuasiNewtonSolver::SetInitialGuess()
 
   // If the number of initial guesses is greater than the number of requested modes
   // de-prioritize the initial guesses that have larger errors.
-  std::vector<size_t> indices(nev_linear);
+  std::vector<std::size_t> indices(nev_linear);
   std::iota(indices.begin(), indices.end(), 0);
   if (nev_linear > nev)
   {
@@ -330,8 +330,8 @@ namespace
 ComplexVector MatVecMult(const std::vector<ComplexVector> &X, const Eigen::VectorXcd &y)
 {
   MFEM_ASSERT(X.size() == y.size(), "Mismatch in dimension of input vectors!");
-  const size_t k = X.size();
-  const size_t n = X[0].Size();
+  const std::size_t k = X.size();
+  const std::size_t n = X[0].Size();
   const bool use_dev = X[0].UseDevice();
   ComplexVector z;
   z.SetSize(n);

@@ -576,7 +576,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
 
   std::vector<std::array<double, 2>> expected_length_width = {{1., 1.}, {2., 1.}, {3., 1.}};
   // Properties of single rectangular element in port.
-  for (size_t i = 0; i < port_1.elems.size(); i++)
+  for (std::size_t i = 0; i < port_1.elems.size(); i++)
   {
     const auto [dl, dw] = expected_length_width.at(i);
     const auto *el_ptr = port_1.elems.at(i).get();
@@ -609,7 +609,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
 
   std::vector<int> perp_vec_dir_index = {0, 0, 1};
 
-  for (size_t i = 0; i < port_1.elems.size(); i++)
+  for (std::size_t i = 0; i < port_1.elems.size(); i++)
   {
     const auto *el_ptr = port_1.elems.at(i).get();
     REQUIRE(el_ptr != nullptr);

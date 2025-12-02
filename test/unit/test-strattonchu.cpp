@@ -242,13 +242,13 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
       surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
 
   // Validate computed far-field against analytical solution
-  for (size_t i = 0; i < thetaphis.size(); i++)
+  for (std::size_t i = 0; i < thetaphis.size(); i++)
   {
     const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
     const auto &[theta, phi] = thetaphis[i];
     auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
 
-    for (size_t j = 0; j < dim; j++)
+    for (std::size_t j = 0; j < dim; j++)
     {
       // The agreement has to be up to a phase, so we compare the absolute values.
       CHECK_THAT(std::abs(E_phys[j]),
