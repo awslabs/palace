@@ -156,8 +156,9 @@ IoData::IoData(const Units &units) : units(units), init(false)
   fem::DefaultIntegrationOrder::p_trial = -1;
 }
 
-IoData::IoData(nlohmann::json &&config, bool print = false) : units(1.0, 1.0), init(false)
+IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(false)
 {
+  auto config = std::move(config_);
   // Validate against JSON schema.
   {
     std::string err = ValidateConfig(config);

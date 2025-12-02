@@ -45,13 +45,13 @@ public:
   // Exposed for testing; not intended for general use.
   void CheckConfiguration();
 
-  IoData(const Units &units);
+  explicit IoData(const Units &units);
 
   // Take parsed json and override options defaults.
-  IoData(nlohmann::json &&config, bool print);
+  explicit IoData(nlohmann::json &&config, bool print = false);
 
   // Parse command line arguments and override options defaults.
-  IoData(const char *filename, bool print);
+  explicit IoData(const char *filename, bool print);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
