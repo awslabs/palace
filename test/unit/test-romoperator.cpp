@@ -102,11 +102,10 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 // TODO: Do some more basic RomOperator Ctor Checks
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
-// inner-product weight and port overlap. This is a serial test as hex mesh only has a
-// single element.
+// inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
+// test as hex mesh only has a single element.
 TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 {
-  // Work with a simple 1x1x1 Cube
   MPI_Comm world_comm = Mpi::World();
 
   // Generate 3 x 2 different test configuration.
@@ -118,6 +117,9 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
                                           "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"));
 
   double L0 = 1.0e-6;
+
+  // Pick a number != 1. This should not matter but be correctly cancelled out in
+  // unit conversions.
   double Lc = 7.0;
 
   json setup_json;
@@ -186,10 +188,9 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
     auto nr_tdof_ref_tet = std::vector<std::size_t>{0, 6, 20, 45}.at(order);
     auto nr_tdof_ref_tri = std::vector<std::size_t>{0, 3, 8, 15}.at(order);
 
-    // Counting tdofs
-    // 3D: There are 6 tets in a cube. Remove edges.
-    // 2D: There are 2 * 6 = 12 open faces, so 12 double-counted. Subtract 6 faces without
-    // edges. interiors. 1D: add total of 19 edges
+    // Counting tdofs. 3D: There are 6 tets in a cube; remove edges. 2D: There are 2 * 6 =
+    // 12 open faces, so 12 double-counted; subtract 6 faces without edges. 1D: add total of
+    // 19 edges
     nr_tdof_expected = 6 * (nr_tdof_ref_tet - 6 * order) -
                        12 / 2 * (nr_tdof_ref_tri - 3 * order) + 19 * order;
     nr_tdof_port_expected = 2 * nr_tdof_ref_tri - order;  // 2 triangles, 1 shared edge
@@ -282,29 +283,29 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   // Now test against port vector. The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e
   // L_e / W_e but with Z_R = 1.0. In this case this = 1.0. See normalization tests of
   // LumpedPort_BasicTests_1ElementPort_Cube321 in test-lumpedportintegration.cpp.
-  ComplexVector port_primary_ht_cn;
-  space_op.GetLumpedPortExcitationVectorPrimary(1, port_primary_ht_cn, true);
-  Vector port_primary_ht_cn_tmp = port_primary_ht_cn.Real();
+  ComplexVector port_primary_et;
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
+  Vector port_primary_ht_cn_tmp = port_primary_et.Real();
 
-  W_port->Mult(port_primary_ht_cn.Real(), port_primary_ht_cn_tmp);
-  auto overlap_port = port_primary_ht_cn.Real() * port_primary_ht_cn_tmp;
+  W_port->Mult(port_primary_et.Real(), port_primary_ht_cn_tmp);
+  auto overlap_port = port_primary_et.Real() * port_primary_ht_cn_tmp;
   CHECK_THAT(overlap_port, WithinRel(1.0));
 
-  W_bulk->Mult(port_primary_ht_cn.Real(), port_primary_ht_cn_tmp);
-  auto overlap_bulk = port_primary_ht_cn.Real() * port_primary_ht_cn_tmp;
+  W_bulk->Mult(port_primary_et.Real(), port_primary_ht_cn_tmp);
+  auto overlap_bulk = port_primary_et.Real() * port_primary_ht_cn_tmp;
   CHECK_THAT(overlap_bulk, WithinAbs(0.0, 1e-15));
 
   if (Mpi::Size(world_comm) == 1)
   {
     // Rank local overlap.
     auto overlap_combined_local =
-        weight_op->InnerProduct(port_primary_ht_cn.Real(), port_primary_ht_cn.Real());
+        weight_op->InnerProduct(port_primary_et.Real(), port_primary_et.Real());
     CHECK_THAT(overlap_combined_local, WithinRel(1.0));
   }
 
   // Global overlap.
-  auto overlap_combined = weight_op->InnerProduct(world_comm, port_primary_ht_cn.Real(),
-                                                  port_primary_ht_cn.Real());
+  auto overlap_combined =
+      weight_op->InnerProduct(world_comm, port_primary_et.Real(), port_primary_et.Real());
   CHECK_THAT(overlap_combined, WithinRel(1.0));
 
   // Test actually adding port primary vectors to PROM.
@@ -331,17 +332,245 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   CHECK_THAT((*m_C)(0, 0).imag(), WithinAbs(0.0, 1e-14));
 }
 
-// double ht_cn_norm_expected = 0.0;
-// for (const auto &el : port_1.elems)
-// {
-//   ht_cn_norm_expected += el->GetGeometryLength() / el->GetGeometryWidth();
-// }
-// ht_cn_norm_expected /= port_1.elems.size() * port_1.elems.size();
+// Basic ROM port construction on a more complex mesh including a composite port and and L,C
+// port. Works on a 3x2x1 cubic mesh.
+TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
 
-// double port_ref_C = 5.5e-5;
-// double port_ref_L = 1.486e-20;
-//                                               {"C", port_ref_C},
-//                                               {"L", port_ref_L},
+  // Generate 3 x 2 different test configuration.
+  size_t order = GENERATE(1ul, 2ul, 3ul);
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+
+  const double L0 = 1.0e-6;
+  const double Lc = 7.0;
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", L0},
+                         {"Lc", Lc},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+
+  const double port1_ref_R = 75.0;
+  const double port1_ref_C = 5.5e-5;
+  const double port1_ref_L = 1.486e-20;
+
+  const double port2_ref_R = 50.0;
+
+  // Put in a single port with single attribute.
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({
+           json::object(
+               {{"Index", 1},
+                {"R", port1_ref_R},
+                {"C", port1_ref_C},
+                {"L", port1_ref_L},
+                {"Excitation", uint(0)},
+                {"Elements",
+                 json::array(
+                     {json::object({{"Attributes", json::array({1})},  // dx,dy=1,1
+                                    {"Direction", "+Y"}}),
+                      json::object({{"Attributes", json::array({9, 11})},  // dx,dy=1,2
+                                    {"Direction", "+Y"}}),
+                      json::object({{"Attributes", json::array({2, 6, 10})},  // dx,dy = 3,1
+                                    {"Direction", "+X"}})})}}),
+           json::object({{"Index", 2},
+                         {"R", port2_ref_R},
+                         {"Excitation", uint(1)},
+                         {"Elements", json::array({json::object(
+                                          {{"Attributes", json::array({14})},  // dx,dy=1,1
+                                           {"Direction", "+Z"}})})}})          //,
+       })}};
+
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Order"] = order;
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
+
+  IoData iodata(std::move(setup_json));
+
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  std::size_t max_size_per_excitation = 100;
+  RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+  // Test hybrid weight operator works as expected.
+  const auto &weight_op = prom_op.GetWeightOp();
+  REQUIRE(weight_op.has_value());
+
+  const auto &W_bulk = weight_op->W_inner_product_weight_bulk;
+  const auto &W_port = weight_op->W_inner_product_weight_port;
+
+  // If serial — concertise as an Eigen matrix on a thread and manually check zeros of row
+  // and columns.
+  if (Mpi::Size(world_comm) == 1)
+  {
+    // Assemble operators as Eigen matrices for simpler testing.
+    auto toEigenMatrix = [](const auto &op)
+    {
+      int n = op.NumRows();
+      int m = op.NumCols();
+      Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, m);
+      mfem::Vector w(n), v(n);
+      w.UseDevice(true);
+      v.UseDevice(true);
+      for (int i = 0; i < m; i++)
+      {
+        w = 0.0;
+        w[i] = 1.0;
+        op.Mult(w, v);
+        for (int j = 0; j < n; j++)
+        {
+          mat(j, i) = v(j);
+        }
+      }
+      return mat;
+    };
+
+    auto W_port_eigen = toEigenMatrix(*W_port);
+    auto W_bulk_eigen = toEigenMatrix(*W_bulk);
+    auto weight_op_eigen = toEigenMatrix(*weight_op);
+
+    // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
+    // matrix is zero.
+    for (int i = 0; i < W_port_eigen.rows(); i++)
+    {
+      if (W_port_eigen.row(i).norm() > 0.0)
+      {
+        CHECK(W_bulk_eigen.row(i).norm() == 0.0);
+      }
+      else
+      {
+        // Check there is some overlap in other rows.
+        CHECK(W_bulk_eigen.row(i).norm() > 0.0);
+      }
+    }
+
+    for (int j = 0; j < W_port_eigen.cols(); j++)
+    {
+
+      if (W_port_eigen.col(j).norm() > 0.0)
+      {
+        CHECK(W_bulk_eigen.col(j).norm() == 0.0);
+      }
+      else
+      {
+        // Check there is some overlap in other cols.
+        CHECK(W_bulk_eigen.col(j).norm() > 0.0);
+      }
+    }
+  }
+
+  // Now test against port vector. The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e
+  // L_e / W_e but with Z_R = 1.0. In this case this = 1.0 for Port 2,3 and != 1.0 for Port
+  // 1. See normalization tests of LumpedPort_BasicTests_1ElementPort_Cube321 in
+  //    test-lumpedportintegration.cpp.
+
+  // double et_norm_expected_port1 = 0.0;
+  const auto &port_1 = space_op.GetLumpedPortOp().GetPort(1);
+  double et_norm_expected_port1 = port_1.GetExcitationFieldEtNormSqWithUnityZR();
+
+  for (const auto &[port_i, port_norm] :
+       std::vector<std::pair<int, double>>{{1, et_norm_expected_port1}, {2, 1.}})
+  {
+    ComplexVector port_primary_et;
+    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_i, port_primary_et, true);
+    Vector port_primary_et_tmp = port_primary_et.Real();
+
+    W_port->Mult(port_primary_et.Real(), port_primary_et_tmp);
+    auto overlap_port =
+        linalg::Dot(world_comm, port_primary_et.Real(), port_primary_et_tmp);
+    CHECK_THAT(overlap_port, WithinRel(port_norm));
+
+    W_bulk->Mult(port_primary_et.Real(), port_primary_et_tmp);
+    auto overlap_bulk =
+        linalg::Dot(world_comm, port_primary_et.Real(), port_primary_et_tmp);
+    Mpi::GlobalSum(1, &overlap_bulk, world_comm);
+    CHECK_THAT(overlap_bulk, WithinAbs(0.0, 1e-15));
+
+    auto overlap_combined =
+        weight_op->InnerProduct(world_comm, port_primary_et.Real(), port_primary_et.Real());
+    CHECK_THAT(overlap_combined, WithinRel(port_norm));
+  }
+
+  // // Test actually adding port primary vectors to PROM.
+  prom_op.AddLumpedPortModesForSynthesis(iodata);
+  auto rom_dim = prom_op.GetReducedDimension();
+  REQUIRE(rom_dim == 2);
+  const auto [m_Linv, m_Rinv, m_C] = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto orth_R = prom_op.GetOrthR();
+
+  CHECK(((m_Linv->rows() == rom_dim) && (m_Linv->cols() == rom_dim)));
+  CHECK(((m_Rinv->rows() == rom_dim) && (m_Rinv->cols() == rom_dim)));
+  CHECK(((m_C->rows() == rom_dim) && (m_Rinv->cols() == rom_dim)));
+  CHECK(((orth_R.rows() == rom_dim) && (orth_R.cols() == rom_dim)));
+
+  Eigen::MatrixXd orth_R_ref = Eigen::MatrixXd::Identity(rom_dim, rom_dim);
+  orth_R_ref(0, 0) = std::sqrt(et_norm_expected_port1);
+
+  Eigen::MatrixXd m_Linv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  m_Linv_ref(0, 0) = 1.0 / port1_ref_L;
+
+  Eigen::MatrixXd m_Rinv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  m_Rinv_ref(0, 0) = 1.0 / port1_ref_R;
+  m_Rinv_ref(1, 1) = 1.0 / port2_ref_R;
+  // m_Rinv_ref(2, 2) = 1.0 / port3_ref_R;
+
+  Eigen::MatrixXd m_C_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  m_C_ref(0, 0) = port1_ref_C;
+
+  auto check_mat_zero_pattern =
+      [dim = prom_op.GetReducedDimension()](auto &mat, bool skip_real = false)
+  {
+    for (long i = 0; i < dim; i++)
+    {
+      for (long j = 0; j < dim; j++)
+      {
+        if (i != j && !skip_real)
+        {
+          CHECK_THAT(std::real(mat(i, j)), WithinAbs(0.0, 1e-15));
+        }
+        CHECK_THAT(std::imag(mat(i, j)), WithinAbs(0.0, 1e-15));
+      }
+    }
+  };
+
+  check_mat_zero_pattern(orth_R);
+  check_mat_zero_pattern(*m_Rinv);
+  check_mat_zero_pattern(*m_C);
+  check_mat_zero_pattern(*m_Linv, true);  // skip: could extras overlap crowded mesh
+
+  CHECK_THAT(std::real(orth_R(0, 0)), WithinRel(orth_R(0, 0)));
+  CHECK_THAT(std::real(orth_R(1, 1)), WithinRel(orth_R(1, 1)));
+
+  CHECK_THAT(std::real((*m_Rinv)(0, 0)), WithinRel(m_Rinv_ref(0, 0)));
+  CHECK_THAT(std::real((*m_Rinv)(1, 1)), WithinRel(m_Rinv_ref(1, 1)));
+
+  // Don't check 11 of due to presence of bulk values.
+  // For 00, bulk values are small as compared to port values, put tolerance of ~1e-6.
+  CHECK_THAT(std::real((*m_Linv)(0, 0)), WithinRel(m_Linv_ref(0, 0), 1e-6));
+  CHECK_THAT(std::real((*m_C)(0, 0)), WithinRel(m_C_ref(0, 0), 1e-6));
+}
 
 // Checks failure mode that neighbouring ports have overlap because they share and edge
 // degree of freedom. Ports in ROM must be orthogonal for conventional scattering matrix
