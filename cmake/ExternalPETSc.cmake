@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(PETSC_DEPENDENCIES hypre)
+set(PETSC_DEPENDENCIES hypre mumps)
 
 # First build PETSc
 set(PETSC_OPTIONS
@@ -15,14 +15,16 @@ set(PETSC_OPTIONS
   "--prefix=${CMAKE_INSTALL_PREFIX}"
   "--with-cc=${CMAKE_C_COMPILER}"
   "--with-cxx=${CMAKE_CXX_COMPILER}"
-  "--with-fc=0"
+  "--with-fc=${MPI_Fortran_COMPILER}"
   "--with-scalar-type=real"
   "--with-precision=double"
   "--with-clanguage=c"
   "--with-x=0"
-  # "--download-hypre"
-  # "--download-hypre-configure-arguments=--disable-fortran --with-MPI"
   "--with-hypre-dir=${CMAKE_INSTALL_PREFIX}"
+  "--download-mumps"
+  # "--download-scalapack"
+  # "--with-mumps-dir=${CMAKE_INSTALL_PREFIX}"
+  "--with-scalapack-dir=${CMAKE_INSTALL_PREFIX}"
   # "--with-petsc4py=1"
 )
 if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
@@ -63,7 +65,6 @@ if(NOT CMAKE_CXX_COMPILER STREQUAL MPI_CXX_COMPILER)
     "--with-mpi-include=[${PETSC_MPI_INCLUDE_DIRS}]"
     "CFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
     "CXXFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
-    # "--download-hypre-configure-arguments=--disable-fortran --with-MPI CFLAGS=-I${PETSC_MPI_INCLUDE_DIRS} CXXFLAGS=-I${PETSC_MPI_INCLUDE_DIRS}"
   )
 endif()
 

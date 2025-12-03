@@ -29,6 +29,7 @@ class BDDCSolver : public mfem::Solver
 private:
   MPI_Comm comm;
   std::unique_ptr<mfem::PetscBDDCSolver> solver;
+  std::unique_ptr<mfem::PetscLinearSolver> solver2;
   mfem::Array<int> ess_tdof_list, nat_tdof_list;
   FiniteElementSpace &fespace;
 
@@ -37,7 +38,7 @@ public:
 
   void SetOperator(const Operator &op) override;
 
-  void Mult(const Vector &x, Vector &y) const override { solver->Mult(x, y); }
+  void Mult(const Vector &x, Vector &y) const override { solver2->Mult(x, y);}
 };
 
 }  // namespace palace

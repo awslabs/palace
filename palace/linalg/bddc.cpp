@@ -59,27 +59,72 @@ void BDDCSolver::SetOperator(const Operator &op)
   //auto pA2 = std::make_unique<mfem::PetscParMatrix>(pA, Operator::PETSC_MATIS);
 
   if (auto *hypre_op = dynamic_cast<const mfem::HypreParMatrix*>(&op)) {
-    std::cout << "hypre ensuremulttranspose/n";
+    std::cout << "hypre ensuremulttranspose\n";
     hypre_op->EnsureMultTranspose();  // Ensure fully assembled
   }
 
-PetscOptionsSetValue(NULL, "-matis_convert_local_nest", "");
-PetscOptionsSetValue(NULL, "-mat_is_convert_local_nest", "");
+  /*
+//PetscOptionsSetValue(NULL, "-matis_convert_local_nest", "");
+//PetscOptionsSetValue(NULL, "-mat_is_convert_local_nest", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2");
 //PetscOptionsSetValue(NULL, "-mat_is_symmetric", "");
 //PetscOptionsSetValue(NULL, "-ksp_monitor", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "0");
 PetscOptionsSetValue(NULL, "-pc_bddc_detect_disconnected", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // ?
+PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // ?
+PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "1"); //
+PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // ?
+//PetscOptionsSetValue(NULL, "-pc_bddc_benign_trick", "");
+//PetscOptionsSetValue(NULL, "-pc_bddc_nonetflux", "");
+PetscOptionsSetValue(NULL, "-pc_bddc_levels", "1"); // ?
+//PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_scaling", "1"); // leads to error?
+//PetscOptionsSetValue(NULL, "-pc_bddc_deluxe_zerorows", ""); //? doesn't do much?
+//PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_threshold", "2.0"); // ?
+//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_type", "lu");
+//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_package", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
+//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_package", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
+//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_package", "mumps");
+*/
 
-  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
-  mfem::PetscBDDCSolverParams opts;
-  opts.SetSpace(&fespace.Get());
-  opts.SetEssBdrDofs(&ess_tdof_list);
+const auto *pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fespace.Get());
+std::cout << " local DOFs: " << pfes->GetVSize() << std::endl;
+std::cout << " true DOFs: " << pfes->GetTrueVSize() << std::endl;
+
+// Check for shared DOFs
+auto &gc = pfes->GroupComm();
+//std::cout << " num groups: " << gc.PrintInfo(mfem::out) << std::endl;
+gc.PrintInfo();
+  //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix *>(&op)); // op -> PetscParMatrix
+  //auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
+
+  //mfem::PetscBDDCSolverParams opts;
+  //opts.SetSpace(&fespace.Get());
+  //opts.SetEssBdrDofs(&ess_tdof_list);
   // opts.SetComputeNetFlux(true); // leads to MFEM abort
   //opts.SetNatBdrDofs(&nat_tdof_list);
-  solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
+  //solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
   //std::cout << "bddc.cpp L48 solver->Width: " << solver->Width() << "\n";
+
+  // try ASM?
+  // gmres, restart100, asm, asm_overlap=2, lu. converges but takes many (~250) iterations coarse solve, increasing overlap helps
+  // but the performance varies as np is changed...
+PetscOptionsSetValue(NULL, "-ksp_type", "gmres"); //preonly does not convegre
+PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "100");  // Larger restart
+PetscOptionsSetValue(NULL, "-pc_type", "asm");
+PetscOptionsSetValue(NULL, "-pc_asm_type", "restrict");//restrict is the default
+PetscOptionsSetValue(NULL, "-pc_asm_overlap", "2");  // Increase overlap?
+PetscOptionsSetValue(NULL, "-sub_pc_type", "lu");
+PetscOptionsSetValue(NULL, "-sub_pc_factor_mat_solver_type", "mumps");
+PetscOptionsSetValue(NULL, "-ksp_monitor", "");
+  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATAIJ); // op -> PetscParMatrix
+  solver2 = std::make_unique<mfem::PetscLinearSolver>(comm);
+  solver2->SetOperator(*pA);
 }
 
 }  // namespace palace

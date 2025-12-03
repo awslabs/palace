@@ -78,7 +78,8 @@ private:
 
   // System matrix A in parallel assembled form.
   std::unique_ptr<mfem::HypreParMatrix> A;
-
+  std::unique_ptr<mfem::BlockOperator> block_op;
+  std::unique_ptr<mfem::Operator> test_op;
   // Whether or not to save the parallel assembled matrix after calling
   // mfem::Solver::SetOperator (some solvers copy their input).
   bool save_assembled;
