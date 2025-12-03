@@ -25,7 +25,7 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -43,7 +43,7 @@ jobs:
     needs: filter
     runs-on: palace_ubuntu-latest_16-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
 
       - uses: singularityhub/install-singularity@main
