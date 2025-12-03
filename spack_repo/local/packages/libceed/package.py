@@ -41,6 +41,8 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
 
     variant("openmp", default=False, description="Enable OpenMP support")
 
+    variant("shared", default=True, description="Build shared libraries")
+
     conflicts("+rocm", when="@:0.7")
 
     depends_on("c", type="build")  # generated
@@ -60,10 +62,12 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
         depends_on("occa+cuda", when="+cuda")
         depends_on("occa~cuda", when="~cuda")
 
-    depends_on("libxsmm", when="+libxsmm")
+    depends_on("libxsmm~shared", when="+libxsmm~shared")
+    depends_on("libxsmm+shared", when="+libxsmm+shared")
     depends_on("blas", when="+libxsmm", type="link")
 
-    depends_on("magma", when="+magma")
+    depends_on("magma~shared", when="+magma~shared")
+    depends_on("magma+shared", when="+magma+shared")
 
     patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
     patch("pkgconfig-version-0.4.diff", when="@0.4")
@@ -150,6 +154,9 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
 
             if spec.satisfies("+openmp"):
                 makeopts += ["OPENMP=1"]
+
+            if spec.satisfies("~shared"):
+                makeopts += ["STATIC=1"]
 
         return makeopts
 
