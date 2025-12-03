@@ -139,15 +139,15 @@ capacitance matrix is also computed and written to `terminal-Cm.csv` in the same
 ## Magnetostatic problems
 
 For magnetostatic simulations
-([`config["Problem"]["Type"]: "Magnetostatic"`](../config/problem.md#config%5B%22Problem%22%5D)),
-the user can specify excitations using either surface current boundaries or flux loop boundaries.
+([`config["Problem"]["Type"]: "Magnetostatic"`](../config/problem.md#config%5B%22Problem%22%5D)), the user can specify
+excitations using either surface current boundaries or flux loop boundaries.
 
-**Surface current boundaries**: Specify a number of source current boundaries to apply unit
-currents to specified surfaces. For each current source, a magnetostatic field is computed by
-applying a unit current to the source of interest, leaving all other sources open. Surfaces
-which are expected to carry current should be labeled as perfectly conducting (PEC), which
-prescribes a zero magnetic flux, or
-[magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
+**Surface current boundaries**: Specify a number of source current boundaries. For each
+current source, a magnetostatic field is computed by applying a unit current to the source
+of interest, leaving all other sources open with no excitation. Surfaces which are expected
+to carry current should be labeled as Perfect Electric Conductors (PEC), which prescribes a
+zero magnetic flux, or [magnetic
+insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
 boundary condition.
 
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`]

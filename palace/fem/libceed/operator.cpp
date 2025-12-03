@@ -29,8 +29,8 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     CeedOperator loc_op, loc_op_t;
     CeedVector loc_u, loc_v;
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
+    PalaceCeedCall(ceed, CeedOperatorCreateComposite(ceed, &loc_op));
+    PalaceCeedCall(ceed, CeedOperatorCreateComposite(ceed, &loc_op_t));
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, width, &loc_u));
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, height, &loc_v));
     op[id] = loc_op;
@@ -70,7 +70,7 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
   MFEM_VERIFY((l_in < 0 || mfem::internal::to_int(l_in) == width) &&
                   (l_out < 0 || mfem::internal::to_int(l_out) == height),
               "Dimensions mismatch for CeedOperator!");
-  PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(op[id], sub_op));
+  PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op[id], sub_op));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
   if (sub_op_t)
   {
@@ -81,7 +81,7 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
     PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(sub_op_t, &l_in_t, &l_out_t));
     MFEM_VERIFY(l_in_t == l_out && l_out_t == l_in,
                 "Dimensions mismatch for transpose CeedOperator!");
-    PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(op_t[id], sub_op_t));
+    PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op_t[id], sub_op_t));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
   }
 }
@@ -467,14 +467,14 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
 
     // Check if the operator is empty, otherwise assemble.
     CeedInt nsub_ops;
-    PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op[id], &nsub_ops));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[id], &nsub_ops));
     if (nsub_ops == 0)
     {
       loc_mat[id] = std::make_unique<hypre::HypreCSRMatrix>(op.Height(), op.Width(), 0);
     }
     else
     {
-      // First, get matrix on master thread in COO format, withs rows/cols always on host
+      // First, get matrix on master thread in COO format, with rows/cols always on host
       // and vals potentially on the device. Process skipping zeros if desired.
       CeedSize nnz;
       CeedInt *rows, *cols;
@@ -568,8 +568,8 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     }
     CeedInt nsub_ops_fine;
     CeedOperator *sub_ops_fine;
-    PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[id], &nsub_ops_fine));
-    PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[id], &sub_ops_fine));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op_fine[id], &nsub_ops_fine));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op_fine[id], &sub_ops_fine));
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
       CeedOperator sub_op_coarse;

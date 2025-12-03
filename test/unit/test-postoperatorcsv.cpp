@@ -1,6 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #include <complex>
 #include <fmt/format.h>
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -440,7 +442,7 @@ public:
   }
 };
 
-TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
 {
   using vs = std::vector<std::size_t>;
   CHECK(_impl::table_expected_filling(0, 0, 5, 1) == vs{0, 0});
@@ -452,9 +454,9 @@ TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv]")
   CHECK(_impl::table_expected_filling(2, 2, 5, 3) == vs{5, 5, 5, 2});
 }
 
-// Could also use METHOD_AS_TEST_CASE with fixture. This resuses fixture class, *without*
+// Could also use METHOD_AS_TEST_CASE with fixture. This reuses fixture class, *without*
 // inheriting from it, so friendship assignment works.
-TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture reload_fixture{"postoperatorcsv_restart/restart1.json"};
   SECTION("Driven solver, single excitation: no reload")
@@ -482,7 +484,7 @@ TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv]")
     reload_fixture.restart1_bad_col_alignment();
   }
 }
-TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv]")
+TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart2.json"};
 

@@ -27,6 +27,8 @@ list(APPEND PALACE_OPTIONS
   "-DANALYZE_SOURCES_CLANG_TIDY=${ANALYZE_SOURCES_CLANG_TIDY}"
   "-DANALYZE_SOURCES_CPPCHECK=${ANALYZE_SOURCES_CPPCHECK}"
   "-DMFEM_DATA_PATH=${CMAKE_BINARY_DIR}/extern/mfem/data" # Path to meshes for testing
+  "-DPALACE_BUILD_EXTERNAL_DEPS=${PALACE_BUILD_EXTERNAL_DEPS}" # For Catch2
+  "-DPALACE_BUILD_WITH_COVERAGE=${PALACE_BUILD_WITH_COVERAGE}"
 )
 if(PALACE_WITH_ARPACK)
   list(APPEND PALACE_OPTIONS
@@ -98,9 +100,10 @@ ExternalProject_Add(palace
 # Add target for Palace unit tests
 ExternalProject_Add_Step(palace tests
   COMMAND           ${CMAKE_MAKE_PROGRAM} unit-tests
+  COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
   DEPENDEES         install
   DEPENDERS         ""
-  COMMENT           "Building unit tests for 'palace'"
+  COMMENT           "Building and installing unit tests for 'palace'"
   WORKING_DIRECTORY <BINARY_DIR>
   EXCLUDE_FROM_MAIN TRUE
 )

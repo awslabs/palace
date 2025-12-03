@@ -16,17 +16,13 @@
 using DelimitedFiles
 using Measures
 using Plots
-using PyPlot: matplotlib
 
 include(joinpath(@__DIR__, "cavity.jl"))
 
 # Plot settings
-pyplot()
-rcParams = PyPlot.PyDict(matplotlib["rcParams"])
 plotsz = (800, 400)
 fntsz = 12
 fnt = font(fntsz)
-rcParams["mathtext.fontset"] = "stix"
 default(
     size=plotsz,
     palette=:Set1_9,

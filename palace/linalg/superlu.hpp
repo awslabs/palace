@@ -25,12 +25,15 @@ private:
   MPI_Comm comm;
   std::unique_ptr<mfem::SuperLURowLocMatrix> A;
   mfem::SuperLUSolver solver;
+  bool reorder_reuse;
 
 public:
-  SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d, int print);
+  SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
+                bool reorder_reuse, int print);
   SuperLUSolver(const IoData &iodata, MPI_Comm comm, int print)
     : SuperLUSolver(comm, iodata.solver.linear.sym_factorization,
-                    iodata.solver.linear.superlu_3d, print)
+                    iodata.solver.linear.superlu_3d, iodata.solver.linear.reorder_reuse,
+                    print)
   {
   }
 
@@ -53,6 +56,8 @@ public:
   {
     solver.ArrayMultTranspose(X, Y);
   }
+
+  void SetReorderReuse(bool reorder_reuse_) { reorder_reuse = reorder_reuse_; }
 };
 
 }  // namespace palace

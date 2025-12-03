@@ -1,17 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4e0bb93..19db918 100644
+index 4e0bb93..e4aca6f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -12,7 +12,7 @@ endif()
- 
- project(MUMPS
- LANGUAGES C Fortran
--VERSION 5.7.3.2
-+VERSION 5.7.3.1
- DESCRIPTION "Sparse direct parallel solver"
- HOMEPAGE_URL "http://mumps-solver.org/"
- )
-@@ -48,13 +48,10 @@ find_package(Threads)
+@@ -48,10 +48,7 @@ find_package(Threads)
  
  if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
@@ -22,20 +13,7 @@ index 4e0bb93..19db918 100644
 +  include(cmake/lapack.cmake)
    set(NUMERIC_LIBS LAPACK::LAPACK)
  
--  if(MUMPS_scalapack)
-+  if(scalapack)
-     include(cmake/scalapack.cmake) # this will also create the LAPACK::LAPACK target
-     list(PREPEND NUMERIC_LIBS SCALAPACK::SCALAPACK)
-   endif()
-@@ -63,7 +60,7 @@ if(MUMPS_parallel)
-   set(NUMERIC_INC ${MPI_Fortran_INCLUDE_DIRS})
-   list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
- 
--  if(MUMPS_openmp)
-+  if(openmp)
-     find_package(OpenMP COMPONENTS C Fortran REQUIRED)
-     list(APPEND NUMERIC_LIBS OpenMP::OpenMP_Fortran OpenMP::OpenMP_C)
-   endif()
+   if(MUMPS_scalapack)
 @@ -99,14 +96,6 @@ endif()
  
  list(APPEND ORDERING_LIBS pord)
@@ -627,6 +605,94 @@ index 56dde6f..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
+diff --git a/cmake/FindPARMETIS.cmake b/cmake/FindPARMETIS.cmake
+new file mode 100644
+index 0000000..8d680c5
+--- /dev/null
++++ b/cmake/FindPARMETIS.cmake
+@@ -0,0 +1,82 @@
++# FindPARMETIS.cmake
++# Finds the PARMETIS library and sets the following variables:
++#  PARMETIS_FOUND - True if PARMETIS was found
++#  PARMETIS_INCLUDE_DIRS - PARMETIS include directories
++#  PARMETIS_LIBRARIES - PARMETIS libraries
++#  PARMETIS_VERSION - PARMETIS version if found
++
++# Try to find PARMETIS using pkg-config first
++find_package(PkgConfig QUIET)
++if(PKG_CONFIG_FOUND)
++  pkg_check_modules(PC_PARMETIS QUIET parmetis)
++endif()
++
++# Find MPI as PARMETIS requires it
++find_package(MPI REQUIRED)
++
++# Find METIS as PARMETIS requires it
++find_package(METIS REQUIRED)
++
++# Find the PARMETIS header
++find_path(PARMETIS_INCLUDE_DIR
++  NAMES parmetis.h
++  PATHS
++    ${PC_PARMETIS_INCLUDE_DIRS}
++    /usr/include
++    /usr/local/include
++    $ENV{PARMETIS_DIR}/include
++  PATH_SUFFIXES parmetis
++)
++
++# Find the PARMETIS library
++find_library(PARMETIS_LIBRARY
++  NAMES parmetis
++  PATHS
++    ${PC_PARMETIS_LIBRARY_DIRS}
++    /usr/lib
++    /usr/local/lib
++    $ENV{PARMETIS_DIR}/lib
++)
++
++# Try to find version information
++if(PARMETIS_INCLUDE_DIR)
++  file(STRINGS "${PARMETIS_INCLUDE_DIR}/parmetis.h" PARMETIS_VERSION_MAJOR_LINE REGEX "^#define[\t ]+PARMETIS_MAJOR_VERSION[\t ]+[0-9]+")
++  file(STRINGS "${PARMETIS_INCLUDE_DIR}/parmetis.h" PARMETIS_VERSION_MINOR_LINE REGEX "^#define[\t ]+PARMETIS_MINOR_VERSION[\t ]+[0-9]+")
++
++  string(REGEX REPLACE "^#define[\t ]+PARMETIS_MAJOR_VERSION[\t ]+([0-9]+)" "\\1" PARMETIS_VERSION_MAJOR "${PARMETIS_VERSION_MAJOR_LINE}")
++  string(REGEX REPLACE "^#define[\t ]+PARMETIS_MINOR_VERSION[\t ]+([0-9]+)" "\\1" PARMETIS_VERSION_MINOR "${PARMETIS_VERSION_MINOR_LINE}")
++
++  set(PARMETIS_VERSION "${PARMETIS_VERSION_MAJOR}.${PARMETIS_VERSION_MINOR}")
++endif()
++
++# Handle standard arguments
++include(FindPackageHandleStandardArgs)
++find_package_handle_standard_args(PARMETIS
++  REQUIRED_VARS
++    PARMETIS_LIBRARY
++    PARMETIS_INCLUDE_DIR
++    MPI_FOUND
++    METIS_FOUND
++  VERSION_VAR PARMETIS_VERSION
++)
++
++# Set output variables
++if(PARMETIS_FOUND)
++  set(PARMETIS_LIBRARIES ${PARMETIS_LIBRARY} ${METIS_LIBRARIES} ${MPI_LIBRARIES})
++  set(PARMETIS_INCLUDE_DIRS ${PARMETIS_INCLUDE_DIR} ${METIS_INCLUDE_DIRS} ${MPI_INCLUDE_PATH})
++
++  if(NOT TARGET parmetis::parmetis)
++    add_library(parmetis::parmetis UNKNOWN IMPORTED)
++    set_target_properties(parmetis::parmetis PROPERTIES
++      IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
++      INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
++      INTERFACE_LINK_LIBRARIES "metis::metis;MPI::MPI_C"
++    )
++  endif()
++endif()
++
++# Mark advanced variables
++mark_as_advanced(
++  PARMETIS_INCLUDE_DIR
++  PARMETIS_LIBRARY
++)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
 index d1880b7..d2ea331 100644
 --- a/cmake/FindSCALAPACK.cmake
@@ -683,12 +749,12 @@ index d1880b7..d2ea331 100644
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 3f0997e..14ebbe6 100644
+index 3f0997e..6776359 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
-@@ -1,11 +1,3 @@
+@@ -1,11 +1,2 @@
  # Handle options for finding LAPACK
- 
+-
 -if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -  set(LAPACK_VENDOR MKL)
 -endif()
@@ -700,13 +766,15 @@ index 3f0997e..14ebbe6 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 8727508..2132c73 100644
+index 8727508..3762473 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -3,39 +3,7 @@ include(GNUInstallDirs)
- 
- if(find AND NOT TARGET SCALAPACK::SCALAPACK)
- 
+@@ -1,103 +1 @@
+-include(ExternalProject)
+-include(GNUInstallDirs)
+-
+-if(find AND NOT TARGET SCALAPACK::SCALAPACK)
+-
 -# Make SCALAPACK_VENDOR match LAPACK_VENDOR
 -
 -if(NOT DEFINED SCALAPACK_VENDOR)
@@ -740,7 +808,70 @@ index 8727508..2132c73 100644
 -endif()
 -
 -find_package(SCALAPACK COMPONENTS ${SCALAPACK_VENDOR})
+-
+-endif()
+-
+-if(SCALAPACK_FOUND OR TARGET SCALAPACK::SCALAPACK)
+-  return()
+-elseif(DEFINED SCALAPACK_VENDOR)
+-  message(FATAL_ERROR "Scalapack from ${SCALAPACK_VENDOR} not found.")
+-endif()
+-
+-set(scalapack_cmake_args
+--DBUILD_SINGLE:BOOL=${BUILD_SINGLE}
+--DBUILD_DOUBLE:BOOL=${BUILD_DOUBLE}
+--DBUILD_COMPLEX:BOOL=${BUILD_COMPLEX}
+--DBUILD_COMPLEX16:BOOL=${BUILD_COMPLEX16}
+--DBUILD_SHARED_LIBS:BOOL=${BUILD_SHARED_LIBS}
+--DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_INSTALL_PREFIX}
+--DCMAKE_C_COMPILER:PATH=${CMAKE_C_COMPILER}
+--DCMAKE_Fortran_COMPILER:PATH=${CMAKE_Fortran_COMPILER}
+--DBUILD_TESTING:BOOL=off
+--DCMAKE_BUILD_TYPE:STRING=Release
+-)
+-
+-file(READ ${CMAKE_CURRENT_LIST_DIR}/libraries.json json)
+-
+-string(JSON scalapack_url GET ${json} scalapack git)
+-string(JSON scalapack_tag GET ${json} scalapack tag)
+-
+-set(SCALAPACK_INCLUDE_DIRS ${CMAKE_INSTALL_FULL_INCLUDEDIR})
+-file(MAKE_DIRECTORY ${SCALAPACK_INCLUDE_DIRS})
+-if(NOT IS_DIRECTORY ${SCALAPACK_INCLUDE_DIRS})
+-  message(FATAL_ERROR "Could not create directory: ${SCALAPACK_INCLUDE_DIRS}")
+-endif()
+-
+-if(BUILD_SHARED_LIBS)
+-  set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_FULL_LIBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}scalapack${CMAKE_SHARED_LIBRARY_SUFFIX}
+-    ${CMAKE_INSTALL_FULL_LIBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}blacs${CMAKE_SHARED_LIBRARY_SUFFIX}
+-  )
+-else()
+-  set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_FULL_LIBDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}scalapack${CMAKE_STATIC_LIBRARY_SUFFIX}
+-    ${CMAKE_INSTALL_FULL_LIBDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}blacs${CMAKE_STATIC_LIBRARY_SUFFIX}
+-  )
+-endif()
+-
+-ExternalProject_Add(scalapack
+-GIT_REPOSITORY ${scalapack_url}
+-GIT_TAG ${scalapack_tag}
+-GIT_SHALLOW true
+-CMAKE_ARGS ${scalapack_cmake_args}
+-TEST_COMMAND ""
+-BUILD_BYPRODUCTS ${SCALAPACK_LIBRARIES}
+-CONFIGURE_HANDLED_BY_BUILD true
+-USES_TERMINAL_DOWNLOAD true
+-USES_TERMINAL_UPDATE true
+-USES_TERMINAL_PATCH true
+-USES_TERMINAL_CONFIGURE true
+-USES_TERMINAL_BUILD true
+-USES_TERMINAL_INSTALL true
+-USES_TERMINAL_TEST true
+-)
+-
+-add_library(SCALAPACK::SCALAPACK INTERFACE IMPORTED GLOBAL)
+-target_include_directories(SCALAPACK::SCALAPACK INTERFACE ${SCALAPACK_INCLUDE_DIRS})
+-target_link_libraries(SCALAPACK::SCALAPACK INTERFACE ${SCALAPACK_LIBRARIES})
+-
+-add_dependencies(SCALAPACK::SCALAPACK scalapack)
 +find_package(SCALAPACK)
- 
- endif()
- 
+\ No newline at end of file

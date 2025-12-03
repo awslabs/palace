@@ -49,7 +49,7 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain driven
-simulations.
+and eigenmode simulations.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -63,7 +63,7 @@ A finite conductivity boundary condition can be specified using the
 [`"Conductivity"`](../config/boundaries.md#boundaries%5B%22Conductivity%22%5D) boundary
 keyword. This boundary condition models the effect of a boundary with non-infinite
 conductivity (an imperfect conductor) for conductors with thickness much larger than the
-skin depth. It is available only for frequency domain driven simulations. For more
+skin depth. It is available only for frequency domain driven and eigenmode simulations. For more
 information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
@@ -76,6 +76,13 @@ boundary condition enforces that the solution on the specified boundaries be exa
 and requires that the surface meshes on the donor and receiver boundaries be identical up to
 translation or rotation. Periodicity in *Palace* is also supported through meshes generated
 incorporating periodicity as part of the meshing process.
+
+*Palace* also supports Floquet periodic boundary conditions, where a phase shift is imposed
+between the fields on the donor and receiver boundaries. The phase shift is
+``e^{-i \bm{k}_p \cdot (\bm{x}_{\textrm{receiver}}-\bm{x}_{\textrm{donor}})}``, where
+``\bm{k}_p`` is the Floquet wave vector and ``\bm{x}`` is the position vector. See
+[Floquet periodic boundary conditions](../reference.md#Floquet-periodic-boundary-conditions)
+for implementation details.
 
 ## Lumped and wave port excitation
 
@@ -99,24 +106,28 @@ incorporating periodicity as part of the meshing process.
     [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D).
 
   - [`config["Boundaries"]["WavePort"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D) :
-    Numeric wave ports are available for frequency domain driven simulations. In this case,
+    Numeric wave ports are available for frequency domain driven and eigenmode simulations. In this case,
     a port boundary condition is applied with an optional excitation using a modal field
     shape which is computed by solving a 2D boundary mode eigenproblem on each wave port
     boundary. This allows for more accurate scattering parameter calculations when modeling
     waveguides or transmission lines with arbitrary cross sections.
     
-    The homogeneous Dirichlet boundary conditions for the wave port boundary mode analysis
-    are taken from the `"PEC"` boundaries of the full 3D model, as well as any optional
-    additional boundary attributes given under `"WavePortPEC"`. Any boundary of the wave
-    port not labeled with with a PEC condition has the natural boundary condition for zero
-    tangential magnetic field prescribed for the purpose of port mode calculation.
+    The 2D wave port eigenproblem only supports PEC and PMC boundary conditions. Boundaries
+    that are specified as `"PEC"` or `"Conductivity"` in the full 3D model and intersect the wave port
+    boundary will be considered as PEC in the 2D boundary mode analysis, as well as any additional
+    boundary attributes given under `"WavePortPEC"`. [`config["Boundaries"]["WavePortPEC"`](../config/boundaries.md#boundaries%5B%22WavePortPEC%22%5D)
+    allows to assign non-PEC attributes from the 3D model (e.g. impedance or absorbing boundary conditions)
+    as a PEC boundary condition for the 2D wave port solve. In addition, boundaries of wave ports other
+    than the wave port currently being considered, in the case wave ports are touching and share one or
+    more edges, are also considered as PEC for the wave port boundary mode analysis. Boundaries of the
+    wave port not labeled with a `"PEC"`, `"Conductivity"`, `"WavePortPEC"`, or `"WavePort"` condition
+    have the natural boundary condition of zero tangential magnetic field (PMC) prescribed for the purpose
+    of port mode calculation.
     
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
-    
-    Wave ports are not currently compatible with nonconformal mesh refinement.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.

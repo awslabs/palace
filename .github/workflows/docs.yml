@@ -7,18 +7,117 @@ on:
     tags: '*'
   pull_request:
 
+permissions:
+  packages: write
+  contents: write
+  statuses: write  # Used to report documentation build statuses
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# We need spack so that we can install palace for the tutorials
+env:
+  SPACK_VERSION: develop
+  REGISTRY: ghcr.io/awslabs/palace
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   build-docs:
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
+    runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Spack
+        uses: spack/setup-spack@v2
+        with:
+          ref: develop
+          buildcache: true
+          color: true
+
+      - name: Setup Environment
+        run: |
+          # Spack.yaml with most / all settings configured
+          cat << EOF > spack.yaml
+          spack:
+            specs:
+              - palace # we install this without a cache each time
+            view: false
+            config:
+              install_tree:
+                root: /opt/spack
+                padded_length: False
+            concretizer:
+              reuse: false
+              unify: true
+              targets:
+                granularity: generic
+            packages:
+              petsc:
+                require: ~hdf5
+            repos:
+            - spack_repo/local
+            mirrors:
+              spack:
+                binary: true
+                url: https://binaries.spack.io/${SPACK_VERSION}
+              local-buildcache:
+                binary: true
+                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+
+      - name: Configure External Packages
+        run: |
+          # These cause build issues if built as externals
+          #   - python : often distributed python isn't feature complete / not all dependencies get detected
+          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
+          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
+          spack -e . external find --all \
+            --exclude openssl \
+            --exclude openssh \
+            --exclude python \
+            --exclude ncurses \
+            --exclude bzip2 \
+            --exclude xz \
+            --exclude curl
+
+      - name: Configure Compilers for Spack
+        run: spack -e . compiler find && spack -e . compiler list
+
+      - name: Configure Binary Mirror Keys for Spack
+        run: spack -e . buildcache keys --install --trust
+
+      - name: Bootstrap Spack
+        run: spack  -e . bootstrap now
+
+      - name: Concretize Spack
+        run: |
+          # Using `spack develop` in order to have an in-source build
+          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . concretize -f
+
+        # Relies on cache-hit(s)
+      - name: Build Dependencies
+        run: |
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+
+        # Explicitly not using cache to get latest develop
+      - name: Build Palace
+        run: |
+          spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
+        # If you want to use the branch-local source instead (should we always do this?)
+        # spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          eval $(spack -e . load --sh palace)
           julia --project=docs -e 'using Pkg; Pkg.instantiate()'
           julia --project=docs --color=yes docs/make.jl
 
@@ -27,3 +126,11 @@ jobs:
           name: docs
           path: docs/build/
           retention-days: 7
+
+      # Push built binaries, even if the build fails
+      # NOTE: This might fail as external fork PRs can't push to GHCR.
+      - name: Push to GHCR cache
+        if: |
+          !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache

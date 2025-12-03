@@ -74,6 +74,10 @@ PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "D
                                                 {EigenSolverBackend::SLEPC, "SLEPc"},
                                                 {EigenSolverBackend::ARPACK, "ARPACK"}})
 
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
+                                                  {NonlinearEigenSolver::SLP, "SLP"}})
+
 // Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                          {SurfaceFlux::MAGNETIC, "Magnetic"},
@@ -336,6 +340,15 @@ void ProblemData::SetUp(json &config)
   verbose = problem->value("Verbose", verbose);
   output = problem->value("Output", output);
 
+  // Parse output formats.
+  auto output_formats_it = problem->find("OutputFormats");
+  if (output_formats_it != problem->end())
+  {
+    output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
+    output_formats.gridfunction =
+        output_formats_it->value("GridFunction", output_formats.gridfunction);
+  }
+
   // Check for provided solver configuration data (not required for electrostatics or
   // magnetostatics since defaults can be used for every option).
   auto solver = config.find("Solver");
@@ -376,6 +389,7 @@ void ProblemData::SetUp(json &config)
   problem->erase("Type");
   problem->erase("Verbose");
   problem->erase("Output");
+  problem->erase("OutputFormats");
   MFEM_VERIFY(problem->empty(),
               "Found an unsupported configuration file keyword under \"Problem\"!\n"
                   << problem->dump(2));
@@ -386,6 +400,8 @@ void ProblemData::SetUp(json &config)
     std::cout << "Type: " << type << '\n';
     std::cout << "Verbose: " << verbose << '\n';
     std::cout << "Output: " << output << '\n';
+    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
+    std::cout << "OutputFormats.GridFunction: " << output_formats.gridfunction << '\n';
   }
 }
 
@@ -614,7 +630,7 @@ void DomainMaterialData::SetUp(json &domains)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Materials\" domain in the configuration file!");
-    MaterialData &data = vecdata.emplace_back();
+    MaterialData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
@@ -935,7 +951,7 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(
         it->find("Conductivity") != it->end(),
         "Missing \"Conductivity\" boundary \"Conductivity\" in the configuration file!");
-    ConductivityData &data = vecdata.emplace_back();
+    ConductivityData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.sigma = it->at("Conductivity");  // Required
@@ -979,7 +995,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("Attributes") != it->end(),
                 "Missing \"Attributes\" list for \"Impedance\" boundary in the "
                 "configuration file!");
-    ImpedanceData &data = vecdata.emplace_back();
+    ImpedanceData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.Rs = it->value("Rs", data.Rs);
@@ -1149,25 +1165,6 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   }
 }
 
-void FloquetData::SetUp(json &boundaries)
-{
-  auto floquet = boundaries.find("FloquetWaveVector");
-  if (floquet == boundaries.end())
-  {
-    return;
-  }
-
-  MFEM_VERIFY(floquet->is_array(),
-              "\"FloquetWaveVector\" should specify an array in the configuration file!");
-  wave_vector = floquet->get<std::array<double, 3>>();
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
-  }
-}
-
 void PeriodicBoundaryData::SetUp(json &boundaries)
 {
   auto periodic = boundaries.find("Periodic");
@@ -1175,9 +1172,24 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
   {
     return;
   }
-  MFEM_VERIFY(periodic->is_array(),
-              "\"Periodic\" should specify an array in the configuration file!");
-  for (auto it = periodic->begin(); it != periodic->end(); ++it)
+  auto floquet = periodic->find("FloquetWaveVector");
+  if (floquet != periodic->end())
+  {
+    MFEM_VERIFY(floquet->is_array(),
+                "\"FloquetWaveVector\" should specify an array in the configuration file!");
+    wave_vector = floquet->get<std::array<double, 3>>();
+  }
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
+  }
+
+  auto pairs = periodic->find("BoundaryPairs");
+  MFEM_VERIFY(pairs->is_array(),
+              "\"BoundaryPairs\" should specify an array in the configuration file!");
+  for (auto it = pairs->begin(); it != pairs->end(); ++it)
   {
     MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
                 "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
@@ -1185,7 +1197,8 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
                 "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
                 "configuration file!");
-    PeriodicData &data = vecdata.emplace_back();
+
+    PeriodicData &data = boundary_pairs.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
         it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
@@ -1210,21 +1223,12 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
-    auto floquet = it->find("FloquetWaveVector");
-    if (floquet != it->end())
-    {
-      MFEM_VERIFY(
-          floquet->is_array(),
-          "\"FloquetWaveVector\" should specify an array in the configuration file!");
-      data.wave_vector = floquet->get<std::array<double, 3>>();
-    }
 
     // Cleanup
     it->erase("DonorAttributes");
     it->erase("ReceiverAttributes");
     it->erase("Translation");
     it->erase("AffineTransformation");
-    it->erase("FloquetWaveVector");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
@@ -1235,7 +1239,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
       std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
       std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
       std::cout << "AffineTransformation: " << data.affine_transform << '\n';
-      std::cout << "FloquetWaveVector: " << data.wave_vector << '\n';
     }
   }
 }
@@ -1556,6 +1559,176 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
   }
 }
+void FarFieldPostData::SetUp(json &postpro)
+{
+  auto farfield = postpro.find("FarField");
+  if (farfield == postpro.end())
+  {
+    return;
+  }
+
+  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
+              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
+              "configuration file!");
+
+  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+
+  // Generate NSample points with the following properties:
+  // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
+  // - The poles, the equator, and the XZ plane are always included.
+  // - The points are almost uniformly on a sphere, with a small bias due to satisfying the
+  //   previous condition.
+  // - The points are on rings of constant theta.
+
+  auto nsample_json = farfield->find("NSample");
+  int nsample = 0;
+  if (nsample_json != farfield->end())
+  {
+    nsample = nsample_json->get<int>();
+    if (nsample > 0)
+    {
+      // Always include poles.
+      thetaphis.emplace_back(0.0, 0.0);   // North pole.
+      thetaphis.emplace_back(M_PI, 0.0);  // South pole.
+
+      if (nsample > 2)
+      {
+        int remaining = nsample - 2;
+
+        // Distribute all remaining points across rings with number weighted by the
+        // local circumference.
+        int n_theta = std::max(1, static_cast<int>(std::sqrt(remaining)));
+        n_theta = std::min(n_theta, remaining);  // Can't have more rings than points.
+
+        std::vector<int> points_per_level(n_theta);
+        std::vector<double> sin_theta_values(n_theta);
+        double total_sin_theta = 0.0;
+
+        // Calculate sin(theta) for each ring and total (sin(theta) is proportional to the
+        // circumference).
+        for (int i = 0; i < n_theta; ++i)
+        {
+          double theta = std::acos(1.0 - 2.0 * (i + 1) / (n_theta + 1.0));
+          sin_theta_values[i] = std::sin(theta);
+          total_sin_theta += sin_theta_values[i];
+        }
+
+        // Distribute points proportional to sin(theta).
+        int assigned_points = 0;
+        for (int i = 0; i < n_theta - 1; ++i)
+        {
+          points_per_level[i] =
+              static_cast<int>(remaining * sin_theta_values[i] / total_sin_theta + 0.5);
+          assigned_points += points_per_level[i];
+        }
+        // Assign remaining points to last ring to ensure exact total.
+        points_per_level[n_theta - 1] = remaining - assigned_points;
+
+        for (int i = 1; i <= n_theta; ++i)
+        {
+          // Ensure equator and XZ plane inclusion.
+          bool is_equator = (i == (n_theta + 1) / 2);
+          double theta = is_equator ? M_PI / 2 : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
+          int points_in_level = points_per_level[i - 1];
+
+          for (int j = 0; j < points_in_level; ++j)
+          {
+            double phi = 2.0 * M_PI * j / points_in_level;
+
+            // Force XZ plane points (phi = 0 or π).
+            if (j == 0)
+            {
+              phi = 0.0;
+            }
+            else if (j == points_in_level / 2)
+            {
+              phi = M_PI;
+            }
+
+            thetaphis.emplace_back(theta, phi);
+          }
+        }
+      }
+
+      if (nsample > 2)
+        // Cast to avoid compiler warnings about types.
+        MFEM_ASSERT(static_cast<int>(thetaphis.size()) == nsample,
+                    "Sampled number of points is not NSample!");
+    }
+  }
+
+  auto thetaphis_json = farfield->find("ThetaPhis");
+  if (thetaphis_json != farfield->end())
+  {
+    MFEM_VERIFY(thetaphis_json->is_array(),
+                "\"ThetaPhis\" should specify an array in the configuration file!");
+
+    // JSON does not support the notion of pair, so we read the theta and phis as vectors
+    // of vectors, and then cast them to vectors of pairs.
+    //
+    // Convert to radians in the process.
+    auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
+    for (const auto &vec : vec_of_vec)
+    {
+      thetaphis.emplace_back(vec[0] * M_PI / 180, vec[1] * M_PI / 180);
+    }
+  }
+
+  // Remove duplicate entries with numerical tolerance.
+  constexpr double tol = 1e-6;
+  std::sort(thetaphis.begin(), thetaphis.end());
+  auto it = std::unique(thetaphis.begin(), thetaphis.end(),
+                        [tol](const auto &a, const auto &b)
+                        {
+                          // At poles (theta ≈ 0 or π), phi is irrelevant.
+                          if ((std::abs(a.first) < tol || std::abs(a.first - M_PI) < tol) &&
+                              (std::abs(b.first) < tol || std::abs(b.first - M_PI) < tol))
+                          {
+                            return std::abs(a.first - b.first) < tol;
+                          }
+
+                          // Check direct match.
+                          if (std::abs(a.first - b.first) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - b.second);
+                            return phi_diff < tol || std::abs(phi_diff - 2.0 * M_PI) < tol;
+                          }
+
+                          // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
+                          if (std::abs(a.first - (M_PI - b.first)) < tol)
+                          {
+                            double phi_diff = std::abs(a.second - (b.second + M_PI));
+                            if (phi_diff > M_PI)
+                              phi_diff = 2.0 * M_PI - phi_diff;
+                            return phi_diff < tol;
+                          }
+
+                          return false;
+                        });
+  thetaphis.erase(it, thetaphis.end());
+
+  if (thetaphis.empty())
+  {
+    MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
+  }
+
+  // Cleanup
+  farfield->erase("Attributes");
+  farfield->erase("NSample");
+  farfield->erase("ThetaPhis");
+  MFEM_VERIFY(farfield->empty(),
+              "Found an unsupported configuration file keyword under \"FarField\"!\n"
+                  << farfield->dump(2));
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "Attributes: " << attributes << '\n';
+    std::cout << "NSample: " << nsample << '\n';
+    std::cout << "ThetaPhis: " << thetaphis << '\n';
+  }
+}
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1565,6 +1738,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
+  farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1575,6 +1749,10 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+
+  attributes.insert(attributes.end(), farfield.attributes.begin(),
+                    farfield.attributes.end());
+
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
@@ -1582,6 +1760,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Cleanup
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
+  postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));
@@ -1600,7 +1779,6 @@ void BoundaryData::SetUp(json &config)
   impedance.SetUp(*boundaries);
   lumpedport.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
-  floquet.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
@@ -1830,7 +2008,7 @@ void DrivenSolverData::SetUp(json &solver)
               auto max_f = r.at("MaxFreq");
               auto delta_f = r.value("FreqStep", 0.0);
               auto n_sample = r.value("NSample", 0);
-              MFEM_VERIFY(delta_f > 0 ^ n_sample > 0,
+              MFEM_VERIFY((delta_f > 0) ^ (n_sample > 0),
                           "Only one of \"FreqStep\" or \"NSample\" can be specified for "
                           "\"Type\": \"Linear\"!");
               if (delta_f > 0)
@@ -2016,6 +2194,24 @@ void EigenSolverData::SetUp(json &solver)
   init_v0 = eigenmode->value("StartVector", init_v0);
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
   mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
+  nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
+  refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
+  linear_tol = eigenmode->value("LinearTol", linear_tol);
+  target_upper = eigenmode->value("TargetUpper", target_upper);
+  preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
+  preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
+  max_restart = eigenmode->value("MaxRestart", max_restart);
+
+  target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
+  MFEM_VERIFY(target > 0.0, "config[\"Eigenmode\"][\"Target\"] must be strictly positive!");
+  MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
+                                     "greater than config[\"Eigenmode\"][\"Target\"]!");
+  MFEM_VERIFY(preconditioner_lag >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
+  MFEM_VERIFY(preconditioner_lag_tol >= 0,
+              "config[\"Eigenmode\"][\"PreconditionerLagTol\"] must be non-negative!");
+  MFEM_VERIFY(max_restart >= 0,
+              "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
 
   MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
 
@@ -2032,6 +2228,13 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("StartVector");
   eigenmode->erase("StartVectorConstant");
   eigenmode->erase("MassOrthogonal");
+  eigenmode->erase("NonlinearType");
+  eigenmode->erase("RefineNonlinear");
+  eigenmode->erase("LinearTol");
+  eigenmode->erase("TargetUpper");
+  eigenmode->erase("PreconditionerLag");
+  eigenmode->erase("PreconditionerLagTol");
+  eigenmode->erase("MaxRestart");
   MFEM_VERIFY(eigenmode->empty(),
               "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
                   << eigenmode->dump(2));
@@ -2051,6 +2254,13 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "StartVector: " << init_v0 << '\n';
     std::cout << "StartVectorConstant: " << init_v0_const << '\n';
     std::cout << "MassOrthogonal: " << mass_orthog << '\n';
+    std::cout << "NonlinearType: " << nonlinear_type << '\n';
+    std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
+    std::cout << "LinearTol: " << linear_tol << '\n';
+    std::cout << "TargetUpper: " << target_upper << '\n';
+    std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
+    std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
+    std::cout << "MaxRestart: " << max_restart << '\n';
   }
 }
 
@@ -2209,6 +2419,8 @@ void LinearSolverData::SetUp(json &solver)
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
+  drop_small_entries = linear->value("DropSmallEntries", drop_small_entries);
+  reorder_reuse = linear->value("ReorderingReuse", reorder_reuse);
   pc_side = linear->value("PCSide", pc_side);
   sym_factorization = linear->value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
@@ -2252,6 +2464,8 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
   linear->erase("ComplexCoarseSolve");
+  linear->erase("DropSmallEntries");
+  linear->erase("ReorderingReuse");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -2297,6 +2511,8 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "PCMatReal: " << pc_mat_real << '\n';
     std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
     std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
+    std::cout << "DropSmallEntries: " << drop_small_entries << '\n';
+    std::cout << "ReorderingReuse: " << reorder_reuse << '\n';
     std::cout << "PCSide: " << pc_side << '\n';
     std::cout << "ColumnOrdering: " << sym_factorization << '\n';
     std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';

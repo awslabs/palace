@@ -267,30 +267,31 @@
     },
     "Periodic":
     {
-      "type": "array",
-      "additionalItems": false,
-      "items":
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["BoundaryPairs"],
+      "properties":
       {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["DonorAttributes", "ReceiverAttributes"],
-        "properties":
+        "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" },
+        "BoundaryPairs":
         {
-          "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
-          "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
-          "Translation": { "$ref": "#/$defs/Translation" },
-          "AffineTransformation": { "$ref": "#/$defs/AffineTransformation" },
-          "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" }
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["DonorAttributes", "ReceiverAttributes"],
+            "properties":
+            {
+              "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
+              "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
+              "Translation": { "$ref": "#/$defs/Translation" },
+              "AffineTransformation": { "$ref": "#/$defs/AffineTransformation" }
+            }
+          }
         }
       }
-    },
-    "FloquetWaveVector":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items": { "type": "number" },
-      "minItems": 3,
-      "maxItems": 3
     },
     "Postprocessing":
     {
@@ -342,6 +343,24 @@
               "Thickness": { "type": "number" },
               "Permittivity": { "type": "number" },
               "LossTan": { "type": "number" }
+            }
+          }
+        },
+        "FarField": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": { "$ref": "#/$defs/Attributes" },
+            "NSample": { "type": "integer", "minimum": 0 },
+            "ThetaPhis": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2
+              }
             }
           }
         }
@@ -415,4 +434,3 @@
     }
   }
 }
-

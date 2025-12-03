@@ -5,9 +5,11 @@ on:
     branches:
       - main
   pull_request:
-    paths-ignore:
-      - '**.md'
   workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,7 +23,28 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - '.github/workflows/spack.yml'
+
   build-and-test-spack:
+    needs: filter
     strategy:
       fail-fast: false # don't have one build stop others from finishing
       matrix:
@@ -34,18 +57,20 @@ jobs:
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v4
+        if: needs.filter.outputs.test == 'true'
 
       - name: Configure Clang compiler
-        if: matrix.compiler == 'clang'
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
         run: sudo apt-get install -y clang lld
 
       - name: Configure Intel oneAPI compiler
-        if: matrix.compiler == 'intel'
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel'
         run:
           sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
           intel-oneapi-compiler-fortran=2024.2.1-1079
 
       - name: Setup Spack
+        if: needs.filter.outputs.test == 'true'
         uses: spack/setup-spack@v2
         with:
           ref: develop
@@ -53,6 +78,7 @@ jobs:
           color: true
 
       - name: Setup Environment
+        if: needs.filter.outputs.test == 'true'
         run: |
           # Configure GPU variant
           if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
@@ -65,9 +91,9 @@ jobs:
 
           # Develop requires ^compiler, not %compiler
           if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
           else
-            PALACE_SPEC="local.palace@develop${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           fi
 
           # Spack.yaml with most / all settings configured
@@ -106,6 +132,7 @@ jobs:
           EOF
 
       - name: Configure External Packages
+        if: needs.filter.outputs.test == 'true'
         run: |
           # These cause build issues if built as externals
           #   - python : often distributed python isn't feature complete / not all dependencies get detected
@@ -121,17 +148,21 @@ jobs:
             --exclude curl
 
       - name: Configure Compilers
+        if: needs.filter.outputs.test == 'true'
         run: spack -e . compiler find && spack -e . compiler list
 
       - name: Configure Binary Mirror Keys
+        if: needs.filter.outputs.test == 'true'
         run: |
           # If we cached these, that would be faster and safer
           spack -e . buildcache keys --install --trust
 
       - name: Bootstrap
+        if: needs.filter.outputs.test == 'true'
         run: spack -e . bootstrap now
 
       - name: Concretize
+        if: needs.filter.outputs.test == 'true'
         # In theory we can re-use a concretization and pin a spack to speed this up.
         # Unfortunately it then becomes difficult to know when to re-concretize.
         run: |
@@ -140,17 +171,25 @@ jobs:
           spack -e . concretize -f
 
       - name: Build Dependencies
+        if: needs.filter.outputs.test == 'true'
         run: |
           spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
       - name: Build Palace
+        if: needs.filter.outputs.test == 'true'
         # Build palace from source using this current directory
         # We use `--no-cache` in order to force a rebuild
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
 
-      # TODO: Should we run unit tests as well here?
+      - name: Run Unit Tests
+        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
+        run: |
+          eval $(spack -e . load --sh palace)
+          palace-unit-tests --skip-benchmarks
+          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
+
       - name: Run Integration Tests
-        if: matrix.gpu == 'none' # Skip tests for GPU builds
+        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
         env:
           NUM_PROC_TEST_MAX: "8"
         run: |
@@ -163,6 +202,7 @@ jobs:
       # NOTE: This might fail as external fork PRs can't push to GHCR.
       - name: Push to GHCR cache
         if: |
+          needs.filter.outputs.test == 'true' &&
           !cancelled() &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache

@@ -61,13 +61,9 @@
         ...
     ],
     "Periodic":
-    [
+    {
         ...
-    ],
-    "FloquetWaveVector":
-    [
-        ...
-    ],
+    },
     "Postprocessing":
     {
         "SurfaceFlux":
@@ -78,6 +74,10 @@
         [
             ...
         ]
+        "FarField":
+        {
+            ...
+        }
     }
 }
 ```
@@ -99,18 +99,18 @@ boundary using a user specified surface impedance.
 artificial scattering boundary conditions at farfield boundaries.
 
 `"Conductivity"` :  Array of objects for configuring finite conductivity surface impedance
-boundary conditions. Finite conductivity boundaries are only available for the frequency
-domain driven simulation type.
+boundary conditions. Finite conductivity boundaries are only available for frequency
+domain driven and eigenmode simulation types.
 
 `"LumpedPort"` :  Array of objects for configuring lumped port boundary conditions. Lumped
 ports can be specified on boundaries which are internal to the computational domain.
 
 `"WavePort"` :  Array of objects for configuring numeric wave port boundary conditions. Wave
 ports can only be specified on boundaries which are on the true boundary of the
-computational domain. Additionally, wave port boundaries are only available for the
-frequency domain driven simulation type.
+computational domain. Additionally, wave port boundaries are only available for
+frequency domain driven and eigenmode simulation types.
 
-`"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
+`"WavePortPEC"` :  Top-level object for configuring additional PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant
 when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
@@ -136,17 +136,16 @@ surface.
 electrostatic simulations. Entries of the capacitance matrix are extracted corresponding to
 each terminal boundary.
 
-`"Periodic"` :  Array of objects for configuring periodic boundary conditions for surfaces
+`"Periodic"` :  Top-level object for configuring periodic boundary conditions for surfaces
 with meshes that are identical after translation and/or rotation.
-
-`"FloquetWaveVector"` :  Array for specifying Floquet wave vector for
-meshes generated with built-in periodicity.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
 
 `"SurfaceFlux"` :  Array of objects for postprocessing surface flux.
 
 `"Dielectric"` :  Array of objects for postprocessing surface interface dielectric loss.
+
+`"FarField"` :  Top-level object for extracting electric fields in the far-field region.
 
 ## `boundaries["PEC"]`
 
@@ -420,10 +419,10 @@ for the wave port problem.
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider along with
-those specified under
-[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) as PEC when
-performing wave port boundary mode analysis.
+`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider as PEC when solving the
+2D eigenproblem for the wave port boundary mode analysis, along with those specified under
+[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) and
+[`config["Boundaries"]["Conductivity"]["Attributes"]`](#boundaries%5B%22Conductivity%22%5D).
 
 ## `boundaries["SurfaceCurrent"]`
 
@@ -570,16 +569,19 @@ boundary.
 
 ```json
 "Periodic":
-[
-    {
-        "DonorAttributes": [<int array>],
-        "ReceiverAttributes": [<int array>],
-        "Translation": [<float array>],
-        "AffineTransformation": [<float array>],
-        "FloquetWaveVector": [<float array>]
-    },
-    ...
-]
+{
+    "FloquetWaveVector": [<float array>],
+    "BoundaryPairs":
+    [
+        {
+            "DonorAttributes": [<int array>],
+            "ReceiverAttributes": [<int array>],
+            "Translation": [<float array>],
+            "AffineTransformation": [<float array>],
+        },
+        ...
+    ]
+}
 ```
 
 with
@@ -600,17 +602,8 @@ three-dimensional (4 x 4) affine transformation matrix (in row major format) fro
 to the receiver attribute in mesh units. If neither `"Translation"` or `"AffineTransformation"` are
 specified, the transformation between donor and receiver boundaries is automatically detected.
 
-`"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between
-this pair of donor and receiver periodic boundaries in the X/Y/Z directions in radians per mesh
-unit. If multiple periodic boundary pairs are used, the Floquet wave vector will be summed over
-the periodic boundary pairs.
-
-## `boundaries["FloquetWaveVector"]`
-
-Optional floating point array defining the phase delay between the periodic boundaries in the X/Y/Z
-directions in radians per mesh unit, for meshes generated with built-in periodicity. This should not
-be used for non-periodic meshes, or for meshes generated without built-in periodicity. In the latter
-case, the Floquet wave vector should be specified via `"boundaries["Periodic"]["FloquetWaveVector"]"`.
+`"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between the
+periodic boundaries in the X/Y/Z directions in radians per mesh unit.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 
@@ -653,7 +646,7 @@ an internal boundary surface is averaged. When `true`, it is summed with an oppo
 direction.
 
 `"Center" [None]` :  Floating point array of length equal to the model spatial dimension
-specfiying the coordinates of a central point used to compute the outward flux. The true
+specifying the coordinates of a central point used to compute the outward flux. The true
 surface normal is used in the calculation, and this point is only used to ensure the correct
 orientation of the normal. Specified in mesh length units, and only relevant when
 `"TwoSided"` is `false`. If not specified, the point will be computed as the centroid of the
@@ -690,7 +683,7 @@ interface.
 boundary. See also [this page](../reference.md#Bulk-and-interface-dielectric-loss).
 Available options are:
 
-  - `"Default"` :  Use the full electric field evaulated at the boundary to compute the
+  - `"Default"` :  Use the full electric field evaluated at the boundary to compute the
     energy participation ratio (EPR) of this dielectric interface and estimate loss.
   - `"MA"` :  Use the boundary conditions assuming a metal-air interface to compute the EPR
     of this dielectric interface.
@@ -706,3 +699,30 @@ units.
 be the interface layer permittivity for the specific `"Type"` of interface specified.
 
 `"LossTan" [0.0]` :  Loss tangent for this lossy dielectric interface.
+
+## `boundaries["Postprocessing"]["FarField"]`
+
+```json
+"Postprocessing":
+{
+    "FarField":
+    {
+        "Attributes": [<int array>],
+        "NSample": <int>,
+        "ThetaPhis": [<array of pairs of floats>]
+    }
+}
+```
+
+with
+
+`"Attributes" [None]` : Integer array of mesh boundary attributes to be used to
+compute the far fields. It has to be an external boundary and enclose the
+system.
+
+`"NSample" [0]` : Number of uniformly-spaced points to use to discretize the
+far-field sphere.
+
+`"ThetaPhi" [None]` : Evaluate the far-field electric field at these specific
+angles too (in degrees). $\theta \in [0, 180°]$ is the polar angle and $\phi \in
+[0, 360°]$ is the azimuthal angle.

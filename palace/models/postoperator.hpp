@@ -70,6 +70,23 @@ constexpr bool HasBGridFunction()
   return solver_t != ProblemType::ELECTROSTATIC;
 }
 
+// Scale gridfunctions after redimensionalizing the mesh.
+void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
+                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
+                        std::unique_ptr<GridFunction> &A);
+
+// Scale gridfunctions from non-dimensional to SI units.
+void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                 std::unique_ptr<GridFunction> &B,
+                                 std::unique_ptr<GridFunction> &V,
+                                 std::unique_ptr<GridFunction> &A);
+
+// Scale gridfunctions from SI units to non-dimensional.
+void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                    std::unique_ptr<GridFunction> &B,
+                                    std::unique_ptr<GridFunction> &V,
+                                    std::unique_ptr<GridFunction> &A);
+
 //
 // A class to handle solution postprocessing for all solvers.
 //
@@ -93,25 +110,64 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
-  // ParaView Measure & Print.
+  // Field output format control flags.
+  bool enable_paraview_output = false;
+  bool enable_gridfunction_output = false;
 
-  // Option to write ParaView fields at all and rate / number of iterations printed.
-  std::size_t paraview_delta_post = 0;  // printing rate for ParaView (TRANSIENT)
-  std::size_t paraview_n_post = 0;      // max printing for ParaView (OTHER SOLVERS)
-  std::vector<std::size_t> paraview_save_indices = {};  // explicit saves for ParaView
-  // Whether any paraview fields will be written.
-  bool write_paraview_fields() const
+  // How many / which fields to output.
+  int output_delta_post = 0;                          // printing rate (TRANSIENT)
+  int output_n_post = 0;                              // max printing (OTHER SOLVERS)
+  std::vector<std::size_t> output_save_indices = {};  // explicit saves
+
+  // Whether any output formats were specified.
+  bool AnyOutputFormats() const
   {
-    return (paraview_delta_post > 0) || (paraview_n_post > 0) ||
-           !paraview_save_indices.empty();
+    return enable_paraview_output || enable_gridfunction_output;
   }
-  // Whether paraview fields should be written for this particular step.
-  bool write_paraview_fields(std::size_t step);
+  bool AnythingToSave() const
+  {
+    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty();
+  }
+
+  // Whether any fields should be written at all.
+  bool ShouldWriteFields() const { return AnyOutputFormats() && AnythingToSave(); }
+
+  // Whether any fields should be written for this step.
+  bool ShouldWriteFields(int step) const
+  {
+    return AnyOutputFormats() &&
+           ((output_delta_post > 0 && step % output_delta_post == 0) ||
+            (output_n_post > 0 && step < output_n_post) ||
+            std::binary_search(output_save_indices.cbegin(), output_save_indices.cend(),
+                               step));
+  }
+
+  // Whether fields should be written for a particular output format (at a given step).
+  bool ShouldWriteParaviewFields() const
+  {
+    return enable_paraview_output && AnythingToSave();
+  }
+  bool ShouldWriteParaviewFields(int step) const
+  {
+    return enable_paraview_output && ShouldWriteFields(step);
+  }
+  bool ShouldWriteGridFunctionFields() const
+  {
+    return enable_gridfunction_output && AnythingToSave();
+  }
+  bool ShouldWriteGridFunctionFields(int step) const
+  {
+    return enable_gridfunction_output && ShouldWriteFields(step);
+  }
 
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if write_paraview_fields() is true.
+  // and we only want initialize it if ShouldWriteParaviewFields() returns true.
   std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+
+  // MFEM grid function output details.
+  std::string gridfunction_output_dir;
+  const std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
@@ -130,6 +186,10 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
+  // Setup coefficients for field postprocessing.
+  void SetupFieldCoefficients();
+
+  // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
 
 public:
@@ -143,8 +203,10 @@ protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
   // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(double time, int step);
-  void WriteFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteParaviewFields(double time, int step);
+  void WriteParaviewFieldsFinal(const ErrorIndicator *indicator = nullptr);
+  void WriteMFEMGridFunctions(double time, int step);
+  void WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator = nullptr);
 
   // CSV Measure & Print.
 
@@ -160,8 +222,8 @@ protected:
 
   // Helper classes that actually do some measurements that will be saved to csv files.
 
-  DomainPostOperator dom_post_op;           // Energy in bulk
-  SurfacePostOperator surf_post_op;         // Dielectric Interface Energy and Flux
+  DomainPostOperator dom_post_op;    // Energy in bulk
+  SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
@@ -176,11 +238,12 @@ protected:
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts
   void MeasureSurfaceFlux() const;
+  void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
   void MeasureProbes() const;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
-  // dependant measurements.
+  // dependent measurements.
   void MeasureAllImpl() const
   {
     MeasureDomainFieldEnergy();
@@ -191,6 +254,7 @@ protected:
     MeasureSurfaceFlux();
     MeasureInterfaceEFieldEnergy();
     MeasureProbes();
+    MeasureFarField();
   }
 
   // Setting grid functions.
@@ -370,6 +434,9 @@ public:
   {
     return *A;
   }
+
+  // Access to number of padding digits.
+  constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
 
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).

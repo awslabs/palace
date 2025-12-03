@@ -9,7 +9,8 @@ namespace palace
 {
 
 MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
-                         SymbolicFactorization reorder, double blr_tol, int print)
+                         SymbolicFactorization reorder, double blr_tol, bool reorder_reuse,
+                         int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
@@ -40,11 +41,16 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
       SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
       break;
   }
-  SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
+  SetReorderingReuse(reorder_reuse);  // If true repeated calls use same sparsity pattern
   if (blr_tol > 0.0)
   {
     SetBLRTol(blr_tol);
   }
+}
+
+void MumpsSolver::SetReorderReuse(bool reorder_reuse)
+{
+  SetReorderingReuse(reorder_reuse);  // If true repeated calls use same sparsity pattern
 }
 
 }  // namespace palace

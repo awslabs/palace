@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace palace
@@ -79,6 +80,10 @@ class Table
   // Column-wise mini-table for storing data and and printing to csv file for doubles.
   // Future: allow int and other output, allow non-owning memory via span.
   std::vector<Column> cols;
+
+  // Map of column name to column index to avoid duplicate column names and allow
+  // fast retrieval by name.
+  std::unordered_map<std::string, std::size_t> name_to_index;
 
   // Cache value to reserve vector space by default.
   std::size_t reserve_n_rows = 0;

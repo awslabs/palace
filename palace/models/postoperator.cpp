@@ -24,7 +24,7 @@ namespace palace
 namespace
 {
 
-std::string ParaviewFoldername(const ProblemType solver_t)
+std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
   {
@@ -39,7 +39,7 @@ std::string ParaviewFoldername(const ProblemType solver_t)
     case ProblemType::TRANSIENT:
       return "transient";
     default:
-      return "unkown";
+      return "unknown";
   }
 }
 
@@ -69,7 +69,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space()),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
+                 fem_op->GetNDSpace()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -95,37 +96,44 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   // Add wave port boundary mode postprocessing, if available.
   if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
   {
+    // Add scaling factor to output dimensional wave port electric fields.
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
       auto ret = port_E0.emplace(idx, WavePortFieldData());
-      ret.first->second.E0r = data.GetModeFieldCoefficientReal();
-      ret.first->second.E0i = data.GetModeFieldCoefficientImag();
+      ret.first->second.E0r = data.GetModeFieldCoefficientReal(scaling);
+      ret.first->second.E0i = data.GetModeFieldCoefficientImag(scaling);
     }
   }
 
-  // If we write paraview fields, initialize paraview files and dependant measurements. We
-  // currently don't use the dependant grid functions for non-paraview measurements, so only
-  // initialize if needed.
+  // Prepare for saving fields
+  enable_paraview_output = iodata.problem.output_formats.paraview;
+  enable_gridfunction_output = iodata.problem.output_formats.gridfunction;
   if (solver_t == ProblemType::DRIVEN)
   {
-    paraview_save_indices = iodata.solver.driven.save_indices;
+    output_save_indices = iodata.solver.driven.save_indices;
   }
   else if (solver_t == ProblemType::EIGENMODE)
   {
-    paraview_n_post = iodata.solver.eigenmode.n_post;
+    output_n_post = iodata.solver.eigenmode.n_post;
   }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
-    paraview_n_post = iodata.solver.electrostatic.n_post;
+    output_n_post = iodata.solver.electrostatic.n_post;
   }
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
-    paraview_n_post = iodata.solver.magnetostatic.n_post;
+    output_n_post = iodata.solver.magnetostatic.n_post;
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
-    paraview_delta_post = iodata.solver.transient.delta_post;
+    output_delta_post = iodata.solver.transient.delta_post;
   }
+
+  gridfunction_output_dir =
+      (post_dir / "gridfunction" / OutputFolderName(solver_t)).string();
+
+  SetupFieldCoefficients();
   InitializeParaviewDataCollection();
 
   // Initialize CSV files for measurements.
@@ -148,33 +156,14 @@ auto PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
 }
 
 template <ProblemType solver_t>
-bool PostOperator<solver_t>::write_paraview_fields(std::size_t step)
+void PostOperator<solver_t>::SetupFieldCoefficients()
 {
-  return (paraview_delta_post > 0 && step % paraview_delta_post == 0) ||
-         (paraview_n_post > 0 && step < paraview_n_post) ||
-         std::binary_search(paraview_save_indices.cbegin(), paraview_save_indices.cend(),
-                            step);
-}
-
-template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(
-    const fs::path &sub_folder_name)
-{
-  if (!write_paraview_fields())
+  // We currently don't use the dependent grid functions apart from saving fields, so only
+  // initialize if needed.
+  if (!ShouldWriteFields())
   {
     return;
   }
-  fs::path paraview_dir_v = post_dir / "paraview" / ParaviewFoldername(solver_t);
-  fs::path paraview_dir_b =
-      post_dir / "paraview" / fmt::format("{}_boundary", ParaviewFoldername(solver_t));
-  if (!sub_folder_name.empty())
-  {
-    paraview_dir_v /= sub_folder_name;
-    paraview_dir_b /= sub_folder_name;
-  }
-  // Set up postprocessing for output to disk.
-  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -189,47 +178,98 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   if constexpr (HasEGridFunction<solver_t>())
   {
+    // If E is dimensionalized when the coefficients are evaluated, the scaling only needs
+    // to account for the remaining ε_0 = D / E. This assumes ProjectCoefficient(),
+    // ProjectBdrCoefficient(), or paraview->Save() for U_e, Q_sr, and Q_si are always
+    // called after the E GridFunction has been dimensionalized. To output nondimensional
+    // coefficients, omit the scaling argument and make sure E is nondimensional when the
+    // coefficients are evaluated.
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+
     // Electric Energy Density.
+    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
-        *E, fem_op->GetMaterialOp());
+        *E, fem_op->GetMaterialOp(), scaling);
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
+        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
       Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector());
+          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     }
   }
 
   if constexpr (HasBGridFunction<solver_t>())
   {
+    // If B is dimensionalized when the coefficients are evaluated, the scaling only needs
+    // to account for the remaining μ⁻¹ = H / B. This assumes ProjectCoefficient(),
+    // ProjectBdrCoefficient(), or paraview->Save() for U_m, J_sr, and J_si are always
+    // called after the B GridFunction has been dimensionalized. To output nondimensional
+    // coefficients, omit the scaling argument and make sure B is nondimensional when the
+    // coefficients are evaluated.
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+
     // Magnetic Energy Density.
+    // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
-        *B, fem_op->GetMaterialOp());
+        *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
     B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(),
-                                                                fem_op->GetMaterialOp());
+    // J_s = n x H = n x μ⁻¹ B.
+    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+        B->Real(), fem_op->GetMaterialOp(), scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(),
-                                                                  fem_op->GetMaterialOp());
+      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+          B->Imag(), fem_op->GetMaterialOp(), scaling);
     }
   }
 
   if constexpr (HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
     // Poynting Vector.
-    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp());
+    // S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
+    // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
+    // only needs to account for the remaining μ⁻¹ = H / B. As mentioned above,
+    // ProjectCoefficient(*S.get()) or paraview->Save() should always be called after
+    // E and B have been dimensionalized.
+    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+                           units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
+                                                    scaling);
   }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::InitializeParaviewDataCollection(
+    const fs::path &sub_folder_name)
+{
+  if (!ShouldWriteParaviewFields())
+  {
+    return;
+  }
+  fs::path paraview_dir_v = post_dir / "paraview" / OutputFolderName(solver_t);
+  fs::path paraview_dir_b =
+      post_dir / "paraview" / fmt::format("{}_boundary", OutputFolderName(solver_t));
+  if (!sub_folder_name.empty())
+  {
+    paraview_dir_v /= sub_folder_name;
+    paraview_dir_b /= sub_folder_name;
+  }
+  // Set up postprocessing for output to disk.
+  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
+  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)
@@ -356,11 +396,9 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 }
 
-namespace
-{
-
-template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
+void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
+                        std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
+                        std::unique_ptr<GridFunction> &A)
 {
   // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
   // the mesh which would carry into the fields during the mapping from reference to
@@ -375,7 +413,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
     // Piola transform: J^-T
     E->Real() *= L;
     E->Real().FaceNbrData() *= L;
-    if (imag)
+    if (E->HasImag())
     {
       E->Imag() *= L;
       E->Imag().FaceNbrData() *= L;
@@ -387,7 +425,7 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
     const auto Ld = std::pow(L, dim - 1);
     B->Real() *= Ld;
     B->Real().FaceNbrData() *= Ld;
-    if (imag)
+    if (B->HasImag())
     {
       B->Imag() *= Ld;
       B->Imag().FaceNbrData() *= Ld;
@@ -401,16 +439,56 @@ void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
   }
 }
 
-}  // namespace
+void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                 std::unique_ptr<GridFunction> &B,
+                                 std::unique_ptr<GridFunction> &V,
+                                 std::unique_ptr<GridFunction> &A)
+{
+  if (E)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+  }
+  if (B)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
+  }
+  if (A)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+  }
+  if (V)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+  }
+}
+
+void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
+                                    std::unique_ptr<GridFunction> &B,
+                                    std::unique_ptr<GridFunction> &V,
+                                    std::unique_ptr<GridFunction> &A)
+{
+  if (E)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*E);
+  }
+  if (B)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*B);
+  }
+  if (A)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+  }
+  if (V)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+  }
+}
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::WriteFields(double time, int step)
+void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
-  if (!write_paraview_fields())
-  {
-    return;
-  }
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -418,8 +496,8 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(), E, B,
-                     V, A);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(units, E, B, V, A);
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -427,20 +505,15 @@ void PostOperator<solver_t>::WriteFields(double time, int step)
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasComplexGridFunction<solver_t>(),
-                     E, B, V, A);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
+void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indicator)
 {
-  if (!write_paraview_fields())
-  {
-    return;
-  }
-
-  BlockTimer bt(Timer::IO);
+  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -513,6 +586,183 @@ void PostOperator<solver_t>::WriteFieldsFinal(const ErrorIndicator *indicator)
   {
     paraview->RegisterVCoeffField(name, gf);
   }
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  Mpi::Barrier(fem_op->GetComm());
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
+{
+  BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+
+  // Create output directory if it doesn't exist.
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    fs::create_directories(gridfunction_output_dir);
+  }
+
+  auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
+
+  // Given the electric field and magnetic flux density, write the fields to disk for
+  // visualization. Write the mesh coordinates in the same units as originally input.
+  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  DimensionalizeGridFunctions(units, E, B, V, A);
+  // Create grid function for vector coefficients.
+  mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
+  mfem::ParGridFunction gridfunc_vector(&fespace);
+
+  // Create grid function for scalar coefficients.
+  mfem::H1_FECollection h1_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
+  mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
+  mfem::ParGridFunction gridfunc_scalar(&h1_fespace);
+
+  const int local_rank = mesh.GetMyRank();
+
+  auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
+  {
+    auto path = fs::path(gridfunction_output_dir) /
+                fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
+                            local_rank, pad_digits_default);
+    std::ofstream file(path);
+    gridfunc.Save(file);
+  };
+
+  // Write grid functions using MFEM's built-in Save method.
+  // Use 6-digit padding to match MFEM's pad_digits_default.
+  if constexpr (HasEGridFunction<solver_t>())
+  {
+    if (E)
+    {
+      if constexpr (HasComplexGridFunction<solver_t>())
+      {
+        // Write real and imaginary parts separately.
+        write_grid_function(E->Real(), "E_real");
+        write_grid_function(E->Imag(), "E_imag");
+      }
+      else
+      {
+        // Write real part only.
+        write_grid_function(E->Real(), "E");
+      }
+    }
+  }
+
+  if constexpr (HasBGridFunction<solver_t>())
+  {
+    if (B)
+    {
+      if constexpr (HasComplexGridFunction<solver_t>())
+      {
+        // Write real and imaginary parts separately.
+        write_grid_function(B->Real(), "B_real");
+        write_grid_function(B->Imag(), "B_imag");
+      }
+      else
+      {
+        // Write real part only.
+        write_grid_function(B->Real(), "B");
+      }
+    }
+  }
+
+  if constexpr (HasVGridFunction<solver_t>())
+  {
+    if (V)
+    {
+      write_grid_function(V->Real(), "V");
+    }
+  }
+
+  if constexpr (HasAGridFunction<solver_t>())
+  {
+    if (A)
+    {
+      write_grid_function(A->Real(), "A");
+    }
+  }
+
+  if (U_e)
+  {
+    gridfunc_scalar = 0.0;
+    gridfunc_scalar.ProjectCoefficient(*U_e.get());
+    write_grid_function(gridfunc_scalar, "U_e");
+  }
+
+  if (U_m)
+  {
+    gridfunc_scalar = 0.0;
+    gridfunc_scalar.ProjectCoefficient(*U_m.get());
+    write_grid_function(gridfunc_scalar, "U_m");
+  }
+
+  if (S)
+  {
+    gridfunc_vector = 0.0;
+    gridfunc_vector.ProjectCoefficient(*S.get());
+    write_grid_function(gridfunc_vector, "S");
+  }
+
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  NondimensionalizeGridFunctions(units, E, B, V, A);
+  Mpi::Barrier(fem_op->GetComm());
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
+{
+  BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+
+  auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
+
+  // Write the mesh partitioning and (optionally) error indicators at the final step.
+  // Write the mesh coordinates in the same units as originally input.
+  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+
+  // Create output directory if it doesn't exist.
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    fs::create_directories(gridfunction_output_dir);
+  }
+
+  // Create piecewise constant finite element space for rank and error indicator.
+  mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
+  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+
+  const int local_rank = mesh.GetMyRank();
+
+  auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
+  {
+    auto path = fs::path(gridfunction_output_dir) /
+                fmt::format("{}.gf.{:0{}d}", name, local_rank, pad_digits_default);
+    std::ofstream file(path);
+    gridfunc.Save(file);
+  };
+
+  // Write mesh partitioning (rank information).
+  {
+    mfem::GridFunction rank(&pwconst_fespace);
+    rank = local_rank + 1;
+    write_grid_function(rank, "rank");
+  }
+
+  // Write error indicator if provided.
+  if (indicator)
+  {
+    mfem::GridFunction eta(&pwconst_fespace);
+    MFEM_VERIFY(eta.Size() == indicator->Local().Size(),
+                "Size mismatch for provided ErrorIndicator for postprocessing!");
+    eta = indicator->Local();
+    write_grid_function(eta, "indicator");
+  }
+
+  // Save ParMesh files; necessary to visualize grid functions.
+  fs::path mesh_filename = fs::path(gridfunction_output_dir) / "mesh";
+  mesh.Save(mesh_filename);
+
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -827,6 +1077,20 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFarField() const
+{
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+
+    // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
+    measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
+        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq.real(),
+        measurement_cache.freq.imag());
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 {
   // Depends on Lumped Port Energy since this is used in normalization of participation
@@ -907,16 +1171,26 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   measurement_cache.ex_idx = ex_idx;
   MeasureAllImpl();
 
-  omega = units.Dimensionalize<Units::ValueType::FREQUENCY>(omega);
-  post_op_csv.PrintAllCSVData(*this, measurement_cache, omega.real(), step, ex_idx);
-  if (write_paraview_fields(step))
+  std::complex<double> freq =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
-    auto ind = 1 + std::distance(paraview_save_indices.begin(),
-                                 std::lower_bound(paraview_save_indices.begin(),
-                                                  paraview_save_indices.end(), step));
-    WriteFields(omega.real(), ind);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
+    auto ind = 1 + std::distance(output_save_indices.begin(),
+                                 std::lower_bound(output_save_indices.begin(),
+                                                  output_save_indices.end(), step));
+    WriteParaviewFields(omega.real(), ind);
+    Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    Mpi::Print("\n");
+    auto ind = 1 + std::distance(output_save_indices.begin(),
+                                 std::lower_bound(output_save_indices.begin(),
+                                                  output_save_indices.end(), step));
+    WriteMFEMGridFunctions(freq.real(), ind);
+    Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -949,11 +1223,13 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Table table;
     int idx_pad = 1 + static_cast<int>(std::log10(num_conv));
     table.col_options = {6, 6};
-    table.insert(Column("idx", "m", idx_pad, {}, {}) << step + 1);
+    table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()));
+                 << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
+                        (2 * M_PI));
     table.insert(Column("f_im", "Im{f} (GHz)")
-                 << units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag()));
+                 << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
+                        (2 * M_PI));
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
@@ -964,10 +1240,15 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
-    WriteFields(step, print_idx);
-    Mpi::Print(" Wrote mode {:d} to disk\n", print_idx);
+    WriteParaviewFields(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (Paraview)\n", print_idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    WriteMFEMGridFunctions(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -988,11 +1269,17 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
-    WriteFields(step, idx);
-    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
+    WriteParaviewFields(step, idx);
+    Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    Mpi::Print("\n");
+    WriteMFEMGridFunctions(step, idx);
+    Mpi::Print(" Wrote fields to disk (grid function) for source {:d}\n", idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1012,11 +1299,17 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
-    WriteFields(step, idx);
-    Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
+    WriteParaviewFields(step, idx);
+    Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    Mpi::Print("\n");
+    WriteMFEMGridFunctions(step, idx);
+    Mpi::Print(" Wrote fields to disk (grid function) for source {:d}\n", idx);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1040,11 +1333,17 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &e, const
   // method.
   time = units.Dimensionalize<Units::ValueType::TIME>(time);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, time, step);
-  if (write_paraview_fields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
-    WriteFields(double(step) / paraview_delta_post, time);
-    Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
+    WriteParaviewFields(time, double(step) / output_delta_post);
+    Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    Mpi::Print("\n");
+    WriteMFEMGridFunctions(time, double(step) / output_delta_post);
+    Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
          measurement_cache.domain_H_field_energy_all;
@@ -1056,9 +1355,13 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   BlockTimer bt0(Timer::POSTPRO);
   auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
   post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
-  if (write_paraview_fields())
+  if (ShouldWriteParaviewFields())
   {
-    WriteFieldsFinal(&indicator);
+    WriteParaviewFieldsFinal(&indicator);
+  }
+  if (ShouldWriteGridFunctionFields())
+  {
+    WriteMFEMGridFunctionsFinal(&indicator);
   }
 }
 
@@ -1078,7 +1381,7 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
          measurement_cache.domain_H_field_energy_all;
 }
 
-// Explict template instantiation.
+// Explicit template instantiation.
 
 template class PostOperator<ProblemType::DRIVEN>;
 template class PostOperator<ProblemType::EIGENMODE>;
@@ -1086,7 +1389,7 @@ template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
 
-// Function explict instantiation.
+// Function explicit instantiation.
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType::DRIVEN>(

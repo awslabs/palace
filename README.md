@@ -1,7 +1,5 @@
-<!---
-Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-SPDX-License-Identifier: Apache-2.0
---->
+<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
+<!--- SPDX-License-Identifier: Apache-2.0 --->
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
 [![CI (Linux)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml)
@@ -60,7 +58,7 @@ connection is required.
 
 System requirements:
 
-  - CMake version 3.21 or later
+  - CMake version 3.24 or later
   - C++17 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
@@ -87,7 +85,14 @@ julia --project=docs -e "using Pkg; Pkg.instantiate()"
 ```
 
 Then, generate the documentation with `julia --project make.jl` from within the
-[`docs/`](./docs) directory.
+[`docs/`](./docs) directory. An HTTP server is needed to visualize the
+rendered documentation. The simple way is to start a server is with python:
+
+```sh
+cd docs/build && python -m http.server 8000
+```
+
+Then, navigate to `localhost:8000` with your browser.
 
 ## Examples
 
@@ -114,3 +119,7 @@ Computing (CQC). Please contact the development team at
 ## License
 
 This project is licensed under the [Apache-2.0 License](./LICENSE).
+
+See [THIRD-PARTY-LICENSES](./THIRD-PARTY-LICENSES) and
+[THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES) for licenses and notices of
+third-party software in this repository.

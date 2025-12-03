@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
 #include "utils/labels.hpp"
@@ -29,7 +30,7 @@ namespace palace
 
 // Base class for coefficients which need to evaluate a GridFunction in a domain element
 // attached to a boundary element, or both domain elements on either side for internal
-// boundaries.
+// boundaries, with optional scaling factor.
 class BdrGridFunctionCoefficient
 {
 protected:
@@ -38,6 +39,7 @@ protected:
   const mfem::ParMesh &mesh;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
+  const double scaling;  // scaling factor used for unit conversions
 
   bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip)
   {
@@ -47,7 +49,10 @@ protected:
   }
 
 public:
-  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh) : mesh(mesh) {}
+  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh, double scaling = 1.0)
+    : mesh(mesh), scaling(scaling)
+  {
+  }
 
   // For a boundary element, return the element transformation objects for the neighboring
   // domain elements. FET.Elem2 may be nullptr if the boundary is a true one-sided boundary,
@@ -72,26 +77,6 @@ public:
     mfem::CalcOrtho(T.Jacobian(), normal);
     normal /= invert ? -normal.Norml2() : normal.Norml2();
   }
-
-  // 3D cross product.
-  static void Cross3(const mfem::Vector &A, const mfem::Vector &B, mfem::Vector &C,
-                     bool add = false)
-  {
-    MFEM_ASSERT(A.Size() == B.Size() && A.Size() == C.Size() && A.Size() == 3,
-                "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
-    if (add)
-    {
-      C(0) += A(1) * B(2) - A(2) * B(1);
-      C(1) += A(2) * B(0) - A(0) * B(2);
-      C(2) += A(0) * B(1) - A(1) * B(0);
-    }
-    else
-    {
-      C(0) = A(1) * B(2) - A(2) * B(1);
-      C(1) = A(2) * B(0) - A(0) * B(2);
-      C(2) = A(0) * B(1) - A(1) * B(0);
-    }
-  }
 };
 
 // Computes surface current Jₛ = n x H = n x μ⁻¹ B on boundaries from B as a vector grid
@@ -106,9 +91,10 @@ private:
 
 public:
   BdrSurfaceCurrentVectorCoefficient(const mfem::ParGridFunction &B,
-                                     const MaterialOperator &mat_op)
+                                     const MaterialOperator &mat_op, double scaling = 1.0)
     : mfem::VectorCoefficient(B.VectorDim()),
-      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh()), B(B), mat_op(mat_op)
+      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh(), scaling), B(B),
+      mat_op(mat_op)
   {
   }
 
@@ -142,11 +128,13 @@ public:
     mfem::Vector normal(normal_data, vdim);
     GetNormal(T, normal, ori);
     V.SetSize(vdim);
-    Cross3(normal, VU, V);
+    linalg::Cross3(normal, VU, V);
+
+    V *= scaling;
   }
 };
 
-// Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
+// Computes the flux Φₛ = F ⋅ n with F = B or ε E on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.
 template <SurfaceFlux Type>
@@ -173,9 +161,9 @@ public:
   // Constructor with center-based orientation
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0)
+                            const mfem::Vector &x0, double scaling = 1.0)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
-                                                        : *B->ParFESpace()->GetParMesh()),
+                                                        : *B->ParFESpace()->GetParMesh(), scaling),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
@@ -269,6 +257,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
   mfem::Vector W(W_data, T.GetSpaceDim());
   E->GetVectorValue(T, T.GetIntPoint(), W);
   mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  V *= scaling;
 }
 
 template <>
@@ -277,6 +266,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>::GetLocalFlux(
 {
   // Flux B.
   B->GetVectorValue(T, T.GetIntPoint(), V);
+  V *= scaling;
 }
 
 template <>
@@ -291,7 +281,8 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
   mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
   E->GetVectorValue(T, T.GetIntPoint(), W1);
   V.SetSize(W1.Size());
-  Cross3(W1, W2, V);
+  linalg::Cross3(W1, W2, V);
+  V *= scaling;
 }
 
 // Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
@@ -502,12 +493,13 @@ class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctio
 private:
   const GridFunction &U;
   const MaterialOperator &mat_op;
-
   double GetLocalEnergyDensity(mfem::ElementTransformation &T) const;
 
 public:
-  EnergyDensityCoefficient(const GridFunction &U, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U),
+  EnergyDensityCoefficient(const GridFunction &U, const MaterialOperator &mat_op,
+                           double scaling = 1.0)
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh(), scaling), U(U),
       mat_op(mat_op)
   {
   }
@@ -554,7 +546,7 @@ inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>::GetLocalEne
     U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
     dot += mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
   }
-  return 0.5 * dot;
+  return 0.5 * dot * scaling;
 }
 
 template <>
@@ -570,7 +562,7 @@ inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEne
     U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
     dot += mat_op.GetInvPermeability(T.Attribute).InnerProduct(V, V);
   }
-  return 0.5 * dot;
+  return 0.5 * dot * scaling;
 }
 
 // Compute time-averaged Poynting vector Re{E x H⋆}, without the typical factor of 1/2. For
@@ -590,21 +582,23 @@ private:
     mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
     E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
     V.SetSize(vdim);
-    Cross3(W1, W2, V);
+    linalg::Cross3(W1, W2, V);
     if (E.HasImag())
     {
       B.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
       mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
       E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
-      Cross3(W1, W2, V, true);
+      linalg::Cross3(W1, W2, V, true);
     }
+    V *= scaling;
   }
 
 public:
   PoyntingVectorCoefficient(const GridFunction &E, const GridFunction &B,
-                            const MaterialOperator &mat_op)
+                            const MaterialOperator &mat_op, double scaling = 1.0)
     : mfem::VectorCoefficient(E.VectorDim()),
-      BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E), B(B), mat_op(mat_op)
+      BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh(), scaling), E(E), B(B),
+      mat_op(mat_op)
   {
   }
 

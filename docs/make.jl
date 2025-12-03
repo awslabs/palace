@@ -19,6 +19,7 @@ makedocs(
     authors="Sebastian Grimberg, sjg@amazon.com",
     pages=[
         "Home" => "index.md",
+        "Quick Start" => "quick.md",
         "install.md",
         "run.md",
         "User Guide" => Any[
@@ -37,15 +38,22 @@ makedocs(
             "config/boundaries.md",
             "config/solver.md"
         ],
+        "Features" => Any["features/farfield.md",],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",
             "examples/rings.md",
+            "examples/antenna.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md"
         ],
-        "developer.md",
+        "For Developers" => Any[
+            "developer/notes.md",
+            "developer/testing.md",
+            "developer/tutorial_add_new_unit_test.md",
+            "developer/tutorial_gpu_profiling.md"
+        ],
         "reference.md"
     ]
 )

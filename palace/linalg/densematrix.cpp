@@ -183,7 +183,7 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
   }
   else
   {
-    MFEM_ABORT("MatrixFunction only supports 2x2 or 3x3 matrices!");
+    MFEM_ABORT("MatrixFunction only supports 2x2 or 3x3 matrices, N: " << N << "!");
   }
   return Mout;
 }

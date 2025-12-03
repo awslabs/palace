@@ -13,6 +13,10 @@ Singularity/Apptainer, described in
 compiling from source using [CMake](https://cmake.org/download) is described in
 [Build from source](#Build-from-source).
 
+If you are a user, we recommend you install [*Palace* with
+Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
+source](#Build-from-source) instead.
+
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To install the
@@ -24,8 +28,19 @@ and run:
 spack install palace
 ```
 
-More information about the available configuration options and dependencies can
-be found using `spack info palace`.
+This will install the default version of *Palace*. Spack supports installing
+_variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
+MUMPS and SLEPc, call
+
+```bash
+spack install palace +mumps +slepc +cuda cuda_arch=90
+```
+
+where `cuda_arch` is determined by the [generation of your
+GPU](https://developer.nvidia.com/cuda-gpus). More information about the
+available configuration options and dependencies can be found using `spack info palace`. See the [official
+tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
+for an introduction.
 
 ## Build using Singularity/Apptainer
 
@@ -51,7 +66,7 @@ Singularity/Apptainer documentation.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.21 or later
+  - [CMake](https://cmake.org/download) version 3.24 or later
   - C++17 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
@@ -217,7 +232,7 @@ For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be spec
 Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
 all can be built so the user can decide at runtime which solver to use.
 
-For unit testing, *Palace* relies on the
-[Catch2 library](https://github.com/catchorg/Catch2), which is automatically downloaded and
-built when building the `unit-tests` target. See the [Developer Notes](developer.md#Testing)
-for more information.
+For unit testing, *Palace* relies on the [Catch2
+library](https://github.com/catchorg/Catch2), which is automatically downloaded
+and built when building the `unit-tests` target. See the [Developer
+Notes](developer/testing.md) for more information.

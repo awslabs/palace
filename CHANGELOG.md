@@ -1,7 +1,5 @@
-<!---
-Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-SPDX-License-Identifier: Apache-2.0
---->
+<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
+<!--- SPDX-License-Identifier: Apache-2.0 --->
 # Changelog
 
 > Note: *Palace* is under active initial development, pre-v1.0. Functionality and interfaces
@@ -11,12 +9,83 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] - 2025-12-2
+
+#### New Features
+
+  - Added support for nonlinear eigenvalue problems arising from frequency-dependent
+    boundary conditions. Two nonlinear eigensolvers are now available and can be specified
+    by setting the `config["Solver"]["Eigenmode"]["NonlinearType"]` option to `"Hybrid"`
+    (default) or `"SLP"`. The nonlinear eigensolver will automatically be used if
+    frequency-dependent boundary conditions are used. [PR
+    467](https://github.com/awslabs/palace/pull/467).
+  - Added support for extraction of electric fields in the radiative zone.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/features/farfield) for
+    additional information. [PR
+    449](https://github.com/awslabs/palace/pull/449).
+  - Added support for more granular tests and for computing the testing coverage.
+    Consult the
+    [documentation](https://awslabs.github.io/palace/dev/developer/testing/) for
+    additional information. [PR
+    398](https://github.com/awslabs/palace/pull/398), [PR
+    480](https://github.com/awslabs/palace/pull/480).
+  - Added option to export field solutions as MFEM grid functions to visualize with
+    [GLVis](https://glvis.org). Output formats can be specified in `config["Problem"]["OutputFormats"]`.
+    [PR 518](https://github.com/awslabs/palace/pull/518).
+  - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
+    direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
+    [PR 476](https://github.com/awslabs/palace/pull/476).
+
+#### Interface Changes
+
+  - `config["Boundaries"]["Periodic"]` is now a dictionary where all periodic boundary
+    pairs, built into the mesh file or not, should be specified in
+    `config["Boundaries"]["Periodic"]["BoundaryPairs"]` and a single global Floquet wave
+    vector can be specified in `config["Boundaries"]["Periodic"]["FloquetWaveVector"]`. [PR
+    471](https://github.com/awslabs/palace/pull/471).
+  - Changed Paraview and GLVis output fields from nondimensional to SI units
+    [PR 532](https://github.com/awslabs/palace/pull/532).
+  - The name of the unit test executable is now `palace-unit-tests` (instead of `unit-tests`)
+    [PR 549](https://github.com/awslabs/palace/pull/549).
+
+#### Bug Fixes
+
+  - Changed wave port eigenproblem shift and sorting to fix an issue with the mode ordering.
+    The first mode now has the largest propagation constant, closest to the TEM limit, and
+    subsequent modes are ordered by decreasing propagation constant. [PR
+    448](https://github.com/awslabs/palace/pull/448).
+  - Fixed an issue where Gmsh meshes with built-in periodicity (specified in the mesh file)
+    were failing. [PR
+    471](https://github.com/awslabs/palace/pull/471).
+  - Fixed bug where a mesh from a previous nonconformal adaptation could not be loaded to
+    use in a non-amr simulation. [PR
+    497](https://github.com/awslabs/palace/pull/497).
+  - Fixed bug where `"CrackInternalBoundaryElements"` would result in incorrect results for
+    some lumped port boundary conditions. [PR
+    505](https://github.com/awslabs/palace/pull/505).
+  - Changed the sign of the Floquet phase factor from $\exp(+ik\cdot x)$ to $\exp(-ik\cdot
+    x)$. [PR 510](https://github.com/awslabs/palace/pull/510) and [PR
+    526](https://github.com/awslabs/palace/pull/526).
+  - Update EM constants to CODATA Recommended Values of the Fundamental Physical Constants
+    2022 [PR 525](https://github.com/awslabs/palace/pull/525).
+  - Scaled Rs/Ls/Cs of impedance boundary conditions affected by mesh cracking, fixing bug
+    where `"CrackInternalBoundaryElements"` would lead to incorrect results. [PR
+    544](https://github.com/awslabs/palace/pull/544).
+  - Fixed Paraview/MFEM output for transient simulations. [PR 561](https://github.com/awslabs/palace/pull/561).
+  - Fixed units of energy. Results were incorrectly reported in joules, while the correct
+    unit was nanojoules. Results are now correctly in joules. [PR
+    541](https://github.com/awslabs/palace/pull/541).
+  - Fixed a bug in transient solver implicit formulation affecting the magnetic flux density fields computed with
+    `"GeneralizedAlpha"` or `"RungeKutta"` transient solver types (`config["Solver"]["Transient"]["Type"]`)
+    [PR 568](https://github.com/awslabs/palace/pull/568).
+
 ## [0.14.0] - 2025-08-20
 
   - Added `--version` command line flag for displaying Palace version information.
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
-  - Added an improvement to numeric wave ports to avoid targetting evanescent modes at
+  - Added an improvement to numeric wave ports to avoid targeting evanescent modes at
     higher operating frequencies. Also finite conductivity boundaries
     (`config["Boundaries"]["Conductivity"]`) are automatically marked as PEC for the wave
     port mode solve (previously these were marked as PMC unless specified under

@@ -20,7 +20,11 @@
 
 with
 
-`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended.
+`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended. If the provided
+mesh is nonconformal, it is assumed that it comes from a previous *Palace* solve using AMR,
+and all mesh preprocessing checks and modifications (for example
+[`model["Refinement"]["CrackInternalBoundaryElements"]`](#model%5B%22Refinement%22%5D)), are
+skipped .
 
 `"L0" [1.0e-6]` :  Unit, relative to m, for mesh vertex coordinates. For example, a value
 of `1.0e-6` implies the mesh coordinates are in μm.
@@ -97,15 +101,15 @@ the sphere region will be marked for refinement.
 `"Levels" [0]` : Levels of parallel mesh refinement inside the specified refinement region.
 
 `"BoundingBoxMin" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the minimum coordinates of the axis-aligned bounding box for this
+dimension specifying the minimum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"BoundingBoxMax" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the maximum coordinates of the axis-aligned bounding box for this
+dimension specifying the maximum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"Center" [None]` : Floating point array of length equal to the model spatial dimension
-specfiying the center coordinates of the sphere for this sphere refinement region.
+specifying the center coordinates of the sphere for this sphere refinement region.
 Specified in mesh length units.
 
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in

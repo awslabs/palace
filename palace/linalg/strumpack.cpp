@@ -40,7 +40,7 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -75,7 +75,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       // Should have good default.
       break;
   }
-  this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
+  this->SetReorderingReuse(
+      reorder_reuse);  // If true repeated calls use same sparsity pattern
 
   // Configure compression.
   this->SetCompression(GetCompressionType(compression));
@@ -154,6 +155,13 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
 #endif
   StrumpackSolverType::SetOperator(A);
   hypre_CSRMatrixDestroy(csr);
+}
+
+template <typename StrumpackSolverType>
+void StrumpackSolverBase<StrumpackSolverType>::SetReorderReuse(bool reorder_reuse)
+{
+  StrumpackSolverType::SetReorderingReuse(
+      reorder_reuse);  // If true repeated calls use same sparsity pattern
 }
 
 template class StrumpackSolverBase<mfem::STRUMPACKSolver>;

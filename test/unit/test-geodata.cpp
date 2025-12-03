@@ -1,22 +1,28 @@
-#include <catch2/catch_approx.hpp>
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <vector>
+#include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
 
 #include "fem/interpolator.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
-using namespace Catch;
+using json = nlohmann::json;
 namespace fs = std::filesystem;
+using namespace Catch::Matchers;
 
-TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
+TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 {
   std::vector<Eigen::Vector3d> vertices{
       {-0.19942181818181828, -0.5838274545454543, 0},
@@ -121,25 +127,25 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata]")
   auto length_x = (max_x - min_x) * invsqrt2;
   auto length_y = (max_y - min_y) * invsqrt2;
 
-  CHECK(length_x == Approx(length_y).margin(1e-6));
+  CHECK_THAT(length_x, WithinAbs(length_y, 1e-6));
 
   auto length = (length_x + length_y) / 2;
   auto lengths = box.Lengths();
-  CHECK(lengths[0] == Approx(length).margin(1e-6));
-  CHECK(lengths[1] == Approx(length).margin(1e-6));
-  CHECK(lengths[2] == Approx(0.0));
+  CHECK_THAT(lengths[0], WithinAbs(length, 1e-6));
+  CHECK_THAT(lengths[1], WithinAbs(length, 1e-6));
+  CHECK_THAT(lengths[2], WithinRel(0.0));
 
   auto normals = box.Normals();
-  CHECK(normals[0][0] == Approx(ax0[0]).margin(1e-4));
-  CHECK(normals[0][1] == Approx(ax0[1]).margin(1e-4));
-  CHECK(normals[0][2] == Approx(ax0[2]).margin(1e-4));
-  CHECK(normals[1][0] == Approx(ax1[0]).margin(1e-4));
-  CHECK(normals[1][1] == Approx(ax1[1]).margin(1e-4));
-  CHECK(normals[1][2] == Approx(ax1[2]).margin(1e-4));
+  CHECK_THAT(normals[0][0], WithinAbs(ax0[0], 1e-4));
+  CHECK_THAT(normals[0][1], WithinAbs(ax0[1], 1e-4));
+  CHECK_THAT(normals[0][2], WithinAbs(ax0[2], 1e-4));
+  CHECK_THAT(normals[1][0], WithinAbs(ax1[0], 1e-4));
+  CHECK_THAT(normals[1][1], WithinAbs(ax1[1], 1e-4));
+  CHECK_THAT(normals[1][2], WithinAbs(ax1[2], 1e-4));
   CHECK(box.planar);
 }
 
-TEST_CASE("TetToHex", "[geodata]")
+TEST_CASE("TetToHex", "[geodata][Serial]")
 {
   // Pull from the mfem externals data folder.
   auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
@@ -181,8 +187,8 @@ TEST_CASE("TetToHex", "[geodata]")
       for (int j = 0; j < 3; j++)
       {
         // margin(1e-12) for comparing zeros.
-        CHECK((*four_hex.GetNodes())(j + 3 * i) ==
-              Approx(global_dof_vals[i][j]).margin(1e-12));
+        CHECK_THAT((*four_hex.GetNodes())(j + 3 * i),
+                   WithinAbs(global_dof_vals[i][j], 1e-12));
       }
 
     mfem::Vector vdof_vals, col;
@@ -201,7 +207,7 @@ TEST_CASE("TetToHex", "[geodata]")
         {
           CAPTURE(i, j, global_dof_vals[verts[j]][i], col(j));
           // margin(1e-12) for comparing zeros.
-          CHECK(col(j) == Approx(global_dof_vals[verts[j]][i]).margin(1e-12));
+          CHECK_THAT(col(j), WithinAbs(global_dof_vals[verts[j]][i], 1e-12));
         }
       }
     };
@@ -289,10 +295,45 @@ TEST_CASE("TetToHex", "[geodata]")
                              hex_FESpace->GetOrdering());
     for (int i = 0; i < tet_vals.Size(); i++)
     {
-      CHECK(tet_vals(i) == Approx(hex_vals(i)).margin(1e-9));
+      CHECK_THAT(tet_vals(i), WithinAbs(hex_vals(i), 1e-9));
     }
   }
 #endif
+}
+
+TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
+{
+  auto torus_path = fs::path(MFEM_DATA_PATH) / "periodic-torus-sector.msh";
+  std::ifstream fi(torus_path.string());
+  std::unique_ptr<mfem::Mesh> mesh = std::make_unique<mfem::Mesh>(fi, false, false, true);
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
+  auto config = json::parse(jsonstream);
+  config::BoundaryData boundary_torus;
+  REQUIRE_NOTHROW(boundary_torus.SetUp(*config.find("boundaries_periodic_torus")));
+  for (const auto &data : boundary_torus.periodic.boundary_pairs)
+  {
+    auto periodic_mapping = mesh::DeterminePeriodicVertexMapping(mesh, data);
+    REQUIRE(periodic_mapping.empty());
+  }
+}
+
+TEST_CASE("Default IOData", "[iodata][Serial]")
+{
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+
+  iodata.domains.materials.emplace_back();
+  iodata.domains.materials.back().attributes = {0};
+
+  // Pull from the mfem externals data folder.
+  auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+  mfem::Mesh single_tet(ref_tet_path.string());
+  mfem::ParMesh pmesh(Mpi::World(), single_tet);
+
+  MaterialOperator mat_op(iodata, pmesh);
+
+  REQUIRE(mat_op.HasLossTangent() == false);
 }
 
 }  // namespace palace

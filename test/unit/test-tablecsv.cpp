@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #include <iterator>
 #include <fmt/format.h>
 #include <scn/scan.h>
@@ -11,7 +14,7 @@
 using namespace palace;
 
 // Small tests for parsing using scn library that checks assumptions implemented in table.
-TEST_CASE("CheckScnCases", "[tablecsv]")
+TEST_CASE("CheckScnCases", "[tablecsv][Serial]")
 {
   {
     auto result = scn::scan<double>("-1.00", "{}");
@@ -35,7 +38,7 @@ TEST_CASE("CheckScnCases", "[tablecsv]")
   }
 }
 
-TEST_CASE("TableCSV", "[tablecsv]")
+TEST_CASE("TableCSV", "[tablecsv][Serial]")
 {
   Table table{};
   table.col_options.float_precision = 9;
@@ -145,7 +148,7 @@ TEST_CASE("TableCSV", "[tablecsv]")
   //   REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
 }
 
-TEST_CASE("TableCSVParsing1_Basic", "[tablecsv]")
+TEST_CASE("TableCSVParsing1_Basic", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -175,7 +178,7 @@ TEST_CASE("TableCSVParsing1_Basic", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv]")
+TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv][Serial]")
 {
   using namespace std::literals;
 
@@ -207,7 +210,7 @@ TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
+TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -237,7 +240,7 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
+TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -267,7 +270,7 @@ TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
+TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
 {
   // Make these tests serial to avoid duplicate file access.
   if (!Mpi::Root(Mpi::World()))

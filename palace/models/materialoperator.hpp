@@ -6,6 +6,7 @@
 
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -31,6 +32,11 @@ private:
       mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
+
+  // Are materials isotropic? True when all the material properties are effectively
+  // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
+  // material is isotropic, the intersection is true when all are isotropic.
+  mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // London penetration depth, or Floquet wave vector.
@@ -75,6 +81,8 @@ public:
 
   auto GetLightSpeedMin(int attr) const { return mat_c0_min[AttrToMat(attr)]; }
   auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }
+
+  bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
 
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
@@ -128,7 +136,7 @@ private:
   // attributes).
   mfem::Array<int> attr_mat;
 
-  // Material propetry coefficients, ordered by material index.
+  // Material property coefficients, ordered by material index.
   mfem::DenseTensor mat_coeff;
 
 public:
@@ -163,5 +171,22 @@ public:
 };
 
 }  // namespace palace
+
+namespace palace::internal::mat
+{
+
+template <std::size_t N>
+bool IsOrthonormal(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsValid(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsIsotropic(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+bool IsIdentity(const config::SymmetricMatrixData<N> &data);
+
+}  // namespace palace::internal::mat
 
 #endif  // PALACE_MODELS_MATERIAL_OPERATOR_HPP

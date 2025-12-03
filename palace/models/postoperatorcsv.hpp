@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP
 #define PALACE_MODELS_POST_OPERATOR_CSV_HPP
 
@@ -74,6 +77,16 @@ struct Measurement
     double quality_factor;        // 1 / (energy_participation * tan δ)
   };
 
+  struct FarFieldData
+  {
+    // Theta: polar angle (0 to pi radians).
+    // Phi: azimuthal angle (0 to 2pi radians).
+    std::vector<std::pair<double, double>> thetaphis;
+
+    // Components of the electric field.
+    std::vector<std::array<std::complex<double>, 3>> E_field;
+  };
+
   // Data for both lumped and wave port.
   struct PortPostData
   {
@@ -136,6 +149,7 @@ struct Measurement
 
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
+  FarFieldData farfield;
 
   // Dimensionalize and nondimensionalize a set of measurements
   static Measurement Dimensionalize(const Units &units,
@@ -200,7 +214,7 @@ protected:
   // prepare the tables for data insertion, whilst the print methods insert data
   // appropriately. Methods are only enabled when valid given the problem type.
 
-  // Base (all solvers)
+  // Base (all solvers).
   std::optional<TableWithCSVFile> domain_E;
   void InitializeDomainE(const DomainPostOperator &dom_post_op);
   void PrintDomainE();
@@ -224,7 +238,7 @@ protected:
   // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
   // just use `void Function(...) requires (solver_t == Type::A);`.
 
-  // Driven + Transient
+  // Driven + Transient.
   std::optional<TableWithCSVFile> surface_I;
   template <ProblemType U = solver_t>
   auto InitializeSurfaceI(const SurfaceCurrentOperator &surf_j_op)
@@ -233,7 +247,7 @@ protected:
   auto PrintSurfaceI(const SurfaceCurrentOperator &surf_j_op, const Units &units)
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void>;
 
-  // Eigenmode + Driven + Transient
+  // Eigenmode + Driven + Transient.
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
   template <ProblemType U = solver_t>
@@ -247,7 +261,7 @@ protected:
                               U == ProblemType::TRANSIENT,
                           void>;
 
-  // Driven
+  // Driven.
   std::optional<TableWithCSVFile> port_S;
   template <ProblemType U = solver_t>
   auto InitializePortS(const SpaceOperator &fem_op)
@@ -255,7 +269,16 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
-  // Eigenmode
+  // Driven + Eigenmode.
+  std::optional<TableWithCSVFile> farfield_E;
+  template <ProblemType U = solver_t>
+  auto InitializeFarFieldE(const SurfacePostOperator &surf_post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFarFieldE(const SurfacePostOperator &surf_post_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>;
+
+  // Eigenmode.
   std::optional<TableWithCSVFile> eig;
   template <ProblemType U = solver_t>
   auto InitializeEig() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
@@ -284,7 +307,7 @@ public:
                        const Measurement &nondim_measurement_cache,
                        double idx_value_dimensionful, int step);
 
-  // Driven specific overload for specifying excitation index
+  // Driven specific overload for specifying excitation index.
   template <ProblemType U = solver_t>
   auto PrintAllCSVData(const PostOperator<solver_t> &post_op,
                        const Measurement &nondim_measurement_cache,

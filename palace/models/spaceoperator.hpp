@@ -81,12 +81,27 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
-  void AddPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &fm,
-                               MaterialPropertyCoefficient &fc);
+  void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
+
+  // Helper functions to build the preconditioner matrix.
+  void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+                              std::vector<std::unique_ptr<Operator>> &bi_vec,
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+  void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+  void AssemblePreconditioner(double a0, double a1, double a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
 public:
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
@@ -180,9 +195,9 @@ public:
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
-  template <typename OperType>
-  std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
-                                                    double a3);
+  template <typename OperType, typename ScalarType>
+  std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
+                                                    ScalarType a2, double a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

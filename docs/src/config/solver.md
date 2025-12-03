@@ -107,10 +107,8 @@ types.
     "MaxSize": <int>,
     "N": <int>,
     "Save": <int>,
-    "Type": <int>,
-    "ContourTargetUpper": <float>,
-    "ContourAspectRatio": <float>,
-    "ContourNPoints": <int>
+    "Type": <string>,
+    "NonlinearType" : <string>,
 }
 ```
 
@@ -130,7 +128,7 @@ uses the solver default.
 
 `"Save" [0]` :  Number of computed field modes to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in
-the `paraview/` directory under the directory specified by
+the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Type" ["Default"]` :  Specifies the eigenvalue solver to be used in computing the given
@@ -141,6 +139,13 @@ number of eigenmodes of the problem. The available options are:
   - `"Default"` :  Use the default eigensolver. Currently, this is the Krylov-Schur
     eigenvalue solver from `"SLEPc"`.
 
+`"NonlinearType" ["Hybrid"]` : Specifies the nonlinear eigenvalue solver to be used for nonlinear problems (e.g. frequency-dependent boundary conditions). The available options are:
+
+  - `"Hybrid"` : Hybrid algorithm where a (quadratic) polynomial approximation of the nonlinear problem is first solved and the eigenmodes are then refined with a quasi-Newton nonlinear eigensolver.
+  - `"SLP"` : SLEPc's Successive Linear Problem nonlinear eigensolver.
+
+`"TargetUpper" [3 * Target]` : Upper end of the frequency target range in which to search for eigenvalues, GHz. Only used in nonlinear problems. Using an inaccurate upper bound (significantly smaller or greater than the largest eigenvalue sought) can negatively affect the convergence of the nonlinear eigensolver.
+
 ### Advanced eigenmode solver options
 
   - `"PEPLinear" [true]`
@@ -148,6 +153,11 @@ number of eigenmodes of the problem. The available options are:
   - `"StartVector" [true]`
   - `"StartVectorConstant" [false]`
   - `"MassOrthogonal" [false]`
+  - `"RefineNonlinear" [true]`
+  - `"LinearTol" [1e-3]`
+  - `"PreconditionerLag" [10]`
+  - `"PreconditionerLagTol" [1e-4]`
+  - `"MaxRestart" [2]`
 
 ## `solver["Driven"]`
 
@@ -177,7 +187,7 @@ with
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
 fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
-Files are saved in the `paraview/` directory under the directory specified by
+Files are saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Samples" [None]` : Array of [sample
@@ -190,7 +200,7 @@ the construction of each of these structs.
 
 `"Save" [None]` : Array of frequencies to save computed fields to disk for [visualization
 with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by
-`"SaveStep"` in any sample specification. Files are saved in the `paraview/`
+`"SaveStep"` in any sample specification. Files are saved in the `paraview/` (and/or `gridfunction/`)
 directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -249,7 +259,7 @@ Mutually exclusive with `"FreqStep"`.
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
 fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
-Files are saved in the `paraview/` directory under the directory specified by
+Files are saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"AddToPROM" [false]` : Advanced option to force the inclusion of this sample into the PROM
@@ -318,7 +328,7 @@ start from rest at ``t = 0.0``.
 
 `"SaveStep" [0]` :  Controls how often, in number of time steps, to save computed fields to
 disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are
-saved in the `paraview/` directory under the directory specified by
+saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Order" [2]` :  Order of the adaptive Runge-Kutta integrators or maximum order of the
@@ -344,7 +354,7 @@ with
 
 `"Save" [0]` :  Number of computed electric field solutions to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the
-entries in the computed capacitance matrix. Files are saved in the `paraview/` directory
+entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -361,7 +371,7 @@ with
 
 `"Save" [0]` :  Number of computed magnetic field solutions to save to disk for
 [visualization with ParaView](../guide/postprocessing.md#Visualization)), ordered by the
-entries in the computed inductance matrix. Files are saved in the `paraview/` directory
+entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
@@ -383,6 +393,7 @@ under the directory specified by
     "PCMatReal": <bool>,
     "PCMatShifted": <bool>,
     "ComplexCoarseSolve": <bool>,
+    "DropSmallEntries": <bool>,
     "PCSide": <string>,
     "DivFreeTol": <float>,
     "DivFreeMaxIts": <float>,
@@ -487,6 +498,9 @@ the sign for the mass matrix contribution, which can help performance at high fr
 `"ComplexCoarseSolve" [false]` : When set to `true`, the coarse-level solver uses the true
 complex-valued system matrix. When set to `false`, the real-valued approximation is used.
 
+`"DropSmallEntries" [false]` : When set to `true`, entries smaller than the double precision
+machine epsilon are dropped from the system matrix used in the sparse direct solver.
+
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
 iterative solver choices, and the default choice depends on the iterative solver used.
 
@@ -536,6 +550,7 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`
   - `"MGSmoothChebyshev4th" [true]`
+  - `"ReorderingReuse" [true]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
     `"PORD"`, `"AMD"`, `"RCM"`, `"Default"`
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,

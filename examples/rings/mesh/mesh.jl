@@ -1,6 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Generate example mesh with:
+# julia -e 'include("mesh/mesh.jl"); generate_ring_mesh(filename="rings.msh")'
+
 using Gmsh: gmsh
 using LinearAlgebra
 
@@ -225,14 +228,15 @@ function generate_ring_mesh(;
         domain
     )
 
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.setOrder(2)
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information

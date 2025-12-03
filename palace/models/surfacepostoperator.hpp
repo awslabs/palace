@@ -22,6 +22,7 @@ namespace config
 
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
+struct FarFieldPostData;
 
 }  // namespace config
 
@@ -64,6 +65,16 @@ private:
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
                                                       const MaterialOperator &mat_op) const;
   };
+  struct FarFieldData : public SurfaceData
+  {
+    std::vector<std::pair<double, double>> thetaphis;
+
+    FarFieldData() = default;
+    FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
+                 const mfem::Array<int> &bdr_attr_marker);
+
+    size_t size() const { return thetaphis.size(); }
+  };
 
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
@@ -72,6 +83,10 @@ private:
   // owned).
   mfem::ParFiniteElementSpace &h1_fespace;
 
+  // Reference to vector finite element space used for computing far-field integrals (not
+  // owned).
+  mfem::ParFiniteElementSpace &nd_fespace;
+
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
 
@@ -79,17 +94,27 @@ public:
   // Data structures for postprocessing the surface with the given type.
   std::map<int, SurfaceFluxData> flux_surfs;
   std::map<int, InterfaceDielectricData> eps_surfs;
+  FarFieldData farfield;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      mfem::ParFiniteElementSpace &h1_fespace);
+                      mfem::ParFiniteElementSpace &h1_fespace,
+                      mfem::ParFiniteElementSpace &nd_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
                                       const GridFunction *B) const;
 
+  // Batch version for multiple theta/phi pairs
+  std::vector<std::array<std::complex<double>, 3>>
+  GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
+                const GridFunction &E, const GridFunction &B, double omega_re,
+                double omega_im) const;
+
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+
+  int GetVDim() const { return mat_op.SpaceDimension(); };
 };
 
 }  // namespace palace

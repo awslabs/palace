@@ -98,14 +98,22 @@ fi
 TEST_DIRS=$(cat << EOF
 spheres
 rings
-cavity/pec
-cavity/impedance
+antenna
+cylinder/cavity_pec
+cylinder/cavity_impedance
+cylinder/waveguide
+cylinder/floquet
+cylinder/driven_wave
 coaxial/open
 coaxial/matched
 cpw/lumped_uniform
 cpw/wave_uniform
 cpw/lumped_adaptive
 cpw/wave_adaptive
+cpw/lumped_eigen
+cpw/wave_eigen
+adapter/hybrid
+adapter/slp
 EOF
 )
 if [[ -n "$EXAMPLE_LIST" ]]; then

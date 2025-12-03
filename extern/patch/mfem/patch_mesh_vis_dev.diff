@@ -405,10 +405,10 @@ index a4a376f8b1..e82830304d 100644
     /// cycle value
     void Save() override;
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 67eb8524d4..da98594ca2 100644
+index a1f8fd5b8c..4470765f9c 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -12079,7 +12079,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -12165,7 +12165,7 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -417,7 +417,7 @@ index 67eb8524d4..da98594ca2 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -12093,7 +12093,7 @@ void Mesh::PrintVTU(std::string fname,
+@@ -12179,7 +12179,7 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -427,10 +427,10 @@ index 67eb8524d4..da98594ca2 100644
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 563c448709..4190b37ecb 100644
+index 945bf36f16..edc6ab14d3 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2525,7 +2525,7 @@ public:
+@@ -2560,7 +2560,7 @@ public:
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,
@@ -440,10 +440,10 @@ index 563c448709..4190b37ecb 100644
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 69dfd298cc..770b9fd41a 100644
+index f2cfef429d..c080aa9942 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -6404,7 +6404,7 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6417,7 +6417,7 @@ void ParMesh::PrintVTU(std::string pathname,
                         VTKFormat format,
                         bool high_order_output,
                         int compression_level,
@@ -452,7 +452,7 @@ index 69dfd298cc..770b9fd41a 100644
  {
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
-@@ -6464,7 +6464,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6477,7 +6477,8 @@ void ParMesh::PrintVTU(std::string pathname,
  
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);
@@ -463,10 +463,10 @@ index 69dfd298cc..770b9fd41a 100644
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index bad6aafbe7..913d4d5894 100644
+index 0c71e60ed9..d5e8bedee1 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
-@@ -787,7 +787,7 @@ public:
+@@ -788,7 +788,7 @@ public:
                   VTKFormat format=VTKFormat::ASCII,
                   bool high_order_output=false,
                   int compression_level=0,

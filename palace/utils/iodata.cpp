@@ -229,21 +229,7 @@ void IoData::CheckConfiguration()
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
-    if (!boundaries.conductivity.empty())
-    {
-      Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
-                   "conditions!\n");
-    }
-    if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
-    {
-      Mpi::Warning(
-          "Eigenmode problem type does not support wave port boundary conditions!\n");
-    }
-    if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
-    {
-      Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
-                   "with order > 1!\n");
-    }
+    // No unsupported domain or boundary objects for frequency domain driven simulations.
   }
   else if (problem.type == ProblemType::ELECTROSTATIC)
   {
@@ -425,7 +411,17 @@ void IoData::CheckConfiguration()
                                      problem.type == ProblemType::MAGNETOSTATIC ||
                                      problem.type == ProblemType::TRANSIENT);
   }
-
+  if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
+      solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
+      (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
+       (!boundaries.farfield.empty() && boundaries.farfield.order > 1)))
+  {
+    // Do not reuse the sparsity pattern for nonlinear eigenmode simulations with complex
+    // coarse preconditioners when dropping small entries. In those cases, the sparsity
+    // pattern of the first preconditioner (purely real coefficients) will be different from
+    // subsequent preconditioners with complex coefficients.
+    solver.linear.reorder_reuse = false;
+  }
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
@@ -526,16 +522,9 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   }
 
   // Floquet periodic boundaries.
-  for (auto &k : boundaries.floquet.wave_vector)
+  for (auto &k : boundaries.periodic.wave_vector)
   {
     k *= units.GetMeshLengthRelativeScale();
-  }
-  for (auto &data : boundaries.periodic)
-  {
-    for (auto &k : data.wave_vector)
-    {
-      k *= units.GetMeshLengthRelativeScale();
-    }
   }
 
   // Wave port offset distance.
@@ -557,25 +546,38 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.t /= units.GetMeshLengthRelativeScale();
   }
 
+  // Convert from GHz to non-dimensional angular frequency (adds the 2pi):
+  // 1/ns -> rad/ns -> non-dim units.
+
   // For eigenmode simulations:
-  solver.eigenmode.target /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.eigenmode.target =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target);
+  solver.eigenmode.target_upper =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target_upper);
 
   // For driven simulations:
   for (auto &f : solver.driven.sample_f)
-    f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
 
   // For transient simulations:
-  solver.transient.pulse_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
-  solver.transient.pulse_tau /= units.GetScaleFactor<Units::ValueType::TIME>();
-  solver.transient.max_t /= units.GetScaleFactor<Units::ValueType::TIME>();
-  solver.transient.delta_t /= units.GetScaleFactor<Units::ValueType::TIME>();
+  solver.transient.pulse_f =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.transient.pulse_f);
+  solver.transient.pulse_tau =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.pulse_tau);
+  solver.transient.max_t =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.max_t);
+  solver.transient.delta_t =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.delta_t);
 
   // Scale mesh vertices for correct nondimensionalization.
   mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),
-             "\nCharacteristic length and time scales:\n L₀ = {:.3e} m, t₀ = {:.3e} ns\n",
+             "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
              units.GetScaleFactor<Units::ValueType::LENGTH>(),
              units.GetScaleFactor<Units::ValueType::TIME>());
 }

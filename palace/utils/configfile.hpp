@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "labels.hpp"
@@ -29,6 +30,11 @@ protected:
   std::vector<DataType> vecdata = {};
 
 public:
+  template <typename... Args>
+  decltype(auto) emplace_back(Args &&...args)
+  {
+    return vecdata.emplace_back(std::forward<Args>(args)...);
+  }
   [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
   [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
   [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
@@ -85,6 +91,16 @@ struct ElementData
 
 // Problem & Model Config.
 
+struct OutputFormatsData
+{
+public:
+  // Enable Paraview output format.
+  bool paraview = true;
+
+  // Enable MFEM GLVis grid function output format.
+  bool gridfunction = false;
+};
+
 struct ProblemData
 {
 public:
@@ -96,6 +112,9 @@ public:
 
   // Output path for storing results.
   std::string output = "";
+
+  // Output formats configuration.
+  OutputFormatsData output_formats = {};
 
   void SetUp(json &config);
 };
@@ -476,20 +495,14 @@ public:
 
   // List of boundary receiver attributes for this periodic boundary condition.
   std::vector<int> receiver_attributes = {};
-
-  // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
-  std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 };
 
-struct PeriodicBoundaryData : public internal::DataVector<PeriodicData>
+struct PeriodicBoundaryData
 {
 public:
-  void SetUp(json &boundaries);
-};
+  // Vector of periodic boundary pairs.
+  std::vector<PeriodicData> boundary_pairs = {};
 
-struct FloquetData
-{
-public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
@@ -604,6 +617,21 @@ public:
   void SetUp(json &postpro);
 };
 
+struct FarFieldPostData
+{
+public:
+  // List of boundary attributes to use for the surface integral.
+  std::vector<int> attributes = {};
+
+  // List of (theta, phi) where the wave-zone fields should be evaluated.
+  // Units are radians.
+  std::vector<std::pair<double, double>> thetaphis = {};
+
+  void SetUp(json &postpro);
+
+  bool empty() const { return thetaphis.empty(); };
+};
+
 struct BoundaryPostData
 {
 public:
@@ -613,6 +641,7 @@ public:
   // Boundary postprocessing objects.
   SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
+  FarFieldPostData farfield = {};
 
   void SetUp(json &boundaries);
 };
@@ -648,6 +677,9 @@ public:
   // List of all boundary attributes (excluding postprocessing).
   std::vector<int> attributes = {};
 
+  // List of all boundary attributes affected by mesh cracking.
+  std::unordered_set<int> cracked_attributes = {};
+
   // Boundary objects.
   PecBoundaryData pec = {};
   PmcBoundaryData pmc = {};
@@ -659,7 +691,6 @@ public:
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
-  FloquetData floquet;
   FluxBoundaryData fluxloop = {};
   BoundaryPostData postpro = {};
 
@@ -734,6 +765,31 @@ public:
   // For SLEPc eigenvalue solver, use linearized formulation for quadratic eigenvalue
   // problems.
   bool pep_linear = true;
+
+  // Nonlinear eigenvalue solver type.
+  NonlinearEigenSolver nonlinear_type = NonlinearEigenSolver::HYBRID;
+
+  // For nonlinear problems, refine the linearized solution with a nonlinear eigensolver.
+  bool refine_nonlinear = true;
+
+  // For nonlinear problems using the hybrid approach, relative tolerance of the linear
+  // eigenvalue solver used to generate the initial guess.
+  double linear_tol = 1e-3;
+
+  // Upper end of the target range for nonlinear eigenvalue solver [GHz]. A value <0
+  // will use the default (3 * target).
+  double target_upper = -1;
+
+  // Update frequency of the preconditioner in the quasi-Newton nonlinear eigenvalue solver.
+  int preconditioner_lag = 10;
+
+  // Relative tolerance below which the preconditioner is not updated, regardless of the
+  // lag.
+  double preconditioner_lag_tol = 1e-4;
+
+  // Maximum number of failed attempts with a given initial guess in the quasi-Newton
+  // nonlinear eigenvalue solver.
+  int max_restart = 2;
 
   void SetUp(json &solver);
 };
@@ -849,12 +905,19 @@ public:
   bool pc_mat_real = false;
 
   // For frequency domain applications, precondition linear systems with a shifted matrix
-  // (makes the preconditoner matrix SPD).
+  // (makes the preconditioner matrix SPD).
   int pc_mat_shifted = -1;
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.
   bool complex_coarse_solve = false;
+
+  // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
+  // solver.
+  bool drop_small_entries = false;
+
+  // Reuse the sparsity pattern (reordering) for repeated factorizations.
+  bool reorder_reuse = true;
 
   // Choose left or right preconditioning.
   PreconditionerSide pc_side = PreconditionerSide::DEFAULT;

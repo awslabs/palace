@@ -55,7 +55,7 @@ the frequency or time domain, using the
   - [Configuration File](config/config.md)
   - [Examples](examples/examples.md)
   - [Reference](reference.md)
-  - [Developer Notes](developer.md)
+  - [Developer Notes](developer/notes.md)
 
 ## Coming soon
 

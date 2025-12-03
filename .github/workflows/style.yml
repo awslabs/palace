@@ -1,5 +1,8 @@
 name: Style
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
@@ -57,3 +60,26 @@ jobs:
             echo 'Configuration file validation passed'
             exit 0
           fi
+
+  check-tests-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check test tags
+        run: |
+          # Find TEST_CASE lines that don't have any of the required tags.
+          if grep -r "TEST_CASE(" test/unit | grep -v "\[Serial\]" | grep -v "\[Parallel\]" | grep -v "\[GPU\]" | grep -q "TEST_CASE("; then
+            echo "Error: Found TEST_CASE without required execution tags:"
+            grep -r "TEST_CASE(" test/unit | grep -v "\[Serial\]" | grep -v "\[Parallel\]" | grep -v "\[GPU\]"
+          exit 1
+          fi
+
+  check-license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: viperproject/check-license-header@v2
+        with:
+          config: .github/license-check/config.json
+          strict: false
