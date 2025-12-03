@@ -42,44 +42,6 @@ public:
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
 
-// Make GridFunction e_t
-bool GetLumpedPortExcitationVectorEt(SpaceOperator &space_op, int port_idx,
-                                     ComplexVector &RHS_primary, bool zero_metal)
-{
-  const auto &data = space_op.GetLumpedPortOp().GetPort(port_idx);
-
-  SumVectorCoefficient fb(space_op.GetMesh().SpaceDimension());
-  mfem::Array<int> attr_list;
-  mfem::Array<int> attr_marker;
-  for (const auto &elem : data.elems)
-  {
-    attr_list.Append(elem->GetAttrList());
-    // TODO: Deal with effective reference normalization
-    const double Rs = 1.0 * data.GetToSquare(*elem);
-    const double Einc = std::sqrt(
-        Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
-    fb.AddCoefficient(elem->GetModeCoefficient(Einc));
-  }
-  const auto &mesh = space_op.GetNDSpace().GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-
-  RHS_primary.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  RHS_primary.UseDevice(true);
-  RHS_primary = 0.0;
-
-  palace::GridFunction rhs(space_op.GetNDSpace());
-  rhs = 0.0;
-  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-  space_op.GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs.Real(),
-                                                                  RHS_primary.Real());
-  if (zero_metal)
-  {
-    linalg::SetSubVector(RHS_primary.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
-  }
-  return true;
-}
-
 auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 {
   // Load Mesh — copy from main.cpp
@@ -97,6 +59,7 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
   return mesh_;
 }
 
+// TODO: Should work in parallel but fails due to MFEM parallel issues.
 TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 {
   // This is a test of a square lumped port with R=50 Ohm. It tests the geometry,
@@ -175,6 +138,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
                                                 {"Attributes", json::array({1})},
                                                 {"Direction", "+Y"}})})}};
   iodata.boundaries.SetUp(boundary_json_1);
+  iodata.CheckConfiguration();
 
   auto mesh_io = LoadScaleParMesh(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -261,17 +225,17 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   // Make Port Bilinear forms:
 
   // - Identity coefficient restricted to the boundary which is ~ \delta_{i,j}
-  mfem::BilinearForm g_boundary_id(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_id(&space_op.GetNDSpace().Get());
   SumCoefficient fb_id{};
 
   // - Mode coefficient on boundary, here ~ \hat{y}_i \hat{y}_j.
-  mfem::BilinearForm g_boundary_mode(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_mode(&space_op.GetNDSpace().Get());
   SumVectorCoefficient fb_mode(mesh.SpaceDimension());
 
   // - Filter coefficient with in-plane vector polarization perpendicular to port, here ~
   //   \hat{x}_i \hat{x}_j. Only zeros out if mode is perfectly along \hat{y}, which is
   //   *not* the case for neighbouring PEC boundary conditions.
-  mfem::BilinearForm g_boundary_perp(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_perp(&space_op.GetNDSpace().Get());
   SumVectorCoefficient fb_perp(mesh.SpaceDimension());
 
   fb_id.AddCoefficient(std::make_unique<RestrictedCoefficient<mfem::ConstantCoefficient>>(
@@ -285,6 +249,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 
   // Port mode is in y direction, so filter in x.
   StaticVector<3> x_dir;
+  x_dir.UseDevice(true);
   x_dir = 0.0;
   x_dir(0) = 1.0;
   fb_perp.AddCoefficient(
@@ -294,16 +259,21 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   g_boundary_perp.Assemble(true);
 
   // Assembly primary vector h_t x n = e_t / eta of port; since TEM this is purely
-  // tangential. Field normalization in GetLumpedPortExcitationVectorPrimary is such that
+  // tangential. Field normalization in GetLumpedPortExcitationVectorPrimaryHt is such that
   // reference impedance is 1.0 in internal units, so that it is Z_0 in physical units.
   ComplexVector port_primary_ht_cn;
-  space_op.GetLumpedPortExcitationVectorPrimary(1, port_primary_ht_cn, true);
-  GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());  // As palace GridFunction
+  port_primary_ht_cn.UseDevice(true);
+  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn, true);
+  // As palace GridFunction: Undo restriction
+  GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());
+  port_primary_gf_ht_cn = 0.0;
   port_primary_gf_ht_cn.Real().SetFromTrueDofs(port_primary_ht_cn.Real());
 
   ComplexVector port_primary_et;
-  GetLumpedPortExcitationVectorEt(space_op, 1, port_primary_et, true);
-  GridFunction port_primary_gf_et(space_op.GetNDSpace());  // As palace GridFunction
+  port_primary_et.UseDevice(true);
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
+  GridFunction port_primary_gf_et(space_op.GetNDSpace());
+  port_primary_gf_et = 0.0;
   port_primary_gf_et.Real().SetFromTrueDofs(port_primary_et.Real());
 
   // Total power for the (real) fields is (e_t / eta) \cdot e_t = 1.
@@ -326,11 +296,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 
   // The normalization of e_t is Z_R \sum_e  W_e / L_e but with Z_R = 1.0 in the
   // internal units.
-  double et_norm_expected = 0.0;
-  for (const auto &el : port_1.elems)
-  {
-    et_norm_expected += el->GetGeometryWidth() / el->GetGeometryLength();
-  }
+  double et_norm_expected = port_1.GetExcitationFieldEtNormSqWithUnityZR();
 
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -345,18 +311,13 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   }
 
   // Plain normalization of h_t x n = e_t / eta
-  double norm_id_ht_cn = g_boundary_id.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                    port_primary_gf_ht_cn.Real());
+  double norm_id_ht_cn = g_boundary_id.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                       port_primary_gf_ht_cn.Real());
 
   // The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e L_e / W_e but with Z_R = 1.0
   // in the internal units, since we took out the 1 / sqrt(\vert Z_0 \vert) factor out of
   // e_t / eta.
-  double ht_cn_norm_expected = 0.0;
-  for (const auto &el : port_1.elems)
-  {
-    ht_cn_norm_expected += el->GetGeometryLength() / el->GetGeometryWidth();
-  }
-  ht_cn_norm_expected /= port_1.elems.size() * port_1.elems.size();
+  double ht_cn_norm_expected = port_1.GetExcitationFieldHtNormSqWithUnityZR();
 
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -370,10 +331,10 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
                WithinRel(ht_cn_norm_expected));
   }
 
-  double norm_mode_ht_cn = g_boundary_mode.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                        port_primary_gf_ht_cn.Real());
-  double norm_perp_ht_cn = g_boundary_perp.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                        port_primary_gf_ht_cn.Real());
+  double norm_mode_ht_cn = g_boundary_mode.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                           port_primary_gf_ht_cn.Real());
+  double norm_perp_ht_cn = g_boundary_perp.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                           port_primary_gf_ht_cn.Real());
 
   // Validate port integration normalisation. This is always true for the single hex mesh.
   // or if there is no proximate metal. Tet mesh mixes directions.
@@ -436,14 +397,19 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   const auto &port_1_test_cast = static_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
-  space_op.GetNDSpace().GetProlongationMatrix()->Mult(*form_s, VecFormS.Real());
+  VecFormS.SetSize(form_s->Size());
+  VecFormS.UseDevice(true);
+  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
 
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
-  space_op.GetNDSpace().GetProlongationMatrix()->Mult(*form_v, VecFormV.Real());
+  VecFormV.SetSize(form_v->Size());
+  VecFormV.UseDevice(true);
+  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
+  RHS.UseDevice(true);
   space_op.GetExcitationVector1(1, RHS);
   RHS *= 0.5;
 
@@ -452,7 +418,10 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
   if (boundary_pec_type != PEC::NONE)
   {
-    CHECK(nd_dbc_tdof.Size() > 0);
+    // If more than 1 MPI rank only know that total tdof is non-zero.
+    auto nd_dbc_tdof_size = nd_dbc_tdof.Size();
+    Mpi::GlobalSum(1, &nd_dbc_tdof_size, world_comm);
+    CHECK(nd_dbc_tdof_size > 0);
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
@@ -486,6 +455,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   }
 }
 
+// TODO: Extend to parallel case.
 TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
 {
   // Similar to LumpedPort_BasicTests_1ElementPort_Cube321 test above,
@@ -552,6 +522,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
                   json::object({{"Attributes", json::array({2, 6, 10})},  // dx,dy = 3,1
                                 {"Direction", "+X"}})})}})})}};
   iodata.boundaries.SetUp(boundary_json_1);
+  iodata.CheckConfiguration();
 
   auto mesh_io = LoadScaleParMesh(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -592,17 +563,17 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
   // Make Port Bilinear forms:
 
   // - Identity coefficient restricted to the boundary which is ~ \delta_{i,j}
-  mfem::BilinearForm g_boundary_id(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_id(&space_op.GetNDSpace().Get());
   SumCoefficient fb_id{};
 
   // - Mode coefficient on boundary, here ~ \hat{y}_i \hat{y}_j.
-  mfem::BilinearForm g_boundary_mode(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_mode(&space_op.GetNDSpace().Get());
   SumVectorCoefficient fb_mode(mesh.SpaceDimension());
 
   // - Filter coefficient with in-plane vector polarization perpendicular to port, here ~
   //   \hat{x}_i \hat{x}_j. Only zeros out if mode is perfectly along \hat{y}, which is
   //   *not* the case for neighbouring PEC boundary conditions.
-  mfem::BilinearForm g_boundary_perp(&space_op.GetNDSpace().Get());
+  mfem::ParBilinearForm g_boundary_perp(&space_op.GetNDSpace().Get());
   SumVectorCoefficient fb_perp(mesh.SpaceDimension());
 
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -641,16 +612,18 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
   g_boundary_perp.Assemble(true);
 
   // Assembly primary vector h_t x n = e_t / eta of port; since TEM this is purely
-  // tangential. Field normalization in GetLumpedPortExcitationVectorPrimary is such that
+  // tangential. Field normalization in GetLumpedPortExcitationVectorPrimaryHt is such that
   // reference impedance is 1.0 in internal units, so that it is Z_0 in physical units.
   ComplexVector port_primary_ht_cn;
-  space_op.GetLumpedPortExcitationVectorPrimary(1, port_primary_ht_cn, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn, true);
   GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());  // As palace GridFunction
+  port_primary_gf_ht_cn = 0.0;
   port_primary_gf_ht_cn.Real().SetFromTrueDofs(port_primary_ht_cn.Real());
 
   ComplexVector port_primary_et;
-  GetLumpedPortExcitationVectorEt(space_op, 1, port_primary_et, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
   GridFunction port_primary_gf_et(space_op.GetNDSpace());  // As palace GridFunction
+  port_primary_gf_et = 0.0;
   port_primary_gf_et.Real().SetFromTrueDofs(port_primary_et.Real());
 
   // Total power for the (real) fields is (e_t / eta) \cdot e_t = 1.
@@ -659,8 +632,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
   // some of the electric field without properly compensating in the integral. This defines
   // a new alpha normalization of the field that we want to divide out to return to the
   // original p_0 = 1.
-  double port_power =
-      g_boundary_id.InnerProduct(port_primary_gf_ht_cn.Real(), port_primary_gf_et.Real());
+  double port_power = g_boundary_id.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                    port_primary_gf_et.Real());
   // double port_normalization_alpha = std::sqrt(port_power);  // Marks-Williams alpha
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -669,15 +642,11 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
 
   // Plain normalization of et
   double norm_id_et =
-      g_boundary_id.InnerProduct(port_primary_gf_et.Real(), port_primary_gf_et.Real());
+      g_boundary_id.ParInnerProduct(port_primary_gf_et.Real(), port_primary_gf_et.Real());
 
   // The normalization of e_t is Z_R \sum_e  W_e / L_e but with Z_R = 1.0 in the
   // internal units.
-  double et_norm_expected = 0.0;
-  for (const auto &el : port_1.elems)
-  {
-    et_norm_expected += el->GetGeometryWidth() / el->GetGeometryLength();
-  }
+  double et_norm_expected = port_1.GetExcitationFieldEtNormSqWithUnityZR();
 
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -694,18 +663,13 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
   }
 
   // Plain normalization of h_t x n = e_t / eta
-  double norm_id_ht_cn = g_boundary_id.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                    port_primary_gf_ht_cn.Real());
+  double norm_id_ht_cn = g_boundary_id.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                       port_primary_gf_ht_cn.Real());
 
   // The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e L_e / W_e but with Z_R = 1.0
   // in the internal units, since we took out the 1 / sqrt(\vert Z_0 \vert) factor out of
   // e_t / eta.
-  double ht_cn_norm_expected = 0.0;
-  for (const auto &el : port_1.elems)
-  {
-    ht_cn_norm_expected += el->GetGeometryLength() / el->GetGeometryWidth();
-  }
-  ht_cn_norm_expected /= port_1.elems.size() * port_1.elems.size();
+  double ht_cn_norm_expected = port_1.GetExcitationFieldHtNormSqWithUnityZR();
 
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -721,10 +685,10 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
     //            WithinRel(ht_cn_norm_expected));
   }
 
-  double norm_mode_ht_cn = g_boundary_mode.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                        port_primary_gf_ht_cn.Real());
-  double norm_perp_ht_cn = g_boundary_perp.InnerProduct(port_primary_gf_ht_cn.Real(),
-                                                        port_primary_gf_ht_cn.Real());
+  double norm_mode_ht_cn = g_boundary_mode.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                           port_primary_gf_ht_cn.Real());
+  double norm_perp_ht_cn = g_boundary_perp.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                           port_primary_gf_ht_cn.Real());
 
   // Validate port integration normalisation. This is always true for the single hex mesh.
   // or if there is no proximate metal. Tet mesh mixes directions.
