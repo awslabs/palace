@@ -18,9 +18,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     git = "https://github.com/awslabs/palace.git"
     license("Apache-2.0")
 
-    maintainers("hughcars", "simlap", "cameronrutherford")
+    maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo")
 
     version("develop", branch="main")
+    version("0.15.0", tag="v0.15.0", commit="b6762777d85a06072fdf4cc96e8a365da73df170")
     version("0.14.0", tag="v0.14.0", commit="a428a3a32dbbd6a2a6013b3b577016c3e9425abc")
     version("0.13.0", tag="v0.13.0", commit="a61c8cbe0cacf496cde3c62e93085fae0d6299ac")
     version("0.12.0", tag="v0.12.0", commit="8c192071206466638d5818048ee712e1fada386f")
