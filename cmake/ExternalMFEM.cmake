@@ -23,6 +23,9 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   if(PALACE_WITH_GSLIB)
     list(APPEND MFEM_DEPENDENCIES gslib)
   endif()
+  if(PALACE_WITH_UMPIRE)
+    list(APPEND MFEM_DEPENDENCIES umpire)
+  endif()
 else()
   set(MFEM_DEPENDENCIES)
 endif()
@@ -146,6 +149,11 @@ if(PALACE_WITH_HIP)
 else()
   list(APPEND MFEM_OPTIONS
     "-DMFEM_USE_HIP=NO"
+  )
+endif()
+if(PALACE_WITH_UMPIRE)
+  list(APPEND MFEM_OPTIONS
+    "-DMFEM_USE_UMPIRE=YES"
   )
 endif()
 

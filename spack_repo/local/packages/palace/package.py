@@ -18,7 +18,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     git = "https://github.com/awslabs/palace.git"
     license("Apache-2.0")
 
-    maintainers("hughcars", "simlap", "cameronrutherford")
+    maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo")
 
     version("develop", branch="main")
     version("0.14.0", tag="v0.14.0", commit="a428a3a32dbbd6a2a6013b3b577016c3e9425abc")
@@ -129,7 +129,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("metis~int64", when="~int64")
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
-    depends_on("hypre@:2")  # MFEM 4.8 is incompatible with hypre v3+ and we haven't updated yet
+    depends_on("hypre@:2", when="@:0.15.0")
+    depends_on("hypre@3:")
     depends_on("hypre~complex")
     depends_on("hypre+shared", when="+shared")
     depends_on("hypre~shared", when="~shared")
@@ -181,7 +182,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+cuda"):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
-            depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
@@ -193,7 +195,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+rocm"):
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
-            depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"hypre+umpire{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
