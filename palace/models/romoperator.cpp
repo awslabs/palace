@@ -419,9 +419,6 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
         port_attr_list.Append(elem->GetAttrList());
       }
     }
-    MFEM_VERIFY(
-        !fb_port.empty(),
-        "Internal error, can't have adaptive_circuit_synthesis without lumped ports.")
     w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
     auto w_port_assemble = w_port.Assemble(false);
     auto w_port_assemble_parop =
@@ -537,29 +534,32 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
 {
   // Add modes for lumped port to use them a circuit matrices.
   //
-  // The excitation vector that we expect to add to the PROM is just the primary vector e
-  // associated with that port. However, when computing the response (scattering) matrix,
-  // we have an overlap g * e, where g is the boundary bilinear form. For Nédélec elements
-  // e and g * e are not proportional to each other. This is true on simple tet meshes,
-  // for simple hex meshes they are equal empirically, but this was not tested generally
-  // (e.g. on non-conforming meshes).
+  // The excitation vector that we expect to add to the PROM is just the GridFunction
+  // (primary vector) E_t which is the tangential electric field associated with that port.
+  // The field is normalized according with an effective reference impedance of \vert Z_R
+  // \vert = 1, see SpaceOp::GetLumpedPortExcitationVectorPrimaryEt &
+  // LumpedPortData::GetExcitationFieldEtNormSqWithUnityZR().
   //
-  // To preserve orthogonality while also extracting the "full" port profile, we add both
-  // to the PROM — first g * e and then e (orthogonalized to g * e), which accounts for a
-  // "finite element correction". When e and g * e are the same, we should only add a
-  // single vector to the PROM.
+  // The lumped ports currently implemented (rectangular and coax) are purely real.
+  //
+  // The hybrid weight matrix used for normalization weight_op_W will guarantee that the
+  // generic vectors added to the ROM will be orthogonal with respect to the boundary
+  // bilinear v_rom * g_port_boundary * e_t = 0 (unless v_rom == e_t). If we used a
+  // conventional mass matrix of the space, this orthogonality would not be true as DoFs of
+  // the boundary also contribute the bulk integral ('leak into the bulk').
+  //
+  // To have a sensible scattering matrix, we ensure port modes are orthogonal. Ports that
+  // neighbor each other in space could fail this since they share DoFs on the finite
+  // element mesh, even if they would be orthogonal in continuous space.
 
-  // Workspace vector: Lumped Ports are Real, but interface is complex.
-  ComplexVector vec;
+  ComplexVector vec;  // Workspace vector:  UpdatePROM interface requires ComplexVectors
   vec.SetSize(space_op.GetNDSpace().GetTrueVSize());
   vec.UseDevice(true);
   vec = 0.0;
 
-  // Add primary port vectors. Weight matrix for PROM orthogonalisation is
-  // hybrid bulk-boundary.
   for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
-    space_op.GetLumpedPortExcitationVectorPrimary(port_idx, vec, true);
+    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec, true);
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
 
@@ -753,26 +753,18 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   std::unique_ptr<mat_t> m_Rinv = {};
   std::unique_ptr<mat_t> m_C = {};
 
-  // TODO(C++23): Replace this with std::ranges::starts_with instead.
-  auto starts_with = [](const std::string &str, const std::string_view prefix) -> bool
-  {
-    return str.length() >= prefix.length() && str.compare(0, prefix.length(), prefix) == 0;
-  };
+  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
 
-  Eigen::VectorXd v_conc(v_node_label.size());
-  for (long j = 0; j < v_node_label.size(); j++)
+  // Lumped ports are real, added at the beginning and in order.
+  for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
   {
-    if (starts_with(v_node_label[j], "port"))
-    {
-      v_conc[j] = orth_R(j, j);
-    }
-    else
-    {
-      v_conc[j] = 1.0;
-    }
+    // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2) =
+    // sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).
+    v_conc[j] = orth_R(j, j);
   }
-  // Lazy diagonal representation of inverse.
-  auto v_d = v_conc.cwiseInverse().asDiagonal();
+
+  // Lazy diagonal representation
+  auto v_d = v_conc.asDiagonal();
 
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   m_Linv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
@@ -857,8 +849,6 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
   print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
-
-  // Debug Print Boundary overlap
 }
 
 }  // namespace palace

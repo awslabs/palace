@@ -55,9 +55,38 @@ public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);
 
-  double GetToSquare(const LumpedElementData &elem) const
+  [[nodiscard]] double GetToSquare(const LumpedElementData &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
+  }
+
+  // Normalization of tangential electric field of port corresponding \int \vert E_t \vert^2
+  // dS = \vert Z_0 \vert \sum W_e / L_e. In this function we set the impedance magnitude
+  // \vert Z_0 \ vert = 1 in internal units (= Z_freespace Ohm). The actual lumped impedance
+  // is frequency dependant for ports with L,C so it is more convenient to add this factor
+  // later as needed.
+  [[nodiscard]] double GetExcitationFieldEtNormSqWithUnityZR() const
+  {
+    double norm_et = 0.0;
+    for (const auto &el : elems)
+    {
+      norm_et += el->GetGeometryWidth() / el->GetGeometryLength();
+    }
+    return norm_et;
+  }
+
+  // Normalization of tangential electric field of port corresponding \int \vert H_t \vert^2
+  // dS = 1 / (\vert Z_0 \vert n_elems^2) \sum L_e / W_e. Same details as in
+  // GetExcitationFieldEtNormSqWithUnityZR above.
+  [[nodiscard]] double GetExcitationFieldHtNormSqWithUnityZR() const
+  {
+    double norm_ht = 0.0;
+    for (const auto &el : elems)
+    {
+      norm_ht += el->GetGeometryLength() / el->GetGeometryWidth();
+    }
+    norm_ht /= elems.size() * elems.size();
+    return norm_ht;
   }
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
