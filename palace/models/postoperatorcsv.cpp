@@ -976,7 +976,8 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
   {
     for (const auto &[idx, data] : lumped_port_op)
     {
-      if (data.excitation == m_ex_idx)
+      // Cast to avoid compiler warnings about types.
+      if (static_cast<std::size_t>(data.excitation) == m_ex_idx)
       {
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
         double V_inc = data.GetExcitationVoltage() * Jcoeff;

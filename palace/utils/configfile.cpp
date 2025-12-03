@@ -1584,7 +1584,8 @@ void FarFieldPostData::SetUp(json &postpro)
       }
 
       if (nsample > 2)
-        MFEM_ASSERT(thetaphis.size() == nsample,
+        // Cast to avoid compiler warnings about types.
+        MFEM_ASSERT(static_cast<int>(thetaphis.size()) == nsample,
                     "Sampled number of points is not NSample!");
     }
   }
@@ -1937,7 +1938,7 @@ void DrivenSolverData::SetUp(json &solver)
               auto max_f = r.at("MaxFreq");
               auto delta_f = r.value("FreqStep", 0.0);
               auto n_sample = r.value("NSample", 0);
-              MFEM_VERIFY(delta_f > 0 ^ n_sample > 0,
+              MFEM_VERIFY((delta_f > 0) ^ (n_sample > 0),
                           "Only one of \"FreqStep\" or \"NSample\" can be specified for "
                           "\"Type\": \"Linear\"!");
               if (delta_f > 0)
