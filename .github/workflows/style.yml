@@ -17,7 +17,7 @@ jobs:
   check-style:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Install more recent clang-format from LLVM (match Homebrew v16)
       - name: Install clang-format
@@ -46,7 +46,7 @@ jobs:
   check-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check JSON Schema
         run: |
@@ -64,7 +64,7 @@ jobs:
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check test tags
         run: |
@@ -78,7 +78,7 @@ jobs:
   check-license:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - uses: viperproject/check-license-header@v2
         with:
           config: .github/license-check/config.json
