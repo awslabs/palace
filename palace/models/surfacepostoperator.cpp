@@ -400,7 +400,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
 
   double *data_r_ptr = integrals_r.data()->data();
   double *data_i_ptr = integrals_i.data()->data();
-  size_t total_elements = integrals_r.size() * 3;
+  std::size_t total_elements = integrals_r.size() * 3;
   Mpi::GlobalSum(total_elements, data_i_ptr, E.GetComm());
   Mpi::GlobalSum(total_elements, data_r_ptr, E.GetComm());
 
@@ -408,11 +408,11 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   // in a neatly accessible vector of arrays of complex numbers.
   std::vector<std::array<std::complex<double>, 3>> result(theta_phi_pairs.size());
   StaticVector<3> tmp_r, tmp_i;
-  for (size_t k = 0; k < theta_phi_pairs.size(); k++)
+  for (std::size_t k = 0; k < theta_phi_pairs.size(); k++)
   {
     linalg::Cross3(r_naughts[k], integrals_r[k], tmp_r);
     linalg::Cross3(r_naughts[k], integrals_i[k], tmp_i);
-    for (size_t d = 0; d < 3; d++)
+    for (std::size_t d = 0; d < 3; d++)
     {
       result[k][d] = std::complex<double>{tmp_r[d], tmp_i[d]};
     }
