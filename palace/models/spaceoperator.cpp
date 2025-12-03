@@ -841,11 +841,11 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
-bool SpaceOperator::GetLumpedPortExcitationVectorPrimary(int port_idx,
-                                                         ComplexVector &RHS_primary,
-                                                         bool zero_metal)
+bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
+                                                           ComplexVector &Et_primary,
+                                                           bool zero_metal)
 {
-  const auto &data = lumped_port_op.GetPort(port_idx);
+  const auto &data = GetLumpedPortOp().GetPort(port_idx);
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   mfem::Array<int> attr_list;
@@ -853,33 +853,33 @@ bool SpaceOperator::GetLumpedPortExcitationVectorPrimary(int port_idx,
   for (const auto &elem : data.elems)
   {
     attr_list.Append(elem->GetAttrList());
-    // TODO: Deal with effective reference normalization
     const double Rs = 1.0 * data.GetToSquare(*elem);
-    const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                        elem->GetGeometryLength() * data.elems.size());
-    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+    const double Einc = std::sqrt(
+        Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
+    fb.AddCoefficient(elem->GetModeCoefficient(Einc));
   }
-  auto &mesh = GetNDSpace().GetParMesh();
+  const auto &mesh = GetNDSpace().GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
 
-  RHS_primary.SetSize(GetNDSpace().GetTrueVSize());
-  RHS_primary.UseDevice(true);
-  RHS_primary = 0.0;
+  Et_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Et_primary.UseDevice(true);
+  Et_primary = 0.0;
 
   GridFunction rhs(GetNDSpace());
   rhs = 0.0;
   rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs.Real(), RHS_primary.Real());
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Et_primary.Real());
   if (zero_metal)
   {
-    linalg::SetSubVector(RHS_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
   return true;
 }
 
-bool SpaceOperator::GetLumpedPortExcitationVectorDual(int port_idx, ComplexVector &RHS_dual,
-                                                      bool zero_metal)
+bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
+                                                             ComplexVector &Htcn_primary,
+                                                             bool zero_metal)
 {
   const auto &data = lumped_port_op.GetPort(port_idx);
 
@@ -889,7 +889,6 @@ bool SpaceOperator::GetLumpedPortExcitationVectorDual(int port_idx, ComplexVecto
   for (const auto &elem : data.elems)
   {
     attr_list.Append(elem->GetAttrList());
-    // TODO: Deal with effective reference normalization
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                         elem->GetGeometryLength() * data.elems.size());
@@ -899,21 +898,17 @@ bool SpaceOperator::GetLumpedPortExcitationVectorDual(int port_idx, ComplexVecto
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
 
-  RHS_dual.SetSize(GetNDSpace().GetTrueVSize());
-  RHS_dual.UseDevice(true);
-  RHS_dual = 0.0;
+  Htcn_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Htcn_primary.UseDevice(true);
+  Htcn_primary = 0.0;
 
-  mfem::LinearForm rhs(&GetNDSpace().Get());
-  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
-  rhs.UseFastAssembly(false);
-  rhs.UseDevice(false);
-  rhs.Assemble();
-  rhs.UseDevice(true);
-  GetNDSpace().GetProlongationMatrix()->Mult(rhs, RHS_dual.Real());
-
+  GridFunction rhs(GetNDSpace());
+  rhs = 0.0;
+  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+  GetNDSpace().GetRestrictionMatrix()->MultTranspose(rhs.Real(), Htcn_primary.Real());
   if (zero_metal)
   {
-    linalg::SetSubVector(RHS_dual.Real(), GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
   return true;
 }

@@ -222,10 +222,19 @@ public:
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
 
-  bool GetLumpedPortExcitationVectorPrimary(int port_idx, ComplexVector &RHS_primary,
-                                            bool zero_metal);
-  bool GetLumpedPortExcitationVectorDual(int port_idx, ComplexVector &RHS_dual,
-                                         bool zero_metal);
+  // Fill vector corresponding to the tangential electric field E_t on a lumped port, with
+  // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
+  // units.
+  bool GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary,
+                                              bool zero_metal);
+
+  // Fill vector corresponding to the tangential electric field H_t x n on a lumped port,
+  // with overall normalization such that the reference impedance \vert Z_R \vert = 1 in
+  // internal units. This is locally in the same direction as E_t, but because of lumped
+  // ports can have multiple attributes ports with different surface impedances, they are
+  // not just proportional to each other.
+  bool GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
+                                                bool zero_metal);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.
