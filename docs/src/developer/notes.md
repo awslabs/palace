@@ -285,11 +285,15 @@ Verify that the repo is there:
 spack repo list
 ```
 
-Verify that *Palace* is found at the right place:
+Now, you can refer to the development spack palace with `local.palace`. For
+example,
 
 ```
-spack location -p palace
+spack spec local.palace@develop
 ```
+
+will show you the spec for your most recent `palace` package, which you can
+compare with the one for `builtin.palace@develop`.
 
 ## Changelog
 
