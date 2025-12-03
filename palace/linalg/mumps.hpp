@@ -29,9 +29,9 @@ public:
            iodata.problem.type == ProblemType::ELECTROSTATIC ||
            iodata.problem.type == ProblemType::MAGNETOSTATIC)
               ? mfem::MUMPSSolver::SYMMETRIC_POSITIVE_DEFINITE
-          : iodata.solver.linear.complex_coarse_solve
-              ? mfem::MUMPSSolver::UNSYMMETRIC
-              : mfem::MUMPSSolver::SYMMETRIC_INDEFINITE,
+          : iodata.boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0}
+              ? mfem::MUMPSSolver::SYMMETRIC_INDEFINITE
+              : mfem::MUMPSSolver::UNSYMMETRIC,
           iodata.solver.linear.sym_factorization,
           (iodata.solver.linear.strumpack_compression_type == SparseCompression::BLR)
               ? iodata.solver.linear.strumpack_lr_tol
