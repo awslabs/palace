@@ -108,7 +108,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 {
   // Test constants
   constexpr double atol = 1e-4;
-  constexpr double rtol = 5e-2;  // 5% tolerance
+  constexpr double rtol = 5e-2;    // 5% tolerance
   constexpr double I0l_Am = 1e-3;  // Current moment [A⋅m]
 
   Units units(0.496, 1.453);  // Non-trivial units for testing
@@ -207,15 +207,18 @@ TEST_CASE("Current dipole field implementation", "[currentdipole][Serial]")
   double freq_Hz = 50e6;
 
   // Create mesh - unit cube centered at origin
-  std::unique_ptr<mfem::Mesh> serial_mesh =
-      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-          6, 6, 6, mfem::Element::TETRAHEDRON));
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON));
 
   // Center mesh around origin
-  serial_mesh->Transform([](const mfem::Vector &x, mfem::Vector &p) {
-    p = x;
-    p(0) -= 0.5; p(1) -= 0.5; p(2) -= 0.5;
-  });
+  serial_mesh->Transform(
+      [](const mfem::Vector &x, mfem::Vector &p)
+      {
+        p = x;
+        p(0) -= 0.5;
+        p(1) -= 0.5;
+        p(2) -= 0.5;
+      });
 
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh));
 }
