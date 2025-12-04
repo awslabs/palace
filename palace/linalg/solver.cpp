@@ -112,6 +112,17 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
       std::cout << "create pA from pAr\n";
       pA = std::make_unique<mfem::PetscParMatrix>(*pAr);
+      // Create pA as a copy of pAr
+Mat matAr = pAr->GetMat();
+Mat matAi = pAi->GetMat();
+Mat matSum;
+
+MatDuplicate(matAr, MAT_COPY_VALUES, &matSum);
+MatAXPY(matSum, 1.0, matAi, DIFFERENT_NONZERO_PATTERN); // compare with SAME_NONZERO_PATTERN?
+
+// Create PetscParMatrix from the sum
+pA = std::make_unique<mfem::PetscParMatrix>(matSum, mfem::Operator::PETSC_MATIS);
+
       //pA.reset(mfem::Add(1.0, *pAr, 1.0, *pAi));
     }
 
