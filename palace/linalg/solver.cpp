@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "solver.hpp"
-#include <mfem.hpp> // for PetscPar?
+// #include <mfem.hpp> // for PetscPar? in solver.hpp?
 #include <petsc.h>
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
@@ -37,30 +37,43 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   // XX TODO: Test complex matrix assembly if coarse solve supports it.
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
   const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
+  mfem::PetscParMatrix *pAr = NULL, *pAi = NULL;
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
   //Operator::Type tid = Operator::PETSC_MATIS; // test
   //mfem::OperatorHandle Arh(tid), Aih(tid); //test
-  if (op.Real() && !hAr)
+  //if (op.Real() && !hAr)
+  if (op.Real() && !pAr)
   {
-    Mpi::Print("calling ParallelAssemble()\n");
+    Mpi::Print("op.Real calling ParallelAssemble()\n");
     PtAPr = dynamic_cast<const ParOperator *>(op.Real());
     MFEM_VERIFY(PtAPr,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    hAr = &PtAPr->ParallelAssemble();
+    //hAr = &PtAPr->ParallelAssemble();
+    std::cout << "calling PtApr->PetscParallelAssemble()\n";
+    pAr = &PtAPr->PetscParallelAssemble();
   }
-  if (op.Imag() && !hAi)
+  //if (op.Imag() && !hAi)
+  if (op.Imag() && !pAi)
   {
+    Mpi::Print("op.Imag calling ParallelAssemble()\n");
     PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
     MFEM_VERIFY(PtAPi,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    hAi = &PtAPi->ParallelAssemble();
+    //hAi = &PtAPi->ParallelAssemble();
+    std::cout << "calling PtApi->PetscParallelAssemble()\n";
+    pAi = &PtAPi->PetscParallelAssemble();
   }
-  if (hAr && hAi)
+  //if (hAr && hAi)
+  if (pAr && pAi)
   {
+    std::cout << "if pAr && pAi\n";
+    std::cout << "pAr height: " << pAr->Height() << ", width: " << pAr->Width() << std::endl;
+    std::cout << "pAi height: " << pAi->Height() << ", width: " << pAi->Width() << std::endl;
     if (complex_matrix)
     {
       // A = [Ar, -Ai]
       //     [Ai,  Ar]
+      /*
       mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
       mfem::Array2D<double> block_coeffs(2, 2);
       blocks(0, 0) = hAr;
@@ -72,83 +85,58 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       block_coeffs(1, 0) = 1.0;
       block_coeffs(1, 1) = 1.0;
       A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
+      */
+      std::cout << "block offsets\n";
+      mfem::Array<int> block_offsets(3); // number of variables + 1
+      block_offsets[0] = 0;
+      block_offsets[1] = op.Real()->Height(); // check this?
+      std::cout << "block_offsets[1]: " << block_offsets[1] << "\n";
+      block_offsets[2] = op.Imag()->Height();
+      std::cout << "block_offsets[2]: " << block_offsets[2] << "\n";
+      block_offsets.PartialSum();
+      block_op = std::make_unique<mfem::BlockOperator>(block_offsets);
+      std::cout << "setblock 0, 0\n";
+      block_op->SetBlock(0, 0, pAr, 1.0);
+      std::cout << "setblock 0, 1\n";
+      block_op->SetBlock(0, 1, pAi, -1.0);
+      std::cout << "setblock 1, 0\n";
+      block_op->SetBlock(1, 0, pAi, 1.0);
+      std::cout << "setblock 1, 1\n";
+      block_op->SetBlock(1, 1, pAr, 1.0);
+      std::cout << "create pA from block_op\n";
+      pA = std::make_unique<mfem::PetscParMatrix>(pAr->GetComm(), block_op.get(), Operator::PETSC_MATIS);
     }
     else
     {
       // A = Ar + Ai.
-      A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+      //A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+      std::cout << "create pA from pAr\n";
+      pA = std::make_unique<mfem::PetscParMatrix>(*pAr);
+      //pA.reset(mfem::Add(1.0, *pAr, 1.0, *pAi));
     }
-    /*
-    std::cout << "solver.cpp L78\n";
-PetscOptionsSetValue(NULL, "-matis_localmat_type", "aij");
-    //auto pAr = std::make_unique<mfem::PetscParMatrix>(hAr->GetComm(), op.Real(), Operator::PETSC_MATIS);
-    //auto pAi = std::make_unique<mfem::PetscParMatrix>(hAi->GetComm(), op.Imag(), Operator::PETSC_MATIS);
-    auto pAr = std::make_unique<mfem::PetscParMatrix>(hAr->GetComm(), hAr, Operator::PETSC_MATIS);
-    auto pAi = std::make_unique<mfem::PetscParMatrix>(hAi->GetComm(), hAi, Operator::PETSC_MATIS);
-    std::cout << "solver.cpp L83\n";
-    mfem::Array<int> block_offsets(3); // number of variables + 1
-    block_offsets[0] = 0;
-    block_offsets[1] = op.Real()->Height();
-    block_offsets[2] = op.Imag()->Height();
-    block_offsets.PartialSum();
-    std::cout << "solver.cpp L89\n";
-    block_op = std::make_unique<mfem::BlockOperator>(block_offsets);
-std::cout << "solver.cpp L91\n";
-    block_op->SetBlock(0, 0, pAr.get(), 1.0);
-    block_op->SetBlock(0, 1, pAi.get(), -1.0);
-    block_op->SetBlock(1, 0, pAi.get(), 1.0);
-    block_op->SetBlock(1, 1, pAr.get(), 1.0);
-    //block_op->SetBlock(0, 0, const_cast<mfem::Operator*>(op.Real()), 1.0);
-    //block_op->SetBlock(0, 1, const_cast<mfem::Operator*>(op.Imag()), -1.0);
-    //block_op->SetBlock(1, 0, const_cast<mfem::Operator*>(op.Imag()), 1.0);
-    //block_op->SetBlock(1, 1, const_cast<mfem::Operator*>(op.Real()), 1.0);
-std::cout << "solver.cpp L100\n";
-    test_op = std::make_unique<mfem::PetscParMatrix>(hAr->GetComm(), block_op.get(), Operator::PETSC_MATIS);
-    std::cout << "solver.cpp L102\n";
-    //auto *petsc_mat = dynamic_cast<mfem::PetscParMatrix*>(test_op.get());
-    //std::cout << "solver.cpp L108\n";
-    //if (petsc_mat) {
-    //  std::cout << "solver.cpp L110\n";
-      //Mat mat = petsc_mat->A;
-    //  std::cout << "solver.cpp L112\n";
-    //MatConvert(mat, MATIS, MAT_INPLACE_MATRIX, &mat);
-    //std::cout << "solver.cpp L114\n";
-    //}
-std::cout << "solver.cpp L116\n";
-    //pc->SetOperator(*test_op);
-    pc->SetOperator(*test_op);
-    std::cout << "solver.cpp L118\n";
-*/
-int rank = Mpi::Rank(hAr->GetComm());
-const HYPRE_BigInt *row_starts = hAr->RowPart();
-const HYPRE_BigInt *col_starts = hAr->ColPart();
-
-std::cout << "Rank " << rank << " row range: [" << row_starts[rank]
-          << ", " << row_starts[rank+1] << ")" << std::endl;
-
-// Check if there are off-diagonal entries (communication between ranks)
-hypre_ParCSRMatrix *hypre_A = (hypre_ParCSRMatrix*)(*hAr);
-HYPRE_Int num_cols_offd = hypre_CSRMatrixNumCols(hypre_ParCSRMatrixOffd(hypre_A));
-std::cout << "Rank " << rank << " off-diagonal cols: " << num_cols_offd << std::endl;
-
 
     if (PtAPr)
     {
-      PtAPr->StealParallelAssemble();
+      //PtAPr->StealParallelAssemble();
+      PtAPr->StealPetscParallelAssemble();
     }
     if (PtAPi)
     {
-      PtAPi->StealParallelAssemble();
+      //PtAPi->StealParallelAssemble();
+      PtAPi->StealPetscParallelAssemble();
     }
     if (drop_small_entries)
     {
       DropSmallEntries();
     }
     //pc->SetOperator(*block_op);
-    pc->SetOperator(*A);
+    //pc->SetOperator(*A);
+    std::cout << "pc->SetOperator(*pA)\n";
+    pc->SetOperator(*pA);
     if (!save_assembled)
     {
       A.reset();
+      pA.reset();
     }
   }
   else if (hAr)

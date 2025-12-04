@@ -12,7 +12,7 @@ namespace palace
 {
 
 BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int print)
-  : mfem::Solver(), fespace(fespace), comm(fespace.GetComm())
+  : mfem::Solver(fespace.Get().GetTrueVSize()), fespace(fespace), comm(fespace.GetComm()), complex_coarse(iodata.solver.linear.complex_coarse_solve)
 {
   const char *petscrc_file = "";
   mfem::MFEMInitializePetsc(NULL, NULL, petscrc_file, NULL);
@@ -63,7 +63,6 @@ void BDDCSolver::SetOperator(const Operator &op)
     hypre_op->EnsureMultTranspose();  // Ensure fully assembled
   }
 
-  /*
 //PetscOptionsSetValue(NULL, "-matis_convert_local_nest", "");
 //PetscOptionsSetValue(NULL, "-mat_is_convert_local_nest", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2");
@@ -77,20 +76,17 @@ PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "1"); //
 PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // ?
 //PetscOptionsSetValue(NULL, "-pc_bddc_benign_trick", "");
 //PetscOptionsSetValue(NULL, "-pc_bddc_nonetflux", "");
-PetscOptionsSetValue(NULL, "-pc_bddc_levels", "1"); // ?
+PetscOptionsSetValue(NULL, "-pc_bddc_levels", "1"); // ? doesn't help
 //PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_scaling", "1"); // leads to error?
 //PetscOptionsSetValue(NULL, "-pc_bddc_deluxe_zerorows", ""); //? doesn't do much?
-//PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_threshold", "2.0"); // ?
-//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_type", "lu");
-//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
-//PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_package", "mumps");
-//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
-//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
-//PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_package", "mumps");
-//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
-//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
-//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_package", "mumps");
-*/
+//PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_threshold", "2.0"); // leads to error
+PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_type", "lu");
+PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
+PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
+PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
+PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
+PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
+
 
 const auto *pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fespace.Get());
 std::cout << " local DOFs: " << pfes->GetVSize() << std::endl;
@@ -100,17 +96,43 @@ std::cout << " true DOFs: " << pfes->GetTrueVSize() << std::endl;
 auto &gc = pfes->GroupComm();
 //std::cout << " num groups: " << gc.PrintInfo(mfem::out) << std::endl;
 gc.PrintInfo();
-  //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix *>(&op)); // op -> PetscParMatrix
-  //auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
 
-  //mfem::PetscBDDCSolverParams opts;
-  //opts.SetSpace(&fespace.Get());
-  //opts.SetEssBdrDofs(&ess_tdof_list);
+  //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix *>(&op)); // op -> PetscParMatrix
+  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
+
+  //std::cout << "pA height/width: " << pA->Height() << " " << pA->Width() << "\n";
+  //std::cout << "ess_tdof_list.Size(): " << ess_tdof_list.Size() << " ess_tdof_list.Max(): " << ess_tdof_list.Max() << "\n";
+
+  mfem::PetscBDDCSolverParams opts;
+  opts.SetSpace(&fespace.Get());
+  std::cout << "complex_coarse: " << complex_coarse << "\n";
+  if (complex_coarse)
+  {
+    if (ess_tdof_list.Size() > 0)
+    {
+      // Block matrix has structure [Ar, -Ai; Ai, Ar]
+      // Essential DOFs appear in both blocks
+      int n = ess_tdof_list.Size();
+      int offset = pA->Height() / 2;
+      block_ess_tdof_list.SetSize(2 * n);
+      for (int i = 0; i < n; i++)
+      {
+        block_ess_tdof_list[i] = ess_tdof_list[i];           // Block (0,0) and (0,1)
+        block_ess_tdof_list[n + i] = ess_tdof_list[i] + offset;  // Block (1,0) and (1,1)
+      }
+    }
+    opts.SetEssBdrDofs(&block_ess_tdof_list);
+  }
+  else
+  {
+    opts.SetEssBdrDofs(&ess_tdof_list);
+  }
   // opts.SetComputeNetFlux(true); // leads to MFEM abort
   //opts.SetNatBdrDofs(&nat_tdof_list);
-  //solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
-  //std::cout << "bddc.cpp L48 solver->Width: " << solver->Width() << "\n";
+  solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
+  std::cout << "bddc.cpp L48 solver->Width: " << solver->Width() << "\n";
 
+  /*
   // try ASM?
   // gmres, restart100, asm, asm_overlap=2, lu. converges but takes many (~250) iterations coarse solve, increasing overlap helps
   // but the performance varies as np is changed...
@@ -125,6 +147,7 @@ PetscOptionsSetValue(NULL, "-ksp_monitor", "");
   auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATAIJ); // op -> PetscParMatrix
   solver2 = std::make_unique<mfem::PetscLinearSolver>(comm);
   solver2->SetOperator(*pA);
+  */
 }
 
 }  // namespace palace

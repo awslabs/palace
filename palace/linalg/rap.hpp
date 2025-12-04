@@ -42,6 +42,9 @@ private:
   // deleted.
   mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
 
+  // Assembled operator as a parallel PETSc matrix in MATIS format.
+  mutable std::unique_ptr<mfem::PetscParMatrix> PetscRAP;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
@@ -102,11 +105,20 @@ public:
   // local operator is free'd.
   mfem::HypreParMatrix &ParallelAssemble(bool skip_zeros = false) const;
 
+  // Assemble the operator as a PETSc parallel sparse matrix in MATIS format.
+  mfem::PetscParMatrix &PetscParallelAssemble(bool skip_zeros = false) const;
+
   // Steal the assembled parallel sparse matrix.
   std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble(bool skip_zeros = false) const
   {
     ParallelAssemble(skip_zeros);
     return std::move(RAP);
+  }
+
+  std::unique_ptr<mfem::PetscParMatrix> StealPetscParallelAssemble(bool skip_zeros = false) const
+  {
+    PetscParallelAssemble(skip_zeros);
+    return std::move(PetscRAP);
   }
 
   void AssembleDiagonal(Vector &diag) const override;
