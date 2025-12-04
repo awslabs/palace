@@ -27,9 +27,15 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mfem/fem/coefficient.hpp>
 #include <mfem/linalg/vector.hpp>
+#include "drivers/drivensolver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -41,6 +47,7 @@ namespace palace
 using namespace Catch;
 using namespace electromagnetics;
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -257,6 +264,94 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   }
 }
 
+// Compare the implementation in CurrentDipoleOperator projected to the far-field, using
+// SurfacePostOperator, with the analytic expectation in ComputeAnalyticalFarFieldrE.
+void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
+                          const std::vector<int> &attributes)
+{
+  constexpr double atol = 1e-4;
+  constexpr double rtol = 5e-6;
+  constexpr double p0 = 1e-9;
+  double m0 = p0 * (2.0 * M_PI * freq_Hz);
+
+  Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+  auto &dipole_config = iodata.domains.current_dipole[1];
+  dipole_config.moment = {0.0, 0.0, m0};
+  dipole_config.center = {0.0, 0.0, 0.0};
+  iodata.boundaries.postpro.farfield.attributes = attributes;
+  iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
+  iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.driven.sample_f = {
+      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9)};
+
+  auto comm = Mpi::World();
+
+  // Read parallel mesh.
+  const int dim = serial_mesh->Dimension();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  std::vector<std::unique_ptr<Mesh>> mesh_vec;
+  mesh_vec.push_back(std::make_unique<Mesh>(palace_mesh));
+  SpaceOperator space_op(iodata, mesh_vec);
+
+  double omega = iodata.solver.driven.sample_f[0];
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                    C.get(), M.get(), A2.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+
+  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ksp.SetOperators(*A, *P);
+
+  const auto &Curl = space_op.GetCurlMatrix();
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  RHS.UseDevice(true);
+  E.UseDevice(true);
+  B.UseDevice(true);
+
+  space_op.GetExcitationVector(1, omega, RHS);
+  ksp.Mult(RHS, E);
+
+  Curl.Mult(E.Real(), B.Real());
+  Curl.Mult(E.Imag(), B.Imag());
+  B *= -1.0 / (1i * omega);
+
+  GridFunction E_field(space_op.GetNDSpace(), true);
+  GridFunction B_field(space_op.GetRTSpace(), true);
+  E_field.Real().SetFromTrueDofs(E.Real());
+  E_field.Imag().SetFromTrueDofs(E.Imag());
+  B_field.Real().SetFromTrueDofs(B.Real());
+  B_field.Imag().SetFromTrueDofs(B.Imag());
+
+  SurfacePostOperator surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
+                                   space_op.GetRTSpace());
+
+  auto thetaphis = GenerateSphericalTestPoints();
+  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega, 0.0);
+
+  for (size_t i = 0; i < thetaphis.size(); i++)
+  {
+    const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
+    const auto &[theta, phi] = thetaphis[i];
+    auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
+
+    for (size_t j = 0; j < dim; j++)
+    {
+      // The agreement has to be up to a phase, so we compare the absolute values.
+      CHECK_THAT(std::abs(E_phys[j]),
+                 WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+    }
+  }
+}
+
 TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
 {
   // Test constants.
@@ -356,6 +451,24 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   MaterialOperator mat_op(iodata, palace_mesh);
 
   CHECK_THROWS(SurfacePostOperator(iodata, mat_op, nd_fespace, nd_fespace));
+}
+
+TEST_CASE("Electric Current Dipole implementation", "[currentdipole][strattonchu][Serial]")
+{
+  // This test checks the Stratton-Chu code using a non-trivial mesh:
+  // 1. The outer boundary has multiple attributes.
+  // 2. The outer boundary is not a sphere.
+
+  double freq_Hz = GENERATE(35e6, 50e6);
+  std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
+
+  // Make mesh for a cube [0, 1] x [0, 1] x [0, 1].
+  int resolution = 20;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+
+  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes);
 }
 
 }  // namespace
