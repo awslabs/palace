@@ -16,7 +16,7 @@
 //
 // H_r = 0
 // H_θ = 0
-// H_φ = iω/(4πε₀r²) * (1 - ikr) * e^(ikr)
+// H_φ = iω/(4πε₀r²) * sin(θ) * (1 - ikr) * e^(ikr)
 //
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
