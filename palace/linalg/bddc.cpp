@@ -88,7 +88,11 @@ PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
 PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
 PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
 PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
-PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio", "16");
+int num_ranks;
+MPI_Comm_size(comm, &num_ranks);
+std::string coarsening_ratio = std::to_string(num_ranks);
+PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio", coarsening_ratio.c_str());
+
 
 const auto *pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fespace.Get());
 std::cout << " local DOFs: " << pfes->GetVSize() << std::endl;
