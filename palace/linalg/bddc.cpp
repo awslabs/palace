@@ -66,10 +66,12 @@ void BDDCSolver::SetOperator(const Operator &op)
 //PetscOptionsSetValue(NULL, "-matis_convert_local_nest", "");
 //PetscOptionsSetValue(NULL, "-mat_is_convert_local_nest", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2");
+PetscOptionsSetValue(NULL, "-pc_bddc_symmetric", "0");
 //PetscOptionsSetValue(NULL, "-mat_is_symmetric", "");
 //PetscOptionsSetValue(NULL, "-ksp_monitor", "");
 PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "0");
 PetscOptionsSetValue(NULL, "-pc_bddc_detect_disconnected", "");
+PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // ?
 PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // ?
 PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // ?
 PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "1"); //
@@ -86,7 +88,7 @@ PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
 PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
 PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
 PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
-
+PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio", "16");
 
 const auto *pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fespace.Get());
 std::cout << " local DOFs: " << pfes->GetVSize() << std::endl;
@@ -98,7 +100,15 @@ auto &gc = pfes->GroupComm();
 gc.PrintInfo();
 
   //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix *>(&op)); // op -> PetscParMatrix
-  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
+  //auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
+
+  // Convert to PETSc MATAIJ first (not MATIS)
+  auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
+  // Now convert MATAIJ to MATIS
+  Mat matAIJ = temp->GetMat();
+  Mat matIS;
+  MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
+  auto pA = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
 
   //std::cout << "pA height/width: " << pA->Height() << " " << pA->Width() << "\n";
   //std::cout << "ess_tdof_list.Size(): " << ess_tdof_list.Size() << " ess_tdof_list.Max(): " << ess_tdof_list.Max() << "\n";
