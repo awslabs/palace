@@ -1,0 +1,131 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Setup Palace CI'
+description: 'Common steps to prepare the environment to run Palace tests'
+inputs:
+  julia-version:
+    description: 'Version of Julia to use (as understood by juliaup)'
+    required: false
+    default: 'release'
+  spack-version:
+    description: 'Spack git tag to use'
+    required: false
+    default: 'develop'
+  llvm-version:
+    description: 'Version of LLVM to use (only major version supported, e.g. "19")'
+    required: false
+    default: 'dont-install'
+  setup-intel:
+    description: 'Install Intel OneAPI'
+    required: false
+    default: 'false'
+outputs:
+  julia-version:
+    description: 'Julia version that was installed'
+    value: ${{ steps.setup-julia.outputs.julia-version }}
+runs:
+  using: 'composite'
+  steps:
+
+    # This can sometimes interfere with sudo apt operations below. We don't
+    # really care about these updates anyway, as we spin up new instances all
+    # the time.
+    - name: Disable unattended upgrades
+      shell: bash
+      run: |
+        # Kill any running unattended upgrade processes
+        sudo pkill -9 -f unattended-upgr || true
+        sudo pkill -9 -f apt.systemd.daily || true
+        
+        # Stop and disable systemd services
+        sudo systemctl stop apt-daily.timer || true
+        sudo systemctl disable apt-daily.timer || true
+        sudo systemctl stop apt-daily-upgrade.timer || true
+        sudo systemctl disable apt-daily-upgrade.timer || true
+        sudo systemctl stop apt-daily.service || true
+        sudo systemctl stop apt-daily-upgrade.service || true
+        
+        # Remove lock files if they exist
+        sudo rm -f /var/lib/dpkg/lock-frontend
+        sudo rm -f /var/lib/dpkg/lock
+        sudo dpkg --configure -a || true
+        
+        # Disable in config
+        echo 'APT::Periodic::Update-Package-Lists "0";' | sudo tee /etc/apt/apt.conf.d/20auto-upgrades
+        echo 'APT::Periodic::Unattended-Upgrade "0";' | sudo tee -a /etc/apt/apt.conf.d/20auto-upgrades
+
+    - name: Setup repositories
+      shell: bash
+      run: |
+        # Intel
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+        | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        
+        # LLVM
+        CODENAME=$(lsb_release -cs) # Ubuntu 24 is "noble"
+        echo "deb http://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+
+        sudo apt update
+
+    - name: Setup Intel OneAPI
+      if: inputs.setup-intel == 'true'
+      shell: bash
+      run: |
+        sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-compiler-fortran
+
+    - name: Setup LLVM
+      if: inputs.llvm-version != 'dont-install'
+      shell: bash
+      env:
+        LLVM_VERSION: ${{ inputs.llvm-version }}
+      run: |
+        sudo apt-get install -y clang-${LLVM_VERSION} llvm-${LLVM_VERSION} lld-${LLVM_VERSION} lldb-${LLVM_VERSION} libomp5-${LLVM_VERSION} libomp-${LLVM_VERSION}-dev flang-${LLVM_VERSION}  
+
+    - name: Setup GNU
+      shell: bash
+      run: |
+        sudo apt-get install -y gfortran
+
+    - name: Setup GNU OpenMP
+      shell: bash
+      if: inputs.llvm-version == 'dont-install'
+      run: |
+        sudo apt-get install -y libgomp1
+        
+    - name: Install Spack
+      uses: actions/checkout@v6
+      with:
+        repository: spack/spack
+        path: spack
+        ref: ${{ inputs.spack-version }}
+        
+    - name: Setup Spack environment
+      shell: bash
+      run: |
+        echo "$(realpath spack/bin)" >> "$GITHUB_PATH"
+        echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
+        
+    - name: Install Julia
+      id: setup-julia
+      shell: bash
+      env:
+        JULIA_VERSION: ${{ inputs.julia-version }}
+      run: |
+        # Install juliaup (installs release by default)
+        curl -fsSL https://install.julialang.org | sh -s -- --yes
+        
+        # Add Julia to PATH
+        echo "$HOME/.juliaup/bin" >> $GITHUB_PATH
+        
+        # Install and set the specified Julia version as default
+        if [ "${JULIA_VERSION}" != "release" ]; then
+          ~/.juliaup/bin/juliaup add "${JULIA_VERSION}"
+          ~/.juliaup/bin/juliaup default "${JULIA_VERSION}"
+        fi
+        
+        # Output the installed version
+        echo "julia-version=$JULIA_VERSION" >> $GITHUB_OUTPUT
+        echo "Installed Julia version: $JULIA_VERSION"

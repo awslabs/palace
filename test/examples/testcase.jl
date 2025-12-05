@@ -4,9 +4,13 @@
 using Test
 using CSV
 using DataFrames
+using JSON
 
 # custom_tests is a dictionary that maps filenames to functions of the signature
 # (new_data, ref_data) -> None, where arbitrary tests can be implemented
+#
+# When force_gpu=true, the Device in the JSON file is ignored and set to GPU
+# instead.
 function testcase(
     testdir,
     testconfig,
@@ -20,7 +24,8 @@ function testcase(
     paraview_fields=true,
     gridfunction_fields=false,
     skip_rowcount=false,
-    generate_data=true
+    generate_data=true,
+    force_gpu=false
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
@@ -34,6 +39,31 @@ function testcase(
     logdir        = joinpath(exampledir, "log")
 
     cd(exampledir)
+
+    # Handle GPU option by creating temporary config
+    config_to_use = testconfig
+    temp_config = nothing
+    if force_gpu
+        config_content = read(testconfig, String)
+        # Strip comments starting with //
+        lines = split(config_content, '\n')
+        filtered_lines = [split(line, "//")[1] for line in lines]
+        clean_content = join(filtered_lines, '\n')
+
+        # Remove trailing commas (handles multi-line cases)
+        clean_content = replace(clean_content, r",(\s*[\r\n]*\s*[}\]])" => s"\1")
+
+        config_json = JSON.parse(clean_content)
+        if !haskey(config_json, "Solver")
+            config_json["Solver"] = Dict()
+        end
+        config_json["Solver"]["Device"] = "GPU"
+
+        temp_config = tempname() * ".json"
+        write(temp_config, JSON.json(config_json, 2))
+        config_to_use = temp_config
+    end
+
     if generate_data
         # Cleanup
         rm(postprodir; force=true, recursive=true)
@@ -44,9 +74,10 @@ function testcase(
             # Run the example simulation
             logfile = "log.out"
             errfile = "err.out"
+
             proc = run(
                 pipeline(
-                    ignorestatus(`$palace -np $np $testconfig`);
+                    ignorestatus(`$palace -np $np $config_to_use`);
                     stdout=joinpath(logdir, logfile),
                     stderr=joinpath(logdir, errfile)
                 )
@@ -63,7 +94,26 @@ function testcase(
                 end
             end
             @test proc.exitcode == 0
+
+            # Check for GPU availability when force_gpu is true.
+            # Palace does not crash and revert to CPU if a GPU is not available,
+            # but this could lead to false positives
+            if force_gpu && isfile(joinpath(exampledir, logdir, logfile))
+                log_content = String(read(joinpath(exampledir, logdir, logfile)))
+                if occursin(
+                    "Palace must be built with either CUDA or HIP support for GPU device usage, reverting to CPU!",
+                    log_content
+                )
+                    @error "GPU was requested but Palace was not built with GPU support"
+                    @test false
+                end
+            end
         end
+    end
+
+    # Clean up temporary config file
+    if !isnothing(temp_config)
+        rm(temp_config; force=true)
     end
 
     @testset "Results" begin
