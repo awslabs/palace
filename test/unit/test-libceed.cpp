@@ -1414,7 +1414,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
 
 }  // namespace
 
-TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel][GPU]")
+TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
@@ -1423,7 +1423,7 @@ TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel][GPU]")
                          amr, order);
 }
 
-TEST_CASE("3D libCEED Operators", "[libCEED][Serial][Parallel][GPU]")
+TEST_CASE("3D libCEED Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
@@ -1432,7 +1432,7 @@ TEST_CASE("3D libCEED Operators", "[libCEED][Serial][Parallel][GPU]")
                          amr, order);
 }
 
-TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel][GPU]")
+TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
@@ -1441,7 +1441,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
                            amr, order);
 }
 
-TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel][GPU]")
+TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
@@ -1450,7 +1450,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
                            amr, order);
 }
 
-TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel][GPU]")
+TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
   RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
