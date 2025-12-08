@@ -584,12 +584,12 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
               "be non-zero if attributes share edges.");
 
   // // Debug Print
-  // if constexpr (false)
-  // {
-  //   fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
-  //   fs::create_directories(folder_tmp);
-  //   PrintPROMMatrices(iodata.units, folder_tmp);
-  // }
+  if constexpr (true)
+  {
+    fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
+    fs::create_directories(folder_tmp);
+    PrintPROMMatrices(iodata.units, folder_tmp);
+  }
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
@@ -844,6 +844,29 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   BlockTimer bt0(Timer::POSTPRO);
   Mpi::Print(" Printing PROM Matrices to disk.\n");
 
+  // Debug-Printing: Calculate s-matrix with rom vectors. Should be diagonal
+  // on ports and otherwise strictly zero.
+  // if constexpr (true)
+
+  Eigen::MatrixXd s_overlaps =
+      Eigen::MatrixXd::Zero(space_op.GetLumpedPortOp().Size(), V.size());
+
+  long port_i = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    for (std::size_t i = 0; i < V.size(); i++)
+    {
+      GridFunction E(space_op.GetNDSpace(), true);
+      E = 0.0;
+      E.Real().SetFromTrueDofs(V.at(i));
+      E.Real().ExchangeFaceNbrData();
+      E.Imag().ExchangeFaceNbrData();
+
+      s_overlaps(port_i, i) = port_data.GetSParameter(E).real();
+    }
+    port_i++;
+  }
+
   if (!Mpi::Root(space_op.GetComm()))
   {
     return;
@@ -867,6 +890,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     }
     out.WriteFullTableTrunc();
   };
+
+  print_table(s_overlaps, "rom-s-overlaps.csv");
 
   const auto [m_Linv, m_Rinv, m_C] = CalculateNormalizedPROMMatrices(units);
 
