@@ -414,8 +414,10 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     {
       for (const auto &elem : data.elems)
       {
+        // Want to add eta corresponding to a nominal Z_r = 1
+        double eta_norm = data.GetToSquare(*elem);
         fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                                    1.0);
+                                    1.0 / eta_norm);
         port_attr_list.Append(elem->GetAttrList());
       }
     }
