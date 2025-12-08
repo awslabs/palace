@@ -421,7 +421,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
         port_attr_list.Append(elem->GetAttrList());
       }
     }
-    w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+    // Need to check this as this per MPI rank. Ranks where the material property is empty
+    // should not add this integrator.
+    if (!fb_port.empty())
+    {
+      w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+    }
     auto w_port_assemble = w_port.Assemble(false);
     auto w_port_assemble_parop =
         std::make_unique<ParOperator>(std::move(w_port_assemble), space_op.GetNDSpace());
@@ -436,7 +441,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // Bulk:
     BilinearForm w_bulk(space_op.GetNDSpace());
     MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
-    mfem::DenseTensor eps_id = mat_op.GetPermittivityReal();
+    const auto &eps_ref = mat_op.GetPermittivityReal();
+    mfem::DenseTensor eps_id(eps_ref.SizeI(), eps_ref.SizeJ(), eps_ref.SizeK());
     eps_id = 0.0;
     for (int k = 0; k < eps_id.SizeK(); k++)
     {
@@ -447,7 +453,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
 
     f_bulk.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
-    w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
+    // Need to check this as this per MPI rank. Ranks where the material property is empty
+    // should not add this integrator.
+    if (!f_bulk.empty())
+    {
+      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
+    }
     auto w_bulk_assemble = w_bulk.Assemble(false);
     auto w_bulk_assemble_parop =
         std::make_unique<ParOperator>(std::move(w_bulk_assemble), space_op.GetNDSpace());
