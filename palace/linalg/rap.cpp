@@ -3,7 +3,6 @@
 
 #include "rap.hpp"
 
-#include <petsc.h>
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
 
@@ -150,117 +149,6 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   }
 
   return *RAP;
-}
-/*
-mfem::PetscParMatrix &ParOperator::PetscParallelAssemble(bool skip_zeros) const
-{
-  if (PetscRAP)
-  {
-    return *PetscRAP;
-  }
-
-  // Assemble the local operator
-  const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
-  std::unique_ptr<hypre::HypreCSRMatrix> data_sA;
-  if (!sA)
-  {
-    const auto *cA = dynamic_cast<const ceed::Operator *>(A);
-    MFEM_VERIFY(cA,
-                "ParOperator::PetscParallelAssemble requires A as an hypre::HypreCSRMatrix or "
-                "ceed::Operator!");
-    data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
-    sA = data_sA.get();
-  }
-
-  // Create local operator as HypreParMatrix
-  hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
-      trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-      test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), 0, sA->NNZ(),
-      0);
-  hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
-  hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
-  hypre_ParCSRMatrixInitialize(hA);
-
-  mfem::HypreParMatrix temp_A(hA, true);
-
-  // Convert to PETSc MATIS
-  mfem::PetscParMatrix petsc_A(trial_fespace.GetComm(), &temp_A, mfem::Operator::PETSC_MATIS);
-
-  // Get prolongation matrix and convert to MATIS
-  const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
-  mfem::PetscParMatrix petsc_P(trial_fespace.GetComm(), P, mfem::Operator::PETSC_MATIS);
-
-  // Perform RAP in PETSc
-  Mat matA = petsc_A.GetMat();
-  Mat matP = petsc_P.GetMat();
-  Mat matRAP;
-
-  if (!use_R)
-  {
-    // Use P^T * A * P
-    // MatPtAP(matA, matP, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &matRAP);
-    // MatPtAP doesn't work with MATIS? use explicit multiplication
-    Mat matPt, matAP;
-    MatTranspose(matP, MAT_INITIAL_MATRIX, &matPt);
-    MatMatMult(matA, matP, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &matAP);
-    MatMatMult(matPt, matAP, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &matRAP);
-    MatDestroy(&matPt);
-    MatDestroy(&matAP);
-  }
-  else
-  {
-    // Use R * A * P
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
-        test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
-        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
-        const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
-    mfem::PetscParMatrix petsc_R(test_fespace.GetComm(), hR, mfem::Operator::PETSC_MATIS);
-    Mat matR = petsc_R.GetMat();
-
-    Mat matAP;
-    MatMatMult(matA, matP, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &matAP);
-    MatMatMult(matR, matAP, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &matRAP);
-    MatDestroy(&matAP);
-    delete hR;
-  }
-
-  // Create PetscParMatrix from result
-  PetscRAP = std::make_unique<mfem::PetscParMatrix>(matRAP, mfem::Operator::PETSC_MATIS);
-
-  // Cleanup
-  hypre_ParCSRMatrixDiag(hA) = hA_diag;
-
-  // Eliminate boundary conditions
-  //if (&trial_fespace == &test_fespace && dbc_tdof_list.Size() > 0)
-  //{
-  //  PetscRAP->EliminateRowsCols(dbc_tdof_list);
-  //}
-  std::cout << "done with PetscParallelAssemble\n";
-  return *PetscRAP;
-}
-*/
-mfem::PetscParMatrix &ParOperator::PetscParallelAssemble(bool skip_zeros) const
-{
-  if (PetscRAP)
-  {
-    return *PetscRAP;
-  }
-std::cout << "begin PetscParallelAssemble\n";
-  // Assemble as HypreParMatrix (existing code)
-  ParallelAssemble(skip_zeros);
-
-  // Convert to PETSc MATAIJ first (not MATIS)
-  auto temp = std::make_unique<mfem::PetscParMatrix>(
-      trial_fespace.GetComm(), RAP.get(), mfem::Operator::PETSC_MATAIJ);
-
-  // Now convert MATAIJ to MATIS
-  Mat matAIJ = temp->GetMat();
-  Mat matIS;
-  MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
-
-  PetscRAP = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
-  std::cout << "done with PetscParallelAssemble\n";
-  return *PetscRAP;
 }
 
 void ParOperator::AssembleDiagonal(Vector &diag) const

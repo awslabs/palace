@@ -37,41 +37,27 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   // XX TODO: Test complex matrix assembly if coarse solve supports it.
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
   const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
-  mfem::PetscParMatrix *pAr = NULL, *pAi = NULL;
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
   if (op.Real() && !hAr)
-  //if (op.Real() && !pAr)
   {
-    Mpi::Print("op.Real calling ParallelAssemble()\n");
     PtAPr = dynamic_cast<const ParOperator *>(op.Real());
     MFEM_VERIFY(PtAPr,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
     hAr = &PtAPr->ParallelAssemble();
-    //std::cout << "calling PtApr->PetscParallelAssemble()\n";
-    //pAr = &PtAPr->PetscParallelAssemble();
   }
   if (op.Imag() && !hAi)
-  //if (op.Imag() && !pAi)
   {
-    Mpi::Print("op.Imag calling ParallelAssemble()\n");
     PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
     MFEM_VERIFY(PtAPi,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
     hAi = &PtAPi->ParallelAssemble();
-    //std::cout << "calling PtApi->PetscParallelAssemble()\n";
-    //pAi = &PtAPi->PetscParallelAssemble();
   }
   if (hAr && hAi)
-  //if (pAr && pAi)
   {
-    std::cout << "if pAr && pAi\n";
-    //std::cout << "pAr height: " << pAr->Height() << ", width: " << pAr->Width() << std::endl;
-    //std::cout << "pAi height: " << pAi->Height() << ", width: " << pAi->Width() << std::endl;
     if (complex_matrix)
     {
       // A = [Ar, -Ai]
       //     [Ai,  Ar]
-      /**/
       mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
       mfem::Array2D<double> block_coeffs(2, 2);
       blocks(0, 0) = hAr;
@@ -83,71 +69,29 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       block_coeffs(1, 0) = 1.0;
       block_coeffs(1, 1) = 1.0;
       A.reset(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
-      /**/
-     /*
-      std::cout << "block offsets\n";
-      mfem::Array<int> block_offsets(3); // number of variables + 1
-      block_offsets[0] = 0;
-      block_offsets[1] = op.Real()->Height(); // check this?
-      std::cout << "block_offsets[1]: " << block_offsets[1] << "\n";
-      block_offsets[2] = op.Imag()->Height();
-      std::cout << "block_offsets[2]: " << block_offsets[2] << "\n";
-      block_offsets.PartialSum();
-      block_op = std::make_unique<mfem::BlockOperator>(block_offsets);
-      std::cout << "setblock 0, 0\n";
-      block_op->SetBlock(0, 0, pAr, 1.0);
-      std::cout << "setblock 0, 1\n";
-      block_op->SetBlock(0, 1, pAi, -1.0);
-      std::cout << "setblock 1, 0\n";
-      block_op->SetBlock(1, 0, pAi, 1.0);
-      std::cout << "setblock 1, 1\n";
-      block_op->SetBlock(1, 1, pAr, 1.0);
-      std::cout << "create pA from block_op\n";
-      pA = std::make_unique<mfem::PetscParMatrix>(pAr->GetComm(), block_op.get(), Operator::PETSC_MATIS);
-      */
     }
     else
     {
       // A = Ar + Ai.
       A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
-      /*
-      std::cout << "create pA from pAr\n";
-      pA = std::make_unique<mfem::PetscParMatrix>(*pAr);
-      // Create pA as a copy of pAr
-Mat matAr = pAr->GetMat();
-Mat matAi = pAi->GetMat();
-Mat matSum;
-
-MatDuplicate(matAr, MAT_COPY_VALUES, &matSum);
-MatAXPY(matSum, 1.0, matAi, DIFFERENT_NONZERO_PATTERN); // compare with SAME_NONZERO_PATTERN?
-
-// Create PetscParMatrix from the sum
-pA = std::make_unique<mfem::PetscParMatrix>(matSum, mfem::Operator::PETSC_MATIS);
-*/
     }
 
     if (PtAPr)
     {
       PtAPr->StealParallelAssemble();
-      //PtAPr->StealPetscParallelAssemble();
     }
     if (PtAPi)
     {
       PtAPi->StealParallelAssemble();
-      //PtAPi->StealPetscParallelAssemble();
     }
     if (drop_small_entries)
     {
       DropSmallEntries();
     }
-    //pc->SetOperator(*block_op);
     pc->SetOperator(*A);
-    //std::cout << "pc->SetOperator(*pA)\n";
-    //pc->SetOperator(*pA);
     if (!save_assembled)
     {
       A.reset();
-      pA.reset();
     }
   }
   else if (hAr)

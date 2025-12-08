@@ -52,61 +52,59 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
 
 void BDDCSolver::SetOperator(const Operator &op)
 {
-  //const auto *pA = dynamic_cast<const mfem::PetscParMatrix *>(&op); // op -> PetscParMatrix
-  //const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op); // op -> HypreParMatrix
-  //auto pA = std::make_unique<mfem::PetscParMatrix>(hA, Operator::PETSC_MATIS); // HypreParMatrix -> PetscParMatrix
-  //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix*>(&op));
-  //auto pA2 = std::make_unique<mfem::PetscParMatrix>(pA, Operator::PETSC_MATIS);
+  // See all BDDC options here: https://petsc.org/main/src/ksp/pc/impls/bddc/bddc.c.html
+  PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "0"); // int, Verbosity level
+  //PetscOptionsSetValue(NULL, "-pc_bddc_interface_ext_type", "LUMP"); // enum, Use DIRICHLET or LUMP to extend interface corrections to interior. LUMP leads to error
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "0"); // bool, Use or not adjacency graph of local mat for interface analysis. No noticeable effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_local_mat_graph_square", "0"); // int, Square adjacency graph of local mat for interface analysis. No noticeable effect
+  PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // Maximum number of shared subdomains for a connected component
+  // 0 or 1 converges well but uses a lot of memory. Not setting or using 2+ leads to much smaller coarse problem but worse convergence
+  //PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "0"); // Activates face-based corner selection. No effect?
+  PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // setting to 0 leads to coarse size = 0
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_vertex_size", "4"); // Connected components smaller or equal to vertex size will be considered as primal vertices
+  // 0 -> error, 1 -> same as not setting, 2 -> same as 1, 10 -> same as 1
+  // TRY IT AGAIN WITH GRAPH_MAXCOUNT > 1??!!! still no noticeable effect?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_nnsp", "1"); // No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_of_basis", "0");  // Internal change of basis on local edge nodes
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_on_faces", "0");  // Internal change of basis on local face nodes
+  //PetscOptionsSetValue(NULL, "-pc_bddc_switch_static", "1"); // Switch on static condensation ops around the interface preconditioner. Leads to MPI error
+  PetscOptionsSetValue(NULL, "-pc_bddc_coarse_eqs_per_proc", "10000"); // number of cores used for the coarse solve-> ncores = coarse_size/this
+  //PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio","4"); // Coarsening ratio, only matters for multilevel
+  PetscOptionsSetValue(NULL, "-pc_bddc_levels", "0"); // Maximum number of levels. 0 disables multilevel
+  //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_eqs_limit", "100"); // maximum number of equations on coarsest grid. No effect...?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_coarse_estimates", "1"); // Use estimated eigenvalues for coarse problem. No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_scaling", "1"); // Use deluxe scaling for BDDC. No effect when maxcount=1, error when maxcount>1
+  //PetscOptionsSetValue(NULL, "-pc_bddc_schur_rebuild", "1"); // Whether or not the interface graph for Schur principal minors has to be rebuilt. No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_schur_layers", "-1"); // Number of dofs' layers for the computation of principal minors (-1 uses all). No effect?
+  // but maybe check again after the testing schur  exact?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_schur_exact", "1"); // Whether or not to use the exact Schur complement instead of the reduced one. No effect?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_zerorows", "1"); // Zero rows and columns of deluxe operators associated with primal dofs
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_singlemat", "1"); // Collapse deluxe operators
+  //PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_threshold", "1.0"); // No effect when maxcount=1, error when maxcount>1
+  //PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_nmin", "2");
+  //PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_nmax", "20");
+  PetscOptionsSetValue(NULL, "-pc_bddc_symmetric", "1"); // Symmetric computation of primal basis functions. Setting to 0 uses more memory?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_adj", "1"); // Number of processors where to map the coarse adjacency list. No effect?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_detect_disconnected", "1"); // Detects disconnected subdomains. No effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_detect_disconnected_filter", "1"); // Filters out small entries in the local matrix when detecting disconnected subdomains
+  //PetscOptionsSetValue(NULL, "-pc_bddc_benign_trick", "0");
+  //PetscOptionsSetValue(NULL, "-pc_bddc_benign_change", "0");
+  //PetscOptionsSetValue(NULL, "-pc_bddc_benign_compute_correction", "0");
+  // PetscOptionsSetValue(NULL, "-pc_bddc_nonetflux", "1"); // Automatic computation of no-net-flux quadrature weights. No effect
+  // PetscOptionsSetValue(NULL, "-pc_bddc_eliminate_dirichlet", "1"); // Whether or not we want to eliminate dirichlet dofs during presolve. No effect
 
-  if (auto *hypre_op = dynamic_cast<const mfem::HypreParMatrix*>(&op)) {
-    std::cout << "hypre ensuremulttranspose\n";
-    hypre_op->EnsureMultTranspose();  // Ensure fully assembled
-  }
+  // Linear solvers
+  PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_type", "lu");
+  PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
+  PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
+  PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
+  //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_ksp_type", "preonly");
+  PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
+  PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
 
-//PetscOptionsSetValue(NULL, "-matis_convert_local_nest", "");
-//PetscOptionsSetValue(NULL, "-mat_is_convert_local_nest", "");
-PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2");
-PetscOptionsSetValue(NULL, "-pc_bddc_symmetric", "0");
-//PetscOptionsSetValue(NULL, "-mat_is_symmetric", "");
-//PetscOptionsSetValue(NULL, "-ksp_monitor", "");
-PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "0");
-PetscOptionsSetValue(NULL, "-pc_bddc_detect_disconnected", "");
-PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // ?
-PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // ?
-PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // ?
-PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "1"); //
-PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // ?
-//PetscOptionsSetValue(NULL, "-pc_bddc_benign_trick", "");
-//PetscOptionsSetValue(NULL, "-pc_bddc_nonetflux", "");
-PetscOptionsSetValue(NULL, "-pc_bddc_levels", "1"); // ? doesn't help
-//PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_scaling", "1"); // leads to error?
-//PetscOptionsSetValue(NULL, "-pc_bddc_deluxe_zerorows", ""); //? doesn't do much?
-//PetscOptionsSetValue(NULL, "-pc_bddc_adaptive_threshold", "2.0"); // leads to error
-PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_type", "lu");
-PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
-PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
-PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
-PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
-PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
-int num_ranks;
-MPI_Comm_size(comm, &num_ranks);
-std::string coarsening_ratio = std::to_string(num_ranks);
-PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio", coarsening_ratio.c_str());
-
-
-const auto *pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fespace.Get());
-std::cout << " local DOFs: " << pfes->GetVSize() << std::endl;
-std::cout << " true DOFs: " << pfes->GetTrueVSize() << std::endl;
-
-// Check for shared DOFs
-auto &gc = pfes->GroupComm();
-//std::cout << " num groups: " << gc.PrintInfo(mfem::out) << std::endl;
-gc.PrintInfo();
-
-  //auto *pA = const_cast<mfem::PetscParMatrix*>(dynamic_cast<const mfem::PetscParMatrix *>(&op)); // op -> PetscParMatrix
-  //auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix
-
-  // Convert to PETSc MATAIJ first (not MATIS)
+  // Convert HypreParMatrix (op) to PETSc MATAIJ first (not MATIS)
   auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
   // Now convert MATAIJ to MATIS
   Mat matAIJ = temp->GetMat();
@@ -114,14 +112,12 @@ gc.PrintInfo();
   MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
   auto pA = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
 
-  //std::cout << "pA height/width: " << pA->Height() << " " << pA->Width() << "\n";
-  //std::cout << "ess_tdof_list.Size(): " << ess_tdof_list.Size() << " ess_tdof_list.Max(): " << ess_tdof_list.Max() << "\n";
-
+  // Set BDDC opts
   mfem::PetscBDDCSolverParams opts;
   opts.SetSpace(&fespace.Get());
-  std::cout << "complex_coarse: " << complex_coarse << "\n";
   if (complex_coarse)
   {
+    MFEM_ABORT("BDDC solver does not support complex coarse matrix!");
     if (ess_tdof_list.Size() > 0)
     {
       // Block matrix has structure [Ar, -Ai; Ai, Ar]
@@ -143,8 +139,9 @@ gc.PrintInfo();
   }
   // opts.SetComputeNetFlux(true); // leads to MFEM abort
   //opts.SetNatBdrDofs(&nat_tdof_list);
+  //opts.SetNatBdrDofs(&ess_tdof_list);
   solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
-  std::cout << "bddc.cpp L48 solver->Width: " << solver->Width() << "\n";
+
 
   /*
   // try ASM?
