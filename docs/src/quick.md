@@ -120,7 +120,7 @@ high-performance computing applications.
 Follow the [instructions on the official
 website](https://spack.readthedocs.io/en/latest/getting_started.html) to install
 Spack. This involves cloning a repository and sourcing a `setup-env` shell
-script. In this, ensure that your system comes with the minimal requirements as
+script. Ensure this shell environment comes with the minimal requirements as
 listed in the [official
 documentation](https://spack.readthedocs.io/en/latest/installing_prerequisites.html).
 Come back here once you are done with that.
