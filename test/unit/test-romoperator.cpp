@@ -37,6 +37,7 @@ public:
   using RomOperator::RomOperator;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
+  auto &GetVectors() const { return V; }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -491,7 +492,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   double et_norm_expected_port1 = port_1.GetExcitationFieldEtNormSqWithUnityZR();
 
   for (const auto &[port_i, port_norm] :
-       std::vector<std::pair<int, double>>{{1, et_norm_expected_port1}, {2, 1.}})
+       std::vector<std::pair<int, double>>{{1, 1.0}, {2, 1.}})
   {
     ComplexVector port_primary_et;
     space_op.GetLumpedPortExcitationVectorPrimaryEt(port_i, port_primary_et, true);
@@ -570,6 +571,41 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   // For 00, bulk values are small as compared to port values, put tolerance of ~1e-6.
   CHECK_THAT(std::real((*m_Linv)(0, 0)), WithinRel(m_Linv_ref(0, 0), 1e-6));
   CHECK_THAT(std::real((*m_C)(0, 0)), WithinRel(m_C_ref(0, 0), 1e-6));
+
+  // Add some random vectors to mimic solution of system.
+  ComplexVector vector_temp;
+  vector_temp.Real() = prom_op.GetVectors().at(0);  // Steal-setup
+  vector_temp.Imag() = prom_op.GetVectors().at(0);  // Steal-setup
+
+  std::size_t nr_random_vec = 10;
+  for (std::size_t i = 0; i < nr_random_vec; i++)
+  {
+    vector_temp.Real().Randomize();
+    vector_temp.Imag().Randomize();
+
+    // Add tiny norm cut-off to avoid degeneracies
+    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i), 1e-18);
+  }
+
+  // Check orthogonality with s-matrix vectors.
+  const auto &rom_vectors = prom_op.GetVectors();
+  // CHECK(rom_vectors.size() == 2 * nr_random_vec + 2);  // nr_random_vec (5) complex + 2
+  // real
+
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    for (std::size_t i = 0; i < rom_vectors.size() - 2; i++)
+    {
+      GridFunction E(space_op.GetNDSpace(), true);
+      E = 0.0;
+      E.Real().SetFromTrueDofs(rom_vectors.at(2 + i));
+      E.Real().ExchangeFaceNbrData();
+      E.Imag().ExchangeFaceNbrData();
+
+      auto S = port_data.GetSParameter(E);
+      CHECK_THAT(std::abs(S), WithinAbs(0.0, 1e-14));
+    }
+  }
 }
 
 // Checks failure mode that neighbouring ports have overlap because they share and edge
