@@ -318,6 +318,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Initialize PROM with explicit HDM samples, record the estimate but do not act on it.
     std::vector<double> max_errors;
+    std::size_t counter_rom_sample = 0;
     for (auto i : iodata.solver.driven.prom_indices)
     {
       auto omega = omega_sample[i];
@@ -326,7 +327,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       linalg::AXPY(-1.0, E, Eh);
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega, i);
+      UpdatePROM(excitation_idx, omega, counter_rom_sample);
+      counter_rom_sample++;
     }
     // The estimates associated to the end points are assumed inaccurate.
     max_errors[0] = std::numeric_limits<double>::infinity();
@@ -357,7 +359,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                  "{:.3e}, memory = {:d}/{:d}\n",
                  it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
                  omega_star, max_errors.back(), memory, convergence_memory);
-      UpdatePROM(excitation_idx, omega_star, it);
+      UpdatePROM(excitation_idx, omega_star, counter_rom_sample);
+      counter_rom_sample++;
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
