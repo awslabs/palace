@@ -208,8 +208,8 @@ public:
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
-  // fields that are orthogonal to boundary overlap and primary fields, which may not be the
-  // same.
+  // fields that are orthogonal to boundary overlap and primary fields, which requires
+  // custom weight matrix in orthogonality — see weight_op_W.
   void AddLumpedPortModesForSynthesis(const IoData &iodata);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
