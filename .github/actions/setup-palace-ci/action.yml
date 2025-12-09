@@ -87,7 +87,7 @@ runs:
     - name: Setup GNU
       shell: bash
       run: |
-        sudo apt-get install -y gfortran
+        sudo apt-get install -y gcc g++ gfortran
 
     - name: Setup GNU OpenMP
       shell: bash
