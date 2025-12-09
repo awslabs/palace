@@ -389,14 +389,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
 
-    // Build inner-product weight matrix. This is essential the mass matrix of the domain
-    // and port boundaries summed together. However, we zero out the domain mass matrix on
-    // the dof of the boundary, for correct boundary orthogonality. Additionally, we don't
-    // weight by material coefficients so that is fully real and corresponds to to full
-    // space overlap (except excised bulk part).
-
-    // Use Palace material machinery for ceed construction put trivialize to get direct
-    // overlap.
+    // Build inner-product weight matrix. This is made from MassIntegrator of the domain and
+    // port boundaries summed together. However:
+    // - We zero out the domain mass matrix on the dof of the boundary, leaving on the
+    //   boundary mass matrix.
+    // - We weight the mass matrix by 1 / \eta with reference impedance \vert Z_R \vert = 1,
+    //   so that power orthogonality of modes is enforced.
+    // - We don't weight by material coefficients so that is fully real and corresponds to
+    //   to full space overlap (except excised bulk part).
 
     const auto &mat_op = space_op.GetMaterialOp();
 
@@ -436,6 +436,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
     // Bulk:
     BilinearForm w_bulk(space_op.GetNDSpace());
+
+    // Use Palace existing palace machinery, but make a trivial bulk material.
     MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
     const auto &eps_ref = mat_op.GetPermittivityReal();
     mfem::DenseTensor eps_id(eps_ref.SizeI(), eps_ref.SizeJ(), eps_ref.SizeK());
