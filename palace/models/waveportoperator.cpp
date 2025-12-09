@@ -601,7 +601,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //            given frequency, Math. Comput. (2003).
   // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
   //           transmission line, arXiv:2302.11994 (2023).
-  const double c_min = mat_op.GetLightSpeedMax().Min();
+  double c_min = mat_op.GetLightSpeedMax().Min();
+  Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
