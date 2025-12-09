@@ -677,6 +677,47 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
 }
 
+void RomOperator::ReorthogonalizePROM()
+{
+  MPI_Comm comm = space_op.GetComm();
+
+  Eigen::MatrixXd orth_R_new;
+  orth_R_new.conservativeResizeLike(Eigen::MatrixXd::Zero(V.size(), V.size()));
+
+  for (std::size_t i = 0; i < V.size(); i++)
+  {
+    auto &v = V.at(i);
+    if (weight_op_W.has_value())
+    {
+      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(),
+                          i, *weight_op_W);
+      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      orth_R_new(i, i) = std::sqrt(std::abs(norm_sq));
+    }
+    else
+    {
+      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(),
+                          i);
+      orth_R_new(i, i) = linalg::Norml2(space_op.GetComm(), v);
+    }
+    v *= 1.0 / orth_R_new(i, i);
+  }
+  orth_R_new *= orth_R;
+  orth_R = orth_R_new;
+
+  // Reproject PROM matrices from scratch.
+  ProjectMatInternal(comm, V, *K, Kr, r, 0);
+  if (C)
+  {
+    ProjectMatInternal(comm, V, *C, Cr, r, 0);
+  }
+  ProjectMatInternal(comm, V, *M, Mr, r, 0);
+  if (RHS1.Size())
+  {
+    ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
+  }
+}
+
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
@@ -771,8 +812,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // Lumped ports are real, added at the beginning and in order.
   for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
   {
-    // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2) =
-    // sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).
+    // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
+    // = sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).
     v_conc[j] = orth_R(j, j);
   }
 
