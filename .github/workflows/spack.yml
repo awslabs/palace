@@ -400,29 +400,6 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-      - name: Configure External Packages
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # Spack needs a little help finding the intel compiler
-          if [[ "${{ matrix.compiler }}" == "intel-oneapi-compilers" ]]; then
-            . /opt/intel/oneapi/setvars.sh
-          fi
-
-          # These cause build issues if built as externals
-          #   - python : often distributed python isn't feature complete / not all dependencies get detected
-          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
-          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
-          #   - llvm-doe: we never want that
-          spack -e . external find --all \
-            --exclude openssl \
-            --exclude openssh \
-            --exclude python \
-            --exclude ncurses \
-            --exclude bzip2 \
-            --exclude xz \
-            --exclude curl \
-            --exclude llvm-doe
-
       - name: Patch Spack Packages for known problems
         if: needs.filter.outputs.test == 'true'
         run: |
