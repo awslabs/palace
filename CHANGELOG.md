@@ -11,12 +11,23 @@ The format of this changelog is based on
 
 ## In progress
 
+#### New Features
+
+  - Added support for circuit synthesis from the ROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort`
+    fields to make circuit. Prints out the projected matrices of the driven problem as well as the
+    basis orthogonalization matrix. Extended tests on aspects related to ROM and LumpedPortOp. [PR 326](https://github.com/awslabs/palace/pull/326).
+  - Upgraded internal orthogonalization routines to optionally allow taking non-identity weights in
+    inner product. Part of [PR 326](https://github.com/awslabs/palace/pull/326).
+
+#### Interface Changes
+
 #### Bug Fixes
 
   - Fixed a bug in the computation of the waveport maximum propagation constant in parallel simulations
     [PR 580](https://github.com/awslabs/palace/pull/580).
 
-## [0.15.0] - 2025-12-2
+## [0.15.0] - 2025-12-02
 
 #### New Features
 
@@ -43,8 +54,6 @@ The format of this changelog is based on
   - Added an option to drop small entries (below machine epsilon) from the matrix used in the sparse
     direct solver. This can be specified with `config["Solver"]["Linear"]["DropSmallEntries"]`.
     [PR 476](https://github.com/awslabs/palace/pull/476).
-  - Added support for circuit synthesis from the PROM in adaptive driven simulations
-    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort` fields to make circuit. Prints out the projected matrices of the driven problem as well as the basis orthogonalization matrix.
 
 #### Interface Changes
 
