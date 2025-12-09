@@ -619,8 +619,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   const auto Cr_ref = prom_op.GetCr();
   const auto Mr_ref = prom_op.GetMr();
 
-  prom_op.PrintPROMMatrices(iodata.units, fs::path(PALACE_TEST_DIR) / "test_1");
-
   // Check re-orthogonality — here everything is order 1 and non-degenerate.
   prom_op.ReorthogonalizePROM();
 
@@ -652,8 +650,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
                  WithinRel(std::imag(Mr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
     }
   }
-
-  prom_op.PrintPROMMatrices(iodata.units, fs::path(PALACE_TEST_DIR) / "test_2");
 }
 
 // Checks failure mode that neighbouring ports have overlap because they share and edge
