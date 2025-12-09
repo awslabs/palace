@@ -38,6 +38,9 @@ public:
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
+  auto &GetKr() const { return Kr; }
+  auto &GetCr() const { return Cr; }
+  auto &GetMr() const { return Mr; }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -579,7 +582,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 
   std::size_t nr_random_vec = 10;
 
-  std::seed_seq seed_gen{Mpi::Rank(world_comm)};
+  std::seed_seq seed_gen{2 * Mpi::Rank(world_comm)};
   std::vector<std::uint32_t> seeds(2 * nr_random_vec);
   seed_gen.generate(seeds.begin(), seeds.end());
 
@@ -611,6 +614,46 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
       CHECK_THAT(std::abs(S), WithinAbs(0.0, 1e-14));
     }
   }
+
+  const auto Kr_ref = prom_op.GetKr();
+  const auto Cr_ref = prom_op.GetCr();
+  const auto Mr_ref = prom_op.GetMr();
+
+  prom_op.PrintPROMMatrices(iodata.units, fs::path(PALACE_TEST_DIR) / "test_1");
+
+  // Check re-orthogonality — here everything is order 1 and non-degenerate.
+  prom_op.ReorthogonalizePROM();
+
+  const auto Kr_reorthog = prom_op.GetKr();
+  const auto Cr_reorthog = prom_op.GetCr();
+  const auto Mr_reorthog = prom_op.GetMr();
+
+  REQUIRE(Kr_ref.size() == Kr_reorthog.size());
+  REQUIRE(Cr_ref.size() == Cr_reorthog.size());
+  REQUIRE(Mr_ref.size() == Mr_reorthog.size());
+
+  for (long i = 0; i < Kr_ref.rows(); i++)
+  {
+    for (long j = 0; j < Kr_ref.cols(); j++)
+    {
+      CHECK_THAT(std::real(Kr_reorthog(i, j)),
+                 WithinRel(std::real(Kr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+      CHECK_THAT(std::imag(Kr_reorthog(i, j)),
+                 WithinRel(std::imag(Kr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+
+      CHECK_THAT(std::real(Cr_reorthog(i, j)),
+                 WithinRel(std::real(Cr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+      CHECK_THAT(std::imag(Cr_reorthog(i, j)),
+                 WithinRel(std::imag(Cr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+
+      CHECK_THAT(std::real(Mr_reorthog(i, j)),
+                 WithinRel(std::real(Mr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+      CHECK_THAT(std::imag(Mr_reorthog(i, j)),
+                 WithinRel(std::imag(Mr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
+    }
+  }
+
+  prom_op.PrintPROMMatrices(iodata.units, fs::path(PALACE_TEST_DIR) / "test_2");
 }
 
 // Checks failure mode that neighbouring ports have overlap because they share and edge
