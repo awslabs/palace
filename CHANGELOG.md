@@ -9,6 +9,13 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+#### Bug Fixes
+
+  - Fixed a bug in the computation of the waveport maximum propagation constant in parallel simulations
+    [PR 580](https://github.com/awslabs/palace/pull/580).
+
 ## [0.15.0] - 2025-12-2
 
 #### New Features
