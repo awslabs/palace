@@ -578,13 +578,18 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   vector_temp.Imag() = prom_op.GetVectors().at(0);  // Steal-setup
 
   std::size_t nr_random_vec = 10;
+
+  std::seed_seq seed_gen{Mpi::Rank(world_comm)};
+  std::vector<std::uint32_t> seeds(2 * nr_random_vec);
+  seed_gen.generate(seeds.begin(), seeds.end());
+
   for (std::size_t i = 0; i < nr_random_vec; i++)
   {
-    vector_temp.Real().Randomize();
-    vector_temp.Imag().Randomize();
+    vector_temp.Real().Randomize(seeds.at(2 * i));
+    vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
 
     // Add tiny norm cut-off to avoid degeneracies
-    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i), 1e-18);
+    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i), 0.0);
   }
 
   // Check orthogonality with s-matrix vectors.
