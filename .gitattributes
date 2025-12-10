@@ -1,1 +1,5 @@
 *.msh binary
+
+# MFEM GridFunction files
+docs/src/assets/examples/transmon-U_m* binary
+docs/src/assets/examples/transmon-mesh* binary

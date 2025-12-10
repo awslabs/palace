@@ -565,7 +565,7 @@ list of keys.
 
 ```@raw html
 <div id="glvis-container" style="width: 100%; height: 500px;">
-  <div id="glvis-div" style="width: 100%; height: 100%;" tabindex="0"></div>
+  <div id="glvis-div" style="width: 100%; height: 100%;"></div>
 </div>
 
 <!-- Note, the snippet below only works with one MPI process because we are
@@ -583,7 +583,11 @@ list of keys.
       var originalTitle = document.title;
       glv.display(stream).then(function() {
         document.title = originalTitle;
-        div.focus();
+        // Enable keyboard controls on click
+        div.addEventListener('click', function() {
+          this.setAttribute('tabindex', '0');
+          this.focus();
+        }, { once: true });
       });
     }).catch(function(e) {
       console.error('Failed to load GLVis data:', e);
