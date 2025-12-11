@@ -275,7 +275,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   double m0 = p0 * (2.0 * M_PI * freq_Hz);
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
-  IoData iodata = IoData(units);
+  IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
   dipole_config.moment = {0.0, 0.0, m0};
@@ -283,12 +283,11 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+  // iodata.solver.linear.tol = 1e-10;
+  iodata.CheckConfiguration();
+
   iodata.solver.driven.sample_f = {
       2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9)};
-  iodata.solver.linear.type = LinearSolver::SUPERLU;
-  iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
-  iodata.solver.linear.tol = 1e-9; // TODO: Is it needed?
-  iodata.solver.linear.max_it = 1000;
 
   auto comm = Mpi::World();
 
@@ -341,17 +340,22 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   auto thetaphis = GenerateSphericalTestPoints();
   auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega, 0.0);
 
-  for (size_t i = 0; i < thetaphis.size(); i++)
+  for (int i = 0; i < thetaphis.size(); i++)
   {
     const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
     const auto &[theta, phi] = thetaphis[i];
     auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
 
-    for (size_t j = 0; j < dim; j++)
+    for (int j = 0; j < dim; j++)
     {
-      // The agreement has to be up to a phase, so we compare the absolute values.
-      CHECK_THAT(std::abs(E_phys[j]),
-                 WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+      if (std::abs(rE_far[j]) < atol)
+      {
+        CHECK_THAT(std::abs(E_phys[j]), WithinAbs(0.0, atol));
+      }
+      else
+      {
+        CHECK_THAT(std::abs(E_phys[j]), WithinRel(std::abs(rE_far[j]), rtol));
+      }
     }
   }
 }

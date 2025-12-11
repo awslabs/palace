@@ -38,10 +38,11 @@ public:
 private:
   bool init;
 
-  // Check configuration file options and compatibility with requested problem type.
+public:
+  // Check configuration file options and compatibility with requested problem type. Should
+  // not be called by user, but temporarily made public for testing.
   void CheckConfiguration();
 
-public:
   IoData(const Units &units) : units(units), init(false) {}
 
   // Parse command line arguments and override options defaults.
