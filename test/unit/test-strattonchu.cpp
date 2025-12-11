@@ -285,6 +285,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.solver.driven.sample_f = {
       2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9)};
+  iodata.solver.linear.type = LinearSolver::SUPERLU;
+  iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
+  iodata.solver.linear.tol = 1e-9; // TODO: Is it needed?
+  iodata.solver.linear.max_it = 1000;
 
   auto comm = Mpi::World();
 
@@ -302,21 +306,21 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const auto &Curl = space_op.GetCurlMatrix();
+  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  // RHS.UseDevice(true);
+  // E.UseDevice(true);
+  // B.UseDevice(true);
+  E = 0.0;
+  B = 0.0;
+
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
                                     C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
-
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
   ksp.SetOperators(*A, *P);
-
-  const auto &Curl = space_op.GetCurlMatrix();
-  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
-  RHS.UseDevice(true);
-  E.UseDevice(true);
-  B.UseDevice(true);
-
   space_op.GetExcitationVector(1, omega, RHS);
   ksp.Mult(RHS, E);
 
