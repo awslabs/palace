@@ -265,7 +265,7 @@ accounts for nonzero metal thickness.
         "Elements":
         [
             {
-                "Attributes": <string>,
+                "Attributes": [<int array>],
                 "Direction": <string> or [<float array>],
                 "CoordinateSystem": <string>
             },

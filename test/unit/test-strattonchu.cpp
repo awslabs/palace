@@ -162,7 +162,7 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
 
-  IoData iodata = IoData(units);
+  IoData iodata{units};
   // We need to have at least one material. By default it's vacuum.
   iodata.domains.materials.emplace_back().attributes = {1};
   // We also need to have a non-empty farfield and a compatible problem type, or
@@ -170,6 +170,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
 
@@ -242,13 +244,13 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
       surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
 
   // Validate computed far-field against analytical solution
-  for (size_t i = 0; i < thetaphis.size(); i++)
+  for (std::size_t i = 0; i < thetaphis.size(); i++)
   {
     const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
     const auto &[theta, phi] = thetaphis[i];
     auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
 
-    for (size_t j = 0; j < dim; j++)
+    for (std::size_t j = 0; j < dim; j++)
     {
       // The agreement has to be up to a phase, so we compare the absolute values.
       CHECK_THAT(std::abs(E_phys[j]),
@@ -332,7 +334,7 @@ TEST_CASE("PostOperator", "[strattonchu][Serial]")
 TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu][Serial]")
 {
   Units units(0.496, 1.453);
-  IoData iodata = IoData(units);
+  IoData iodata{units};
 
   auto &material = iodata.domains.materials.emplace_back();
   material.attributes = {1};
@@ -341,6 +343,8 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   iodata.boundaries.postpro.farfield.attributes = {1};
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.CheckConfiguration();
 
   MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
