@@ -788,7 +788,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   else
   {
     // LU solve.
-    RHSr = Ar.partialPivLu().solve(RHSr);
+    RHSr = Ar.fullPivLu().solve(RHSr);
   }
   ProlongatePROMSolution(V.size(), V, RHSr, u);
 }
