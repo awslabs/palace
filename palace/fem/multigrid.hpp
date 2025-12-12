@@ -199,6 +199,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
       //std::cout << "rank: " << fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() << " g2_comp2 min/max: " << g2_comp2.Min() << " " << g2_comp2.Max() << "\n";
       Mpi::Print("GetNumLevels: {}\n", fespaces.GetNumLevels());
       Mpi::Print("fespaces.GetFESpaceAtLevel({}).GetParMesh().GetLastOperation() == REFINE: {}\n", fe_idx, fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetLastOperation() == mfem::Mesh::REFINE);
+      // comment out 5 lines below if skipping rebalance
       fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().Rebalance(); // modifies the mesh associated with that fespace!
       Mpi::Print("mesh {} was modified by rebalance_op\n", copy_idx + 2 * (amr_it - fe_idx) + call_id + 1);
       Mpi::Print("get rebalance_op\n");
@@ -214,12 +215,13 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
       //T.SetOperatorOwner(false); // should it be before or after assigning T.Ptr() to rebalance_op?
       //rebalance_op.reset(T.Ptr());
       //rebalance_op.reset(Thm);
+      // comment out std::cout if skipping rebalance
       std::cout << "rank: " << Mpi::Rank(mesh[l]->GetComm()) << " GetNE: " << mesh[l]->GetNE() << " refine width/height: " << refine_op->Width() << " " << refine_op->Height()
                 << " rebalance width/height: " << rebalance_op->Width() << " " << rebalance_op->Height() << "\n";
       mfem::ParGridFunction g3(&fespaces.GetFESpaceAtLevel(fe_idx).Get()); g3 = 0.0;
       //mfem::ParGridFunction g3_comp(&fespaces.GetFESpaceAtLevel(fe_idx).Get()); g3_comp = fespaces.GetFESpaceAtLevel(fe_idx).GetParMesh().GetMyRank() + 1;
       //std::cout << "before rebalance_op->Mult rank: " << Mpi::Rank(mesh[l]->GetComm()) << "\n";
-      rebalance_op->Mult(g2, g3);
+      rebalance_op->Mult(g2, g3); // comment out if skipping rebalance
       g3.ExchangeFaceNbrData();
       if (fecs[0]->GetRangeType(3) == mfem::FiniteElement::VECTOR)
       {
@@ -264,7 +266,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
       fespaces.UpdateLevel(
         std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()),
         std::move(refine_op),
-        std::move(rebalance_op)
+        std::move(rebalance_op) // use nullptr instead if skipping rebalance
       );
       fe_idx++;
       copy_idx += copy_increment;

@@ -218,10 +218,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         Mpi::Print("after emplace_back\n");
         if (it > 1)
         {
+          // comment out next four lines if skipping rebalance
           Mpi::Print("test calling rebalance on mesh?\n");
           mfem::ParMesh &last_mesh = *mesh.back();
           last_mesh.Rebalance();
-          Mpi::Print("after callingr rebalance\n");
+          Mpi::Print("after calling rebalance\n");
           mesh.back()->Update();
           Mpi::Print("after calling mesh.back()->Update()\n");
         }
@@ -231,7 +232,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       {
       Mpi::Print("Refine mesh[{}]\n", mesh_size + i);
       mfem::ParMesh &fine_mesh = *mesh[mesh_size + i]; //*mesh.back();
-        Mpi::Print("Last mesh operation is refine: {}, is rebalance: {}\n", fine_mesh.GetLastOperation() == mfem::Mesh::REFINE, fine_mesh.GetLastOperation() == mfem::Mesh::REBALANCE);
+      Mpi::Print("Last mesh operation is refine: {}, is rebalance: {}\n", fine_mesh.GetLastOperation() == mfem::Mesh::REFINE, fine_mesh.GetLastOperation() == mfem::Mesh::REBALANCE);
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
       //fine_mesh.UniformRefinement(); // test uniform ref instead of adaptive
@@ -249,6 +250,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       /**/
       Mpi::Print("adding refined mesh to mesh vector before rebalancing\n");
       mesh.emplace_back(std::make_unique<Mesh>(*mesh.back())); // add last mesh to sequence and then rebalance it
+      // comment out if/else block below if skipping rebalance
       Mpi::Print("calling rebalance\n");
       const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
       if (ratio_pre > refinement.maximum_imbalance)

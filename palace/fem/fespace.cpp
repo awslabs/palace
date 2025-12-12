@@ -238,6 +238,11 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
           std::make_unique<ProductOperator>(*rebalance_ops[l + 1], *refine_ops[l + 1]),
           *fespaces[l], *fespaces[l + 1], true);
     }
+    else if (refine_ops[l + 1] != nullptr)
+    {
+      Mpi::Print("Using refine op at l: {}\n", l);
+      P[l] = std::make_unique<ParOperator>(*refine_ops[l + 1], *fespaces[l], *fespaces[l + 1], true);
+    }
     else
     {
       Mpi::Print("Using transfer op at l: {}\n", l);
