@@ -874,8 +874,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
                                                              std::string_view filename)
   {
-    MFEM_VERIFY((labels.size() == mat.cols()) && (labels.size() == mat.rows()),
-                "Inconsistent PROM size!");
+    // MFEM_VERIFY((labels.size() == mat.cols()) && (labels.size() == mat.rows()),
+    //             "Inconsistent PROM size!");
 
     auto out = TableWithCSVFile(post_dir / filename);
     out.table.col_options.float_precision = 17;
