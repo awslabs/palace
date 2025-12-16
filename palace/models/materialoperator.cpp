@@ -221,10 +221,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       }
     }
 
-    attr_is_isotropic[i] = internal::mat::IsIsotropic(data.mu_r) &&
-                           internal::mat::IsIsotropic(data.epsilon_r) &&
-                           internal::mat::IsIsotropic(data.tandelta) &&
-                           internal::mat::IsIsotropic(data.sigma);
+    attr_is_isotropic[count] = internal::mat::IsIsotropic(data.mu_r) &&
+                               internal::mat::IsIsotropic(data.epsilon_r) &&
+                               internal::mat::IsIsotropic(data.tandelta) &&
+                               internal::mat::IsIsotropic(data.sigma);
 
     // Map all attributes to this material property index.
     for (auto attr : data.attributes)
