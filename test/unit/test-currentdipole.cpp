@@ -73,14 +73,11 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 
   std::complex<double> ikr(0, kr);
   std::complex<double> exp_ikr = std::exp(-ikr);
-  std::complex<double> factor1 =
-      exp_ikr * Ids / (4.0 * M_PI * epsilon0_ * r * r * r);
+  std::complex<double> factor1 = exp_ikr * Ids / (4.0 * M_PI * epsilon0_ * r * r * r);
   factor1 = units.Nondimensionalize<Units::ValueType::FIELD_E>(factor1);
-  std::complex<double> factor2 =
-      (-k * k * r * r + 3. * ikr + 3.) / (r * r);
+  std::complex<double> factor2 = (-k * k * r * r + 3. * ikr + 3.) / (r * r);
 
-  return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.),
-           factor1 * (x * y * factor2),
+  return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.), factor1 * (x * y * factor2),
            factor1 * (x * z * factor2)}};
 }
 
@@ -197,13 +194,13 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   // Debug analytical field values at key locations to understand the field pattern
   std::cout << "\n=== Analytical Field Debug at Key Points ===";
   std::vector<std::pair<mfem::Vector, std::string>> test_points = {
-    {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
-    {mfem::Vector({0.02, 0.0, 0.0}), "Near origin on x-axis"},
-    {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
-    {mfem::Vector({0.0, 0.0, -0.495}), "Far field on z-axis"},
-    {mfem::Vector({0.0, 0.495, 0.0}), "Far field on y-axis"},
-    {mfem::Vector({0.5, 0.0, 0.0}), ".5m from origin on x-axis"},
-    {mfem::Vector({0.0, 0.0, -.5}), "-.5m from origin on z-axis (dipole axis)"},
+      {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
+      {mfem::Vector({0.02, 0.0, 0.0}), "Near origin on x-axis"},
+      {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
+      {mfem::Vector({0.0, 0.0, -0.495}), "Far field on z-axis"},
+      {mfem::Vector({0.0, 0.495, 0.0}), "Far field on y-axis"},
+      {mfem::Vector({0.5, 0.0, 0.0}), ".5m from origin on x-axis"},
+      {mfem::Vector({0.0, 0.0, -.5}), "-.5m from origin on z-axis (dipole axis)"},
 
   };
 
@@ -260,7 +257,8 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
         E_palace_real(2) * E_palace_real(2) + E_palace_imag(0) * E_palace_imag(0) +
         E_palace_imag(1) * E_palace_imag(1) + E_palace_imag(2) * E_palace_imag(2));
 
-    std::cout << "\n" << description << " r=" << r_dim << "m:" << " r_nondim=" << r_nondim << "m:";
+    std::cout << "\n"
+              << description << " r=" << r_dim << "m:" << " r_nondim=" << r_nondim << "m:";
     std::cout << "\n  PALACE FEM SOLUTION:";
     if (palace_eval_success)
     {
@@ -314,9 +312,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
 
-TEST_CASE("Electrical Current Dipole implementation", "[currentdipole][strattonchu][Serial]")
+TEST_CASE("Electrical Current Dipole implementation",
+          "[currentdipole][strattonchu][Serial]")
 {
-  double freq_Hz = 35e6; // GENERATE(35e6, 300e6, 50e6);
+  double freq_Hz = 35e6;  // GENERATE(35e6, 300e6, 50e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
