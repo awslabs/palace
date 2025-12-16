@@ -193,6 +193,124 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   // Compute relative error
   double relative_error = total_error / total_exact_norm;
 
+  // ------------------------Debugging--------------------------------
+  // Debug analytical field values at key locations to understand the field pattern
+  std::cout << "\n=== Analytical Field Debug at Key Points ===";
+  std::vector<std::pair<mfem::Vector, std::string>> test_points = {
+    {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
+    {mfem::Vector({0.02, 0.0, 0.0}), "Near origin on x-axis"},
+    {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
+    {mfem::Vector({0.0, 0.0, -0.495}), "Far field on z-axis"},
+    {mfem::Vector({0.0, 0.495, 0.0}), "Far field on y-axis"},
+    {mfem::Vector({0.5, 0.0, 0.0}), ".5m from origin on x-axis"},
+    {mfem::Vector({0.0, 0.0, -.5}), "-.5m from origin on z-axis (dipole axis)"},
+
+  };
+
+  for (const auto &[pt, description] : test_points)
+  {
+    double r_nondim = pt.Norml2();
+    double r_dim = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
+
+    // Evaluate nondimensional analytical solution
+    auto E_analytical = ComputeCurrentDipoleENonDim(pt, units, Ids, freq_Hz);
+
+    double analytical_magnitude =
+        std::sqrt(std::real(E_analytical[0] * std::conj(E_analytical[0])) +
+                  std::real(E_analytical[1] * std::conj(E_analytical[1])) +
+                  std::real(E_analytical[2] * std::conj(E_analytical[2])));
+
+    // Try to evaluate Palace FEM solution at this point
+    mfem::Vector E_palace_real(dim), E_palace_imag(dim);
+    E_palace_real = 0.0;
+    E_palace_imag = 0.0;
+    bool palace_eval_success = false;
+
+    try
+    {
+      // Find which element contains this point
+      auto &mesh = space_op.GetNDSpace().GetParMesh();
+      mfem::Array<int> elem_ids;
+      mfem::Array<mfem::IntegrationPoint> ips;
+
+      // Convert Vector to DenseMatrix for FindPoints
+      mfem::DenseMatrix point_mat(dim, 1);
+      for (int i = 0; i < dim; i++)
+      {
+        point_mat(i, 0) = pt(i);
+      }
+
+      mesh.FindPoints(point_mat, elem_ids, ips);
+
+      if (elem_ids.Size() > 0 && elem_ids[0] >= 0)
+      {
+        // Evaluate the gridfunction at this point
+        E_field.Real().GetVectorValue(elem_ids[0], ips[0], E_palace_real);
+        E_field.Imag().GetVectorValue(elem_ids[0], ips[0], E_palace_imag);
+        palace_eval_success = true;
+      }
+    }
+    catch (...)
+    {
+      // Evaluation failed - just continue with zero values
+    }
+
+    double palace_magnitude = std::sqrt(
+        E_palace_real(0) * E_palace_real(0) + E_palace_real(1) * E_palace_real(1) +
+        E_palace_real(2) * E_palace_real(2) + E_palace_imag(0) * E_palace_imag(0) +
+        E_palace_imag(1) * E_palace_imag(1) + E_palace_imag(2) * E_palace_imag(2));
+
+    std::cout << "\n" << description << " r=" << r_dim << "m:" << " r_nondim=" << r_nondim << "m:";
+    std::cout << "\n  PALACE FEM SOLUTION:";
+    if (palace_eval_success)
+    {
+      std::cout << "\n    Palace |E|: " << palace_magnitude;
+      std::cout << "\n    Palace Ex: "
+                << std::complex<double>(E_palace_real(0), E_palace_imag(0));
+      std::cout << "\n    Palace Ey: "
+                << std::complex<double>(E_palace_real(1), E_palace_imag(1));
+      std::cout << "\n    Palace Ez: "
+                << std::complex<double>(E_palace_real(2), E_palace_imag(2));
+    }
+    else
+    {
+      std::cout << "\n    Palace evaluation failed at this point";
+    }
+    std::cout << "\n  ANALYTICAL SOLUTION:";
+    std::cout << "\n    Analytical |E|: " << analytical_magnitude;
+    std::cout << "\n    Analytical Ex: " << E_analytical[0];
+    std::cout << "\n    Analytical Ey: " << E_analytical[1];
+    std::cout << "\n    Analytical Ez: " << E_analytical[2];
+    if (palace_eval_success && analytical_magnitude > 1e-12)
+    {
+      std::cout << "\n  COMPARISON:";
+      std::cout << "\n    |E| ratio (Palace/Analytical): "
+                << palace_magnitude / analytical_magnitude;
+    }
+    std::cout << "\n  Field decay: |E| ~ 1/r^"
+              << (r_dim > 0.5 ? std::log(analytical_magnitude) / std::log(1.0 / r_dim)
+                              : 0.0);
+  }
+  std::cout << "\n============================================\n";
+
+  std::cout << "\n\n--- Absolute L2 Errors ---";
+  std::cout << "\nReal part error: || E_h_Re - E_Re ||_L2 = " << error_real;
+  std::cout << "\nImag part error: || E_h_Im - E_Im ||_L2 = " << error_imag;
+  std::cout << "\nTotal error:     || E_h - E ||_L2 = " << total_error;
+
+  std::cout << "\n\n--- Exact Solution Norms ---";
+  std::cout << "\nReal part norm: || E_Re ||_L2 = " << exact_norm_real;
+  std::cout << "\nImag part norm: || E_Im ||_L2 = " << exact_norm_imag;
+  std::cout << "\nTotal norm:     || E ||_L2 = " << total_exact_norm;
+
+  std::cout << "\n\n--- Relative L2 Errors ---";
+  std::cout << "\nReal part: || E_h_Re - E_Re || / ||E_Re|| = "
+            << error_real / exact_norm_real;
+  std::cout << "\nImag part: || E_h_Im - E_Im || / ||E_Im|| = "
+            << error_imag / exact_norm_imag;
+  std::cout << "\nTotal:     || E_h - E || / ||E|| = " << relative_error;
+  // -----------------------------------------------------------------------
+
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
 
