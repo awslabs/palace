@@ -71,6 +71,7 @@ Palace version and the example files you're using. Here's how to ensure
 compatibility:
 
  1. Check your Palace version by running `palace --version` in your terminal
+    (if `--version` is supported, if not, check the log of any Palace simulation)
  2. Navigate to the documentation for your specific version using the version selector
  3. Download example files from the GitHub repository at the tag or commit corresponding to your version
 
@@ -124,9 +125,9 @@ your local copy of Spack.
 
 ##### Installing Development Versions
 
-If you need the absolute latest version of Palace (including unreleased
-features), you can install the development version directly from the main
-branch:
+If you need the absolute latest version of Palace (including features not yet in
+a released version), you can install the development version directly from the
+main branch:
 
 ```bash
 spack install palace@develop
