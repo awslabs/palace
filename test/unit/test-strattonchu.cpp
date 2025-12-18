@@ -27,9 +27,15 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mfem/fem/coefficient.hpp>
 #include <mfem/linalg/vector.hpp>
+#include "drivers/drivensolver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -41,6 +47,7 @@ namespace palace
 using namespace Catch;
 using namespace electromagnetics;
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -257,6 +264,125 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   }
 }
 
+// Compare the implementation in CurrentDipoleOperator projected to the far-field, using
+// SurfacePostOperator, with the analytic expectation in ComputeAnalyticalFarFieldrE.
+void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
+                          const std::vector<int> &attributes)
+{
+  constexpr double atol = 1e-4;
+  constexpr double rtol = 0.05;  // 5% relative error for large domain with absorbing BC
+  constexpr double p0 = 1e-9;
+  double m0 = p0 * (2.0 * M_PI * freq_Hz);
+
+  Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
+  IoData iodata{units};
+  iodata.domains.materials.emplace_back().attributes = {1};
+  auto &dipole_config = iodata.domains.current_dipole[1];
+  dipole_config.moment = {0.0, 0.0, m0};
+  dipole_config.center = {0.0, 0.0, 0.0};
+  iodata.boundaries.postpro.farfield.attributes = attributes;
+  iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
+  iodata.problem.type = ProblemType::DRIVEN;
+  // iodata.solver.linear.tol = 1e-10;
+  iodata.CheckConfiguration();
+
+  auto comm = Mpi::World();
+
+  // Read parallel mesh.
+  const int dim = serial_mesh->Dimension();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.NondimensionalizeInputs(*par_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  std::vector<std::unique_ptr<Mesh>> mesh_vec;
+  mesh_vec.push_back(std::make_unique<Mesh>(palace_mesh));
+  SpaceOperator space_op(iodata, mesh_vec);
+
+  double omega = 2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const auto &Curl = space_op.GetCurlMatrix();
+  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  E = 0.0;
+  B = 0.0;
+
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                    C.get(), M.get(), A2.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+  ksp.SetOperators(*A, *P);
+  space_op.GetExcitationVector(1, omega, RHS);
+  ksp.Mult(RHS, E);
+
+  // Compute B = -1/(iω) ∇ x E on the true dofs.
+  Curl.Mult(E.Real(), B.Real());
+  Curl.Mult(E.Imag(), B.Imag());
+  B *= -1.0 / (1i * omega);  // TODO: add error computation for B as well.
+
+  // Recover complete GridFunction from constrained solver solution for error computation.
+  GridFunction E_field(space_op.GetNDSpace(), true);
+  E_field.Real().SetFromTrueDofs(E.Real());
+  E_field.Imag().SetFromTrueDofs(E.Imag());
+
+  // Create analytical solution coefficients.
+  auto E_exact_real = [=](const mfem::Vector &x, mfem::Vector &E_out)
+  {
+    auto E_complex = ComputeDipoleENonDim(x, units, p0, freq_Hz);
+    E_out(0) = std::real(E_complex[0]);
+    E_out(1) = std::real(E_complex[1]);
+    E_out(2) = std::real(E_complex[2]);
+  };
+  auto E_exact_imag = [=](const mfem::Vector &x, mfem::Vector &E_out)
+  {
+    auto E_complex = ComputeDipoleENonDim(x, units, p0, freq_Hz);
+    E_out(0) = std::imag(E_complex[0]);
+    E_out(1) = std::imag(E_complex[1]);
+    E_out(2) = std::imag(E_complex[2]);
+  };
+  mfem::VectorFunctionCoefficient E_exact_real_coef(dim, E_exact_real);
+  mfem::VectorFunctionCoefficient E_exact_imag_coef(dim, E_exact_imag);
+
+  // Higher-order integration for accuracy
+  int order = 3;
+  int order_quad = std::max(2, 2 * order + 1);
+  const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
+  for (int i = 0; i < mfem::Geometry::NumGeom; ++i)
+  {
+    irs[i] = &(mfem::IntRules.Get(i, order_quad));
+  }
+
+  // Compute L2 error
+  double error_real = E_field.Real().ComputeL2Error(E_exact_real_coef, irs);
+  double error_imag = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  double total_error = std::sqrt(error_real * error_real + error_imag * error_imag);
+
+  // Compute exact solution norm using zero field trick
+  // When field=0, ComputeL2Error(exact_coef) returns ||0 - exact_coef||_L2 =
+  // ||exact_coef||_L2
+  GridFunction zero_field_for_norm_computation(space_op.GetNDSpace(), true);
+  zero_field_for_norm_computation = 0.0;  // Initialize to zero
+  double exact_norm_real =
+      zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs);
+  double exact_norm_imag =
+      zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  double total_exact_norm =
+      std::sqrt(exact_norm_real * exact_norm_real + exact_norm_imag * exact_norm_imag);
+
+  // Compute relative error
+  double relative_error = total_error / total_exact_norm;
+
+  std::cout << "\n Relative Error (Re part): || E_h - E || / ||E|| = "
+            << error_real / exact_norm_real
+            << "\n Relative Error (Im part): || E_h - E || / ||E|| = "
+            << error_imag / exact_norm_imag << "\n Total Relative Error: " << relative_error
+            << "\n\n";
+
+  CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
+}
+
 TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
 {
   // Test constants.
@@ -356,6 +482,38 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   MaterialOperator mat_op(iodata, palace_mesh);
 
   CHECK_THROWS(SurfacePostOperator(iodata, mat_op, nd_fespace, nd_fespace));
+}
+
+TEST_CASE("Electric Current Dipole implementation", "[currentdipole][strattonchu][Serial]")
+{
+  // This test checks the current dipole implementation using a larger domain
+  // and higher frequency for better absorbing boundary condition performance:
+  // 1. The outer boundary has multiple attributes.
+  // 2. The outer boundary is not a sphere.
+  // 3. Domain is electrically large (~2.5 wavelengths) for effective ABC.
+  // 4. Domain is offset to center the origin (following PostOperator pattern).
+
+  double freq_Hz = 300e6;  // 300 MHz -> λ ≈ 1m, making 5x5x5 domain ~2.5λ
+  std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
+
+  // Make mesh for a cube [0, 5] x [0, 5] x [0, 5] and offset to center origin.
+  int resolution = 20;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON, 5.0, 5.0,
+          5.0));  // 5x5x5 domain
+
+  // Offset the cube to center the origin (following PostOperator pattern).
+  serial_mesh->Transform(
+      [](const mfem::Vector &x, mfem::Vector &p)
+      {
+        p = x;
+        p(0) -= 2.5;  // Transform [0,5] -> [-2.5,2.5]
+        p(1) -= 2.5;
+        p(2) -= 2.5;
+      });
+
+  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes);
 }
 
 }  // namespace
