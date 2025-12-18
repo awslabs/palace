@@ -51,7 +51,7 @@ namespace
 {
 
 // Compute the Cartesian components electric field of a time-harmonic electrical
-// current dipole aligned in the x-direction (p·δ(x)δ(y)δ(z)·x̂) at a given point in space.
+// current dipole aligned in the x-direction (Ids·δ(x)δ(y)δ(z)·x̂) at a given point in space.
 // The returned field is non-dimensionalized according to the provided units.
 //
 // We want the non-dimensional E field to mock a Palace-computed field.
@@ -195,12 +195,12 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   std::cout << "\n=== Analytical Field Debug at Key Points ===";
   std::vector<std::pair<mfem::Vector, std::string>> test_points = {
       {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
-      {mfem::Vector({0.02, 0.0, 0.0}), "Near origin on x-axis"},
+      {mfem::Vector({0.02, 0.0, 0.0}), "+0.02 origin on x-axis"},
       {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
-      {mfem::Vector({0.0, 0.0, -0.495}), "Far field on z-axis"},
-      {mfem::Vector({0.0, 0.495, 0.0}), "Far field on y-axis"},
-      {mfem::Vector({0.5, 0.0, 0.0}), ".5m from origin on x-axis"},
-      {mfem::Vector({0.0, 0.0, -.5}), "-.5m from origin on z-axis (dipole axis)"},
+      {mfem::Vector({0.0, 0.0, -0.495}), "-0.495 field on z-axis"},
+      {mfem::Vector({0.0, 0.495, 0.0}), "+0.495 on y-axis"},
+      {mfem::Vector({0.495, 0.0, 0.0}), "+0.495m from origin on x-axis"},
+      {mfem::Vector({0.0, 0.0, -0.5}), "-0.5m from origin on z-axis"},
 
   };
 
@@ -312,8 +312,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
 
-TEST_CASE("Electrical Current Dipole implementation",
-          "[currentdipole][strattonchu][Serial]")
+TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
 {
   double freq_Hz = 35e6;  // GENERATE(35e6, 300e6, 50e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
