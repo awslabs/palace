@@ -16,7 +16,7 @@ makedocs(
         assets=["assets/favicon.ico"]
     ),
     sitename="Palace",
-    authors="Sebastian Grimberg, sjg@amazon.com",
+    authors="The Palace Developers and Maintainers, palace-maint@amazon.com",
     pages=[
         "Home" => "index.md",
         "Quick Start" => "quick.md",
@@ -48,6 +48,7 @@ makedocs(
             "examples/coaxial.md",
             "examples/cpw.md"
         ],
+        "faq.md",
         "For Developers" => Any[
             "developer/notes.md",
             "developer/testing.md",
