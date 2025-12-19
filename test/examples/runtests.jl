@@ -38,6 +38,7 @@ else
         "spheres",
         "rings",
         "antenna",
+        #        "transmon",  # Not run by default because it is very expensive
         "cylinder/cavity_pec",
         "cylinder/cavity_impedance",
         "cylinder/waveguide",
@@ -88,6 +89,44 @@ if "rings" in cases
         excluded_columns=["Maximum", "Minimum"]
     )
 end
+
+reltol = 1.0e-2
+
+if "transmon" in cases
+    @info "Testing single transmon..."
+    @time testcase(
+        "transmon",
+        "transmon.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Re{V[1]} (V)",
+            "Im{V[1]} (V)",
+            "Re{V[2]} (V)",
+            "Im{V[2]} (V)",
+            "Re{V[3]} (V)",
+            "Im{V[3]} (V)",
+            "Re{I[1]} (A)",
+            "Im{I[1]} (A)",
+            "Re{I[2]} (A)",
+            "Im{I[2]} (A)",
+            "Re{I[3]} (A)",
+            "Im{I[3]} (A)"
+        ],
+        skip_rowcount=true,
+        gridfunction_fields=true
+    )
+end
+
+reltol = 1.0e-4
 
 if "cylinder/cavity_pec" in cases
     @info "Testing cylinder/cavity (PEC)..."
