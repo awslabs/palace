@@ -405,18 +405,6 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-      - name: Patch Spack Packages for known problems
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          PALACE_DIR=$PWD
-          cd $(spack location --repo builtin)
-          for patch in "$PALACE_DIR"/spack_repo/patches/*.patch; do
-            if [ -f "$patch" ]; then
-              echo "Applying patch: $patch"
-              git apply "$patch"
-            fi
-          done
-
       - name: Configure Compilers
         if: needs.filter.outputs.test == 'true'
         run: |
