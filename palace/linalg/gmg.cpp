@@ -182,44 +182,42 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at
   // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
-  //std::cout << "gmg.cpp L185 l: " << l << "\n";
   B[l]->SetInitialGuess(initial_guess);
   if (l == 0)
   {
-    //std::cout << "gmg.cpp L189 l: " << l << "\n";
+    std::cout << "gmg.cpp coarse solver type: " << typeid(*B[l]).name() << std::endl;
+    std::cout << "gmg.cpp coarse matrix type: " << typeid(*A[l]).name() << std::endl;
+    std::cout << "gmg.cpp coarse matrix height: " << A[l]->Height() << " width: " << A[l]->Width() << std::endl;
+
+    // Coarse solve. This seems to be where first inf/nan appears
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  //std::cout << "gmg.cpp L194 l: " << l << "\n";
+
   B[l]->Mult2(X[l], Y[l], R[l]);
-//std::cout << "gmg.cpp L196 l: " << l << "\n";
+
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
-  //std::cout << "gmg.cpp L199 l: " << l << "\n";
   linalg::AXPBY(1.0, X[l], -1.0, R[l]);
-//std::cout << "gmg.cpp L201 l: " << l << "\n";
-  // Coarse grid correction.
+
+  // Coarse grid correction. (rebalance operator is in P)
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
-  //std::cout << "gmg.cpp L204 l: " << l << "\n";
+
   if (dbc_tdof_lists[l - 1])
   {
     linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
   }
-  //std::cout << "gmg.cpp L209 l: " << l << "\n";
+
   VCycle(l - 1, false);
-//std::cout << "gmg.cpp L211 l: " << l << "\n";
-  // Prolongate and add.
-  //std::cout << "gmg.cpp L213 l: " << l << "\n";
+
+  // Prolongate and add. (rebalance operator is in P)
   RealMult(*P[l - 1], Y[l - 1], R[l]);
-  //std::cout << "gmg.cpp L215 l: " << l << "\n";
   Y[l] += R[l];
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
-  //std::cout << "gmg.cpp L220 l: " << l << "\n";
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
-  //std::cout << "gmg.cpp L222 l: " << l << "\n";
 }
 
 template class GeometricMultigridSolver<Operator>;
