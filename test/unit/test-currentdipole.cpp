@@ -98,8 +98,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
-  iodata.solver.driven.sample_f = {
-      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9)};
   iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
@@ -114,13 +112,14 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   mesh_vec.push_back(std::make_unique<Mesh>(palace_mesh));
   SpaceOperator space_op(iodata, mesh_vec);
 
-  double omega = iodata.solver.driven.sample_f[0];
+  double omega =
+      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
-  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  ComplexVector RHS(Curl.Width()), RHS_modified(Curl.Width()), E(Curl.Width()), B(Curl.Height());
   E = 0.0;
   B = 0.0;
 
@@ -131,7 +130,15 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
                                                              -omega * omega + 0.0i, omega);
   ksp.SetOperators(*A, *P);
   space_op.GetExcitationVector(1, omega, RHS);
-  ksp.Mult(RHS, E);
+
+  // RHS_modified = -iω RHS
+  RHS *= omega;
+  RHS_modified = (0., 0.);
+  RHS_modified.Real() = RHS.Imag();
+  RHS_modified.Imag() -= RHS.Real();
+
+  // Solve for E
+  ksp.Mult(RHS_modified, E);
 
   // Compute B = -1/(iω) ∇ x E on the true dofs.
   Curl.Mult(E.Real(), B.Real());
