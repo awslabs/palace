@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "21845bffdf74f74370707f2d174b276454646774" CACHE STRING
+  "fca98afcd78a26b784dc24b0c3edb0e6140598af" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -296,6 +296,6 @@ set(EXTERN_UMPIRE_GIT_BRANCH
   "Git branch for external UMPIRE build"
 )
 set(EXTERN_UMPIRE_GIT_TAG
-  "ab81a4f22bc2967ee9dd3e2716cafa3f1587e7b9" CACHE STRING
+  "ac034c775c7b4d4f4ff0f66774398373cf5fce73" CACHE STRING
   "Git tag for external UMPIRE build"
 )

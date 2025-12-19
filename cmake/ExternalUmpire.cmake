@@ -29,12 +29,6 @@ elseif(PALACE_WITH_HIP)
   )
 endif()
 
-# Fix CUDA compatibility in BLT.
-set(UMPIRE_PATCH_FILES
-  # https://github.com/LLNL/blt/pull/735
-  "${CMAKE_SOURCE_DIR}/extern/patch/umpire/cuda_compatibility.diff"
-)
-
 string(REPLACE ";" "; " UMPIRE_OPTIONS_PRINT "${UMPIRE_OPTIONS}")
 message(STATUS "UMPIRE_OPTIONS: ${UMPIRE_OPTIONS_PRINT}")
 
@@ -47,7 +41,6 @@ ExternalProject_Add(umpire
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/umpire-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply ${UMPIRE_PATCH_FILES}
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${UMPIRE_OPTIONS}"
   TEST_COMMAND      ""
 )
