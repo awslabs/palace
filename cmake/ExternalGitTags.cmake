@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "4dd96d0e83088890879612c58364f6c10756ed90" CACHE STRING
+  "fca98afcd78a26b784dc24b0c3edb0e6140598af" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "0c4c006ef86dc2b2cf415e5bc4ed9118c9768652" CACHE STRING
+  "bf1b25d82e232909e1d3aa1f416dbdae9931a550" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "0311516ef26856f9037490a5104151a9a9d292aa" CACHE STRING
+  "51619389660697cb6ab811d9eb05c4522bec4803" CACHE STRING
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "61182f12f55a2c1e9f5f1ddbc66df7e264d4bfe8" CACHE STRING
+  "8bb360c8075904deb45e694f591d2b578ac6c300" CACHE STRING
   "Git tag for external SLEPc build"
 )
 
@@ -284,4 +284,18 @@ set(EXTERN_SUNDIALS_GIT_BRANCH
 set(EXTERN_SUNDIALS_GIT_TAG
   "8e17876d3b4d682b4098684b07a85b005a122f81" CACHE STRING
   "Git tag for external SUNDIALS build"
+)
+
+# Umpire (for HYPRE)
+set(EXTERN_UMPIRE_URL
+  "https://github.com/LLNL/Umpire" CACHE STRING
+  "URL for external UMPIRE build"
+)
+set(EXTERN_UMPIRE_GIT_BRANCH
+  "develop" CACHE STRING
+  "Git branch for external UMPIRE build"
+)
+set(EXTERN_UMPIRE_GIT_TAG
+  "ac034c775c7b4d4f4ff0f66774398373cf5fce73" CACHE STRING
+  "Git tag for external UMPIRE build"
 )

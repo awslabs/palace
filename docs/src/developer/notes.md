@@ -271,6 +271,30 @@ $ mpirun -n 10 -gtool "vtune -collect hpc-performance --app-working-dir=$(pwd) -
 $ vtune-gui vtune-mpi.*
 ```
 
+## Developing the spack recipe
+
+To use the local Spack recipe (make sure you have Spack installed)
+
+```bash
+spack repo add /path/to/palace/spack_repo/local
+```
+
+Verify that the repo is there:
+
+```bash
+spack repo list
+```
+
+Now, you can refer to the development spack palace with `local.palace`. For
+example,
+
+```
+spack spec local.palace@develop
+```
+
+will show you the spec for your most recent `palace` package, which you can
+compare with the one for `builtin.palace@develop`.
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the

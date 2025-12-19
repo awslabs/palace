@@ -91,9 +91,9 @@ jobs:
 
           # Develop requires ^compiler, not %compiler
           if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
           else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
           fi
 
           # Spack.yaml with most / all settings configured
@@ -170,18 +170,20 @@ jobs:
         run: |
           # Using `spack develop` in order to have an in-source build
           spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
-          spack -e . concretize -f
+          # --test root pulls in the test dependencies
+          spack -e . concretize -f --test root
 
       - name: Build Dependencies
         if: needs.filter.outputs.test == 'true'
         run: |
-          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
         # Build palace from source using this current directory
         # We use `--no-cache` in order to force a rebuild
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
+        # --test root installs the tests for the root specs (Palace)
+        run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
       - name: Run Unit Tests
         if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds

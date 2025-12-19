@@ -120,10 +120,11 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
   int rank = Mpi::Rank(Mpi::World());
   std::complex<double> vals[2];
 
+  bool data_already_on_dev = false;
   vals[0] = std::complex<double>(1.0 * rank, 10.0 * rank);
   vals[1] = std::complex<double>(2.0 * rank, 20.0 * rank);
 
-  cv.Set(vals, 2, on_dev);
+  cv.Set(vals, 2, data_already_on_dev);
 
   CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank) || WithinAbs(0.0, 1e-14));

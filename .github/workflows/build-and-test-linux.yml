@@ -456,6 +456,10 @@ jobs:
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
           fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR="$ARMPL_DIR"
+            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
+          fi
 
           cd $(pwd)/palace-build/palace-build/test/unit
 

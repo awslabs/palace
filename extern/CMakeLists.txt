@@ -27,6 +27,12 @@ if(PALACE_WITH_MAGMA)
   include(ExternalMAGMA)
 endif()
 
+# Add UMPIRE (for HYPRE)
+if(PALACE_WITH_UMPIRE)
+  message(STATUS "==================== Configuring UMPIRE dependency =====================")
+  include(ExternalUmpire)
+endif()
+
 # Add STRUMPACK
 if(PALACE_WITH_STRUMPACK)
   message(STATUS "=================== Configuring STRUMPACK dependency ===================")
