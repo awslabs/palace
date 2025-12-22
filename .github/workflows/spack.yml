@@ -43,385 +43,210 @@ jobs:
               - 'test/unit/**'
               - '.github/workflows/spack.yml'
 
-  build-palace:
+  # Build jobs
+  build-x64-gcc:
     needs: filter
-    strategy:
-      fail-fast: false # don't have one build stop others from finishing
-      matrix:
-        include:
-          - runner: x64
-            toolchain: gcc
-
-          - runner: x64
-            toolchain: llvm
-
-          - runner: x64
-            toolchain: intel-oneapi
-
-          - runner: gpu
-            variant: +cuda
-            toolchain: gcc
-
-          - runner: arm64
-            toolchain: gcc
-
-          - runner: arm64
-            toolchain: llvm
-
-          - runner: arm64
-            toolchain: gcc
-            math-libs: armpl-gcc
-
-            # Unusual arguments
-          - runner: x64
-            variant: "+openmp+int64~shared"
-            toolchain: gcc
-
-    runs-on: [self-hosted, "${{ matrix.runner }}"]
-    outputs:
-      build-key: ${{ steps.build-info.outputs.key }}
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
     steps:
       - uses: actions/checkout@v6
-        if: needs.filter.outputs.test == 'true'
-
-      - name: Setup environment
-        if: needs.filter.outputs.test == 'true'
-        uses: ./.github/actions/setup-palace-ci
+      - uses: ./.github/actions/build-palace
         with:
-          julia-version: 'release'
-          # Spack develop because we want to have access to the most recent version of spack-packages
-          spack-version: 'develop'
-          # LLVM 19 because it is the latest supported by CUDA 12.9
-          llvm-version: ${{ matrix.toolchain == 'llvm' && '19' || 'dont-install' }}
-          setup-intel: ${{ matrix.toolchain == 'intel-oneapi' && 'true' || 'false' }}
+          toolchain: gcc
 
-      - name: Prepare spack.yaml
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
-            # nvidia-smi gives us 8.6, so we need to remove the dot
-            CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
-            CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
-          else
-            CUDA_ARGS=""
-          fi
-
-          # flang is not fully supported across the ecosystem, so we always use
-          # gfortran when working with llvm.
-          if [[ "${{ matrix.toolchain }}" == "llvm" ]]; then
-            FORTRAN_COMPILER="gcc"
-          else
-            FORTRAN_COMPILER="${{ matrix.toolchain }}"
-          fi
-
-          # Set default math libs and MPI based on toolchain:
-          # - When intel-oneapi, set everything intel
-          # - Otherwise, set OpenBlas + OpenMPI, unless matrix.math_libs/matrix.mpi are passed
-          if [[ "${{ matrix.toolchain }}" == "intel-oneapi" ]]; then
-            MATH_LIBS="${{ matrix.math-libs || 'intel-oneapi-mkl' }}"
-            MPI_IMPL="${{ matrix.mpi || 'intel-oneapi-mpi' }}"
-            C_CXX_COMPILER="intel-oneapi-compilers"
-            FORTRAN_COMPILER="intel-oneapi-compilers"
-          else
-            # We fix the version of openblas because of
-            # https://github.com/OpenMathLib/OpenBLAS/issues/5459
-            MATH_LIBS="${{ matrix.math-libs || 'openblas@0.3.29' }}"
-            MPI_IMPL="${{ matrix.mpi || 'openmpi' }}"
-            C_CXX_COMPILER="${{ matrix.toolchain }}"
-          fi
-          PALACE_SPEC="local.palace@develop+tests+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ matrix.variant }} ${CUDA_ARGS}"
-
-          # Spack.yaml with most / all settings configured
-          cat << EOF > spack.yaml
-          spack:
-            specs:
-              - ${PALACE_SPEC}
-            view: false
-            config:
-              install_tree:
-                root: ${HOME}/opt/spack
-                padded_length: 256
-            concretizer:
-              reuse: false
-              unify: true
-              # generic cpu target so that we can increase cache hits
-              targets:
-                granularity: generic
-            packages:
-              petsc:
-                require: ~hdf5
-              mpi:
-                require: ${MPI_IMPL}
-              blas:
-                require: ${MATH_LIBS}
-              lapack:
-                require: ${MATH_LIBS}
-              c:
-                require: [${C_CXX_COMPILER}]
-              cxx:
-                require: [${C_CXX_COMPILER}]
-              fortran:
-                require: [${FORTRAN_COMPILER}]
-              # Metis is verify fragile
-              # -fPIC seems to be required because metis always compiles some shared objects
-              # -lc seems to be required for intel compilers
-              metis:
-                require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
-              parmetis:
-                require: ldflags=-lc
-              # The Intel compiler (2025.3) does not process the main for mixed
-              # C/Fortran codes correctly and does not find the correct main.
-              mumps:
-                require: cflags="-DMAIN__"
-          EOF
-
-          # Add CUDA configuration if using CUDA
-          if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
-            cat << CUDAEOF >> spack.yaml
-              cuda:
-                buildable: false
-                externals:
-                - spec: cuda@12.9
-                  prefix: /usr/local/cuda-12.9/
-          CUDAEOF
-          fi
-
-          # Continue with the rest of the spack.yaml
-          cat << EOF >> spack.yaml
-            repos:
-            - spack_repo/local
-            mirrors:
-              spack:
-                binary: true
-                url: https://binaries.spack.io/${SPACK_VERSION}
-              local-buildcache:
-                binary: true
-                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}-testing
-                signed: false
-                access_pair:
-                  id_variable: GITHUB_USER
-                  secret_variable: GITHUB_TOKEN
-          EOF
-
-      - name: Configure Compilers
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # Spack needs a little help finding the intel compiler.
-          if [[ "${{ matrix.toolchain }}" == "intel-oneapi" ]]; then
-            . /opt/intel/oneapi/setvars.sh
-          fi
-          spack -e . compiler find && spack -e . compiler list
-
-          if [[ "${{ matrix.toolchain }}" == "intel-oneapi" ]]; then
-            spack -e . compiler info "intel-oneapi-compilers"
-          else
-            spack -e . compiler info "${{ matrix.toolchain }}"
-          fi
-
-      # Spack and oneAPI-2025.3.1 have some compatibility problems where the
-      # version of the fortran compiler is not correctly identified. As a
-      # workaround, we manually edit the relevant entry in the spack.yaml to put
-      # all the compilers under the same version. # This amounts to merging two
-      # entries (for two different versions) into a single one.
-      #
-      # TODO: Check if this issue is still relevant, if not, remove this step.
-      - name: Merge Intel Compiler Entries
-        if: needs.filter.outputs.test == 'true' && matrix.toolchain == 'intel-oneapi'
-        run: |
-          python3 << 'EOF'
-          import yaml
-          
-          with open('spack.yaml', 'r') as f:
-              data = yaml.safe_load(f)
-          
-          # Get Intel compiler externals
-          intel_externals = data['spack']['packages']['intel-oneapi-compilers']['externals']
-          
-          if len(intel_externals) > 1:
-              # Merge compilers from all entries
-              merged_compilers = {}
-              newest_spec = None
-              newest_prefix = None
-              
-              for entry in intel_externals:
-                  # Keep track of the newest version
-                  if newest_spec is None or entry['spec'] > newest_spec:
-                      newest_spec = entry['spec']
-                      newest_prefix = entry['prefix']
-                  
-                  # Merge all compilers
-                  if 'extra_attributes' in entry and 'compilers' in entry['extra_attributes']:
-                      compilers = entry['extra_attributes']['compilers']
-                      merged_compilers.update(compilers)
-              
-              # Create single merged entry
-              merged_entry = {
-                  'spec': newest_spec,
-                  'prefix': newest_prefix,
-                  'extra_attributes': {
-                      'compilers': merged_compilers
-                  }
-              }
-              
-              # Replace ALL entries with single merged entry
-              data['spack']['packages']['intel-oneapi-compilers']['externals'] = [merged_entry]
-              
-              # Write back
-              with open('spack.yaml', 'w') as f:
-                  yaml.dump(data, f, default_flow_style=False)
-              
-              print("Merged Intel compiler entries into single entry")
-          EOF
-
-      - name: Display spack.yaml
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          echo "=== Generated spack.yaml ==="
-          cat spack.yaml
-          echo "=== End spack.yaml ==="
-
-      - name: Configure Binary Mirror Keys
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # If we cached these, that would be faster and safer
-          spack -e . buildcache keys --install --trust
-
-      - name: Bootstrap
-        if: needs.filter.outputs.test == 'true'
-        run: spack -e . bootstrap now
-
-      - name: Concretize
-        if: needs.filter.outputs.test == 'true'
-        # In theory we can re-use a concretization and pin a spack to speed this up.
-        # Unfortunately it then becomes difficult to know when to re-concretize.
-        env:
-          PALACE_REF: ${{ github.head_ref || github.ref_name }}
-        run: |
-          # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
-          # --test root pulls in the test dependencies
-          spack -e . concretize -f --test root
-
-      - name: Build Dependencies
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
-
-      - name: Build Palace
-        if: needs.filter.outputs.test == 'true'
-        # Build palace from source using this current directory
-        # We use `--no-cache` in order to force a rebuild
-        # --test root installs the tests for the root specs (Palace)
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
-
-      - name: Run Unit Tests
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          eval $(spack -e . load --sh palace)
-
-          if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
-            export GPU_FLAGS="--device cuda"
-          else
-            export GPU_FLAGS=""
-          fi
-
-          if [[ "${{ matrix.variant }}" == *"+openmp"* ]]; then
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
-          fi
-
-          palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
-          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
-
-      # - name: Run Integration Tests
-      #   if: needs.filter.outputs.test == 'true'
-      #   run: |
-      #     # Use nproc, but halve to account for hyperthreading.
-      #     LOGICAL_CORES=$(nproc)
-      #     THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
-      #     if [ "$THREADS_PER_CORE" = "2" ]; then
-      #         export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
-      #     else
-      #         export NUM_PROC_TEST=$LOGICAL_CORES
-      #     fi
-
-      #     if [[ "${{ matrix.variant }}" == *"+openmp"* ]]; then
-      #       NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
-      #       export OMP_NUM_THREADS=2
-      #     else
-      #       export OMP_NUM_THREADS=1
-      #     fi
-
-      #     eval $(spack -e . load --sh palace)
-      #     # Run tests
-      #     julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-      #     if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
-      #       export PALACE_DEVICE=GPU
-      #       export NUM_PROC_TEST=1
-      #     fi
-      #     julia --project=test/examples --color=yes test/examples/runtests.jl
-
-      # Push built binaries, even if the build fails
-      # NOTE: This might fail as external fork PRs can't push to GHCR.
-      - name: Push to GHCR cache
-        if: |
-          needs.filter.outputs.test == 'true' &&
-          !cancelled() &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
-
-      - name: Generate build key
-        id: build-info
-        if: needs.filter.outputs.test == 'true'
-        run: echo "key=${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}" >> $GITHUB_OUTPUT
-      
-      - name: Upload spack environment
-        if: needs.filter.outputs.test == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: spack-env-${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}
-          path: |
-            spack.yaml
-            spack.lock
-          retention-days: 1
-
-  test-palace:
-    needs: [filter, build-palace]
+  build-x64-llvm:
+    needs: filter
     if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: llvm
+
+  build-x64-intel:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: intel-oneapi
+
+  build-gpu-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: gcc
+          variant: +cuda
+
+  build-arm64-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: gcc
+
+  build-arm64-llvm:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: llvm
+
+  build-arm64-gcc-armpl:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: gcc
+          math-libs: armpl-gcc
+
+  build-x64-gcc-openmp:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-palace
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+
+  # Test jobs
+  test-x64-gcc:
+    needs: [filter, build-x64-gcc]
+    if: success()
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: x64
-            toolchain: gcc
-            solver: MUMPS
-    
-    runs-on: [self-hosted, "${{ matrix.runner }}"]
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
     steps:
       - uses: actions/checkout@v6
-      
-      - name: Setup environment
-        if: needs.filter.outputs.test == 'true'
-        uses: ./.github/actions/setup-palace-ci
+      - uses: ./.github/actions/test-palace
         with:
-          julia-version: 'release'
-          # Spack develop because we want to have access to the most recent version of spack-packages
-          spack-version: 'develop'
-          # LLVM 19 because it is the latest supported by CUDA 12.9
-          llvm-version: ${{ matrix.toolchain == 'llvm' && '19' || 'dont-install' }}
-          setup-intel: ${{ matrix.toolchain == 'intel-oneapi' && 'true' || 'false' }}
-      
-      - name: Download spack environment
-        uses: actions/download-artifact@v4
+          toolchain: gcc
+          solver: ${{ matrix.solver }}
+
+  test-x64-llvm:
+    needs: [filter, build-x64-llvm]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
         with:
-          name: spack-env-${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}
-      
-      - name: Install from cache
-        run: spack -e . install --only-concrete --no-check-signature
-      
-      - name: Run Integration Tests
-        run: |
-          export NUM_PROC_TEST=8
-          julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ matrix.solver }}
-        
+          toolchain: llvm
+          solver: ${{ matrix.solver }}
+
+  test-x64-intel:
+    needs: [filter, build-x64-intel]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: intel-oneapi
+          solver: ${{ matrix.solver }}
+
+  test-gpu-gcc:
+    needs: [filter, build-gpu-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: gcc
+          variant: +cuda
+          solver: ${{ matrix.solver }}
+
+  test-arm64-gcc:
+    needs: [filter, build-arm64-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: gcc
+          solver: ${{ matrix.solver }}
+
+  test-arm64-llvm:
+    needs: [filter, build-arm64-llvm]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: llvm
+          solver: ${{ matrix.solver }}
+
+  test-arm64-gcc-armpl:
+    needs: [filter, build-arm64-gcc-armpl]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: gcc
+          math-libs: armpl-gcc
+          solver: ${{ matrix.solver }}
+
+  test-x64-gcc-openmp:
+    needs: [filter, build-x64-gcc-openmp]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/test-palace
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+          solver: ${{ matrix.solver }}
