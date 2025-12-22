@@ -148,7 +148,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # https://github.com/libxsmm/libxsmm/issues/883
         depends_on("libxsmm+shared")
 
-    depends_on("libceed@0.13:", when="@0.14:")
+    with when("@0.14:"):
+        depends_on("libceed@0.13:")
+        depends_on("libceed+openmp", when="+openmp")
+        depends_on("libceed~openmp", when="~openmp")
 
     with when("+sundials @0.14:"):
         depends_on("sundials")
@@ -252,13 +255,38 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # MPI compiler wrappers are not required, but MFEM test builds need to know to link
         # against MPI libraries.
         if self.spec.satisfies("+superlu-dist"):
-            args.append(self.define("SuperLUDist_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
+            superlu_packages = ["ParMETIS", "METIS", "LAPACK", "BLAS", "MPI"]
+            if self.spec.satisfies("+openmp"):
+                superlu_packages.append("OpenMP")
+            args.append(self.define("SuperLUDist_REQUIRED_PACKAGES", ";".join(superlu_packages)))
         if self.spec.satisfies("+sundials"):
-            args.append(self.define("SUNDIALS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI"))
+            sundials_packages = ["LAPACK", "BLAS", "MPI"]
+            if self.spec.satisfies("+openmp"):
+                sundials_packages.append("OpenMP")
+            args.append(self.define("SUNDIALS_REQUIRED_PACKAGES", ";".join(sundials_packages)))
         if self.spec.satisfies("+strumpack"):
-            args.append(self.define("STRUMPACK_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran"))
+            strumpack_packages = ["ParMETIS", "METIS", "LAPACK", "BLAS", "MPI", "MPI_Fortran"]
+            if self.spec.satisfies("+openmp"):
+               strumpack_packages.append("OpenMP")
+            args.append(self.define("STRUMPACK_REQUIRED_PACKAGES", ";".join(strumpack_packages)))
+            scalapack_libs = self.spec["scalapack"].libs
+            fortran_libs = ""
+            if "gfortran" in self.compiler.fc:
+                fortran_libs = "gfortran"
+            elif "ifort" in self.compiler.fc or "ifx" in self.compiler.fc:
+                fortran_libs = "ifport;ifcore"
+            # For other compilers (flang, etc.), don't add extra libs
+            strumpack_libs = str(scalapack_libs).replace(" ", ";")
+            if fortran_libs:
+                strumpack_libs += ";" + fortran_libs
+            args.append(self.define("STRUMPACK_REQUIRED_LIBRARIES", strumpack_libs))
         if self.spec.satisfies("+mumps"):
-            args.append(self.define("MUMPS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran"))
+            mumps_packages = ["ParMETIS", "METIS", "LAPACK", "BLAS", "MPI", "MPI_Fortran", "Threads"]
+            if self.spec.satisfies("+openmp"):
+                mumps_packages.append("OpenMP")
+            args.append(self.define("MUMPS_REQUIRED_PACKAGES", ";".join(mumps_packages)))
+            scalapack_libs = self.spec["scalapack"].libs
+            args.append(self.define("MUMPS_REQUIRED_LIBRARIES", str(scalapack_libs).replace(" ", ";")))
 
         if self.spec.satisfies("@:0.13"):
             # In v0.13 and prior libCEED and gslib were internally built and required the libxsmm
