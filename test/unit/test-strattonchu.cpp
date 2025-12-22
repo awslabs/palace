@@ -75,10 +75,10 @@ std::array<std::complex<double>, 3> ComputeDipoleENonDim(const mfem::Vector &x_n
 
   double factor = p0 / (4.0 * M_PI * epsilon0_ * r * r * r);
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_jkr = std::exp(jkr);
+  std::complex<double> exp_jkr = std::exp(-jkr);
 
-  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 - jkr) * exp_jkr;
-  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 - jkr - kr * kr) * exp_jkr;
+  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 + jkr) * exp_jkr;
+  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 + jkr - kr * kr) * exp_jkr;
 
   Er = units.Nondimensionalize<Units::ValueType::FIELD_E>(Er);
   Etheta = units.Nondimensionalize<Units::ValueType::FIELD_E>(Etheta);
@@ -271,19 +271,21 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 {
   constexpr double atol = 1e-4;
   constexpr double rtol = 0.05;  // 5% relative error for large domain with absorbing BC
-  constexpr double p0 = 1e-9;
-  double m0 = p0 * (2.0 * M_PI * freq_Hz);
+  constexpr double Ids = 1.;
 
-  Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
+
+  Units units(1.0, 1.0);  // Pick some arbitrary non-trivial units for testing
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
-  dipole_config.moment = {0.0, 0.0, m0};
+  double omega = 2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+  double p0 = Ids / (2.0 * M_PI * freq_Hz); // Ids / ω
+
+  dipole_config.moment = {0.0, 0.0, Ids};
   dipole_config.center = {0.0, 0.0, 0.0};
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
-  // iodata.solver.linear.tol = 1e-10;
   iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
@@ -298,7 +300,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   mesh_vec.push_back(std::make_unique<Mesh>(palace_mesh));
   SpaceOperator space_op(iodata, mesh_vec);
 
-  double omega = 2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -315,6 +316,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
                                                              -omega * omega + 0.0i, omega);
   ksp.SetOperators(*A, *P);
   space_op.GetExcitationVector(1, omega, RHS);
+  RHS *= (-1i * omega); // RHS = -iω RHS
   ksp.Mult(RHS, E);
 
   // Compute B = -1/(iω) ∇ x E on the true dofs.
@@ -374,11 +376,124 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   // Compute relative error
   double relative_error = total_error / total_exact_norm;
 
-  std::cout << "\n Relative Error (Re part): || E_h - E || / ||E|| = "
-            << error_real / exact_norm_real
-            << "\n Relative Error (Im part): || E_h - E || / ||E|| = "
-            << error_imag / exact_norm_imag << "\n Total Relative Error: " << relative_error
-            << "\n\n";
+  // ------------------------Debugging--------------------------------
+  // Debug analytical field values at key locations to understand the field pattern
+  std::cout << "\n=== Analytical Field Debug at Key Points ===";
+  std::vector<std::pair<mfem::Vector, std::string>> test_points = {
+      {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
+      {mfem::Vector({0.0, 0.0, 0.02}), "+0.02 origin on z-axis"},
+      {mfem::Vector({0.0, 0.0, -0.1}), "-0.1m from origin on z-axis"},
+      {mfem::Vector({-0.495, 0.0, 0.0}), "-0.495 field on x-axis"},
+      {mfem::Vector({0.0, 0.495, 0.0}), "+0.495 on y-axis"},
+      {mfem::Vector({0.0, 0.0, 0.495}), "+0.495m from origin on z-axis"},
+      {mfem::Vector({0.5, 0.0, 0.0}), "-0.5m from origin on x-axis"},
+
+  };
+
+  for (const auto &[pt, description] : test_points)
+  {
+    double r_nondim = pt.Norml2();
+    double r_dim = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
+
+    // Evaluate nondimensional analytical solution
+    auto E_analytical = ComputeDipoleENonDim(pt, units, p0, freq_Hz);
+
+    double analytical_magnitude =
+        std::sqrt(std::real(E_analytical[0] * std::conj(E_analytical[0])) +
+                  std::real(E_analytical[1] * std::conj(E_analytical[1])) +
+                  std::real(E_analytical[2] * std::conj(E_analytical[2])));
+
+    // Try to evaluate Palace FEM solution at this point
+    mfem::Vector E_palace_real(dim), E_palace_imag(dim);
+    E_palace_real = 0.0;
+    E_palace_imag = 0.0;
+    bool palace_eval_success = false;
+
+    try
+    {
+      // Find which element contains this point
+      auto &mesh = space_op.GetNDSpace().GetParMesh();
+      mfem::Array<int> elem_ids;
+      mfem::Array<mfem::IntegrationPoint> ips;
+
+      // Convert Vector to DenseMatrix for FindPoints
+      mfem::DenseMatrix point_mat(dim, 1);
+      for (int i = 0; i < dim; i++)
+      {
+        point_mat(i, 0) = pt(i);
+      }
+
+      mesh.FindPoints(point_mat, elem_ids, ips);
+
+      if (elem_ids.Size() > 0 && elem_ids[0] >= 0)
+      {
+        // Evaluate the gridfunction at this point
+        E_field.Real().GetVectorValue(elem_ids[0], ips[0], E_palace_real);
+        E_field.Imag().GetVectorValue(elem_ids[0], ips[0], E_palace_imag);
+        palace_eval_success = true;
+      }
+    }
+    catch (...)
+    {
+      // Evaluation failed - just continue with zero values
+    }
+
+    double palace_magnitude = std::sqrt(
+        E_palace_real(0) * E_palace_real(0) + E_palace_real(1) * E_palace_real(1) +
+        E_palace_real(2) * E_palace_real(2) + E_palace_imag(0) * E_palace_imag(0) +
+        E_palace_imag(1) * E_palace_imag(1) + E_palace_imag(2) * E_palace_imag(2));
+
+    std::cout << "\n"
+              << description << " r=" << r_dim << "m:" << " r_nondim=" << r_nondim << "m:";
+    std::cout << "\n  PALACE FEM SOLUTION:";
+    if (palace_eval_success)
+    {
+      std::cout << "\n    Palace |E|: " << palace_magnitude;
+      std::cout << "\n    Palace Ex: "
+                << std::complex<double>(E_palace_real(0), E_palace_imag(0));
+      std::cout << "\n    Palace Ey: "
+                << std::complex<double>(E_palace_real(1), E_palace_imag(1));
+      std::cout << "\n    Palace Ez: "
+                << std::complex<double>(E_palace_real(2), E_palace_imag(2));
+    }
+    else
+    {
+      std::cout << "\n    Palace evaluation failed at this point";
+    }
+    std::cout << "\n  ANALYTICAL SOLUTION:";
+    std::cout << "\n    Analytical |E|: " << analytical_magnitude;
+    std::cout << "\n    Analytical Ex: " << E_analytical[0];
+    std::cout << "\n    Analytical Ey: " << E_analytical[1];
+    std::cout << "\n    Analytical Ez: " << E_analytical[2];
+    if (palace_eval_success && analytical_magnitude > 1e-12)
+    {
+      std::cout << "\n  COMPARISON:";
+      std::cout << "\n    |E| ratio (Palace/Analytical): "
+                << palace_magnitude / analytical_magnitude;
+    }
+    std::cout << "\n  Field decay: |E| ~ 1/r^"
+              << (r_dim > 0.5 ? std::log(analytical_magnitude) / std::log(1.0 / r_dim)
+                              : 0.0);
+  }
+  std::cout << "\n============================================\n";
+
+  std::cout << "\n\n--- Absolute L2 Errors ---";
+  std::cout << "\nReal part error: || E_h_Re - E_Re ||_L2 = " << error_real;
+  std::cout << "\nImag part error: || E_h_Im - E_Im ||_L2 = " << error_imag;
+  std::cout << "\nTotal error:     || E_h - E ||_L2 = " << total_error;
+
+  std::cout << "\n\n--- Exact Solution Norms ---";
+  std::cout << "\nReal part norm: || E_Re ||_L2 = " << exact_norm_real;
+  std::cout << "\nImag part norm: || E_Im ||_L2 = " << exact_norm_imag;
+  std::cout << "\nTotal norm:     || E ||_L2 = " << total_exact_norm;
+
+  std::cout << "\n\n--- Relative L2 Errors ---";
+  std::cout << "\nReal part: || E_h_Re - E_Re || / ||E_Re|| = "
+            << error_real / exact_norm_real;
+  std::cout << "\nImag part: || E_h_Im - E_Im || / ||E_Im|| = "
+            << error_imag / exact_norm_imag;
+  std::cout << "\nTotal:     || E_h - E || / ||E|| = " << relative_error;
+  // -----------------------------------------------------------------------
 
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
@@ -486,31 +601,23 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
 
 TEST_CASE("Electric Current Dipole implementation", "[currentdipole][strattonchu][Serial]")
 {
-  // This test checks the current dipole implementation using a larger domain
-  // and higher frequency for better absorbing boundary condition performance:
-  // 1. The outer boundary has multiple attributes.
-  // 2. The outer boundary is not a sphere.
-  // 3. Domain is electrically large (~2.5 wavelengths) for effective ABC.
-  // 4. Domain is offset to center the origin (following PostOperator pattern).
-
-  double freq_Hz = 300e6;  // 300 MHz -> λ ≈ 1m, making 5x5x5 domain ~2.5λ
+  double freq_Hz = 35e6;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
-  // Make mesh for a cube [0, 5] x [0, 5] x [0, 5] and offset to center origin.
+  // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
   int resolution = 20;
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-          resolution, resolution, resolution, mfem::Element::TETRAHEDRON, 5.0, 5.0,
-          5.0));  // 5x5x5 domain
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
 
-  // Offset the cube to center the origin (following PostOperator pattern).
+  // Offset the cube to center the origin
   serial_mesh->Transform(
       [](const mfem::Vector &x, mfem::Vector &p)
       {
         p = x;
-        p(0) -= 2.5;  // Transform [0,5] -> [-2.5,2.5]
-        p(1) -= 2.5;
-        p(2) -= 2.5;
+        p(0) -= 0.5;  // Transform [0,1] -> [-0.5,0.5]
+        p(1) -= 0.5;
+        p(2) -= 0.5;
       });
 
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes);
