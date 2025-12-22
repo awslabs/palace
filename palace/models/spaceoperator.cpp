@@ -867,7 +867,7 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
-  // The g'(t) or iω factors are not accounted for here, they is accounted for in the time
+  // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
   // integration or frequency sweep later.
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
