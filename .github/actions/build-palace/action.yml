@@ -173,3 +173,7 @@ runs:
           spack.yaml
           spack.lock
         retention-days: 1
+
+    - name: Push to GHCR cache
+      shell: bash
+      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache

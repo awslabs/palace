@@ -67,7 +67,6 @@ function testcase(
 
     config_json["Solver"]["Device"] = device
 
-    @show linear_solver
     config_json["Solver"]["Linear"]["Type"] = linear_solver
     haskey(config_json["Solver"], "Eigenmode") &&
         (config_json["Solver"]["Eigenmode"]["Type"] = eigen_solver)

@@ -105,7 +105,7 @@ if "spheres" in cases
         excluded_columns=["Maximum", "Minimum"],
         gridfunction_fields=true,
         device=device,
-        linear_solver=solver,
+        linear_solver="Default",
         eigen_solver=eigensolver
     )
 end
@@ -122,7 +122,7 @@ if "rings" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
         device=device,
-        linear_solver=solver,
+        linear_solver="Default",
         eigen_solver=eigensolver
     )
 end
