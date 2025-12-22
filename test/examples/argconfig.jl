@@ -38,6 +38,16 @@ function parse_args(configs::Vector{ArgConfig})
         exit(0)
     end
 
+    # Check for unrecognized flags
+    valid_flags = Set("--$(config.name)" for config in configs)
+    push!(valid_flags, "--help", "-h")
+    
+    for arg in ARGS
+        if startswith(arg, "--") && arg ∉ valid_flags
+            error("Unrecognized flag: $arg\nUse --help to see available options.")
+        end
+    end
+
     # Parse each argument.
     for config in configs
         cli_arg = "--$(config.name)"

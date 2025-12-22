@@ -104,7 +104,9 @@ if "spheres" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
         gridfunction_fields=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -119,7 +121,9 @@ if "rings" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -135,7 +139,9 @@ if "cylinder/cavity_pec" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -151,7 +157,9 @@ if "cylinder/cavity_impedance" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -167,7 +175,9 @@ if "cylinder/waveguide" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -210,7 +220,9 @@ if "cylinder/floquet" in cases
             "probe-B.csv" => test_probe_magnitude
         ),
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -228,7 +240,9 @@ if "cylinder/driven_wave" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -246,7 +260,9 @@ if "antenna" in cases
         np=numprocs,
         rtol=reltol,
         atol=50abstol,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -263,7 +279,9 @@ if "coaxial/open" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -278,7 +296,9 @@ if "coaxial/matched" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -293,7 +313,9 @@ if "cpw/lumped_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -308,7 +330,9 @@ if "cpw/wave_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -323,7 +347,9 @@ if "cpw/lumped_adaptive" in cases
         palace=palace,
         np=numprocs,
         rtol=Inf,
-        atol=Inf
+        atol=Inf,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -338,7 +364,9 @@ if "cpw/wave_adaptive" in cases && device != "GPU"
         palace=palace,
         np=numprocs,
         rtol=Inf,
-        atol=Inf
+        atol=Inf,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -405,7 +433,9 @@ if "cpw/lumped_eigen" in cases
         ],
         custom_tests=Dict("farfield-rE.csv" => test_farfield),
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -421,7 +451,9 @@ if "cpw/wave_eigen" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -437,7 +469,9 @@ if "adapter/hybrid" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end
 
@@ -453,6 +487,8 @@ if "adapter/slp" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        device=device
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
     )
 end

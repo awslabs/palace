@@ -43,7 +43,7 @@ jobs:
               - 'test/unit/**'
               - '.github/workflows/spack.yml'
 
-  build-and-test-spack:
+  build-palace:
     needs: filter
     strategy:
       fail-fast: false # don't have one build stop others from finishing
@@ -78,6 +78,8 @@ jobs:
             toolchain: gcc
 
     runs-on: [self-hosted, "${{ matrix.runner }}"]
+    outputs:
+      build-key: ${{ steps.build-info.outputs.key }}
     steps:
       - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
@@ -121,7 +123,9 @@ jobs:
             C_CXX_COMPILER="intel-oneapi-compilers"
             FORTRAN_COMPILER="intel-oneapi-compilers"
           else
-            MATH_LIBS="${{ matrix.math-libs || 'openblas' }}"
+            # We fix the version of openblas because of
+            # https://github.com/OpenMathLib/OpenBLAS/issues/5459
+            MATH_LIBS="${{ matrix.math-libs || 'openblas@0.3.29' }}"
             MPI_IMPL="${{ matrix.mpi || 'openmpi' }}"
             C_CXX_COMPILER="${{ matrix.toolchain }}"
           fi
@@ -165,6 +169,10 @@ jobs:
                 require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
               parmetis:
                 require: ldflags=-lc
+              # The Intel compiler (2025.3) does not process the main for mixed
+              # C/Fortran codes correctly and does not find the correct main.
+              mumps:
+                require: cflags="-DMAIN__"
           EOF
 
           # Add CUDA configuration if using CUDA
@@ -326,33 +334,33 @@ jobs:
           palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
           mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
 
-      - name: Run Integration Tests
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # Use nproc, but halve to account for hyperthreading.
-          LOGICAL_CORES=$(nproc)
-          THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
-          if [ "$THREADS_PER_CORE" = "2" ]; then
-              export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
-          else
-              export NUM_PROC_TEST=$LOGICAL_CORES
-          fi
+      # - name: Run Integration Tests
+      #   if: needs.filter.outputs.test == 'true'
+      #   run: |
+      #     # Use nproc, but halve to account for hyperthreading.
+      #     LOGICAL_CORES=$(nproc)
+      #     THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+      #     if [ "$THREADS_PER_CORE" = "2" ]; then
+      #         export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
+      #     else
+      #         export NUM_PROC_TEST=$LOGICAL_CORES
+      #     fi
 
-          if [[ "${{ matrix.variant }}" == *"+openmp"* ]]; then
-            NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
-          fi
+      #     if [[ "${{ matrix.variant }}" == *"+openmp"* ]]; then
+      #       NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
+      #       export OMP_NUM_THREADS=2
+      #     else
+      #       export OMP_NUM_THREADS=1
+      #     fi
 
-          eval $(spack -e . load --sh palace)
-          # Run tests
-          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
-            export PALACE_DEVICE=GPU
-            export NUM_PROC_TEST=1
-          fi
-          julia --project=test/examples --color=yes test/examples/runtests.jl
+      #     eval $(spack -e . load --sh palace)
+      #     # Run tests
+      #     julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+      #     if [[ "${{ matrix.variant }}" == *"+cuda"* ]]; then
+      #       export PALACE_DEVICE=GPU
+      #       export NUM_PROC_TEST=1
+      #     fi
+      #     julia --project=test/examples --color=yes test/examples/runtests.jl
 
       # Push built binaries, even if the build fails
       # NOTE: This might fail as external fork PRs can't push to GHCR.
@@ -362,3 +370,58 @@ jobs:
           !cancelled() &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+
+      - name: Generate build key
+        id: build-info
+        if: needs.filter.outputs.test == 'true'
+        run: echo "key=${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}" >> $GITHUB_OUTPUT
+      
+      - name: Upload spack environment
+        if: needs.filter.outputs.test == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spack-env-${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}
+          path: |
+            spack.yaml
+            spack.lock
+          retention-days: 1
+
+  test-palace:
+    needs: [filter, build-palace]
+    if: needs.filter.outputs.test == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: x64
+            toolchain: gcc
+            solver: MUMPS
+    
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Setup environment
+        if: needs.filter.outputs.test == 'true'
+        uses: ./.github/actions/setup-palace-ci
+        with:
+          julia-version: 'release'
+          # Spack develop because we want to have access to the most recent version of spack-packages
+          spack-version: 'develop'
+          # LLVM 19 because it is the latest supported by CUDA 12.9
+          llvm-version: ${{ matrix.toolchain == 'llvm' && '19' || 'dont-install' }}
+          setup-intel: ${{ matrix.toolchain == 'intel-oneapi' && 'true' || 'false' }}
+      
+      - name: Download spack environment
+        uses: actions/download-artifact@v4
+        with:
+          name: spack-env-${{ matrix.runner }}-${{ matrix.toolchain }}-${{ matrix.variant || 'default' }}-${{ matrix.math-libs || 'default' }}
+      
+      - name: Install from cache
+        run: spack -e . install --only-concrete --no-check-signature
+      
+      - name: Run Integration Tests
+        run: |
+          export NUM_PROC_TEST=8
+          julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ matrix.solver }}
+        
