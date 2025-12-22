@@ -50,7 +50,7 @@ runs:
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
-        PALACE_SPEC="local.palace@develop+tests+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
+        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
 
         cat << EOF > spack.yaml
         spack:
@@ -135,15 +135,15 @@ runs:
         PALACE_REF: ${{ github.head_ref || github.ref_name }}
       run: |
         spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
-        spack -e . concretize -f
+        spack -e . concretize -f --test root
 
     - name: Build Dependencies
       shell: bash
-      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
 
     - name: Build Palace
       shell: bash
-      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
+      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
     - name: Run Unit Tests
       shell: bash

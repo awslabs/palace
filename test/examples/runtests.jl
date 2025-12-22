@@ -105,7 +105,7 @@ if "spheres" in cases
         excluded_columns=["Maximum", "Minimum"],
         gridfunction_fields=true,
         device=device,
-        linear_solver="Default",
+        linear_solver=solver,
         eigen_solver=eigensolver
     )
 end
@@ -140,7 +140,7 @@ if "cylinder/cavity_pec" in cases
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
         device=device,
-        linear_solver=solver,
+        linear_solver="Default",
         eigen_solver=eigensolver
     )
 end
