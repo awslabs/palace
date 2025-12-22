@@ -303,7 +303,7 @@ and verify that the code reproduces results in reference files stored in
 #### Prerequisites
 
   - Julia
-  - Palace executable in PATH or specified via environment variable
+  - Palace executable in PATH or specified via environment variable/command-line argument
 
 #### Setup
 
@@ -315,12 +315,17 @@ julia --project -e "using Pkg; Pkg.instantiate()"
 
 You need to do this step only the very first time.
 
-#### Environment Variables
+#### Command Line Arguments
 
-  - `PALACE_TEST`: Path to *Palace* executable and optional arguments (default: "`palace`")
-  - `NUM_PROC_TEST`: Number of MPI processes (default: number of physical cores)
-  - `OMP_NUM_THREADS`: Number of OpenMP threads (default: 1)
-  - `TEST_CASES`: Space-separated list of test cases to run (default: all examples)
+The test runner supports command line arguments for configuration. Each argument can also be set via environment variables as fallbacks.
+
+**Key Options:**
+
+  - `--palace-test`: Path to *Palace* executable and optional arguments (default: "`palace`")
+  - `--num-proc-test`: Number of MPI processes (default: number of physical cores)
+  - `--test-cases`: Space-separated list of test cases to run (default: all examples)
+
+Run `julia --project runtests.jl --help` to see all available options with descriptions and defaults.
 
 #### Execution
 
@@ -333,19 +338,26 @@ julia --project runtests.jl
 Run specific test cases:
 
 ```bash
-TEST_CASES="spheres rings" julia --project runtests.jl
+julia --project runtests.jl --test-cases "spheres rings"
 ```
 
 Run with custom *Palace* executable:
 
 ```bash
-PALACE_TEST="../../build/bin/palace" julia --project runtests.jl
+julia --project runtests.jl --palace-test "../../build/bin/palace"
 ```
 
-Run with custom Palace executable and custom MPI launcher:
+Run with custom number of processes:
 
 ```bash
-PALACE_TEST="../../build/bin/palace --launcher mpiexec" julia --project runtests.jl
+julia --project runtests.jl --num-proc-test 4
+```
+
+You can also use environment variables as fallbacks:
+
+```bash
+TEST_CASES="spheres rings" julia --project runtests.jl
+PALACE_TEST="../../build/bin/palace" julia --project runtests.jl
 ```
 
 Each test case runs Palace simulations and compares generated CSV files against

@@ -4,60 +4,90 @@
 using Hwloc
 using Test
 
+include("argconfig.jl")
 include("testcase.jl")
 
-if "PALACE_TEST" in keys(ENV)
-    palace = String.(split(ENV["PALACE_TEST"], ' '))
-else
-    palace = ["palace"]
-end
-
-if isnothing(Base.Sys.which(first(palace)))
-    error(
-        "Executable `$palace` not found. " *
-        "You can customize the path by setting the PALACE_TEST environment variable"
+# Configure arguments.
+arg_configs = [
+    ArgConfig(
+        name="palace-test",
+        env_var="PALACE_TEST",
+        default=["palace"],
+        description="Palace executable path",
+        parser=s -> String.(split(s, ' '))
+    ),
+    ArgConfig(
+        name="num-proc-test",
+        env_var="NUM_PROC_TEST",
+        default=num_physical_cores(),
+        description="Number of processes for testing",
+        parser=s -> parse(Int, s)
+    ),
+    ArgConfig(
+        name="palace-solver",
+        env_var="PALACE_SOLVER",
+        default="Default",
+        description="Solver to test"
+    ),
+    ArgConfig(
+        name="palace-eigensolver",
+        env_var="PALACE_EIGENSOLVER",
+        default="Default",
+        description="Eigensolver to test"
+    ),
+    ArgConfig(
+        name="omp-num-threads",
+        env_var="OMP_NUM_THREADS",
+        default=1,
+        description="Number of OpenMP threads",
+        parser=s -> parse(Int, s)
+    ),
+    ArgConfig(
+        name="palace-device",
+        env_var="PALACE_DEVICE",
+        default="CPU",
+        description="Device to use for testing (CPU or GPU)"
+    ),
+    ArgConfig(
+        name="test-cases",
+        env_var="TEST_CASES",
+        default=[
+            "spheres",
+            "rings",
+            "antenna",
+            "cylinder/cavity_pec",
+            "cylinder/cavity_impedance",
+            "cylinder/waveguide",
+            "cylinder/floquet",
+            "cylinder/driven_wave",
+            "coaxial/open",
+            "coaxial/matched",
+            "cpw/lumped_uniform",
+            "cpw/wave_uniform",
+            "cpw/lumped_adaptive",
+            "cpw/wave_adaptive",
+            "cpw/lumped_eigen",
+            "cpw/wave_eigen",
+            "adapter/hybrid"
+        ],
+        description="Test cases to run",
+        parser=s -> String.(split(s, ' '))
     )
-end
+]
 
-if "NUM_PROC_TEST" in keys(ENV)
-    numprocs = parse(Int, ENV["NUM_PROC_TEST"])
-else
-    numprocs = num_physical_cores()
-end
+# Parse arguments
+args = parse_args(arg_configs)
 
-if "OMP_NUM_THREADS" in keys(ENV)
-    numthreads = parse(Int, ENV["OMP_NUM_THREADS"])
-else
-    numthreads = 1
-end
-
-test_gpu = "TEST_GPU" in keys(ENV)
-
-if "TEST_CASES" in keys(ENV)
-    cases = String.(split(ENV["TEST_CASES"], ' '))
-else
-    cases = [
-        "spheres",
-        "rings",
-        "antenna",
-        "cylinder/cavity_pec",
-        "cylinder/cavity_impedance",
-        "cylinder/waveguide",
-        "cylinder/floquet",
-        "cylinder/driven_wave",
-        "coaxial/open",
-        "coaxial/matched",
-        "cpw/lumped_uniform",
-        "cpw/wave_uniform",
-        "cpw/lumped_adaptive",
-        "cpw/wave_adaptive",
-        "cpw/lumped_eigen",
-        "cpw/wave_eigen",
-        "adapter/hybrid"
-    ]
-end
+palace = args["palace-test"]
+numprocs = args["num-proc-test"]
+solver = args["palace-solver"]
+eigensolver = args["palace-eigensolver"]
+numthreads = args["omp-num-threads"]
+device = args["palace-device"]
+cases = args["test-cases"]
 
 @info "Starting regression tests using `$palace` on $numprocs core$(numprocs > 1 ? "s" : "") $(numthreads > 1 ? "with $(numthreads) threads" : "")"
+@info "Running test cases: $(join(cases, ", "))"
 
 reltol = 1.0e-4
 abstol = 1.0e-16
@@ -74,7 +104,7 @@ if "spheres" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
         gridfunction_fields=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -89,7 +119,7 @@ if "rings" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -105,7 +135,7 @@ if "cylinder/cavity_pec" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -121,7 +151,7 @@ if "cylinder/cavity_impedance" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -137,7 +167,7 @@ if "cylinder/waveguide" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -180,7 +210,7 @@ if "cylinder/floquet" in cases
             "probe-B.csv" => test_probe_magnitude
         ),
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -198,7 +228,7 @@ if "cylinder/driven_wave" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -216,7 +246,7 @@ if "antenna" in cases
         np=numprocs,
         rtol=reltol,
         atol=50abstol,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -233,7 +263,7 @@ if "coaxial/open" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -248,7 +278,7 @@ if "coaxial/matched" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -263,7 +293,7 @@ if "cpw/lumped_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -278,7 +308,7 @@ if "cpw/wave_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -299,7 +329,7 @@ end
 
 # We skip when on GPUs because of this:
 # https://github.com/awslabs/palace/issues/375
-if "cpw/wave_adaptive" in cases && !test_gpu
+if "cpw/wave_adaptive" in cases && device != "GPU"
     @info "Testing CPW (wave ports, adaptive)..."
     @time testcase(
         "cpw",
@@ -375,7 +405,7 @@ if "cpw/lumped_eigen" in cases
         ],
         custom_tests=Dict("farfield-rE.csv" => test_farfield),
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -391,7 +421,7 @@ if "cpw/wave_eigen" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -407,7 +437,7 @@ if "adapter/hybrid" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
 
@@ -423,6 +453,6 @@ if "adapter/slp" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true,
-        force_gpu=test_gpu
+        device=device
     )
 end
