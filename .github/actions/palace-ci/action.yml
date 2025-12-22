@@ -1,5 +1,8 @@
-name: 'Build Palace'
-description: 'Build Palace with Spack'
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Palace CI'
+description: 'Run Palace CI with Spack'
 inputs:
   toolchain:
     description: 'Toolchain to use'
@@ -12,12 +15,16 @@ inputs:
     description: 'Math libraries'
     required: false
     default: ''
+  run-regression-tests:
+    description: 'Run regression tests after build'
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
   steps:
     - name: Setup environment
-      uses: ./.github/actions/setup-palace-ci
+      uses: ./.github/actions/setup-runner
       with:
         julia-version: 'release'
         spack-version: 'develop'
@@ -177,3 +184,11 @@ runs:
     - name: Push to GHCR cache
       shell: bash
       run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+
+    - name: Run Regression Tests
+      if: inputs.run-regression-tests == 'true'
+      uses: ./.github/actions/run-regression-tests
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        variant: ${{ inputs.variant }}
+        math-libs: ${{ inputs.math-libs }}

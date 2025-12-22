@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 name: 'Test Palace'
 description: 'Run Palace integration tests'
 inputs:
@@ -14,7 +17,8 @@ inputs:
     default: ''
   solver:
     description: 'Solver to test'
-    required: true
+    required: false
+    default: 'Default'
 
 runs:
   using: 'composite'
@@ -54,9 +58,6 @@ runs:
         else
           export OMP_NUM_THREADS=1
         fi
-
-        # Limit cores per solver to maximize parallelism
-        export NUM_PROC_TEST=8
 
         eval $(spack -e . load --sh palace)
         julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'

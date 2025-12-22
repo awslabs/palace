@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: 'Setup Palace CI'
+name: 'Setup Runners'
 description: 'Common steps to prepare the environment to run Palace tests'
 inputs:
   julia-version:
