@@ -497,17 +497,13 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
                    DivideLengthScale);
   }
 
-  // Current dipole location coordinates and moment values.
+  // Current dipole location coordinates.
+  // Note: Dipole moment is kept in dimensional units [A⋅m], similar to how surface current
+  // uses dimensional current [A]. Only the position is nondimensionalized.
   for (auto &[idx, data] : domains.current_dipole)
   {
     std::transform(data.center.begin(), data.center.end(), data.center.begin(),
                    DivideLengthScale);
-    // Nondimensionalize moment [A⋅m] = CURRENT × LENGTH
-    double current_scale = units.GetScaleFactor<palace::Units::ValueType::CURRENT>();
-    double length_scale = units.GetScaleFactor<palace::Units::ValueType::LENGTH>();
-    double moment_scale = current_scale * length_scale;
-    std::transform(data.moment.begin(), data.moment.end(), data.moment.begin(),
-                   [moment_scale](double val) { return val / moment_scale; });
   }
 
   // Finite conductivity boundaries.
