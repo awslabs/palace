@@ -14,14 +14,20 @@ namespace palace
 CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
                                      const mfem::ParMesh &mesh)
 {
-  // Set up dipole moment vector
-  moment.SetSize(mesh.SpaceDimension());
-  MFEM_VERIFY(data.moment.size() == static_cast<std::size_t>(mesh.SpaceDimension()),
-              "Current dipole moment dimension must match mesh space dimension!");
+  // Set up normalized direction
+  direction.SetSize(mesh.SpaceDimension());
+  MFEM_VERIFY(data.direction.size() == static_cast<std::size_t>(mesh.SpaceDimension()),
+              "Current dipole direction dimension must match mesh space dimension!");
   for (int d = 0; d < mesh.SpaceDimension(); d++)
   {
-    moment[d] = data.moment[d];
+    direction[d] = data.direction[d];
   }
+
+  double dir_norm = direction.Norml2();
+  MFEM_VERIFY(dir_norm > 0.0, "Current dipole direction magnitude must be positive!");
+  direction /= dir_norm;  // Normalize to unit vector
+
+  moment = data.moment;
 
   // Set up dipole center position
   center.SetSize(mesh.SpaceDimension());
@@ -31,17 +37,6 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
   {
     center[d] = data.center[d];
   }
-
-  // Create the VectorDeltaCoefficient
-  dipole_coeff = std::make_unique<mfem::VectorDeltaCoefficient>(moment);
-  dipole_coeff->SetDeltaCenter(center);
-}
-
-mfem::VectorDeltaCoefficient *CurrentDipoleData::GetDeltaCoefficient(double scale) const
-{
-  // Scale the dipole coefficient by the given factor
-  dipole_coeff->SetScale(scale);
-  return dipole_coeff.get();
 }
 
 CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
@@ -75,57 +70,31 @@ void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::Pa
     // Convert center coordinates back to physical units for display
     mfem::Vector physical_center = data.center;
     iodata.units.DimensionalizeInPlace<Units::ValueType::LENGTH>(physical_center);
+
     Mpi::Print(" Dipole {:d}: \n"
+               " \tMoment = {:.3e} A·m\n"
                " \tCenter = ({:.3e}, {:.3e}, {:.3e})\n"
-               " \tMoment = ({:.3e}, {:.3e}, {:.3e})\n",
-               idx, physical_center[0], physical_center[1],
-               (mesh.SpaceDimension() > 2) ? physical_center[2] : 0.0, data.moment[0],
-               data.moment[1], (mesh.SpaceDimension() > 2) ? data.moment[2] : 0.0);
+               " \tDirection = ({:.3e}, {:.3e}, {:.3e})\n",
+               idx, data.moment, physical_center[0], physical_center[1],
+               (mesh.SpaceDimension() > 2) ? physical_center[2] : 0.0, data.direction[0],
+               data.direction[1], (mesh.SpaceDimension() > 2) ? data.direction[2] : 0.0);
   }
-}
-
-const CurrentDipoleData &CurrentDipoleOperator::GetDipole(int idx) const
-{
-  return dipoles.at(idx);
-}
-
-std::vector<mfem::Vector> CurrentDipoleOperator::GetMoments() const
-{
-  std::vector<mfem::Vector> moments;
-  moments.reserve(dipoles.size());
-  for (const auto &[idx, dipole] : dipoles)
-  {
-    moments.push_back(dipole.moment);
-  }
-  return moments;
-}
-
-std::vector<mfem::Vector> CurrentDipoleOperator::GetCenters() const
-{
-  std::vector<mfem::Vector> centers;
-  centers.reserve(dipoles.size());
-  for (const auto &[idx, dipole] : dipoles)
-  {
-    centers.push_back(dipole.center);
-  }
-  return centers;
 }
 
 void CurrentDipoleOperator::AddExcitationDomainIntegrators(int idx, mfem::LinearForm &rhs)
 {
-  // Add only the specific dipole with the given index
   auto it = dipoles.find(idx);
   if (it != dipoles.end())
   {
     const auto &dipole = it->second;
 
-    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -J_e)
-    auto dipole_coeff = std::make_unique<mfem::VectorDeltaCoefficient>(dipole.moment);
+    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -iω J_e)
+    // RHS will be scaled by iω later in SpaceOperator.
+    auto dipole_coeff =
+        std::make_unique<mfem::VectorDeltaCoefficient>(dipole.direction.Size());
+    dipole_coeff->SetDirection(dipole.direction);
     dipole_coeff->SetDeltaCenter(dipole.center);
-
-    // Note: Moment is kept in dimensional units [A⋅m], similar to surface current
-    // which uses dimensional current [A]. No additional scaling needed.
-    dipole_coeff->SetScale(-1.0);
+    dipole_coeff->SetScale(-dipole.moment);
 
     // Add as domain integrator
     rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(*dipole_coeff));
