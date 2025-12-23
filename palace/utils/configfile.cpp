@@ -785,24 +785,30 @@ void CurrentDipoleSourceData::SetUp(json &domains)
                             "sources in the configuration file!");
     auto &data = ret.first->second;
 
-    MFEM_VERIFY(it->find("Moment") != it->end(),
-                "Missing \"CurrentDipole\" source \"Moment\" in the configuration file!");
+    MFEM_VERIFY(
+        it->find("Direction") != it->end(),
+        "Missing \"CurrentDipole\" source \"Direction\" in the configuration file!");
     MFEM_VERIFY(it->find("Center") != it->end(),
                 "Missing \"CurrentDipole\" source \"Center\" in the configuration file!");
-
-    auto moment = it->find("Moment");
+    MFEM_VERIFY(
+        it->find("Moment") != it->end(),
+        "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
+    auto direction = it->find("Direction");
     auto center = it->find("Center");
-    MFEM_VERIFY(moment->is_array() && center->is_array(),
-                "\"CurrentDipole\" source \"Moment\" and \"Center\" should specify arrays "
-                "in the configuration file!");
+    MFEM_VERIFY(
+        direction->is_array() && center->is_array(),
+        "\"CurrentDipole\" source \"Direction\" and \"Center\" should specify arrays "
+        "in the configuration file!");
 
-    data.moment = moment->get<std::array<double, 3>>();  // Required
-    data.center = center->get<std::array<double, 3>>();  // Required
+    data.direction = direction->get<std::array<double, 3>>();  // Required
+    data.center = center->get<std::array<double, 3>>();        // Required
+    data.moment = it->value("Moment", data.moment);            // Required
 
     // Cleanup
     it->erase("Index");
-    it->erase("Moment");
+    it->erase("Direction");
     it->erase("Center");
+    it->erase("Moment");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
                     << it->dump(2));
@@ -811,8 +817,9 @@ void CurrentDipoleSourceData::SetUp(json &domains)
     if constexpr (JSON_DEBUG)
     {
       std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Moment: " << data.moment << '\n';
+      std::cout << "Direction: " << data.moment << '\n';
       std::cout << "Center: " << data.center << '\n';
+      std::cout << "Moment: " << data.moment << '\n';
     }
   }
 }

@@ -74,7 +74,8 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 
   std::complex<double> ikr(0, kr);
   std::complex<double> exp_ikr = std::exp(-ikr);
-  std::complex<double> factor1 = exp_ikr * Ids / (4.0 * M_PI * 1i * omega * epsilon0_ * r * r * r);
+  std::complex<double> factor1 =
+      exp_ikr * Ids / (4.0 * M_PI * 1i * omega * epsilon0_ * r * r * r);
   factor1 = units.Nondimensionalize<Units::ValueType::FIELD_E>(factor1);
   std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
@@ -94,7 +95,8 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
-  dipole_config.moment = {Ids, 0.0, 0.0};
+  dipole_config.moment = Ids;
+  dipole_config.direction = {1, 0, 0};
   dipole_config.center = {0.0, 0.0, 0.0};
   iodata.boundaries.farfield.attributes = attributes;
   iodata.boundaries.farfield.order = 2;

@@ -27,18 +27,15 @@ class CurrentDipoleData
 {
 public:
   // Current dipole properties.
-  mfem::Vector moment;  // Dipole moment vector
-  mfem::Vector center;  // Dipole center position
+  mfem::Vector direction;  // Normalized direction vector (unitless)
+  double moment;           // Dipole moment magnitude [A·m]
+  mfem::Vector center;     // Dipole center position [m, m, m]
 
   // Internal MFEM coefficient for the dipole
   std::unique_ptr<mfem::VectorDeltaCoefficient> dipole_coeff;
 
 public:
   CurrentDipoleData(const config::CurrentDipoleData &data, const mfem::ParMesh &mesh);
-
-  // Get the VectorDeltaCoefficient for this dipole
-  // TODO: scale defaults to 1. Do we need to expose this?
-  mfem::VectorDeltaCoefficient *GetDeltaCoefficient(double scale = 1.0) const;
 };
 
 //
@@ -61,17 +58,12 @@ public:
   CurrentDipoleOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Access data structures for current dipoles.
-  const CurrentDipoleData &GetDipole(int idx) const;
   auto begin() const { return dipoles.begin(); }
   auto end() const { return dipoles.end(); }
   auto rbegin() const { return dipoles.rbegin(); }
   auto rend() const { return dipoles.rend(); }
   auto Size() const { return dipoles.size(); }
   bool Empty() const { return dipoles.empty(); }
-
-  // Get moment and center arrays separately
-  std::vector<mfem::Vector> GetMoments() const;
-  std::vector<mfem::Vector> GetCenters() const;
 
   // Add integrators directly to a LinearForm
   void AddExcitationDomainIntegrators(mfem::LinearForm &rhs);
