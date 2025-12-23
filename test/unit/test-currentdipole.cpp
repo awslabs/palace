@@ -63,45 +63,22 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
   if (r_nondim < 1e-12)
     return {0.0, 0.0, 0.0};
 
-  // Work in nondimensional coordinates
-  double x = x_nondim(0);
-  double y = x_nondim(1);
-  double z = x_nondim(2);
-  double r = r_nondim;
+  double r = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
+  double x = units.Dimensionalize<Units::ValueType::LENGTH>(x_nondim(0));
+  double y = units.Dimensionalize<Units::ValueType::LENGTH>(x_nondim(1));
+  double z = units.Dimensionalize<Units::ValueType::LENGTH>(x_nondim(2));
 
-  // Get nondimensional parameters
-  double omega_nondim = 2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
-
-  // Calculate nondimensional speed of light using available units
-  // In the nondimensional system: c = Lc/tc, and tc = Lc/c0 so c_nondim = 1
-  double c_nondim = 1.0;  // Dimensionless speed of light in Palace units
-  double k_nondim = omega_nondim / c_nondim;
-  double kr = k_nondim * r;
-
-  // From debug output: Palace nondimensionalizes 1.0 A⋅m to 1.941e+07
-  // Use the exact value that Palace actually uses instead of trying to compute it
-  double Ids_nondim = 1.941e+07;  // Directly from Palace debug output
-
-  // Calculate nondimensional epsilon0 using available units: ε₀ = 1/(Z₀c), and we have Z₀
-  double Z0_nondim = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(Z0_);
-  double epsilon0_nondim = 1.0 / (Z0_nondim * c_nondim);
-  std::complex<double> sigma_eff_nondim = 1i * omega_nondim * epsilon0_nondim;
+  double omega = 2.0 * M_PI * freq_Hz;
+  double k = omega / c0_;
+  double kr = k * r;
 
   std::complex<double> ikr(0, kr);
   std::complex<double> exp_ikr = std::exp(-ikr);
+  std::complex<double> factor1 = exp_ikr * Ids / (4.0 * M_PI * 1i * omega * epsilon0_ * r * r * r);
+  factor1 = units.Nondimensionalize<Units::ValueType::FIELD_E>(factor1);
+  std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
-  // Palace solves (∇×∇× - ω²εμ)E = -iωJ, so there's an additional -iω factor
-  std::complex<double> palace_rhs_scaling = -1i * omega_nondim;
-
-  std::complex<double> factor1 = exp_ikr * Ids_nondim / (4.0 * M_PI * sigma_eff_nondim * r * r * r);
-
-  // Account for Palace's -iω RHS scaling: E_palace = E_analytical / (-iω)
-  factor1 /= palace_rhs_scaling;
-
-  std::complex<double> factor2 = (-k_nondim * k_nondim * r * r + 3. * ikr + 3.) / (r * r);
-
-  return {{factor1 * (x * x * factor2 + k_nondim * k_nondim * r * r - ikr - 1.),
-           factor1 * (x * y * factor2),
+  return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.), factor1 * (x * y * factor2),
            factor1 * (x * z * factor2)}};
 }
 
@@ -117,16 +94,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
-  // The moment gets nondimensionalized, so we need to account for that
-  // From debug: input 1.0 becomes 1.941e+07 after nondimensionalization
-  double moment_physical = Ids;
-  dipole_config.moment = {moment_physical, 0.0, 0.0};
-
-  std::cout << "\n=== DIPOLE CONFIGURATION DEBUG ===";
-  std::cout << "\nInput moment (physical): " << moment_physical << " A⋅m";
+  dipole_config.moment = {Ids, 0.0, 0.0};
   dipole_config.center = {0.0, 0.0, 0.0};
-  iodata.boundaries.postpro.farfield.attributes = attributes;
-  iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
+  iodata.boundaries.farfield.attributes = attributes;
+  iodata.boundaries.farfield.order = 2;
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.CheckConfiguration();
 
@@ -160,21 +131,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
                                                              -omega * omega + 0.0i, omega);
   ksp.SetOperators(*A, *P);
   space_op.GetExcitationVector(1, omega, RHS);
-
-  // Debug: Check RHS vector before and after scaling
-  double rhs_norm_before = linalg::Norml2(space_op.GetComm(), RHS);
-  std::cout << "\n=== DEBUGGING SOURCE TERM ===";
-  std::cout << "\nRHS norm BEFORE -iω scaling: " << rhs_norm_before;
-  std::cout << "\nOmega (nondimensional): " << omega;
-  std::cout << "\nFreq (Hz): " << freq_Hz;
-
-  // RHS = -iω RHS
-  RHS *= (-1i * omega);
-
-  double rhs_norm_after = linalg::Norml2(space_op.GetComm(), RHS);
-  std::cout << "\nRHS norm AFTER -iω scaling: " << rhs_norm_after;
-  std::cout << "\nScaling factor magnitude ||-iω||: " << std::abs(-1i * omega);
-  std::cout << "\n===============================\n";
 
   // Solve for E
   ksp.Mult(RHS, E);
@@ -243,6 +199,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
       {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
       {mfem::Vector({0.02, 0.0, 0.0}), "+0.02 origin on x-axis"},
       {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
+      {mfem::Vector({-0.2, 0.3, 0.4}), "{-.2, .3, .4} from origin"},
       {mfem::Vector({0.0, 0.0, -0.495}), "-0.495 field on z-axis"},
       {mfem::Vector({0.0, 0.495, 0.0}), "+0.495 on y-axis"},
       {mfem::Vector({0.495, 0.0, 0.0}), "+0.495m from origin on x-axis"},
@@ -360,7 +317,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
 TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
 {
-  double freq_Hz = 35e6;  // GENERATE(35e6, 300e6, 50e6);
+  double freq_Hz = 350e6;  // GENERATE(35e6, 300e6, 50e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]

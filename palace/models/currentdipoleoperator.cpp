@@ -119,12 +119,13 @@ void CurrentDipoleOperator::AddExcitationDomainIntegrators(int idx, mfem::Linear
   {
     const auto &dipole = it->second;
 
-    // Create a VectorDeltaCoefficient for this specific dipole (RHS = J_source)
+    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -J_e)
     auto dipole_coeff = std::make_unique<mfem::VectorDeltaCoefficient>(dipole.moment);
     dipole_coeff->SetDeltaCenter(dipole.center);
 
-    // Scaling factor (moment already nondimensionalized during input processing)
-    dipole_coeff->SetScale(1.0);
+    // Note: Moment is kept in dimensional units [A⋅m], similar to surface current
+    // which uses dimensional current [A]. No additional scaling needed.
+    dipole_coeff->SetScale(-1.0);
 
     // Add as domain integrator
     rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(*dipole_coeff));
