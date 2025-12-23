@@ -83,7 +83,7 @@ aligned on the xz-plane and spans the diameter of the cylindrical conductors.
 ## Configuration File
 
 The configuration file for the *Palace* simulation is found in
-[`antenna.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna.json).
+[`antenna_halfwave_dipole.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_halfwave_dipole.json).
 The simulation is performed in the frequency domain using the `"Driven"` solver
 type, operating at a single frequency of ``0.0749\text{ GHz}``.
 
@@ -138,7 +138,7 @@ The `plot_farfield.jl` Julia script processes this file and produces plots polar
 for the E- and H- planes (xz/xy-planes) and in the 3D.
 
 ```bash
-julia --project plot_radiation_pattern.jl postpro/farfield-rE.csv
+julia --project plot_farfield.jl postpro/farfield-rE.csv
 ```
 
 The results for the polar plot are shown below.

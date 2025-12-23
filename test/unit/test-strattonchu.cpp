@@ -16,7 +16,7 @@
 //
 // H_r = 0
 // H_θ = 0
-// H_φ = iω/(4πε₀r²) * (1 - ikr) * e^(ikr)
+// H_φ = iω/(4πε₀r²) * sin(θ) * (1 - ikr) * e^(ikr)
 //
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
@@ -27,9 +27,15 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mfem/fem/coefficient.hpp>
 #include <mfem/linalg/vector.hpp>
+#include "drivers/drivensolver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -41,6 +47,7 @@ namespace palace
 using namespace Catch;
 using namespace electromagnetics;
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -68,10 +75,10 @@ std::array<std::complex<double>, 3> ComputeDipoleENonDim(const mfem::Vector &x_n
 
   double factor = p0 / (4.0 * M_PI * epsilon0_ * r * r * r);
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_jkr = std::exp(jkr);
+  std::complex<double> exp_jkr = std::exp(-jkr);
 
-  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 - jkr) * exp_jkr;
-  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 - jkr - kr * kr) * exp_jkr;
+  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 + jkr) * exp_jkr;
+  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 + jkr - kr * kr) * exp_jkr;
 
   Er = units.Nondimensionalize<Units::ValueType::FIELD_E>(Er);
   Etheta = units.Nondimensionalize<Units::ValueType::FIELD_E>(Etheta);
