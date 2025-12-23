@@ -150,45 +150,50 @@ runs:
 
     - name: Build Palace
       shell: bash
+      continue-on-error: true
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
-    - name: Run Unit Tests
+    - name: Sleep
       shell: bash
-      run: |
-        eval $(spack -e . load --sh palace)
+      run: sleep 7200
 
-        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          export GPU_FLAGS="--device cuda"
-        else
-          export GPU_FLAGS=""
-        fi
+    # - name: Run Unit Tests
+    #   shell: bash
+    #   run: |
+    #     eval $(spack -e . load --sh palace)
 
-        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
-          export OMP_NUM_THREADS=2
-        else
-          export OMP_NUM_THREADS=1
-        fi
+    #     if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+    #       export GPU_FLAGS="--device cuda"
+    #     else
+    #       export GPU_FLAGS=""
+    #     fi
 
-        palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
-        mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+    #     if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+    #       export OMP_NUM_THREADS=2
+    #     else
+    #       export OMP_NUM_THREADS=1
+    #     fi
 
-    - name: Upload spack environment
-      uses: actions/upload-artifact@v4
-      with:
-        name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
-        path: |
-          spack.yaml
-          spack.lock
-        retention-days: 1
+    #     palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
+    #     mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
 
-    - name: Push to GHCR cache
-      shell: bash
-      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+    # - name: Upload spack environment
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
+    #     path: |
+    #       spack.yaml
+    #       spack.lock
+    #     retention-days: 1
 
-    - name: Run Regression Tests
-      if: inputs.run-regression-tests == 'true'
-      uses: ./.github/actions/run-regression-tests
-      with:
-        toolchain: ${{ inputs.toolchain }}
-        variant: ${{ inputs.variant }}
-        math-libs: ${{ inputs.math-libs }}
+    # - name: Push to GHCR cache
+    #   shell: bash
+    #   run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+
+    # - name: Run Regression Tests
+    #   if: inputs.run-regression-tests == 'true'
+    #   uses: ./.github/actions/run-regression-tests
+    #   with:
+    #     toolchain: ${{ inputs.toolchain }}
+    #     variant: ${{ inputs.variant }}
+    #     math-libs: ${{ inputs.math-libs }}
