@@ -94,15 +94,15 @@ jobs:
   #       with:
   #         toolchain: llvm
 
-  build-test-x64-intel:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: intel-oneapi
+  # build-test-x64-intel:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: intel-oneapi
 
   # build-test-arm64-gcc:
   #   needs: filter

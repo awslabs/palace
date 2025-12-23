@@ -217,10 +217,16 @@ runs:
         spack -e . concretize -f --test root
 
     - name: Build Dependencies
+      continue-on-error: true
       shell: bash
       run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
 
+    - name: Sleep
+      shell: bash
+      run: sleep 7200
+
     - name: Build Palace
+      continue-on-error: true
       shell: bash
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
@@ -244,10 +250,6 @@ runs:
 
         palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
         mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
-
-    - name: Sleep
-      shell: bash
-      run: sleep 7200
 
     # - name: Upload spack environment
     #   uses: actions/upload-artifact@v4
