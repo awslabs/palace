@@ -128,6 +128,69 @@ runs:
         fi
         spack -e . compiler find && spack -e . compiler list
 
+    # Spack and oneAPI-2025.3.1 have some compatibility problems where the
+    # version of the fortran compiler is not correctly identified. As a
+    # workaround, we manually edit the relevant entry in the spack.yaml to put
+    # all the compilers under the same version. # This amounts to merging two
+    # entries (for two different versions) into a single one.
+    #
+    # TODO: Check if this issue is still relevant, if not, remove this step.
+    - name: Merge Intel Compiler Entries
+      if: inputs.toolchain == 'intel-oneapi'
+      shell: bash
+      run: |
+        python3 << 'EOF'
+        import yaml
+        
+        with open('spack.yaml', 'r') as f:
+            data = yaml.safe_load(f)
+        
+        # Get Intel compiler externals
+        intel_externals = data['spack']['packages']['intel-oneapi-compilers']['externals']
+        
+        if len(intel_externals) > 1:
+            # Merge compilers from all entries
+            merged_compilers = {}
+            newest_spec = None
+            newest_prefix = None
+            
+            for entry in intel_externals:
+                # Keep track of the newest version
+                if newest_spec is None or entry['spec'] > newest_spec:
+                    newest_spec = entry['spec']
+                    newest_prefix = entry['prefix']
+                
+                # Merge all compilers
+                if 'extra_attributes' in entry and 'compilers' in entry['extra_attributes']:
+                    compilers = entry['extra_attributes']['compilers']
+                    merged_compilers.update(compilers)
+            
+            # Create single merged entry
+            merged_entry = {
+                'spec': newest_spec,
+                'prefix': newest_prefix,
+                'extra_attributes': {
+                    'compilers': merged_compilers
+                }
+            }
+            
+            # Replace ALL entries with single merged entry
+            data['spack']['packages']['intel-oneapi-compilers']['externals'] = [merged_entry]
+            
+            # Write back
+            with open('spack.yaml', 'w') as f:
+                yaml.dump(data, f, default_flow_style=False)
+            
+            print("Merged Intel compiler entries into single entry")
+        EOF
+
+    - name: Display spack.yaml
+      shell: bash
+      run: |
+        echo "=== Generated spack.yaml ==="
+        cat spack.yaml
+        echo "=== End spack.yaml ==="
+
     - name: Configure Binary Mirror Keys
       shell: bash
       run: spack -e . buildcache keys --install --trust
