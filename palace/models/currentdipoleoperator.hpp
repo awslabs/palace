@@ -26,16 +26,17 @@ struct CurrentDipoleData;
 class CurrentDipoleData
 {
 public:
-  // Current dipole properties.
-  mfem::Vector direction;  // Normalized direction vector (unitless)
-  double moment;           // Dipole moment magnitude [A·m]
-  mfem::Vector center;     // Dipole center position [m, m, m]
+  // Current dipole properties (stored in nondimensional form).
+  mfem::Vector direction;  // Normalized direction vector
+  double moment;           // Dipole moment magnitude
+  mfem::Vector center;     // Dipole center position
 
   // Internal MFEM coefficient for the dipole
   std::unique_ptr<mfem::VectorDeltaCoefficient> dipole_coeff;
 
 public:
-  CurrentDipoleData(const config::CurrentDipoleData &data, const mfem::ParMesh &mesh);
+  CurrentDipoleData(const config::CurrentDipoleData &data, const mfem::ParMesh &mesh,
+                    const class Units &units);
 };
 
 //
@@ -48,8 +49,12 @@ private:
   std::map<int, CurrentDipoleData> dipoles;
 
   // Storage for integrator coefficients to manage their lifetime
-  mutable std::vector<std::unique_ptr<mfem::VectorDeltaCoefficient>>
+  mutable std::vector<std::unique_ptr<RegularizedCurrentDipoleCoefficient>>
       dipole_integrator_coeffs;
+
+  // Calculate regularization parameter based on local mesh size
+  double CalculateRegularizationParameter(const mfem::ParMesh &mesh,
+                                          const mfem::Vector &center) const;
 
   void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);

@@ -7,12 +7,13 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
 
 CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
-                                     const mfem::ParMesh &mesh)
+                                     const mfem::ParMesh &mesh, const Units &units)
 {
   // Set up normalized direction
   direction.SetSize(mesh.SpaceDimension());
@@ -27,7 +28,9 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
   MFEM_VERIFY(dir_norm > 0.0, "Current dipole direction magnitude must be positive!");
   direction /= dir_norm;  // Normalize to unit vector
 
-  moment = data.moment;
+  // Nondimensionalize moment: [A·m] = [CURRENT] × [LENGTH]
+  moment = units.Nondimensionalize<Units::ValueType::CURRENT>(
+      units.Nondimensionalize<Units::ValueType::LENGTH>(data.moment));
 
   // Set up dipole center position
   center.SetSize(mesh.SpaceDimension());
@@ -53,7 +56,7 @@ void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata,
   // Set up current dipole data structures.
   for (const auto &[idx, data] : iodata.domains.current_dipole)
   {
-    dipoles.emplace(idx, CurrentDipoleData(data, mesh));
+    dipoles.emplace(idx, CurrentDipoleData(data, mesh, iodata.units));
   }
 }
 
@@ -71,11 +74,15 @@ void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::Pa
     mfem::Vector physical_center = data.center;
     iodata.units.DimensionalizeInPlace<Units::ValueType::LENGTH>(physical_center);
 
+    // Convert moment back to physical units for display
+    double physical_moment = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(
+        iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.moment));
+
     Mpi::Print(" Dipole {:d}: \n"
                " \tMoment = {:.3e} A·m\n"
                " \tCenter = ({:.3e}, {:.3e}, {:.3e})\n"
                " \tDirection = ({:.3e}, {:.3e}, {:.3e})\n",
-               idx, data.moment, physical_center[0], physical_center[1],
+               idx, physical_moment, physical_center[0], physical_center[1],
                (mesh.SpaceDimension() > 2) ? physical_center[2] : 0.0, data.direction[0],
                data.direction[1], (mesh.SpaceDimension() > 2) ? data.direction[2] : 0.0);
   }
