@@ -94,6 +94,15 @@ runs:
               require: ldflags=-lc
         EOF
 
+        # The Intel compiler has problems with C/C++/Fortran interop in MUMPS.
+        # Fixes: for_main.c:(.text+0x19): undefined reference to `MAIN__'
+        if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          cat << INTELEOF >> spack.yaml
+            mumps:
+              require: fflags=-nofor-main
+        INTELEOF
+        fi
+
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           cat << CUDAEOF >> spack.yaml
             cuda:
@@ -211,11 +220,6 @@ runs:
       shell: bash
       continue-on-error: true
       run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
-
-    - name: Sleep
-      shell: bash
-      if: inputs.toolchain == 'intel-oneapi'
-      run: sleep 7200
 
     - name: Build Palace
       shell: bash
