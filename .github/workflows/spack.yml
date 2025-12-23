@@ -56,17 +56,17 @@ jobs:
   #         run-regression-tests: 'false'
 
   # Needs 2025.12 release of umpire and camp.
-  # build-gpu-gcc:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, gpu]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: gcc
-  #         variant: +cuda
-  #         run-regression-tests: 'false'
+  build-gpu-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: +cuda
+          run-regression-tests: 'false'
 
   # Compiling MFEM fails with STRUMPACK_NOT_FOUND. This ultimately due to the
   # test program in FindSTRUMPACK not being able to find slate, lapackpp, and

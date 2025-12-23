@@ -218,32 +218,36 @@ runs:
 
     - name: Build Dependencies
       shell: bash
-      continue-on-error: true
       run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
 
     - name: Build Palace
       shell: bash
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
-    # - name: Run Unit Tests
-    #   shell: bash
-    #   run: |
-    #     eval $(spack -e . load --sh palace)
+    - name: Run Unit Tests
+      continue-on-error: true
+      shell: bash
+      run: |
+        eval $(spack -e . load --sh palace)
 
-    #     if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-    #       export GPU_FLAGS="--device cuda"
-    #     else
-    #       export GPU_FLAGS=""
-    #     fi
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          export GPU_FLAGS="--device cuda"
+        else
+          export GPU_FLAGS=""
+        fi
 
-    #     if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
-    #       export OMP_NUM_THREADS=2
-    #     else
-    #       export OMP_NUM_THREADS=1
-    #     fi
+        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          export OMP_NUM_THREADS=2
+        else
+          export OMP_NUM_THREADS=1
+        fi
 
-    #     palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
-    #     mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+        palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
+        mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+
+    - name: Sleep
+      shell: bash
+      run: sleep 7200
 
     # - name: Upload spack environment
     #   uses: actions/upload-artifact@v4
