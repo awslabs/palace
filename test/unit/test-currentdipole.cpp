@@ -77,6 +77,8 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
   std::complex<double> factor1 =
       exp_ikr * Ids / (4.0 * M_PI * 1i * omega * epsilon0_ * r * r * r);
   factor1 = units.Nondimensionalize<Units::ValueType::FIELD_E>(factor1);
+  factor1 *= 1.e6; // TODO: Forcing the units to match
+
   std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
   return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.), factor1 * (x * y * factor2),
