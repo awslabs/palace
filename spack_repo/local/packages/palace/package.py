@@ -284,10 +284,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             
             strumpack_libs = str(self.spec["scalapack"].libs).replace(" ", ";")
             
-            # Add OpenMP libraries
+            # Add OpenMP libraries - use compiler's OpenMP library
             if self.spec.satisfies("+openmp"):
-                openmp_libs = str(self.spec["openmp"].libs).replace(" ", ";")
-                strumpack_libs += ";" + openmp_libs
+                # Get OpenMP library from compiler
+                omp_lib = self.compiler.openmp_flag
+                if omp_lib:
+                    strumpack_libs += ";" + omp_lib
             
             # Add ButterflyPACK, ZFP, CUDA libraries...
             if self.spec.satisfies("^strumpack+butterflypack"):
