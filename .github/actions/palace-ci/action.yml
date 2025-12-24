@@ -41,6 +41,12 @@ runs:
           CUDA_ARGS=""
         fi
 
+        if [[ "${{ inputs.variant }}" == *"~shared"* ]]; then
+          SHARED=""
+        else
+          SHARED="+shared"
+        fi
+
         if [[ "${{ inputs.toolchain }}" == "llvm" ]]; then
           FORTRAN_COMPILER="gcc"
         else
@@ -57,7 +63,7 @@ runs:
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
-        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
+        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${SHARED}${{ inputs.variant }} ${CUDA_ARGS}"
 
         cat << EOF > spack.yaml
         spack:
@@ -110,6 +116,11 @@ runs:
               externals:
               - spec: cuda@12.9
                 prefix: /usr/local/cuda-12.9/
+            # FindSTRUMPACK in MFEM fails if slate/blaspp/lapackpp are built
+            # with OpenMP (and for some reasons, they can be built with OpenMP
+            # even if we ask for ~openmp at the root level.)
+            all:
+              require: ~openmp
         CUDAEOF
         fi
 
@@ -219,7 +230,7 @@ runs:
     - name: Build Dependencies
       continue-on-error: true
       shell: bash
-      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root
+      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
 
     - name: Sleep
       shell: bash
@@ -228,7 +239,7 @@ runs:
     - name: Build Palace
       continue-on-error: true
       shell: bash
-      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
+      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
 
     - name: Run Unit Tests
       continue-on-error: true
