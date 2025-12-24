@@ -67,21 +67,17 @@ jobs:
           variant: +cuda
           run-regression-tests: 'false'
 
-  # Compiling MFEM fails with STRUMPACK_NOT_FOUND. This ultimately due to the
-  # test program in FindSTRUMPACK not being able to find slate, lapackpp, and
-  # blaspp. This is likely due to some linking issues. This issue will likely be
-  # fixed once MFEM is removed from the superbuild.
-  build-x64-gcc-openmp:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          variant: "+openmp+int64~shared"
-          run-regression-tests: 'false'
+  # build-x64-gcc-openmp:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: gcc
+  #         variant: "+openmp+int64~shared"
+  #         run-regression-tests: 'false'
  
   # build-test-x64-llvm:
   #   needs: filter

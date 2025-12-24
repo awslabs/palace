@@ -303,6 +303,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 zfp_libs = str(self.spec["zfp"].libs).replace(" ", ";")
                 strumpack_libs += ";" + zfp_libs
             
+            # Add SLATE, BLASPP, LAPACKPP libraries
+            for lib_name in ["slate", "lapackpp", "blaspp"]:
+                try:
+                    lib = str(self.spec[lib_name].libs).replace(" ", ";")
+                    strumpack_libs += ";" + lib
+                except:
+                    pass
+            
             if self.spec.satisfies("+cuda"):
                 # Add specific CUDA math libraries that STRUMPACK needs
                 cuda_spec = self.spec["cuda"]

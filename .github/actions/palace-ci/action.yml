@@ -41,12 +41,6 @@ runs:
           CUDA_ARGS=""
         fi
 
-        if [[ "${{ inputs.variant }}" == *"~shared"* ]]; then
-          SHARED=""
-        else
-          SHARED="+shared"
-        fi
-
         if [[ "${{ inputs.toolchain }}" == "llvm" ]]; then
           FORTRAN_COMPILER="gcc"
         else
@@ -63,7 +57,7 @@ runs:
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
-        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${SHARED}${{ inputs.variant }} ${CUDA_ARGS}"
+        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
 
         cat << EOF > spack.yaml
         spack:
