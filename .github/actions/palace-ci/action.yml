@@ -31,6 +31,18 @@ runs:
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
 
+    - name: Patch Spack Packages for known problems
+      shell: bash
+      run: |
+        PALACE_DIR=$PWD
+        cd $(spack location --repo builtin)
+        for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+          if [ -f "$patch" ]; then
+            echo "Applying patch: $patch"
+            git apply "$patch"
+          fi
+        done
+
     - name: Prepare spack.yaml
       shell: bash
       run: |
@@ -110,6 +122,11 @@ runs:
               externals:
               - spec: cuda@12.9
                 prefix: /usr/local/cuda-12.9/
+            # When some packages are built with OpenMP in a non-OpenMP build,
+            # FindSTRUMPACK in MFEM cannot compile the test program. Hopefully,
+            # we can remove this when MFEM is not in the superbuild.
+            all:
+              require: ~openmp
         CUDAEOF
         fi
 
@@ -217,25 +234,14 @@ runs:
         spack -e . concretize -f --test root
 
     - name: Build Dependencies
-      continue-on-error: true
       shell: bash
       run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
 
-    # - name: Sleep
-    #   shell: bash
-    #   run: sleep 7200
-
     - name: Build Palace
-      continue-on-error: true
       shell: bash
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
 
-    - name: Sleep
-      shell: bash
-      run: sleep 10000
-
     - name: Run Unit Tests
-      continue-on-error: true
       shell: bash
       run: |
         eval $(spack -e . load --sh palace)
@@ -255,23 +261,23 @@ runs:
         palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
         mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
 
-    # - name: Upload spack environment
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
-    #     path: |
-    #       spack.yaml
-    #       spack.lock
-    #     retention-days: 1
+    - name: Upload spack environment
+      uses: actions/upload-artifact@v4
+      with:
+        name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
+        path: |
+          spack.yaml
+          spack.lock
+        retention-days: 1
 
-    # - name: Push to GHCR cache
-    #   shell: bash
-    #   run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+    - name: Push to GHCR cache
+      shell: bash
+      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
 
-    # - name: Run Regression Tests
-    #   if: inputs.run-regression-tests == 'true'
-    #   uses: ./.github/actions/run-regression-tests
-    #   with:
-    #     toolchain: ${{ inputs.toolchain }}
-    #     variant: ${{ inputs.variant }}
-    #     math-libs: ${{ inputs.math-libs }}
+    - name: Run Regression Tests
+      if: inputs.run-regression-tests == 'true'
+      uses: ./.github/actions/run-regression-tests
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        variant: ${{ inputs.variant }}
+        math-libs: ${{ inputs.math-libs }}

@@ -24,7 +24,7 @@ runs:
   using: 'composite'
   steps:
     - name: Setup environment
-      uses: ./.github/actions/setup-palace-ci
+      uses: ./.github/actions/setup-runner
       with:
         julia-version: 'release'
         spack-version: 'develop'
