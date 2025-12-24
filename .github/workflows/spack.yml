@@ -44,18 +44,17 @@ jobs:
               - '.github/workflows/spack.yml'
 
   # Build jobs
-  # build-x64-gcc:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: gcc
-  #         run-regression-tests: 'false'
+  build-x64-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          run-regression-tests: 'false'
 
-  # Needs 2025.12 release of umpire and camp.
   build-gpu-gcc:
     needs: filter
     if: needs.filter.outputs.test == 'true'
@@ -72,113 +71,113 @@ jobs:
   # test program in FindSTRUMPACK not being able to find slate, lapackpp, and
   # blaspp. This is likely due to some linking issues. This issue will likely be
   # fixed once MFEM is removed from the superbuild.
-  # build-x64-gcc-openmp:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: gcc
-  #         variant: "+openmp+int64~shared"
-  #         run-regression-tests: 'false'
+  build-x64-gcc-openmp:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+          run-regression-tests: 'false'
 
-  # build-test-x64-llvm:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: llvm
+  build-test-x64-llvm:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: llvm
 
-  # build-test-x64-intel:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: intel-oneapi
+  build-test-x64-intel:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: intel-oneapi
 
-  # build-test-arm64-gcc:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, arm64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: gcc
+  build-test-arm64-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
 
-  # build-test-arm64-llvm:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, arm64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: llvm
+  build-test-arm64-llvm:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: llvm
 
-  # build-test-arm64-gcc-armpl:
-  #   needs: filter
-  #   if: needs.filter.outputs.test == 'true'
-  #   runs-on: [self-hosted, arm64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/palace-ci
-  #       with:
-  #         toolchain: gcc
-  #         math-libs: armpl-gcc
+  build-test-arm64-gcc-armpl:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          math-libs: armpl-gcc
 
-  # # Test jobs
-  # test-x64-gcc:
-  #   needs: [filter, build-x64-gcc]
-  #   if: success()
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       solver: [MUMPS, SuperLU, STRUMPACK, Default]
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/run-regression-tests
-  #       with:
-  #         toolchain: gcc
-  #         solver: ${{ matrix.solver }}
+  # Test jobs
+  test-x64-gcc:
+    needs: [filter, build-x64-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          solver: ${{ matrix.solver }}
 
-  # test-gpu-gcc:
-  #   needs: [filter, build-gpu-gcc]
-  #   if: success()
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       solver: [MUMPS, SuperLU, STRUMPACK, Default]
-  #   runs-on: [self-hosted, gpu]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/run-regression-tests
-  #       with:
-  #         toolchain: gcc
-  #         variant: +cuda
-  #         solver: ${{ matrix.solver }}
+  test-gpu-gcc:
+    needs: [filter, build-gpu-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          variant: +cuda
+          solver: ${{ matrix.solver }}
 
-  # test-x64-gcc-openmp:
-  #   needs: [filter, build-x64-gcc-openmp]
-  #   if: success()
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       solver: [MUMPS, SuperLU, STRUMPACK, Default]
-  #   runs-on: [self-hosted, x64]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: ./.github/actions/run-regression-tests
-  #       with:
-  #         toolchain: gcc
-  #         variant: "+openmp+int64~shared"
-  #         solver: ${{ matrix.solver }}
+  test-x64-gcc-openmp:
+    needs: [filter, build-x64-gcc-openmp]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+          solver: ${{ matrix.solver }}

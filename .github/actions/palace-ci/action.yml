@@ -116,11 +116,6 @@ runs:
               externals:
               - spec: cuda@12.9
                 prefix: /usr/local/cuda-12.9/
-            # FindSTRUMPACK in MFEM fails if slate/blaspp/lapackpp are built
-            # with OpenMP (and for some reasons, they can be built with OpenMP
-            # even if we ask for ~openmp at the root level.)
-            all:
-              require: ~openmp
         CUDAEOF
         fi
 
@@ -233,6 +228,7 @@ runs:
       run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
 
     - name: Sleep
+      if: failure()
       shell: bash
       run: sleep 7200
 
@@ -240,6 +236,11 @@ runs:
       continue-on-error: true
       shell: bash
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
+
+    - name: Sleep
+      if: failure()
+      shell: bash
+      run: sleep 7200
 
     - name: Run Unit Tests
       continue-on-error: true
