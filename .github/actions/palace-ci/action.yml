@@ -236,9 +236,9 @@ runs:
       shell: bash
       run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
 
-    # - name: Sleep
-    #   shell: bash
-    #   run: sleep 7200
+    - name: Sleep
+      shell: bash
+      run: sleep 10000
 
     - name: Run Unit Tests
       continue-on-error: true
