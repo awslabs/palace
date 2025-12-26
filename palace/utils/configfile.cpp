@@ -4,7 +4,9 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <iterator>
+#include <string>
 #include <string_view>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -34,7 +36,22 @@
     static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;             \
     auto it = std::find_if(std::begin(m), std::end(m),                              \
                            [j](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)  \
-                           { return ej_pair.second == j; });                        \
+                           {                                                         \
+                             if constexpr (std::is_same_v<BasicJsonType, nlohmann::json>) \
+                             {                                                       \
+                               if (j.is_string() && ej_pair.second.is_string())      \
+                               {                                                     \
+                                 std::string j_lower = j.get<std::string>();        \
+                                 std::string ej_lower = ej_pair.second.get<std::string>(); \
+                                 std::transform(j_lower.begin(), j_lower.end(), j_lower.begin(), \
+                                                [](unsigned char c) { return std::tolower(c); }); \
+                                 std::transform(ej_lower.begin(), ej_lower.end(), ej_lower.begin(), \
+                                                [](unsigned char c) { return std::tolower(c); }); \
+                                 return j_lower == ej_lower;                        \
+                               }                                                     \
+                             }                                                       \
+                             return ej_pair.second == j;                            \
+                           });                                                       \
     MFEM_VERIFY(it != std::end(m),                                                  \
                 "Invalid value (" << j << ") for "                                  \
                                   << #ENUM_TYPE                                     \
