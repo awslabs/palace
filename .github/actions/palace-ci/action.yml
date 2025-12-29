@@ -1,0 +1,283 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Palace CI'
+description: 'Run Palace CI with Spack'
+inputs:
+  toolchain:
+    description: 'Toolchain to use'
+    required: true
+  variant:
+    description: 'Palace variant'
+    required: false
+    default: ''
+  math-libs:
+    description: 'Math libraries'
+    required: false
+    default: ''
+  run-regression-tests:
+    description: 'Run regression tests after build'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup environment
+      uses: ./.github/actions/setup-runner
+      with:
+        julia-version: 'release'
+        spack-version: 'develop'
+        llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
+        setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
+
+    - name: Patch Spack Packages for known problems
+      shell: bash
+      run: |
+        PALACE_DIR=$PWD
+        cd $(spack location --repo builtin)
+        for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+          if [ -f "$patch" ]; then
+            echo "Applying patch: $patch"
+            git apply "$patch"
+          fi
+        done
+
+    - name: Prepare spack.yaml
+      shell: bash
+      run: |
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
+          CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
+        else
+          CUDA_ARGS=""
+        fi
+
+        if [[ "${{ inputs.toolchain }}" == "llvm" ]]; then
+          FORTRAN_COMPILER="gcc"
+        else
+          FORTRAN_COMPILER="${{ inputs.toolchain }}"
+        fi
+
+        if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          MATH_LIBS="${{ inputs.math-libs || 'intel-oneapi-mkl' }}"
+          MPI_IMPL="intel-oneapi-mpi"
+          C_CXX_COMPILER="intel-oneapi-compilers"
+          FORTRAN_COMPILER="intel-oneapi-compilers"
+        else
+          MATH_LIBS="${{ inputs.math-libs || 'openblas@0.3.29' }}"
+          MPI_IMPL="openmpi"
+          C_CXX_COMPILER="${{ inputs.toolchain }}"
+        fi
+        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
+
+        cat << EOF > spack.yaml
+        spack:
+          specs:
+            - ${PALACE_SPEC}
+          view: false
+          config:
+            install_tree:
+              root: ${HOME}/opt/spack
+              padded_length: 256
+          concretizer:
+            reuse: false
+            unify: true
+            targets:
+              granularity: generic
+          packages:
+            petsc:
+              require: ~hdf5
+            mpi:
+              require: ${MPI_IMPL}
+            blas:
+              require: ${MATH_LIBS}
+            lapack:
+              require: ${MATH_LIBS}
+            c:
+              require: [${C_CXX_COMPILER}]
+            cxx:
+              require: [${C_CXX_COMPILER}]
+            fortran:
+              require: [${FORTRAN_COMPILER}]
+            metis:
+              require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
+            parmetis:
+              require: ldflags=-lc
+        EOF
+
+        # The Intel compiler has problems with C/C++/Fortran interop in MUMPS.
+        # Fixes: for_main.c:(.text+0x19): undefined reference to `MAIN__'
+        if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          cat << INTELEOF >> spack.yaml
+            mumps:
+              require: fflags=-nofor-main
+        INTELEOF
+        fi
+
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          cat << CUDAEOF >> spack.yaml
+            cuda:
+              buildable: false
+              externals:
+              - spec: cuda@12.9
+                prefix: /usr/local/cuda-12.9/
+            # When some packages are built with OpenMP in a non-OpenMP build,
+            # FindSTRUMPACK in MFEM cannot compile the test program. Hopefully,
+            # we can remove this when MFEM is not in the superbuild.
+            all:
+              require: ~openmp
+        CUDAEOF
+        fi
+
+        cat << EOF >> spack.yaml
+          repos:
+          - spack_repo/local
+          mirrors:
+            spack:
+              binary: true
+              url: https://binaries.spack.io/develop
+            local-buildcache:
+              binary: true
+              url: oci://ghcr.io/awslabs/palace-develop-testing
+              signed: false
+              access_pair:
+                id_variable: GITHUB_USER
+                secret_variable: GITHUB_TOKEN
+        EOF
+
+    - name: Configure Compilers
+      shell: bash
+      run: |
+        if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          . /opt/intel/oneapi/setvars.sh
+        fi
+        spack -e . compiler find && spack -e . compiler list
+
+    # Spack and oneAPI-2025.3.1 have some compatibility problems where the
+    # version of the fortran compiler is not correctly identified. As a
+    # workaround, we manually edit the relevant entry in the spack.yaml to put
+    # all the compilers under the same version. # This amounts to merging two
+    # entries (for two different versions) into a single one.
+    #
+    # TODO: Check if this issue is still relevant, if not, remove this step.
+    - name: Merge Intel Compiler Entries
+      if: inputs.toolchain == 'intel-oneapi'
+      shell: bash
+      run: |
+        python3 << 'EOF'
+        import yaml
+        
+        with open('spack.yaml', 'r') as f:
+            data = yaml.safe_load(f)
+        
+        # Get Intel compiler externals
+        intel_externals = data['spack']['packages']['intel-oneapi-compilers']['externals']
+        
+        if len(intel_externals) > 1:
+            # Merge compilers from all entries
+            merged_compilers = {}
+            newest_spec = None
+            newest_prefix = None
+            
+            for entry in intel_externals:
+                # Keep track of the newest version
+                if newest_spec is None or entry['spec'] > newest_spec:
+                    newest_spec = entry['spec']
+                    newest_prefix = entry['prefix']
+                
+                # Merge all compilers
+                if 'extra_attributes' in entry and 'compilers' in entry['extra_attributes']:
+                    compilers = entry['extra_attributes']['compilers']
+                    merged_compilers.update(compilers)
+            
+            # Create single merged entry
+            merged_entry = {
+                'spec': newest_spec,
+                'prefix': newest_prefix,
+                'extra_attributes': {
+                    'compilers': merged_compilers
+                }
+            }
+            
+            # Replace ALL entries with single merged entry
+            data['spack']['packages']['intel-oneapi-compilers']['externals'] = [merged_entry]
+            
+            # Write back
+            with open('spack.yaml', 'w') as f:
+                yaml.dump(data, f, default_flow_style=False)
+            
+            print("Merged Intel compiler entries into single entry")
+        EOF
+
+    - name: Display spack.yaml
+      shell: bash
+      run: |
+        echo "=== Generated spack.yaml ==="
+        cat spack.yaml
+        echo "=== End spack.yaml ==="
+
+    - name: Configure Binary Mirror Keys
+      shell: bash
+      run: spack -e . buildcache keys --install --trust
+
+    - name: Bootstrap
+      shell: bash
+      run: spack -e . bootstrap now
+
+    - name: Concretize
+      shell: bash
+      env:
+        PALACE_REF: ${{ github.head_ref || github.ref_name }}
+      run: |
+        spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
+        spack -e . concretize -f --test root
+
+    - name: Build Dependencies
+      shell: bash
+      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
+
+    - name: Build Palace
+      shell: bash
+      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
+
+    - name: Run Unit Tests
+      shell: bash
+      run: |
+        eval $(spack -e . load --sh palace)
+
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          export GPU_FLAGS="--device cuda"
+        else
+          export GPU_FLAGS=""
+        fi
+
+        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          export OMP_NUM_THREADS=2
+        else
+          export OMP_NUM_THREADS=1
+        fi
+
+        palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
+        mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+
+    - name: Upload spack environment
+      uses: actions/upload-artifact@v4
+      with:
+        name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
+        path: |
+          spack.yaml
+          spack.lock
+        retention-days: 1
+
+    - name: Push to GHCR cache
+      shell: bash
+      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+
+    - name: Run Regression Tests
+      if: inputs.run-regression-tests == 'true'
+      uses: ./.github/actions/run-regression-tests
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        variant: ${{ inputs.variant }}
+        math-libs: ${{ inputs.math-libs }}

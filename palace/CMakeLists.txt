@@ -120,6 +120,12 @@ endif()
 # Find LAPACK
 find_package(LAPACK REQUIRED)
 
+# Find Umpire and Camp (needed when CUDA/HIP is enabled)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  find_package(umpire REQUIRED CONFIG)
+  find_package(camp REQUIRED CONFIG)
+endif()
+
 # Find nlohmann/json
 find_package(nlohmann_json REQUIRED CONFIG)
 message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")

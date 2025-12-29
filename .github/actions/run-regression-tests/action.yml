@@ -1,0 +1,70 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Test Palace'
+description: 'Run Palace integration tests'
+inputs:
+  toolchain:
+    description: 'Toolchain to use'
+    required: true
+  variant:
+    description: 'Palace variant'
+    required: false
+    default: ''
+  math-libs:
+    description: 'Math libraries'
+    required: false
+    default: ''
+  solver:
+    description: 'Solver to test'
+    required: false
+    default: 'Default'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup environment
+      uses: ./.github/actions/setup-runner
+      with:
+        julia-version: 'release'
+        spack-version: 'develop'
+        llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
+        setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
+
+    - name: Download spack environment
+      uses: actions/download-artifact@v4
+      with:
+        name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
+
+    - name: Install from cache
+      shell: bash
+      run: spack -e . install --only-concrete --no-check-signature
+
+    - name: Run Integration Tests
+      shell: bash
+      run: |
+        # Use nproc, but halve to account for hyperthreading.
+        LOGICAL_CORES=$(nproc)
+        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+        if [ "$THREADS_PER_CORE" = "2" ]; then
+            export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
+        else
+            export NUM_PROC_TEST=$LOGICAL_CORES
+        fi
+
+        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
+          export OMP_NUM_THREADS=2
+        else
+          export OMP_NUM_THREADS=1
+        fi
+
+        eval $(spack -e . load --sh palace)
+        julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+        
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          export PALACE_DEVICE=GPU
+          export NUM_PROC_TEST=1
+        fi
+        
+        julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ inputs.solver }}
