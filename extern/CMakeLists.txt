@@ -99,3 +99,7 @@ endif()
 message(STATUS "==================== Configuring libCEED dependency ====================")
 include(ExternalLibCEED)
 
+# Add MFEM
+message(STATUS "====================== Configuring MFEM dependency =====================")
+include(ExternalMFEM)
+

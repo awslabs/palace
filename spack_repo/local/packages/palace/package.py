@@ -139,6 +139,33 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
 
+    with when("@develop"):
+        depends_on(
+            "mfem+mpi+metis cxxstd=17 commit=0c4c006ef86dc2b2cf415e5bc4ed9118c9768652",
+            patches=[
+                "patch_mesh_vis_dev.diff",
+                "patch_par_tet_mesh_fix_dev.diff",
+                "patch_gmsh_parser_performance.diff",
+                "patch_race_condition_fix.diff",
+            ],
+        )
+        depends_on("mfem+shared", when="+shared")
+        depends_on("mfem~shared", when="~shared")
+        depends_on("mfem+openmp", when="+openmp")
+        depends_on("mfem~openmp", when="~openmp")
+        depends_on("mfem+superlu-dist", when="+superlu-dist")
+        depends_on("mfem~superlu-dist", when="~superlu-dist")
+        depends_on("mfem+strumpack", when="+strumpack")
+        depends_on("mfem~strumpack", when="~strumpack")
+        depends_on("mfem+mumps", when="+mumps")
+        depends_on("mfem~mumps", when="~mumps")
+        depends_on("mfem+sundials", when="+sundials")
+        depends_on("mfem~sundials", when="~sundials")
+        depends_on("mfem+gslib", when="+gslib")
+        depends_on("mfem~gslib", when="~gslib")
+
+        depends_on("mfem+exceptions", when="+tests")
+
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
         depends_on("libxsmm@=main blas=0")
@@ -187,12 +214,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+cuda"):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
-
             # TODO: Remove me after blt > 0.7.1 is released
             depends_on(f"blt@develop")
 
             depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"mfem{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
@@ -206,6 +234,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"hypre+umpire{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"mfem{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")

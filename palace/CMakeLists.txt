@@ -112,6 +112,15 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 # Find MPI
 find_package(MPI REQUIRED)
 
+
+if(PALACE_WITH_SUNDIALS AND NOT PALACE_BUILD_EXTERNAL_DEPS)
+  # Spack's sundials requires MPI with C bindings, so we alias
+  # MPI_C to MPI_CXX (if it does not already exist).
+  if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
+    add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
+  endif()
+endif()
+
 # Find OpenMP
 if(PALACE_WITH_OPENMP)
   find_package(OpenMP REQUIRED)
@@ -147,15 +156,20 @@ if(NOT "${MFEM_DIR}" STREQUAL "")
   set(MFEM_ROOT ${MFEM_DIR})
 endif()
 find_package(Threads REQUIRED)
-find_package(MFEM REQUIRED CONFIG)
-message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
-if(NOT MFEM_USE_MPI)
-  message(FATAL_ERROR "Build requires MFEM with MPI support")
+
+# MFEM in Spack is currently using autotools, and this find_package will fail
+# (hence the QUIET), but this is not a problem.
+find_package(MFEM QUIET CONFIG)
+if(MFEM_FOUND)
+  message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
+  if(NOT MFEM_USE_MPI)
+    message(FATAL_ERROR "Build requires MFEM with MPI support")
+  endif()
 endif()
-# if(MFEM_CXX_FLAGS)
-#   # Pull compiler flags from MFEM for OpenMP and optimizations
-#   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MFEM_CXX_FLAGS}")
-# endif()
+
+if(NOT "${HYPRE_DIR}" STREQUAL "")
+  set(HYPRE_ROOT ${HYPRE_DIR})
+endif()
 
 # Find libCEED
 include(PkgConfigHelpers)
@@ -338,6 +352,29 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
     PUBLIC umpire camp
   )
 endif()
+
+if(NOT PALACE_BUILD_EXTERNAL_DEPS)
+  # When using external deps, we need to manually link them to Palace (when
+  # building them, they get linked through mfem).
+
+  # TODO: Switch to find_package
+  if(TARGET HYPRE::HYPRE)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC HYPRE::HYPRE)
+  else()
+    find_library(HYPRE_LIBRARY NAMES HYPRE)
+    if(HYPRE_LIBRARY)
+      target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${HYPRE_LIBRARY})
+    endif()
+  endif()
+
+  # Explicitly link SUNDIALS if MFEM doesn't export it transitively
+  if(PALACE_WITH_SUNDIALS)
+    find_package(SUNDIALS REQUIRED)
+    message(STATUS "Found SUNDIALS: ${SUNDIALS_VERSION} in ${SUNDIALS_DIR}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC SUNDIALS::arkode SUNDIALS::cvode)
+  endif()
+endif()
+
 target_link_libraries(
   ${LIB_TARGET_NAME}
   PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
