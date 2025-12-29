@@ -137,7 +137,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
 
-    with when("@0.15:"):
+    with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
             "mfem+mpi+metis+lapack cxxstd=17 commit=0c4c006ef86dc2b2cf415e5bc4ed9118c9768652",
