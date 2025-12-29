@@ -119,6 +119,14 @@ jobs:
         # If you want to use the branch-local source instead (should we always do this?)
         # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
+
+      - uses: julia-actions/setup-julia@v2
+        if: needs.filter.outputs.test == 'true'
+        with:
+          version: '1'
+
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

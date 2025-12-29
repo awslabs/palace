@@ -52,6 +52,7 @@ makedocs(
         "For Developers" => Any[
             "developer/notes.md",
             "developer/testing.md",
+            "developer/spack.md",
             "developer/tutorial_add_new_unit_test.md",
             "developer/tutorial_gpu_profiling.md"
         ],

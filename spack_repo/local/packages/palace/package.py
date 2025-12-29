@@ -55,12 +55,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
 
-    # NOTE: We can't depend on git tagged versions here
-    #       https://github.com/spack/spack/issues/50171
-    #       Instead, version in environment / spec
     depends_on("c", type="build")
     depends_on("cxx", type="build")
-    depends_on("cmake@3.21:", type="build")
+    depends_on("cmake@3.24:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("zlib-api")
@@ -139,9 +136,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
 
-    with when("@develop"):
+    with when("@0.15:"):
+        # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis cxxstd=17 commit=0c4c006ef86dc2b2cf415e5bc4ed9118c9768652",
+            "mfem+mpi+metis+lapack cxxstd=17 commit=0c4c006ef86dc2b2cf415e5bc4ed9118c9768652",
             patches=[
                 "patch_mesh_vis_dev.diff",
                 "patch_par_tet_mesh_fix_dev.diff",
@@ -163,8 +161,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem~sundials", when="~sundials")
         depends_on("mfem+gslib", when="+gslib")
         depends_on("mfem~gslib", when="~gslib")
-
+        depends_on("mfem~cuda", when="~cuda")
+        depends_on("mfem~rocm", when="~rocm")
         depends_on("mfem+exceptions", when="+tests")
+
+        depends_on("mfem+libunwind", when="build_type=Debug")
 
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
@@ -183,12 +184,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed~shared", when="~shared")
 
     with when("+sundials @0.14:"):
-        depends_on("sundials")
+        depends_on("sundials+mpi+lapack")
+        depends_on("sundials~examples~examples-install")
         depends_on("sundials+shared", when="+shared")
         depends_on("sundials~shared", when="~shared")
         depends_on("sundials+openmp", when="+openmp")
         depends_on("sundials~openmp", when="~openmp")
 
+    conflicts("+tests", when="@:0.14", msg="Building tests is only supported for Palace versions after 0.14")
     conflicts("+cuda", when="@:0.13", msg="CUDA is only supported for Palace versions after 0.13")
     conflicts("+rocm", when="@:0.13", msg="ROCm is only supported for Palace versions after 0.13")
     conflicts("+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
@@ -398,7 +401,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+cuda") or self.spec.satisfies("+rocm"):
                 args.append(self.define("MAGMA_DIR", self.spec["magma"].prefix))
         else:
-            # After v 0.13 gslib and libceed is built externally and
+            # After v 0.13 gslib and libceed are built externally and
             # so the directories for these are passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
             if self.spec.satisfies("+gslib"):

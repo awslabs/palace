@@ -165,6 +165,8 @@ if(MFEM_FOUND)
   if(NOT MFEM_USE_MPI)
     message(FATAL_ERROR "Build requires MFEM with MPI support")
   endif()
+elseif(NOT "${MFEM_DIR}" STREQUAL "")
+  message(STATUS "Found MFEM in ${MFEM_DIR}")
 endif()
 
 if(NOT "${HYPRE_DIR}" STREQUAL "")
@@ -356,6 +358,12 @@ endif()
 if(NOT PALACE_BUILD_EXTERNAL_DEPS)
   # When using external deps, we need to manually link them to Palace (when
   # building them, they get linked through mfem).
+
+  # Link zlib if MFEM uses it
+  find_package(ZLIB)
+  if(ZLIB_FOUND)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ZLIB::ZLIB)
+  endif()
 
   # TODO: Switch to find_package
   if(TARGET HYPRE::HYPRE)
