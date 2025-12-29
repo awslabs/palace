@@ -48,53 +48,291 @@ jobs:
     strategy:
       fail-fast: false # don't have one build stop others from finishing
       matrix:
-        compiler: [gcc] #, clang, intel]
-        gpu: [none] #, cuda, rocm]
-        blas: [openblas] # ,intel-oneapi-mkl]
-        spack_version: [develop] # ,v0.23.1]
-        mpi: [openmpi] #, mpich, mvapich]
+        include:
+          - arch: x86
+            compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            shared: +shared
+            int: +int64
+            openmp: ~openmp
+            eigensolver: +arpack
+            solver: +mumps
+            cuda: ~cuda
+            runner: palace_ubuntu-latest_16-core
 
-    runs-on: palace_ubuntu-latest_16-core
+          # SUNDIALS 7.5.0 fails with
+          # Could NOT find OpenMP_C (missing: OpenMP_C_FLAGS OpenMP_C_LIB_NAM
+          # ES)
+          #
+          # (Probably fixable by forcing LLVM@19)
+          # - arch: x86
+          #   compiler: llvm
+          #   mpi: mpich
+          #   math-libs: amdblis
+          #   shared: ~shared
+          #   int: ~int64
+          #   openmp: +openmp
+          #   eigensolver: +slepc
+          #   solver: +superlu-dist
+          #   cuda: ~cuda
+          #   runner: palace_ubuntu-latest_16-core
+
+          # OpenBlas 0.3.30 fails with
+          # FATAL ERROR - COMPUTED RESULT IS LESS THAN HALF ACCURATE
+          # 
+          # - arch: arm
+          #   compiler: llvm
+          #   mpi: openmpi
+          #   math-libs: openblas
+          #   shared: ~shared
+          #   int: ~int64
+          #   openmp: ~openmp
+          #   eigensolver: +slepc
+          #   solver: +strumpack
+          #   cuda: ~cuda
+          #   runner: [self-hosted, arm64]
+
+          - arch: arm
+            compiler: gcc
+            mpi: mpich
+            math-libs: armpl-gcc
+            shared: +shared
+            int: +int64
+            openmp: +openmp
+            eigensolver: +arpack
+            solver: +strumpack
+            cuda: ~cuda
+            runner: [self-hosted, arm64]
+
+          - arch: x86
+            compiler: intel-oneapi-compilers
+            mpi: intel-oneapi-mpi
+            math-libs: intel-oneapi-mkl
+            shared: +shared
+            int: +int64
+            openmp: ~openmp
+            eigensolver: +slepc
+            solver: +superlu-dist
+            cuda: ~cuda
+            runner: palace_ubuntu-latest_16-core
+
+          # Mumps fails with multiple definition of `main'
+          # 
+          # - arch: x86
+          #   compiler: intel-oneapi-compilers
+          #   mpi: intel-oneapi-mpi
+          #   math-libs: intel-oneapi-mkl
+          #   shared: ~shared
+          #   int: ~int64
+          #   openmp: +openmp
+          #   eigensolver: +arpack
+          #   solver: +mumps
+          #   cuda: ~cuda
+          #   runner: palace_ubuntu-latest_16-core
+
+          - arch: x86
+            compiler: llvm
+            mpi: mpich
+            math-libs: amdblis
+            shared: +shared
+            int: +int64
+            openmp: ~openmp
+            eigensolver: +arpack
+            solver: +mumps
+            cuda: +cuda
+            runner: [self-hosted, gpu]
+
+          # Performing Test STRUMPACK_VERSION_OK - Failed
+          # 
+          # - arch: x86
+          #   compiler: gcc
+          #   mpi: openmpi
+          #   math-libs: amdblis
+          #   shared: ~shared
+          #   int: ~int64
+          #   openmp: +openmp
+          #   eigensolver: +slepc
+          #   solver: +strumpack
+          #   cuda: ~cuda
+          #   runner: palace_ubuntu-latest_16-core
+
+          - arch: arm
+            compiler: gcc
+            mpi: openmpi
+            math-libs: armpl-gcc
+            shared: ~shared
+            int: ~int64
+            openmp: ~openmp
+            eigensolver: +slepc
+            solver: +superlu-dist
+            cuda: ~cuda
+            runner: [self-hosted, arm64]
+
+          # cylinder/floquet (periodic) fails
+          #
+          # - arch: arm
+          #   compiler: gcc
+          #   mpi: openmpi
+          #   math-libs: openblas
+          #   shared: ~shared
+          #   int: +int64
+          #   openmp: +openmp
+          #   eigensolver: +slepc
+          #   solver: +mumps
+          #   cuda: ~cuda
+          #   runner: [self-hosted, arm64]
+
+          - arch: arm
+            compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            shared: ~shared
+            int: ~int64
+            openmp: +openmp
+            eigensolver: +slepc
+            solver: +superlu-dist
+            cuda: ~cuda
+            runner: [self-hosted, arm64]
+
+          - arch: arm
+            compiler: gcc
+            mpi: openmpi
+            math-libs: armpl-gcc
+            shared: ~shared
+            int: ~int64
+            openmp: +openmp
+            eigensolver: +slepc
+            solver: +mumps
+            cuda: ~cuda
+            runner: [self-hosted, arm64]
+
+          - arch: x86
+            compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            shared: +shared
+            int: ~int64
+            openmp: ~openmp
+            eigensolver: +slepc+arpack
+            solver: +superlu-dist+mumps+sundials+strumpack
+            cuda: ~cuda
+            runner: palace_ubuntu-latest_16-core
+
+          - arch: x86
+            compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            shared: +shared
+            int: ~int64
+            openmp: ~openmp
+            eigensolver: +slepc+arpack
+            solver: +superlu-dist+mumps+sundials+strumpack
+            cuda: +cuda
+            runner: [self-hosted, gpu]
+
+          - arch: x86
+            compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            shared: +shared
+            int: +int64
+            openmp: ~openmp
+            eigensolver: +slepc
+            solver: +superlu-dist
+            cuda: +cuda
+            runner: [self-hosted, gpu]
+
+          # Performing Test STRUMPACK_VERSION_OK - Failed
+          # 
+          # Requires
+          # https://github.com/spack/spack-packages/pull/2580
+          # - arch: x86
+          #   compiler: llvm
+          #   mpi: openmpi
+          #   math-libs: amdblis
+          #   shared: ~shared
+          #   int: ~int64
+          #   openmp: ~openmp
+          #   eigensolver: +arpack
+          #   solver: +strumpack
+          #   cuda: +cuda
+          #   runner: [self-hosted, gpu]
+
+    runs-on: ${{ matrix.runner }}
     steps:
+      - name: Print Test Matrix
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          echo "Matrix values:"
+          echo "  arch: ${{ matrix.arch }}"
+          echo "  compiler: ${{ matrix.compiler }}"
+          echo "  mpi: ${{ matrix.mpi }}"
+          echo "  math-libs: ${{ matrix.math-libs }}"
+          echo "  shared: ${{ matrix.shared }}"
+          echo "  int: ${{ matrix.int }}"
+          echo "  openmp: ${{ matrix.openmp }}"
+          echo "  eigensolver: ${{ matrix.eigensolver }}"
+          echo "  solver: ${{ matrix.solver }}"
+          echo "  cuda: ${{ matrix.cuda }}"
+
       - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
 
-      - name: Configure Clang compiler
-        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
-        run: sudo apt-get install -y clang lld
-
-      - name: Configure Intel oneAPI compiler
-        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel'
-        run:
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
-          intel-oneapi-compiler-fortran=2024.2.1-1079
-
-      - name: Setup Spack
+      - name: Setup environment
         if: needs.filter.outputs.test == 'true'
-        uses: spack/setup-spack@v2
+        uses: ./.github/actions/setup-palace-ci
         with:
-          ref: develop
-          buildcache: true
-          color: true
+          julia-version: 'release'
+          # Spack develop because we want to have access to the most recent version of spack-packages
+          spack-version: 'develop'
+          # LLVM 19 because it is the latest supported by CUDA 12.9
+          llvm-version: ${{ matrix.compiler == 'llvm' && '19' || 'dont-install' }}
+          setup-intel: ${{ matrix.compiler == 'intel-oneapi-compilers' && 'true' || 'false' }}
 
-      - name: Setup Environment
+      - name: Remove Android NDK # it confuses the Intel compiler
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel-oneapi-compilers'
+        run: sudo rm -rf /usr/local/lib/android/
+
+      - name: Prepare spack.yaml
         if: needs.filter.outputs.test == 'true'
         run: |
-          # Configure GPU variant
-          if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
-            GPU_VARIANT="+cuda cuda_arch=70"
-          elif [[ "${{ matrix.gpu }}" == 'rocm' ]]; then
-            GPU_VARIANT="+rocm amdgpu_target=gfx900"
+          # Change defaults for solver and eigensolvers (by not including them in the build).
+          if [[ "${{ matrix.solver }}" == "+strumpack" ]]; then
+            SOLVER_VARIANTS="+strumpack~superlu-dist~mumps"
+          elif [[ "${{ matrix.solver }}" == "+mumps" ]]; then
+            SOLVER_VARIANTS="+mumps~superlu-dist~strumpack"
+          elif [[ "${{ matrix.solver }}" == "+superlu-dist" ]]; then
+            SOLVER_VARIANTS="+superlu-dist~strumpack~mumps"
           else
-            GPU_VARIANT=""
+            SOLVER_VARIANTS="${{ matrix.solver }}"
           fi
 
-          # Develop requires ^compiler, not %compiler
-          if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
+          if [[ "${{ matrix.eigensolver }}" == "+arpack" ]]; then
+            EIGEN_VARIANTS="+arpack~slepc"
+          elif [[ "${{ matrix.eigensolver }}" == "+slepc" ]]; then
+            EIGEN_VARIANTS="+slepc~arpack"
           else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
+            EIGEN_VARIANTS="${{ matrix.eigensolver }}"
           fi
+
+          if [[ "${{ matrix.cuda }}" == "+cuda" ]]; then
+            # nvidia-smi gives us 8.6, so we need to remove the dot
+            CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
+            GPU_VARIANTS="+cuda cuda_arch=${CUDA_ARCH}"
+          else
+            GPU_VARIANTS="${{ matrix.cuda }}"
+          fi
+
+          # As of version 1.2.0-alpha, the spack concretizer hangs when using flang.
+          # TODO: Try again in the future to see if we can use it.
+          if [[ "${{ matrix.compiler }}" == "llvm" ]]; then
+            FORTRAN_COMPILER="gcc"
+          else
+            FORTRAN_COMPILER="${{ matrix.compiler }}"
+          fi
+
+          PALACE_SPEC="local.palace@develop+tests${SOLVER_VARIANTS}${EIGEN_VARIANTS}${{ matrix.shared }}${{ matrix.int }}${{ matrix.openmp }}${GPU_VARIANTS}"
 
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
@@ -104,18 +342,49 @@ jobs:
             view: false
             config:
               install_tree:
-                root: /opt/spack
-                padded_length: False
+                root: ${HOME}/opt/spack
+                padded_length: 256
             concretizer:
               reuse: false
               unify: true
+              # generic cpu target so that we can increase cache hits
               targets:
                 granularity: generic
             packages:
               petsc:
                 require: ~hdf5
-              rocblas:
-                require: ~tensile
+              mpi:
+                require: ${{ matrix.mpi }}
+              blas:
+                require: ${{ matrix.math-libs }}
+              c:
+                require: [${{ matrix.compiler }}]
+              cxx:
+                require: [${{ matrix.compiler }}]
+              fortran:
+                require: [${FORTRAN_COMPILER}]
+              # Metis is verify fragile
+              # -fPIC seems to be required because metis always compiles some shared objects
+              # -lc seems to be required for intel compilers
+              metis:
+                require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
+              parmetis:
+                require: ldflags=-lc
+          EOF
+
+          # Add CUDA configuration if using CUDA
+          if [[ "${{ matrix.cuda }}" == "+cuda" ]]; then
+            cat << CUDAEOF >> spack.yaml
+              cuda:
+                buildable: false
+                externals:
+                - spec: cuda@12.9
+                  prefix: /usr/local/cuda-12.9/
+          CUDAEOF
+          fi
+
+          # Continue with the rest of the spack.yaml
+          cat << EOF >> spack.yaml
             repos:
             - spack_repo/local
             mirrors:
@@ -124,7 +393,7 @@ jobs:
                 url: https://binaries.spack.io/${SPACK_VERSION}
               local-buildcache:
                 binary: true
-                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
+                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}-testing
                 signed: false
                 access_pair:
                   id_variable: GITHUB_USER
@@ -134,10 +403,16 @@ jobs:
       - name: Configure External Packages
         if: needs.filter.outputs.test == 'true'
         run: |
+          # Spack needs a little help finding the intel compiler
+          if [[ "${{ matrix.compiler }}" == "intel-oneapi-compilers" ]]; then
+            . /opt/intel/oneapi/setvars.sh
+          fi
+
           # These cause build issues if built as externals
           #   - python : often distributed python isn't feature complete / not all dependencies get detected
           #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
           #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
+          #   - llvm-doe: we never want that
           spack -e . external find --all \
             --exclude openssl \
             --exclude openssh \
@@ -145,11 +420,93 @@ jobs:
             --exclude ncurses \
             --exclude bzip2 \
             --exclude xz \
-            --exclude curl
+            --exclude curl \
+            --exclude llvm-doe
+
+      - name: Patch Spack Packages for known problems
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          PALACE_DIR=$PWD
+          cd $(spack location --repo builtin)
+          for patch in "$PALACE_DIR"/spack_repo/patches/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $patch"
+              git apply "$patch"
+            fi
+          done
 
       - name: Configure Compilers
         if: needs.filter.outputs.test == 'true'
-        run: spack -e . compiler find && spack -e . compiler list
+        run: |
+          # Spack needs a little help finding the intel compiler.
+          if [[ "${{ matrix.compiler }}" == "intel-oneapi-compilers" ]]; then
+            . /opt/intel/oneapi/setvars.sh
+          fi
+          spack -e . compiler find && spack -e . compiler list
+
+          spack -e . compiler info "${{ matrix.compiler }}"
+
+      # Spack and oneAPI-2025.3.1 have some compatibility problems where the
+      # version of the fortran compiler is not correctly identified. As a
+      # workaround, we manually edit the relevant entry in the spack.yaml to put
+      # all the compilers under the same version. # This amounts to merging two
+      # entries (for two different versions) into a single one.
+      #
+      # TODO: Check if this issue is still relevant, if not, remove this step.
+      - name: Merge Intel Compiler Entries
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel-oneapi-compilers'
+        run: |
+          python3 << 'EOF'
+          import yaml
+          
+          with open('spack.yaml', 'r') as f:
+              data = yaml.safe_load(f)
+          
+          # Get Intel compiler externals
+          intel_externals = data['spack']['packages']['intel-oneapi-compilers']['externals']
+          
+          if len(intel_externals) > 1:
+              # Merge compilers from all entries
+              merged_compilers = {}
+              newest_spec = None
+              newest_prefix = None
+              
+              for entry in intel_externals:
+                  # Keep track of the newest version
+                  if newest_spec is None or entry['spec'] > newest_spec:
+                      newest_spec = entry['spec']
+                      newest_prefix = entry['prefix']
+                  
+                  # Merge all compilers
+                  if 'extra_attributes' in entry and 'compilers' in entry['extra_attributes']:
+                      compilers = entry['extra_attributes']['compilers']
+                      merged_compilers.update(compilers)
+              
+              # Create single merged entry
+              merged_entry = {
+                  'spec': newest_spec,
+                  'prefix': newest_prefix,
+                  'extra_attributes': {
+                      'compilers': merged_compilers
+                  }
+              }
+              
+              # Replace ALL entries with single merged entry
+              data['spack']['packages']['intel-oneapi-compilers']['externals'] = [merged_entry]
+              
+              # Write back
+              with open('spack.yaml', 'w') as f:
+                  yaml.dump(data, f, default_flow_style=False)
+              
+              print("Merged Intel compiler entries into single entry")
+          EOF
+
+      - name: Display spack.yaml
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          echo "=== Generated spack.yaml ==="
+          cat spack.yaml
+          echo "=== End spack.yaml ==="
 
       - name: Configure Binary Mirror Keys
         if: needs.filter.outputs.test == 'true'
@@ -172,7 +529,6 @@ jobs:
           spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
           # --test root pulls in the test dependencies
           spack -e . concretize -f --test root
-
       - name: Build Dependencies
         if: needs.filter.outputs.test == 'true'
         run: |
@@ -186,20 +542,51 @@ jobs:
         run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root
 
       - name: Run Unit Tests
-        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
+        if: needs.filter.outputs.test == 'true'
         run: |
           eval $(spack -e . load --sh palace)
-          palace-unit-tests --skip-benchmarks
-          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
+
+          if [[ "${{ matrix.cuda }}" == "+cuda" ]]; then
+            export GPU_FLAGS="--device cuda"
+          else
+            export GPU_FLAGS=""
+          fi
+
+          if [[ "${{ matrix.openmp }}" == '+openmp' ]]; then
+            export OMP_NUM_THREADS=2
+          else
+            export OMP_NUM_THREADS=1
+          fi
+
+          palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
+          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
 
       - name: Run Integration Tests
-        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
-        env:
-          NUM_PROC_TEST_MAX: "8"
+        if: needs.filter.outputs.test == 'true'
         run: |
+          # Use nproc, but halve to account for hyperthreading.
+          LOGICAL_CORES=$(nproc)
+          THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+          if [ "$THREADS_PER_CORE" = "2" ]; then
+              export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
+          else
+              export NUM_PROC_TEST=$LOGICAL_CORES
+          fi
+
+          if [[ "${{ matrix.openmp }}" == '+openmp' ]]; then
+            NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
+            export OMP_NUM_THREADS=2
+          else
+            export OMP_NUM_THREADS=1
+          fi
+
           eval $(spack -e . load --sh palace)
           # Run tests
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+          if [[ "${{ matrix.cuda }}" == +"cuda" ]]; then
+            export TEST_GPU=1
+            export NUM_PROC_TEST=1
+          fi
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
       # Push built binaries, even if the build fails

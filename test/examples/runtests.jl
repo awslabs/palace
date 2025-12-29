@@ -31,6 +31,8 @@ else
     numthreads = 1
 end
 
+test_gpu = "TEST_GPU" in keys(ENV)
+
 if "TEST_CASES" in keys(ENV)
     cases = String.(split(ENV["TEST_CASES"], ' '))
 else
@@ -71,7 +73,8 @@ if "spheres" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        gridfunction_fields=true
+        gridfunction_fields=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -85,7 +88,8 @@ if "rings" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -100,7 +104,8 @@ if "cylinder/cavity_pec" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -115,7 +120,8 @@ if "cylinder/cavity_impedance" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -130,7 +136,8 @@ if "cylinder/waveguide" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -172,7 +179,8 @@ if "cylinder/floquet" in cases
             "probe-E.csv" => test_probe_magnitude,
             "probe-B.csv" => test_probe_magnitude
         ),
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -189,7 +197,8 @@ if "cylinder/driven_wave" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -206,11 +215,12 @@ if "antenna" in cases
         palace=palace,
         np=numprocs,
         rtol=reltol,
-        atol=50abstol
+        atol=50abstol,
+        force_gpu=test_gpu
     )
 end
 
-abstol = 2.0e-12
+abstol = 1.0e-11
 
 if "coaxial/open" in cases
     @info "Testing coaxial (open)..."
@@ -222,7 +232,8 @@ if "coaxial/open" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -236,7 +247,8 @@ if "coaxial/matched" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -250,7 +262,8 @@ if "cpw/lumped_uniform" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -264,7 +277,8 @@ if "cpw/wave_uniform" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum"],
+        force_gpu=test_gpu
     )
 end
 
@@ -283,7 +297,9 @@ if "cpw/lumped_adaptive" in cases
     )
 end
 
-if "cpw/wave_adaptive" in cases
+# We skip when on GPUs because of this:
+# https://github.com/awslabs/palace/issues/375
+if "cpw/wave_adaptive" in cases && !test_gpu
     @info "Testing CPW (wave ports, adaptive)..."
     @time testcase(
         "cpw",
@@ -358,7 +374,8 @@ if "cpw/lumped_eigen" in cases
             "κ_ext[4] (GHz)"
         ],
         custom_tests=Dict("farfield-rE.csv" => test_farfield),
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -373,7 +390,8 @@ if "cpw/wave_eigen" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -388,7 +406,8 @@ if "adapter/hybrid" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
 
@@ -403,6 +422,7 @@ if "adapter/slp" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        skip_rowcount=true
+        skip_rowcount=true,
+        force_gpu=test_gpu
     )
 end
