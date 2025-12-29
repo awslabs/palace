@@ -4,6 +4,10 @@
 name: 'Test Palace'
 description: 'Run Palace integration tests'
 inputs:
+  testing-on-build-runner:
+    description: 'Set to true if the tests are being run on the machine that built the software (avoids setups)'
+    required: false
+    default: 'false'
   toolchain:
     description: 'Toolchain to use'
     required: true
@@ -24,6 +28,7 @@ runs:
   using: 'composite'
   steps:
     - name: Setup environment
+      if: inputs.testing-on-build-runner != 'true'
       uses: ./.github/actions/setup-runner
       with:
         julia-version: 'release'
@@ -32,11 +37,13 @@ runs:
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
 
     - name: Download spack environment
+      if: inputs.testing-on-build-runner != 'true'
       uses: actions/download-artifact@v4
       with:
         name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
 
     - name: Install from cache
+      if: inputs.testing-on-build-runner != 'true'
       shell: bash
       run: spack -e . install --only-concrete --no-check-signature
 

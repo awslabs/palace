@@ -276,6 +276,7 @@ runs:
 
     - name: Upload spack environment
       uses: actions/upload-artifact@v4
+      if: inputs.run-regression-tests != 'true'
       with:
         name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
         path: |
@@ -291,6 +292,6 @@ runs:
       if: inputs.run-regression-tests == 'true'
       uses: ./.github/actions/run-regression-tests
       with:
-        toolchain: ${{ inputs.toolchain }}
+        testing-on-build-runner: 'true'
         variant: ${{ inputs.variant }}
-        math-libs: ${{ inputs.math-libs }}
+
