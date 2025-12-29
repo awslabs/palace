@@ -36,15 +36,16 @@ jobs:
           buildcache: true
           color: true
 
-        # https://github.com/spack/spack/issues/51505
-      - name: Overwrite builtin Palace package
-        run: |
-          # Bug with OpenMP and libceed
-          # TODO: Remove when https://github.com/spack/spack-packages/pull/2361 is merged
-          cp -r spack_repo/local/packages/libceed/package.py "$(spack location --repo builtin)/packages/libceed/"
+      # Workaround for https://github.com/spack/spack/issues/51505
+      # 
+      # Currently not needed because we have a full copy of mfem and libceed
+      # because of https://github.com/spack/spack-packages/pull/2361
 
-          cp -r spack_repo/local/packages/palace "$(spack location --repo builtin)/packages"
-          cp extern/patch/mfem/* "$(spack location --repo builtin)/packages/palace"
+      # - name: Overwrite builtin Palace package
+      #   if: needs.filter.outputs.test == 'true'
+      #   run: |
+      #     ln -s "$(spack location --repo builtin)/packages/libceed" spack_repo/local/packages/
+      #     ln -s "$(spack location --repo builtin)/packages/mfem" spack_repo/local/packages/
 
       - name: Setup Environment
         run: |
@@ -52,12 +53,12 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace@develop # we install this without a cache each time
+              - local.palace@develop # we install this without a cache each time
             view: false
             config:
               install_tree:
                 root: /opt/spack
-                padded_length: False
+                padded_length: false
             concretizer:
               reuse: false
               unify: true
@@ -66,6 +67,8 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
+            repos:
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true

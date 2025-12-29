@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 
-"""
+"""Test Matrix Generator
 
-Test Matrix Generator
-
-Generates pairwise test combinations using
+Generates pairwise test combinations used in spack.yml using
 [allpairspy](https://github.com/thombashi/allpairspy).
 
 ## Usage
@@ -14,18 +12,17 @@ pip install -U pyyaml allpairspy
 python generate_test_matrix.py
 ```
 
-It enforces certain contrains.
+It enforces certain constrains.
 
 """
 from allpairspy import AllPairs
 import yaml
 
 parameters = [
-    # Favor x86
-    ["x86", "x86", "arm"],
-    ["gcc", "llvm", "intel-oneapi-compilers", ],
+    ["x86", "x86", "arm"], # Favor x86
+    ["gcc", "llvm", "intel-oneapi-compilers"],
     ["openmpi", "mpich", "intel-oneapi-mpi"],
-    ["openblas", "amdblis", "armpl-gcc", "intel-oneapi-mkl", ],
+    ["openblas", "amdblis", "armpl-gcc", "intel-oneapi-mkl"],
     ["+shared", "~shared"],
     ["+int64", "~int64"],
     ["~openmp", "+openmp"],
@@ -73,5 +70,20 @@ for combo in AllPairs(parameters, filter_func=is_valid):
         "solver": combo[8],
         "cuda": combo[9],
     })
+
+# Add one case where we turn a multiple solvers (to check that there's no
+# problem with compiling multiple solvers)
+matrix.append({
+    "arch": "x86",
+    "compiler": "gcc",
+    "mpi": "openmpi",
+    "math-libs": "openblas",
+    "shared": "+shared",
+    "int": "+int64",
+    "openmp": "+openmp",
+    "eigensolver": "+slepc+arpack",
+    "solver": "+superlu-dist+mumps+sundials+strumpack",
+    "cuda": "~cuda"
+})
 
 print(yaml.dump(matrix, default_flow_style=False, sort_keys=False))
