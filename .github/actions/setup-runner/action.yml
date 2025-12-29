@@ -101,6 +101,21 @@ runs:
       run: |
         echo "$(realpath spack/bin)" >> "$GITHUB_PATH"
         echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
+
+    - name: Patch Spack Packages for known problems
+      shell: bash
+      run: |
+        PALACE_DIR=$PWD
+        cd $(spack location --repo builtin)
+        for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+          if [ -f "$patch" ]; then
+            echo "Applying patch: $patch"
+            git apply "$patch"
+          fi
+        done
+
+        # Workaround for https://github.com/spack/spack/issues/51505
+        ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
         
     - name: Install Julia
       id: setup-julia

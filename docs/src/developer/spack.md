@@ -50,10 +50,10 @@ built, you would change the spec to `palace@develop+tests`. Spack's variant
 system is quite flexible, so you can enable or disable features as needed for
 your development work.
 
-Before running the installation, it's worth taking advantage of packages that
-are already installed on your system. Spack calls these "external packages," and
-finding them can significantly speed up your build times. You can scan for them
-by running:
+Before running the installation, it's sometimes worth taking advantage of
+packages that are already installed on your system. Spack calls these "external
+packages," and finding them can significantly speed up your build times. You can
+scan for them by running:
 
 ```sh
 spack -e palace_spack external find --all
@@ -63,6 +63,13 @@ This command will modify your `spack.yaml` file to include references to system
 packages like compilers, MPI implementations, and common libraries. Spack will
 then use these instead of building them from scratch, which can save hours on
 the first build.
+
+!!! note "Risks of using externals"
+    
+    While using external packages can save hours of compilation time, Spack
+    does not always handle them correctly, and incompatibilities are possible.
+    If you find issues, you can try removing the external packages and letting
+    Spack compile everythin.
 
 Now you're ready to install *Palace* by running:
 
@@ -138,7 +145,7 @@ using the explicit `local.` prefix in examples for clarity.
 
 #### Working Around a Spack Bug with Patches
 
-There's currently a known issue in Spack version 1.1.0 that affects packages
+There's currently a known issue in Spack version <=1.2.0 that affects packages
 using patches when they come from non-builtin repositories (see the [bug
 report](https://github.com/spack/spack/issues/51505)). Since *Palace* uses
 patches, you'll run into this problem. The workaround is straightforward but a
@@ -171,3 +178,51 @@ With your local repository configured, you can now iterate on *Palace*'s
 *Palace* again. You can also use `spack spec local.palace@develop` to see how
 Spack would resolve dependencies without actually building anything, which is
 useful for catching errors early.
+
+### Working with source code patches
+
+*Palace* requires some patches in some of the dependencies (primarily MFEM).
+Spack handles this, but there are a few common pitfalls.
+
+First, patches are evaluated at concretization. This is because patches are
+embedded in the hash, which is computed at concretization. If you are iterating
+on patches, make sure to re-concretize your environment.
+
+Second, *Palace* depends on a specific commit of MFEM (defined in the
+`package.py` or in the `ExternalGitTags.cmake`). `spack develop mfem` does not
+respect this commit restriction. In most cases, this means that you have to
+manually git checkout the specific hash for mfem in the mfem folder so that
+patches apply cleanly.
+
+### Working with patches for `package.py` files
+
+When working with Spack, it sometimes happens that we find problems in upstream
+`package.py` files. When this happens, we open pull requests to
+[`spack-packages`](https://github.com/spack/spack-packages) to fix the issue.
+However, having those pull requests merged can take weeks. To ensure that our
+continuous integration works, we manually apply those PR as part setting Spack
+up in our runners (the `setup-runner` workflow).
+
+If you are working with Spack and *Palace* locally, you might need to apply the
+same patches. To apply a patch in `spack_repo/patches`:
+
+```bash
+cd $(spack location --repo builtin)
+git apply /path/to/palace/spack_repo/patches/prNUM.diff
+```
+
+Note that if you do so, your `builtin` repository will no longer
+be clean and you will not be able to update `spack-packages` as easily.
+
+Instead, if you some patches applied and need to upgrade the recipes, the
+easiest way is probably to remove all the patches and re-apply the ones you need:
+
+```bash
+cd $(spack location --repo builtin)
+git fetch
+git reset --hard origin/develop
+# Apply relevant patches
+```
+
+Patches are often more less common build options, so you might not need all of
+them.

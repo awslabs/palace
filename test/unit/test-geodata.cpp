@@ -7,6 +7,8 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "test-helpers.hpp"
+
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
 
@@ -21,6 +23,41 @@ namespace palace
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Catch::Matchers;
+
+// TODO: Add this test when we can access MFEM_DATA_PATH from Spack
+// This requires MFEM to move to a CMake-based build system for spack.
+//
+// TEST_CASE("ReferenceTetrahedron", "[geodata][Serial]")
+// {
+//   auto tet1 = SingleTetMesh();
+//   auto ref_tet_path = fs::path(MFEM_DATA_PATH) / "ref-tetrahedron.mesh";
+//   mfem::Mesh tet2(ref_tet_path.string());
+
+//   REQUIRE(tet1.GetNV() == tet2.GetNV());
+//   REQUIRE(tet1.GetNE() == tet2.GetNE());
+//   for (int i = 0; i < tet1.GetNV(); i++)
+//   {
+//     REQUIRE_THAT(tet1.GetVertex(i)[0], WithinAbs(tet2.GetVertex(i)[0], 1.0e-12));
+//     REQUIRE_THAT(tet1.GetVertex(i)[1], WithinAbs(tet2.GetVertex(i)[1], 1.0e-12));
+//     REQUIRE_THAT(tet1.GetVertex(i)[2], WithinAbs(tet2.GetVertex(i)[2], 1.0e-12));
+//   }
+//   for (int i = 0; i < tet1.GetNE(); i++)
+//   {
+//     for (int j = 0; j < 4; j++)
+//     {
+//       CHECK(tet1.GetElement(i)->GetVertices()[j] ==
+//       tet2.GetElement(i)->GetVertices()[j]);
+//     }
+//   }
+//   for (int i = 0; i < tet1.GetNBE(); i++)
+//   {
+//     for (int j = 0; j < 3; j++)
+//     {
+//       CHECK(tet1.GetBdrElement(i)->GetVertices()[j] ==
+//               tet2.GetBdrElement(i)->GetVertices()[j]);
+//     }
+//   }
+// }
 
 TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 {
@@ -147,8 +184,8 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 
 TEST_CASE("TetToHex", "[geodata][Serial]")
 {
-  auto ref_tet_path = fs::path(PALACE_TEST_MESH_DIR) / "ref-tetrahedron.mesh";
-  mfem::Mesh single_tet(ref_tet_path.string());
+
+  mfem::Mesh single_tet(SingleTetMesh());
 
   SECTION("Linear")
   {

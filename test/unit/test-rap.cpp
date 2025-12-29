@@ -5,6 +5,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 
+#include "test-helpers.hpp"
+
 #include "fem/bilinearform.hpp"
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
@@ -26,9 +28,9 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   IoData iodata(units);
   iodata.domains.materials.emplace_back().attributes = {1};
 
-  auto ref_tet_path = fs::path(PALACE_TEST_MESH_DIR) / "ref-tetrahedron.mesh";
   auto comm = Mpi::World();
-  mfem::Mesh mfem_mesh(ref_tet_path.string());
+
+  mfem::Mesh mfem_mesh(SingleTetMesh());
   while (mfem_mesh.GetNE() < Mpi::Size(comm))
   {
     mfem_mesh.UniformRefinement();  // avoid empty partition
