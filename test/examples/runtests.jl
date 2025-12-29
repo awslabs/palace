@@ -89,6 +89,8 @@ cases = args["test-cases"]
 @info "Starting regression tests using `$palace` on $numprocs core$(numprocs > 1 ? "s" : "") $(numthreads > 1 ? "with $(numthreads) threads" : "")"
 @info "Running test cases: $(join(cases, ", "))"
 
+start_time = time()
+
 reltol = 1.0e-4
 abstol = 1.0e-16
 
@@ -492,3 +494,6 @@ if "adapter/slp" in cases
         eigen_solver=eigensolver
     )
 end
+
+total_time = time() - start_time
+@info "Total runtime: $(round(total_time, digits=2)) seconds"

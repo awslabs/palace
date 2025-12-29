@@ -27,7 +27,10 @@ runs:
       uses: ./.github/actions/setup-runner
       with:
         julia-version: 'release'
+        # Spack develop because we want to have access to the most recent
+        # version of spack-packages
         spack-version: 'develop'
+        # LLVM 19 because it is the latest supported by CUDA 12.9
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
 
@@ -53,6 +56,9 @@ runs:
           CUDA_ARGS=""
         fi
 
+        # As of version 1.2.0-alpha, the spack concretizer hangs when using flang.
+        # Also https://github.com/libxsmm/libxsmm/issues/996
+        # TODO: Try again in the future to see if we can use it.
         if [[ "${{ inputs.toolchain }}" == "llvm" ]]; then
           FORTRAN_COMPILER="gcc"
         else
@@ -79,10 +85,14 @@ runs:
           config:
             install_tree:
               root: ${HOME}/opt/spack
+              # We add a lot of padding to support better cache relocation
+              # https://spack.readthedocs.io/en/latest/binary_caches.html#relocation
               padded_length: 256
           concretizer:
             reuse: false
             unify: true
+            # generic cpu target so that we can increase cache hits
+            # (we also do not care too much about hyper-optimal performance)
             targets:
               granularity: generic
           packages:
@@ -100,6 +110,9 @@ runs:
               require: [${C_CXX_COMPILER}]
             fortran:
               require: [${FORTRAN_COMPILER}]
+            # Metis is verify fragile
+            # -fPIC seems to be required because metis always compiles some shared objects
+            # -lc seems to be required for intel compilers
             metis:
               require: cflags=-fPIC cppflags=-fPIC ldflags=-lc
             parmetis:
