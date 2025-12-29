@@ -269,6 +269,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
         ]
 
+        if self.spec.satisfies("@0.16:"):
+            # TODO: Remove when MFEM moves to cmake
+            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
+
         # We guarantee that there are arch specs with conflicts above
         if self.spec.satisfies("+cuda"):
             args.append(
