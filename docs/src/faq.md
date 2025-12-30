@@ -220,7 +220,8 @@ error like the following,
      required because palace requested explicitly
 ```
 
-chances are that you do not have a Fortran compiler.
+chances are that you do not have a Fortran compiler. This is a common occurrence
+on Mac's, which does not ship with a Fortran compiler by default.
 
 Some of the dependencies of *Palace* require a Fortran compiler, and Spack
 disables such dependencies when a suitable compiler is not found, leading to the
@@ -243,13 +244,18 @@ previous command (e.g., `spack compiler info gcc`). This will provide extra info
 on the available compilers, for example:
 
 ```
-[e]  gcc@=14.3.0~binutils+bootstrap~graphite~mold~nvptx~piclibs~profiled~strip build_system=autotools build_type=RelWithDebInfo languages:='c,c++,fortran' platform=darwin os=tahoe target=aarch64
+[e]  apple-clang@=17.0.0 build_system=bundle platform=darwin os=tahoe target=aarch64
 
-  prefix: /opt/homebrew
+  prefix: /usr
   compilers:
-    cc: /opt/homebrew/bin/gcc-14
-    cxx: /opt/homebrew/bin/g++-14
-    fortran: /opt/homebrew/bin/gfortran-14
+    cc: /usr/bin/clang
+    cxx: /usr/bin/clang++
+    fortran: None
 ```
 
-You have a Fortran compiler is `fortran` is mentioned in the output of `spack compiler info` for one of your toolchains, as in the example above.
+You have a Fortran compiler if `fortran` is mentioned in the output of `spack compiler info` with output that is not `None`.
+
+If you do not have a Fortran compiler, you can install `gfortran` with your
+package manager (e.g., `apt install gfortran` or `brew install gfortran`). Then,
+call `spack compiler find` to update the list of compilers that Spack is aware
+of.
