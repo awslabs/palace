@@ -36,17 +36,21 @@ jobs:
           buildcache: true
           color: true
 
-      # Workaround for https://github.com/spack/spack/issues/51505
-      # 
-      # Currently not needed because we have a full copy of mfem and libceed
-      # because of https://github.com/spack/spack-packages/pull/2361
-
-      # - name: Overwrite builtin Palace package
-      #   if: needs.filter.outputs.test == 'true'
-      #   run: |
-      #     ln -s "$(spack location --repo builtin)/packages/libceed" spack_repo/local/packages/
-      #     ln -s "$(spack location --repo builtin)/packages/mfem" spack_repo/local/packages/
-
+      - name: Patch Spack Packages for known problems
+        shell: bash
+        run: |
+          PALACE_DIR=$PWD
+          cd $(spack location --repo builtin)
+          for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $patch"
+              git apply "$patch"
+            fi
+          done
+  
+          # Workaround for https://github.com/spack/spack/issues/51505
+          ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+  
       - name: Setup Environment
         run: |
           # Spack.yaml with most / all settings configured
@@ -106,21 +110,6 @@ jobs:
       - name: Bootstrap Spack
         run: spack  -e . bootstrap now
 
-      - name: Patch Spack Packages for known problems
-        shell: bash
-        run: |
-          PALACE_DIR=$PWD
-          cd $(spack location --repo builtin)
-          for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
-            if [ -f "$patch" ]; then
-              echo "Applying patch: $patch"
-              git apply "$patch"
-            fi
-          done
-  
-          # Workaround for https://github.com/spack/spack/issues/51505
-          ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
-  
       - name: Concretize Spack
         env:
           PALACE_REF: ${{ github.head_ref || github.ref_name }}
