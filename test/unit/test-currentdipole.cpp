@@ -77,7 +77,6 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
   std::complex<double> factor1 =
       exp_ikr * Ids / (4.0 * M_PI * 1i * omega * epsilon0_ * r * r * r);
   factor1 = units.Nondimensionalize<Units::ValueType::FIELD_E>(factor1);
-  factor1 *= 1.e6; // TODO: Forcing the units to match
 
   std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
@@ -321,14 +320,15 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
 TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
 {
-  double freq_Hz = 350e6;  // GENERATE(35e6, 300e6, 50e6);
+  double freq_Hz = 35e6;  // GENERATE(35e6, 300e6, 50e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
-  int resolution = 21;
+  int resolution = 21;  // TODO: Switch back to 20 after fixing the vertex issue
+  // TODO: Try TETRAHEDRON after fixing the vertex issue
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-          resolution, resolution, resolution, mfem::Element::HEXAHEDRON)); // TETRAHEDRON
+          resolution, resolution, resolution, mfem::Element::HEXAHEDRON));
 
   // Offset the cube to center the origin
   serial_mesh->Transform(
