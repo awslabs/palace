@@ -198,3 +198,58 @@ spack install palace@0.14.0
 If you prefer to keep both the old and new versions (for example, to maintain
 compatibility with existing projects), you can skip step 3 and just install the
 new version alongside the old one. You can then use `spack load palace@<version>` to switch between versions as needed.
+
+## I called `spack install palace` but I get an error saying that I need at least one solver
+
+If you followed the instructions to install *Palace* with Spack and found an
+error like the following,
+
+```
+==> Error: failed to concretize palace for the following reasons:
+   1. palace: Need at least one sparse direct solver
+   2. palace: At least one eigenvalue solver is required
+   3. palace: Need at least one sparse direct solver
+    required because conflict is triggered when ~mumps~strumpack~superlu-dist 
+     required because palace requested explicitly 
+    required because conflict constraint
+     required because palace requested explicitly 
+   4. palace: At least one eigenvalue solver is required
+    required because conflict is triggered when ~arpack~slepc 
+     required because palace requested explicitly 
+    required because conflict constraint
+     required because palace requested explicitly
+```
+
+chances are that you do not have a Fortran compiler.
+
+Some of the dependencies of *Palace* require a Fortran compiler, and Spack
+disables such dependencies when a suitable compiler is not found, leading to the
+error message posted above.
+
+To check that this is the case, call
+
+```
+spack compiler list
+```
+
+This lists the compiler that Spack located. Then, call
+
+```
+spack compiler info TOOLCHAIN_NAME
+```
+
+where `TOOLCHAIN_NAME` is the name of the compiler listed in the output of the
+previous command (e.g., `spack compiler info gcc`). This will provide extra information
+on the available compilers, for example:
+
+```
+[e]  gcc@=14.3.0~binutils+bootstrap~graphite~mold~nvptx~piclibs~profiled~strip build_system=autotools build_type=RelWithDebInfo languages:='c,c++,fortran' platform=darwin os=tahoe target=aarch64
+
+  prefix: /opt/homebrew
+  compilers:
+    cc: /opt/homebrew/bin/gcc-14
+    cxx: /opt/homebrew/bin/g++-14
+    fortran: /opt/homebrew/bin/gfortran-14
+```
+
+You have a Fortran compiler is `fortran` is mentioned in the output of `spack compiler info` for one of your toolchains, as in the example above.
