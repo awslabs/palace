@@ -325,10 +325,10 @@ TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][S
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
-  int resolution = 20;
+  int resolution = 21;
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+          resolution, resolution, resolution, mfem::Element::HEXAHEDRON)); // TETRAHEDRON
 
   // Offset the cube to center the origin
   serial_mesh->Transform(
