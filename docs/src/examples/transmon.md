@@ -38,7 +38,7 @@ example](https://aws-cqc.github.io/DeviceLayout.jl/stable/examples/singletransmo
 The system consists of three main components: a transmon qubit, a quarter-wave
 coplanar waveguide resonator, and a feedline for signal input and output. The
 transmon is capacitively coupled to the resonator through a "claw" structure
-that extends around the transmon islands, while the resonator couples to the
+that extends around the transmon cutout, while the resonator couples to the
 feedline to enable readout of the qubit state.
 
 The image below shows the meshed geometry of the system. The metal structures
@@ -62,7 +62,7 @@ properties (see,
 [`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D)
 for more information on how to configure anisotropic materials).
 [`config["Boundaries"]["Absorbing"]`](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D)
-boundary conditions at the simulation box edges capture electromagnetic
+boundary conditions on the external boundaries of the simulation box capture electromagnetic
 radiation and prevent artificial reflections.
 
 The JSON configuration file and mesh are generated automatically by the
@@ -103,7 +103,7 @@ single_transmon(
 ```
 
 Beyond the physical dimensions, the `save_mesh` and `save_gds` options enable
-output of the mesh file for simulation and a [GDS
+output of a mesh file for simulation and a [GDS
 file](https://en.wikipedia.org/wiki/GDSII) for fabrication, respectively. This
 integration between design, simulation, and fabrication workflows demonstrates
 the power of automated quantum device design tools.
@@ -237,9 +237,9 @@ include_example_file("transmon", "error-indicators.csv") #hide
 ```
 
 These error indicators provide metrics for estimating numerical accuracy across
-the computational domain, with the `Norm` column representing the L2 norm of the
-error estimate. When reducing to first order, the error norm increases by a
-factor of two, and the computed eigenfrequencies deviate noticeably from the
-converged values. While first-order simulations are valuable for rapid
-prototyping and debugging, second order (or higher) is generally recommended for
-accurate results.
+the computational domain, with the `Norm` column representing a measure related
+to the H(curl) seminorm of the solution error. When reducing to first order, the
+error norm increases by a factor of two, and the computed eigenfrequencies
+deviate noticeably from the converged values. While first-order simulations are
+valuable for rapid prototyping and debugging, second order (or higher) is
+generally recommended for accurate results.

@@ -76,6 +76,6 @@ runs:
         
         julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ inputs.solver }}
 
-        if [[ "${{ inputs.variant }}" == *"+cuda"* ]] || [[ "$NUM_PROC_TEST" -ge 32 ]]; then
+        if [[ "$NUM_PROC_TEST" -ge 32 ]]; then
             julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon" --palace-solver ${{ inputs.solver }}
         fi

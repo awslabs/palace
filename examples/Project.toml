@@ -16,4 +16,4 @@ Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [compat]
-DeviceLayout = "=1.6.0"
+DeviceLayout = "=1.7.0"

@@ -125,7 +125,7 @@ function generate_transmon(;
     config["Solver"]["Linear"]["Tol"] = 1e-12
 
     # Get closer to expected values to speed up convergence.
-    config["Solver"]["Eigenmode"]["Target"] = 3
+    config["Solver"]["Eigenmode"]["Target"] = 4
 
     # Enable GridFunction output for GLVis visualization (Used in the
     # documentation).

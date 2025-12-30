@@ -49,7 +49,7 @@ pv.ColorBy(display2, ('POINTS', 'log_U_m'))
 
 ctf = pv.GetColorTransferFunction('log_U_m')
 colorbar = pv.GetScalarBar(ctf, view1)
-colorbar.Title = 'U_m (J/m³)'
+colorbar.Title = 'log10[U_m (J/m³)]'
 colorbar.ComponentTitle = ''
 
 # Add titles.
