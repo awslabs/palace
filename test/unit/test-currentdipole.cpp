@@ -92,7 +92,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
 
-  Units units(1., 1.);  // units(0.496, 1.453);
+  Units units(1.5, 0.5);
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
@@ -100,8 +100,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   dipole_config.direction = {1, 0, 0};
   dipole_config.center = {0.0, 0.0, 0.0};
   iodata.boundaries.farfield.attributes = attributes;
-  iodata.boundaries.farfield.order = 2;
+  iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
   iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.linear.max_it = 1000;
+  iodata.solver.linear.tol = 1e-10;
   iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
@@ -116,8 +118,8 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   mesh_vec.push_back(std::make_unique<Mesh>(palace_mesh));
   SpaceOperator space_op(iodata, mesh_vec);
 
-  double omega =
-      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+  double omega = 2.0 * M_PI *
+                 iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -151,14 +153,14 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   // Create analytical solution coefficients.
   auto E_exact_real = [=](const mfem::Vector &x, mfem::Vector &E_out)
   {
-    auto E_complex = ComputeCurrentDipoleENonDim(x, units, Ids, freq_Hz);
+    auto E_complex = ComputeCurrentDipoleENonDim(x, iodata.units, Ids, freq_Hz);
     E_out(0) = std::real(E_complex[0]);
     E_out(1) = std::real(E_complex[1]);
     E_out(2) = std::real(E_complex[2]);
   };
   auto E_exact_imag = [=](const mfem::Vector &x, mfem::Vector &E_out)
   {
-    auto E_complex = ComputeCurrentDipoleENonDim(x, units, Ids, freq_Hz);
+    auto E_complex = ComputeCurrentDipoleENonDim(x, iodata.units, Ids, freq_Hz);
     E_out(0) = std::imag(E_complex[0]);
     E_out(1) = std::imag(E_complex[1]);
     E_out(2) = std::imag(E_complex[2]);
@@ -196,27 +198,48 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   double relative_error = total_error / total_exact_norm;
 
   // ------------------------Debugging--------------------------------
+  std::cout << "\nTesting frequency: " << freq_Hz << " \n";
+
+  // Get the scaling factor to automatically adjust test points for any units configuration
+  double scaling_factor = iodata.units.GetMeshLengthRelativeScale();  // Lc_m / L0_m
+  double point_scale = 1.0 / scaling_factor;
+  std::cout << "\nMesh scaling factor (Lc/L0): " << scaling_factor;
+  std::cout << "\nTest points scaled by: " << point_scale;
+
   // Debug analytical field values at key locations to understand the field pattern
   std::cout << "\n=== Analytical Field Debug at Key Points ===";
-  std::vector<std::pair<mfem::Vector, std::string>> test_points = {
+
+  // Define base test points, then scale them to fit within mesh bounds
+  std::vector<std::pair<mfem::Vector, std::string>> base_test_points = {
       {mfem::Vector({0.0, 0.0, 0.0}), "Origin"},
       {mfem::Vector({0.02, 0.0, 0.0}), "+0.02 origin on x-axis"},
-      {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1m from origin on x-axis"},
+      {mfem::Vector({-0.1, 0.0, 0.0}), "-0.1 from origin on x-axis"},
       {mfem::Vector({-0.2, 0.3, 0.4}), "{-.2, .3, .4} from origin"},
-      {mfem::Vector({0.0, 0.0, -0.495}), "-0.495 field on z-axis"},
-      {mfem::Vector({0.0, 0.495, 0.0}), "+0.495 on y-axis"},
-      {mfem::Vector({0.495, 0.0, 0.0}), "+0.495m from origin on x-axis"},
-      {mfem::Vector({0.0, 0.0, -0.5}), "-0.5m from origin on z-axis"},
-
+      {mfem::Vector({0.0, 0.2, 0.0}), "0.2 field on y-axis"},
+      {mfem::Vector({0.0, 0.0, -0.3}), "-0.3 field on z-axis"},
+      {mfem::Vector({0.4, 0.0, 0.0}), "0.4 field on x-axis"},
+      {mfem::Vector({0.0, 0.45, 0.0}), "+0.45 on y-axis"},
+      {mfem::Vector({0.0, 0.0, 0.47}), "+0.47 on z-axis"},
+      {mfem::Vector({0.495, 0.0, 0.0}), "+0.495 from origin on x-axis"},
+      {mfem::Vector({0.0, 0.0, -0.5}), "-0.5 from origin on z-axis"},
   };
+
+  // Scale the test points to fit within mesh bounds for the given units
+  std::vector<std::pair<mfem::Vector, std::string>> test_points;
+  for (const auto &[base_pt, description] : base_test_points)
+  {
+    mfem::Vector scaled_pt = base_pt;
+    scaled_pt *= point_scale;
+    test_points.emplace_back(scaled_pt, description + " (scaled)");
+  }
 
   for (const auto &[pt, description] : test_points)
   {
     double r_nondim = pt.Norml2();
-    double r_dim = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
+    double r_dim = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
 
     // Evaluate nondimensional analytical solution
-    auto E_analytical = ComputeCurrentDipoleENonDim(pt, units, Ids, freq_Hz);
+    auto E_analytical = ComputeCurrentDipoleENonDim(pt, iodata.units, Ids, freq_Hz);
 
     double analytical_magnitude =
         std::sqrt(std::real(E_analytical[0] * std::conj(E_analytical[0])) +
@@ -291,9 +314,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
       std::cout << "\n    |E| ratio (Palace/Analytical): "
                 << palace_magnitude / analytical_magnitude;
     }
-    std::cout << "\n  Field decay: |E| ~ 1/r^"
-              << (r_dim > 0.5 ? std::log(analytical_magnitude) / std::log(1.0 / r_dim)
-                              : 0.0);
   }
   std::cout << "\n============================================\n";
 
@@ -312,7 +332,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
             << error_real / exact_norm_real;
   std::cout << "\nImag part: || E_h_Im - E_Im || / ||E_Im|| = "
             << error_imag / exact_norm_imag;
-  std::cout << "\nTotal:     || E_h - E || / ||E|| = " << relative_error;
+  std::cout << "\nTotal:     || E_h - E || / ||E|| = " << relative_error << "\n\n";
   // -----------------------------------------------------------------------
 
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
@@ -320,7 +340,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
 TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
 {
-  double freq_Hz = 35e6;  // GENERATE(35e6, 300e6, 50e6);
+  double freq_Hz = 700e6;  // GENERATE(350e6, 500e6, 700e6);
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]

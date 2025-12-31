@@ -28,9 +28,10 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
   MFEM_VERIFY(dir_norm > 0.0, "Current dipole direction magnitude must be positive!");
   direction /= dir_norm;  // Normalize to unit vector
 
-  // Nondimensionalize moment: [A·m] = [CURRENT] × [LENGTH]
-  moment = units.Nondimensionalize<Units::ValueType::CURRENT>(
-      units.Nondimensionalize<Units::ValueType::LENGTH>(data.moment));
+  // Nondimensionalize moment [A·m]
+  double current_scale = units.Nondimensionalize<Units::ValueType::CURRENT>(1.0);
+  double length_scale = units.Nondimensionalize<Units::ValueType::LENGTH>(1.0);
+  moment = data.moment * current_scale * length_scale;
 
   // Set up dipole center position
   center.SetSize(mesh.SpaceDimension());

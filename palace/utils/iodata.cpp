@@ -149,7 +149,8 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
-IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
+IoData::IoData(const char *filename, bool print)
+  : units(1.0, 1.0), init(false), explicit_units(false)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
   // ranges.
@@ -456,15 +457,24 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 
   // Calculate the reference length and time. A user specified model.Lc is in mesh length
   // units.
+  bool auto_calculate_units = false;
   if (model.Lc <= 0.0)
   {
     mfem::Vector bbmin, bbmax;
     mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
     bbmax -= bbmin;
     model.Lc = *std::max_element(bbmax.begin(), bbmax.end());
+    auto_calculate_units = true;
   }
-  // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
-  units = Units(model.L0, model.Lc * model.L0);
+
+  // Only override units if they weren't explicitly provided AND we auto-calculated Lc from
+  // mesh bounds This preserves explicitly provided custom units for testing while still
+  // allowing auto-calculation when no explicit Lc is provided
+  if (!explicit_units && auto_calculate_units)
+  {
+    // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
+    units = Units(model.L0, model.Lc * model.L0);
+  }
 
   // Mesh refinement parameters.
   auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
