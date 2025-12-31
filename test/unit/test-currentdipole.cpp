@@ -92,7 +92,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
 
-  Units units(1.5, 0.5);
+  Units units(1.0, 10.);
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
@@ -350,14 +350,29 @@ TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][S
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
           resolution, resolution, resolution, mfem::Element::HEXAHEDRON));
 
-  // Offset the cube to center the origin
+  // Transform cube to sphere and center the origin
   serial_mesh->Transform(
       [](const mfem::Vector &x, mfem::Vector &p)
       {
-        p = x;
-        p(0) -= 0.5;  // Transform [0,1] -> [-0.5,0.5]
-        p(1) -= 0.5;
-        p(2) -= 0.5;
+        // Center cube: [0,1]³ → [-1,1]³
+        double xi = 2.0 * x(0) - 1.0;
+        double eta = 2.0 * x(1) - 1.0;
+        double zeta = 2.0 * x(2) - 1.0;
+
+        double r = std::sqrt(xi * xi + eta * eta + zeta * zeta);
+        double t = std::max({std::abs(xi), std::abs(eta), std::abs(zeta)});
+
+        if (r > 1e-12 && t > 1e-12)
+        {
+          double scale = t / r;
+          p(0) = xi * scale;
+          p(1) = eta * scale;
+          p(2) = zeta * scale;
+        }
+        else
+        {
+          p = 0.0;
+        }
       });
 
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes);
