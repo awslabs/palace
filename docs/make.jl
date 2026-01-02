@@ -6,6 +6,10 @@
 
 using Documenter
 
+# Determine which git ref the docs are built from
+# Uses the GitHub Actions ref when available, otherwise defaults to main
+git_ref = get(ENV, "GITHUB_REF_NAME", "main")
+
 makedocs(
     format=Documenter.HTML(
         # Always use clean URLs so that raw HTML works, view local builds using a local
@@ -17,6 +21,7 @@ makedocs(
     ),
     sitename="Palace",
     authors="The Palace Developers and Maintainers, palace-maint@amazon.com",
+    repo="https://github.com/awslabs/palace/blob/$(git_ref)",
     pages=[
         "Home" => "index.md",
         "Quick Start" => "quick.md",
