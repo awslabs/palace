@@ -33,6 +33,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
@@ -92,7 +93,8 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
 
-  Units units(1.0, 10.);
+  // To make the mesh larger, we can increase the first input of Units instead of creating a new mesh.
+  Units units(5.0, 1.0);
   IoData iodata{units};
   iodata.domains.materials.emplace_back().attributes = {1};
   auto &dipole_config = iodata.domains.current_dipole[1];
@@ -104,6 +106,11 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.solver.linear.max_it = 1000;
   iodata.solver.linear.tol = 1e-10;
+
+  // Enable ParaView output for visualization
+  iodata.solver.driven.save_indices = {0};
+  iodata.problem.output_formats.paraview = true;
+
   iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
@@ -150,6 +157,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   E_field.Real().SetFromTrueDofs(E.Real());
   E_field.Imag().SetFromTrueDofs(E.Imag());
 
+  // Create analytical solution GridFunction for visualization
+  GridFunction E_analytical(space_op.GetNDSpace(), true);
+  E_analytical = 0.0;
+
   // Create analytical solution coefficients.
   auto E_exact_real = [=](const mfem::Vector &x, mfem::Vector &E_out)
   {
@@ -167,6 +178,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   };
   mfem::VectorFunctionCoefficient E_exact_real_coef(dim, E_exact_real);
   mfem::VectorFunctionCoefficient E_exact_imag_coef(dim, E_exact_imag);
+
+  // Project analytical solution onto GridFunction for visualization
+  E_analytical.Real().ProjectCoefficient(E_exact_real_coef);
+  E_analytical.Imag().ProjectCoefficient(E_exact_imag_coef);
 
   // Higher-order integration for accuracy
   int order = 3;
@@ -196,6 +211,76 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
   // Compute relative error
   double relative_error = total_error / total_exact_norm;
+
+  // ======================== VISUALIZATION ========================
+  // Write both numerical and analytical solutions to ParaView
+  {
+    // Compute error field
+    GridFunction E_error(space_op.GetNDSpace(), true);
+    E_error.Real() = E_field.Real();
+    E_error.Real() -= E_analytical.Real();
+    E_error.Imag() = E_field.Imag();
+    E_error.Imag() -= E_analytical.Imag();
+
+    // Compute relative error field (pointwise)
+    GridFunction E_rel_error(space_op.GetNDSpace(), true);
+    E_rel_error = 0.0;
+
+    // For each DOF, compute relative error separately for real and imaginary parts
+    auto &E_err_real = E_error.Real();
+    auto &E_err_imag = E_error.Imag();
+    auto &E_ana_real = E_analytical.Real();
+    auto &E_ana_imag = E_analytical.Imag();
+    auto &E_rel_real = E_rel_error.Real();
+    auto &E_rel_imag = E_rel_error.Imag();
+
+    for (int i = 0; i < E_err_real.Size(); i++)
+    {
+      // Relative error for real part
+      double ana_real_mag = std::abs(E_ana_real(i));
+      if (ana_real_mag > 1e-14)
+      {
+        E_rel_real(i) = E_err_real(i) / ana_real_mag;
+      }
+
+      // Relative error for imaginary part
+      double ana_imag_mag = std::abs(E_ana_imag(i));
+      if (ana_imag_mag > 1e-14)
+      {
+        E_rel_imag(i) = E_err_imag(i) / ana_imag_mag;
+      }
+    }
+
+    auto &mesh = palace_mesh.Get();
+    mfem::ParaViewDataCollection paraview_dc("CurrentDipoleComparison", &mesh);
+    paraview_dc.SetPrefixPath("ParaView");
+    paraview_dc.SetLevelsOfDetail(order);
+    paraview_dc.SetDataFormat(mfem::VTKFormat::BINARY);
+    paraview_dc.SetHighOrderOutput(true);
+    paraview_dc.SetCycle(0);
+    paraview_dc.SetTime(freq_Hz);
+
+    // Register numerical solution
+    paraview_dc.RegisterField("E_numerical_real", &E_field.Real());
+    paraview_dc.RegisterField("E_numerical_imag", &E_field.Imag());
+
+    // Register analytical solution
+    paraview_dc.RegisterField("E_analytical_real", &E_analytical.Real());
+    paraview_dc.RegisterField("E_analytical_imag", &E_analytical.Imag());
+
+    // Register error fields
+    paraview_dc.RegisterField("E_error_real", &E_error.Real());
+    paraview_dc.RegisterField("E_error_imag", &E_error.Imag());
+
+    // Register relative error (separate for real and imaginary parts)
+    paraview_dc.RegisterField("E_relative_error_real", &E_rel_error.Real());
+    paraview_dc.RegisterField("E_relative_error_imag", &E_rel_error.Imag());
+
+    paraview_dc.Save();
+
+    std::cout << "\n=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===\n";
+  }
+  // ===============================================================
 
   // ------------------------Debugging--------------------------------
   std::cout << "\nTesting frequency: " << freq_Hz << " \n";
@@ -340,7 +425,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
 TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
 {
-  double freq_Hz = 700e6;  // GENERATE(350e6, 500e6, 700e6);
+  double freq_Hz = 350e6;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
