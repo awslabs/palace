@@ -44,14 +44,14 @@ There are two different options for modeling the termination at the ends of the 
 Views of the mesh boundaries for these two configurations are shown below. In both cases the
 computational domain is discretized using an unstructured tetrahedral mesh. The mesh files
 are
-[`mesh/cpw_wave_0.msh`](https://github.com/awslabs/palace/blob/main/examples/cpw/mesh/cpw_wave_0.msh)
+[`mesh/cpw_wave_0.msh`](examples/cpw/mesh/cpw_wave_0.msh)
 and
-[`mesh/cpw_lumped_0.msh`](https://github.com/awslabs/palace/blob/main/examples/cpw/mesh/cpw_lumped_0.msh),
+[`mesh/cpw_lumped_0.msh`](examples/cpw/mesh/cpw_lumped_0.msh),
 respectively. In addition, this example includes two mesh files which include the thickness
 of the metal trace:
-[`mesh/cpw_wave.msh`](https://github.com/awslabs/palace/blob/main/examples/cpw/mesh/cpw_wave.msh)
+[`mesh/cpw_wave.msh`](examples/cpw/mesh/cpw_wave.msh)
 and
-[`mesh/cpw_lumped.msh`](https://github.com/awslabs/palace/blob/main/examples/cpw/mesh/cpw_lumped.msh).
+[`mesh/cpw_lumped.msh`](examples/cpw/mesh/cpw_lumped.msh).
 
 ```@raw html
 <br/><p align="center">
@@ -71,11 +71,11 @@ desired frequency band:
 
 This leads to four possible configurations, for which there are four configuration files in
 the example directory:
-[`cpw_lumped_uniform.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_lumped_uniform.json),
-[`cpw_lumped_adaptive.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_lumped_adaptive.json),
-[`cpw_wave_uniform.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_wave_uniform.json),
+[`cpw_lumped_uniform.json`](examples/cpw/cpw_lumped_uniform.json),
+[`cpw_lumped_adaptive.json`](examples/cpw/cpw_lumped_adaptive.json),
+[`cpw_wave_uniform.json`](examples/cpw/cpw_wave_uniform.json),
 and
-[`cpw_wave_adaptive.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_wave_adaptive.json).
+[`cpw_wave_adaptive.json`](examples/cpw/cpw_wave_adaptive.json).
 
 The frequency response is computed for the band ``f\in[2.0,32.0]\text{ GHz}``. For the
 uniform sweep, a step size of ``\Delta f=6.0\text{ GHz}`` is used, while the adaptive sweep
