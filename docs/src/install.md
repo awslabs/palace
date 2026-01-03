@@ -55,8 +55,8 @@ for an introduction.
 for HPC environments
 supporting the Singularity/Apptainer container system. To build the container using the
 provided definition file in the
-[singularity/](https://github.com/awslabs/palace/blob/main/singularity) directory, first
-[set up Singularity/Apptainer on your system](https://github.com/apptainer/apptainer/blob/main/INSTALL.md)
+[singularity/](singularity) directory, first
+[set up Singularity/Apptainer on your system](INSTALL.md)
 and subsequently run:
 
 ```bash
