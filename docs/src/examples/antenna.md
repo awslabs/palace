@@ -63,9 +63,9 @@ tetrahedral elements with appropriate refinement near the antenna structure. The
 element size increases with distance from the antenna, but is capped to ensure
 the wavelength is resolved by at least a few elements per wavelength. The mesh
 file is
-[`mesh/antenna.msh`](https://github.com/awslabs/palace/blob/main/examples/antenna/mesh/antenna.msh)
+[`mesh/antenna.msh`](examples/antenna/mesh/antenna.msh)
 and is generated using the Julia script
-[`mesh/mesh.jl`](https://github.com/awslabs/palace/blob/main/examples/antenna/mesh/mesh.jl).
+[`mesh/mesh.jl`](examples/antenna/mesh/mesh.jl).
 
 A visualization of the model and the resulting mesh is shown below.
 
