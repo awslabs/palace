@@ -294,9 +294,9 @@ untested code paths.
 
 In addition to unit tests, *Palace* comes with a series of regression tests.
 Regression tests based on the provided example applications in the
-[`examples/`](https://github.com/awslabs/palace/blob/main/examples/) directory
+[`examples/`](examples/) directory
 and verify that the code reproduces results in reference files stored in
-[`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
+[`test/examples/`](test/examples/ref).
 
 ### Building and running example tests
 
