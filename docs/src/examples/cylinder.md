@@ -14,7 +14,7 @@ end
 !!! note
     
     The files for this example can be found in the
-    [`examples/cylinder/`](https://github.com/awslabs/palace/blob/main/examples/cylinder)
+    [`examples/cylinder/`](examples/cylinder)
     directory of the *Palace* source code.
 
 ## Cavity
@@ -63,12 +63,12 @@ where ``k=\omega\sqrt{\mu\varepsilon}``, ``\eta=\sqrt{\mu/\varepsilon}``, and
 ``\beta=l\pi/d``.
 
 The initial Gmsh mesh for this problem, from
-[`mesh/cavity_prism.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_prism.msh),
+[`mesh/cavity_prism.msh`](examples/cylinder/mesh/cavity_prism.msh),
 is shown below. We use quadratic triangular prism elements. There are also two other
 included mesh files,
-[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh)
+[`mesh/cavity_tet.msh`](examples/cylinder/mesh/cavity_tet.msh)
 and
-[`mesh/cavity_hex.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_hex.msh),
+[`mesh/cavity_hex.msh`](examples/cylinder/mesh/cavity_hex.msh),
 which use curved tetrahedral and hexahedral elements, respectively.
 
 ```@raw html
@@ -78,9 +78,9 @@ which use curved tetrahedral and hexahedral elements, respectively.
 ```
 
 There are two configuration files for this problem,
-[`cavity_pec.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_pec.json)
+[`cavity_pec.json`](examples/cylinder/cavity_pec.json)
 and
-[`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_impedance.json).
+[`cavity_impedance.json`](examples/cylinder/cavity_impedance.json).
 
 In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
 field is set to `"Eigenmode"`, and we use the mesh shown above. The material properties for
@@ -169,7 +169,7 @@ for the ``\text{TE}_{011}`` mode is shown below.
 ### Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using
-[`convergence_study.jl`](https://github.com/awslabs/palace/blob/main/examples/cylinder/convergence_study.jl).
+[`convergence_study.jl`](examples/cylinder/convergence_study.jl).
 For a polynomial order of solution and refinement level, a mesh is generated using Gmsh
 using polynomials of the same order to resolve the boundary geometry. The eigenvalue
 problem is then solved for ``f_{\text{TM},010}`` and ``f_{\text{TE},111}``, and the
@@ -229,10 +229,10 @@ such modes to higher frequencies. The relevant modes are tabulated as
 | ``(3,1,2)`` | ``6.334023\text{ GHz}`` | ``8.586796\text{ GHz}`` |
 
 For this problem, we use curved tetrahedral elements from the mesh file
-[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cylinder/mesh/cavity_tet.msh),
+[`mesh/cavity_tet.msh`](examples/cylinder/mesh/cavity_tet.msh),
 and the configuration files
-[`waveguide.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/waveguide.json) and
-[`floquet.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/floquet.json).
+[`waveguide.json`](examples/cylinder/waveguide.json) and
+[`floquet.json`](examples/cylinder/floquet.json).
 
 The main difference between these configuration files and those used in the cavity example is
 in the `"Boundaries"` object: `waveguide.json` specifies a perfect electric conductor
