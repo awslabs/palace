@@ -8,7 +8,7 @@
 !!! note
     
     The files for this example can be found in the
-    [`examples/cpw/`](../../../examples/cpw)
+    [`examples/cpw/`](https://github.com/awslabs/palace/blob/main/examples/cpw)
     directory of the *Palace* source code.
 
 In this example, we construct a frequency domain model to analyze the wave transmission,
