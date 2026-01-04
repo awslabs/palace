@@ -19,7 +19,7 @@ where
   - `<NUM_PROCS>` is the number of MPI processes to use for the simulation.
   - `config.json` is the JSON format configuration file used to specify the simulation
     parameters. The structure of this configuration file is outlined in detail in the
-    section [Configuration File](../config/config.md).
+    section [Configuration File](config/config.md).
 
 A full list of available script options is available using the `-h` or `--help` flag.
 
