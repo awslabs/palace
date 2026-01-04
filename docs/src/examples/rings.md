@@ -39,9 +39,9 @@ M_{bb} &= \mu_0 r_b \left(\log{\frac{16 r_b}{w}}-1.75\right) \,.
 
 We take in this case ``r_a = 10 \text{ μm}``, ``r_b = 100 \text{ μm}``, and
 ``w = 1 \text{ μm}``. The `mesh.jl` script in the
-[`mesh/`](examples/rings/mesh) directory is used
+[`mesh/`](../../../examples/rings/mesh) directory is used
 to generate an unstructured tetrahedral mesh with Gmsh, saved to
-[`mesh/rings.msh`](examples/rings/mesh/rings.msh),
+[`mesh/rings.msh`](../../../examples/rings/mesh/rings.msh),
 and a depiction is shown below.
 
 ```@raw html
@@ -51,7 +51,7 @@ and a depiction is shown below.
 ```
 
 The configuration file for the *Palace* simulation is
-[`rings.json`](examples/rings/rings.json). The
+[`rings.json`](../../../examples/rings/rings.json). The
 simulation `"Type"` is `"Magnetostatic"`, and we add `"SurfaceCurrent"` boundaries for
 applying a surface current to drive the inner or outer ring. The rest of the ring
 boundaries are labeled as `"PEC"` boundaries, which prescribes a zero magnetic flux, or
