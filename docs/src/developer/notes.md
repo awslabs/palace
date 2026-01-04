@@ -107,7 +107,7 @@ Automated source code formatting is performed using
 in the repository root directory to automatically use `clang-format` to format `C++` source
 as well as [`JuliaFormatter.jl`](https://github.com/domluna/JuliaFormatter.jl) for Julia and
 Markdown files. The script can be viewed
-[in the repository](../../../scripts/format_source).
+[in the repository](../../scripts/format_source).
 
 The following conventions also apply:
 
