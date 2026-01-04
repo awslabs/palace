@@ -6,12 +6,12 @@
 # Overview
 
 Some examples of using *Palace*, including configuration and mesh files, can be found in
-the [`examples/`](examples) directory of the
+the [`examples/`](../../../examples) directory of the
 source code. The following sections provide complete tutorials for each of the available
 example applications.
 
 These examples are also used by *Palace*'s regression testing suite. See the
-[`test/examples/`](test/examples/) directory for
+[`test/examples/`](../../../test/examples/) directory for
 more details.
 
 ## Contents
