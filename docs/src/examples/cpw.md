@@ -44,7 +44,7 @@ There are two different options for modeling the termination at the ends of the 
 Views of the mesh boundaries for these two configurations are shown below. In both cases the
 computational domain is discretized using an unstructured tetrahedral mesh. The mesh files
 are
-[`mesh/cpw_wave_0.msh`](examples/cpw/mesh/cpw_wave_0.msh)
+[`mesh/cpw_wave_0.msh`](../../../examples/cpw/mesh/cpw_wave_0.msh)
 and
 [`mesh/cpw_lumped_0.msh`](examples/cpw/mesh/cpw_lumped_0.msh),
 respectively. In addition, this example includes two mesh files which include the thickness
