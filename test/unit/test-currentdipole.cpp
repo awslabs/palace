@@ -93,6 +93,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   constexpr double atol = 1e-4;
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
+  int Order = 3;
 
   Units units(L0, Lc);
   IoData iodata{units};
@@ -104,9 +105,10 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
   iodata.problem.type = ProblemType::DRIVEN;
-  iodata.solver.order = 4;
+  iodata.solver.order = Order;
   iodata.solver.linear.max_it = 1000;
   iodata.solver.linear.tol = 1e-10;
+  iodata.solver.linear.mg_max_levels = 1;  // Disable multigrid for parallel compatibility
   // Enable ParaView output for visualization
   iodata.solver.driven.save_indices = {0};
   iodata.problem.output_formats.paraview = true;
