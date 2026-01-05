@@ -104,9 +104,9 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
   iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.order = 4;
   iodata.solver.linear.max_it = 1000;
   iodata.solver.linear.tol = 1e-10;
-
   // Enable ParaView output for visualization
   iodata.solver.driven.save_indices = {0};
   iodata.problem.output_formats.paraview = true;
