@@ -87,21 +87,21 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 
 // Compare the implementation in CurrentDipoleOperator with the analytic solution.
 void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
-                          const std::vector<int> &attributes)
+                          const std::vector<int> &farfield_attributes,
+                          const std::vector<int> &domain_attributes, double L0, double Lc)
 {
   constexpr double atol = 1e-4;
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
 
-  // To make the mesh larger, we can increase the first input of Units instead of creating a new mesh.
-  Units units(5.0, 1.0);
+  Units units(L0, Lc);
   IoData iodata{units};
-  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.domains.materials.emplace_back().attributes = domain_attributes;
   auto &dipole_config = iodata.domains.current_dipole[1];
   dipole_config.moment = Ids;
   dipole_config.direction = {1, 0, 0};
   dipole_config.center = {0.0, 0.0, 0.0};
-  iodata.boundaries.farfield.attributes = attributes;
+  iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.solver.linear.max_it = 1000;
@@ -423,7 +423,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
 
-TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][Serial]")
+TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]")
 {
   double freq_Hz = 350e6;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
@@ -445,7 +445,25 @@ TEST_CASE("Electrical Current Dipole implementation", "[electriccurrentdipole][S
         p(2) -= 0.5;
       });
 
-  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes);
+  // To make the mesh larger, we can increase the first input of Units, L0, instead of
+  // creating a new mesh.
+  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0);
+}
+
+TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial]")
+{
+  double freq_Hz = 350e6;
+
+  // Load the antenna sphere mesh
+  // attribute 1 = outer boundary, attribute 2 = domain
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>("../examples/antenna/mesh/antenna_short_dipole.msh");
+
+  std::vector<int> domain_attributes = {2};    // Domain volume
+  std::vector<int> farfield_attributes = {1};  // Outer boundary (absorbing boundary)
+
+  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), farfield_attributes,
+                       domain_attributes, 1.0, 1.0);
 }
 
 }  // namespace
