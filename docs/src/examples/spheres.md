@@ -39,9 +39,9 @@ parameter ``u`` is given by
 
 Here we take the values ``a = 1\text{ cm}``, ``b = 2\text{ cm}``, and ``c = 5\text{ cm}``. A
 mesh is generated with Gmsh using the `mesh.jl` Julia script found in the
-[`mesh/`](https://github.com/awslabs/palace/blob/main/examples/spheres/mesh) directory,
+[`mesh/`](../../../examples/spheres/mesh) directory,
 which writes the mesh to
-[`mesh/spheres.msh`](https://github.com/awslabs/palace/blob/main/examples/spheres/mesh/spheres.msh).
+[`mesh/spheres.msh`](../../../examples/spheres/mesh/spheres.msh).
 The resulting high-order mesh uses cubically-curved tetrahedral elements, and is pictured
 below.
 
@@ -53,7 +53,7 @@ below.
 ```
 
 The configuration file for the *Palace* simulation is found in
-[`spheres.json`](https://github.com/awslabs/palace/blob/main/examples/spheres/spheres.json).
+[`spheres.json`](../../../examples/spheres/spheres.json).
 We set the simulation `"Type"` to `"Electrostatic"`, and add `"Terminal"` entries for the
 surface boundary of each sphere, corresponding to the entries of the capacitance matrix we
 wish to compute. The outer boundary of the computational domain, which is sufficiently far
