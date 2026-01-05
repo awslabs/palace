@@ -8,7 +8,7 @@
 !!! note
     
     The files for this example can be found in the
-    [`examples/coaxial/`](examples/coaxial)
+    [`examples/coaxial/`](https://github.com/awslabs/palace/blob/main/examples/coaxial)
     directory of the *Palace* source code.
 
 *Palace* can perform transient electromagnetic modeling, acting as a so-called finite
@@ -23,14 +23,14 @@ line.
 
 In this example we consider three different configurations of the model, all with a coaxial
 lumped port excitation at one end of the line: an open termination at the opposite end
-([`coaxial_open.json`](examples/coaxial/coaxial_open.json)),
+([`coaxial_open.json`](../../../examples/coaxial/coaxial_open.json)),
 a shorted termination
-([`coaxial_short.json`](examples/coaxial/coaxial_short.json)),
+([`coaxial_short.json`](../../../examples/coaxial/coaxial_short.json)),
 and a matched ``50\text{ }\Omega`` lumped port termination
-([`coaxial_matched.json`](https://github.com/awslabs/palace/blob/main/examples/coaxial/coaxial_matched.json)).
+([`coaxial_matched.json`](\../../../examples/coaxial/coaxial_matched.json)).
 
 The mesh is generated using the Julia code in
-[`mesh/mesh.jl`](examples/coaxial/mesh/mesh.jl)
+[`mesh/mesh.jl`](../../../examples/coaxial/mesh/mesh.jl)
 and consists of quadratically-curved hexahedral elements, as depicted below. Third-order
 shape functions are used to approximate the solution.
 
