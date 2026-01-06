@@ -204,15 +204,13 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   CHECK(W_bulk->NumCols() == nr_tdof_expected);
 
   // Assemble operators as Eigen matrices for simpler testing.
-  auto toEigenMatrix = [](const auto &op)
+  auto toEigenMatrix = [](const auto &op, int n)
   {
-    int n = op.NumRows();
-    int m = op.NumCols();
-    Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, m);
+    Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, n);
     mfem::Vector w(n), v(n);
     w.UseDevice(true);
     v.UseDevice(true);
-    for (int i = 0; i < m; i++)
+    for (int i = 0; i < n; i++)
     {
       w = 0.0;
       w[i] = 1.0;
@@ -225,9 +223,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
     return mat;
   };
 
-  auto W_port_eigen = toEigenMatrix(*W_port);
-  auto W_bulk_eigen = toEigenMatrix(*W_bulk);
-  auto weight_op_eigen = toEigenMatrix(*weight_op);
+  auto W_port_eigen = toEigenMatrix(*W_port, nr_tdof_expected);
+  auto W_bulk_eigen = toEigenMatrix(*W_bulk, nr_tdof_expected);
 
   // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
   // matrix is zero.
@@ -264,25 +261,13 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   }
   CHECK(nr_cols_count == nr_tdof_port_expected);
 
-  // Check element-wise sum is ok.
-  for (int i = 0; i < weight_op_eigen.rows(); i++)
-  {
-    for (int j = 0; j < weight_op_eigen.cols(); j++)
-    {
-      CHECK_THAT(weight_op_eigen(i, j),
-                 WithinRel(W_bulk_eigen(i, j) + W_port_eigen(i, j)) ||
-                     WithinAbs(0.0, 1e-18));
-    }
-  }
-
   // Debug Print.
-  // if constexpr (false)
-  // {
-  //   Eigen::IOFormat HeavyFmt(4, 0, ", ", ";\n", "[", "]", "[", "]");
-  //   std::cout << W_bulk_eigen.format(HeavyFmt) << "\n";
-  //   std::cout << W_port_eigen.format(HeavyFmt) << "\n";
-  //   std::cout << weight_op_eigen.format(HeavyFmt) << "\n";
-  // }
+  if constexpr (false)
+  {
+    Eigen::IOFormat HeavyFmt(4, 0, ", ", ";\n", "[", "]", "[", "]");
+    std::cout << W_bulk_eigen.format(HeavyFmt) << "\n";
+    std::cout << W_port_eigen.format(HeavyFmt) << "\n";
+  }
 
   // Now test against port vector. The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e
   // L_e / W_e but with Z_R = 1.0. In this case this = 1.0. See normalization tests of
@@ -303,13 +288,13 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   {
     // Rank local overlap.
     auto overlap_combined_local =
-        weight_op->InnerProduct(port_primary_et.Real(), port_primary_et.Real());
+        (*weight_op)(port_primary_et.Real(), port_primary_et.Real());
     CHECK_THAT(overlap_combined_local, WithinRel(1.0));
   }
 
   // Global overlap.
   auto overlap_combined =
-      weight_op->InnerProduct(world_comm, port_primary_et.Real(), port_primary_et.Real());
+      (*weight_op)(world_comm, port_primary_et.Real(), port_primary_et.Real());
   CHECK_THAT(overlap_combined, WithinRel(1.0));
 
   // Test actually adding port primary vectors to PROM.
@@ -430,15 +415,13 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   if (Mpi::Size(world_comm) == 1)
   {
     // Assemble operators as Eigen matrices for simpler testing.
-    auto toEigenMatrix = [](const auto &op)
+    auto toEigenMatrix = [](const auto &op, int n)
     {
-      int n = op.NumRows();
-      int m = op.NumCols();
-      Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, m);
+      Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, n);
       mfem::Vector w(n), v(n);
       w.UseDevice(true);
       v.UseDevice(true);
-      for (int i = 0; i < m; i++)
+      for (int i = 0; i < n; i++)
       {
         w = 0.0;
         w[i] = 1.0;
@@ -451,9 +434,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
       return mat;
     };
 
-    auto W_port_eigen = toEigenMatrix(*W_port);
-    auto W_bulk_eigen = toEigenMatrix(*W_bulk);
-    auto weight_op_eigen = toEigenMatrix(*weight_op);
+    auto W_port_eigen = toEigenMatrix(*W_port, W_port->NumCols());
+    auto W_bulk_eigen = toEigenMatrix(*W_bulk, W_port->NumCols());
 
     // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
     // matrix is zero.
@@ -513,7 +495,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
     CHECK_THAT(overlap_bulk, WithinAbs(0.0, 1e-15));
 
     auto overlap_combined =
-        weight_op->InnerProduct(world_comm, port_primary_et.Real(), port_primary_et.Real());
+        (*weight_op)(world_comm, port_primary_et.Real(), port_primary_et.Real());
     CHECK_THAT(overlap_combined, WithinRel(port_norm));
   }
 

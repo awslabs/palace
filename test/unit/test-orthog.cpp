@@ -30,7 +30,7 @@ public:
   orthogonalize_wrapper(Orthogonalization orthgo_type_) : orthgo_type(orthgo_type_) {}
 
   template <typename VecType, typename ScalarType,
-            typename InnerProductW = linalg::InnerProductStandard>
+            typename InnerProductW = linalg::InnerProduct>
   void operator()(MPI_Comm comm, const std::vector<VecType> &V, VecType &w, ScalarType *H,
                   std::size_t m, const InnerProductW &dot_op = {}) const
   {
@@ -253,7 +253,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
 
   std::vector<double> H(2, 0.0);
 
-  linalg::InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  linalg::RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   // Check orthogonality with respect to weight matrix
@@ -302,7 +302,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
 
   std::vector<std::complex<double>> H(2, 0.0);
 
-  linalg::InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  linalg::RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   auto W_wrap = ComplexWrapperOperator(&W, nullptr);

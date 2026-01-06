@@ -48,7 +48,7 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = linalg::InnerProductStandard>
+          typename InnerProductW = linalg::InnerProduct>
 inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
                                 std::size_t j, const InnerProductW &dot_op = {})
@@ -68,21 +68,21 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
   }
 }
 
-// Weight should be a Hermitian operator so that norm is real.
-template <typename VecType>
-inline auto Norml2Weighted(MPI_Comm comm, Operator *weight, const VecType &x)
-{
-  if (weight == nullptr)
-  {
-    return linalg::Norml2(comm, x);
-  }
-  else
-  {
-    VecType x_tmp = x;
-    weight->Mult(x, x_tmp);
-    return std::sqrt(std::abs(linalg::Dot(comm, x, x_tmp)));
-  }
-}
+// // Weight should be a Hermitian operator so that norm is real.
+// template <typename VecType>
+// inline auto Norml2Weighted(MPI_Comm comm, Operator *weight, const VecType &x)
+// {
+//   if (weight == nullptr)
+//   {
+//     return linalg::Norml2(comm, x);
+//   }
+//   else
+//   {
+//     VecType x_tmp = x;
+//     weight->Mult(x, x_tmp);
+//     return std::sqrt(std::abs(linalg::Dot(comm, x, x_tmp)));
+//   }
+// }
 
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
@@ -583,13 +583,13 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
 
-  // // Debug Print
-  // if constexpr (false)
-  // {
-  //   fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
-  //   fs::create_directories(folder_tmp);
-  //   PrintPROMMatrices(iodata.units, folder_tmp);
-  // }
+  // Debug Print
+  if constexpr (false)
+  {
+    fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
+    fs::create_directories(folder_tmp);
+    PrintPROMMatrices(iodata.units, folder_tmp);
+  }
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
@@ -607,8 +607,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new =
-      V.size() + static_cast<std::size_t>(has_real) + static_cast<std::size_t>(has_imag);
+  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
@@ -622,7 +621,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
                           dim_V, *weight_op_W);
 
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      auto norm_sq = (*weight_op_W)(space_op.GetComm(), v, v);
       orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
     }
     else
@@ -693,7 +692,7 @@ void RomOperator::ReorthogonalizePROM()
     {
       OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(),
                           i, *weight_op_W);
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      auto norm_sq = (*weight_op_W)(space_op.GetComm(), v, v);
       orth_R_new(i, i) = std::sqrt(std::abs(norm_sq));
     }
     else

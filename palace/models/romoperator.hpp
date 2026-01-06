@@ -66,28 +66,17 @@ struct InnerProductHybridBulkBoundary
                 "Mismatch sizes of inner product matrices!")
   }
 
-  inline auto NumCols() const { return W_inner_product_weight_bulk->NumCols(); }
-
-  inline auto NumRows() const { return W_inner_product_weight_bulk->NumRows(); }
-
-  inline void Mult(const Vector &x, Vector &y) const
-  {
-    W_inner_product_weight_bulk->Mult(x, y);
-    W_inner_product_weight_port->AddMult(x, y);
-  }
-
-  inline double InnerProduct(const Vector &x, const Vector &y) const
+  inline double operator()(const Vector &x, const Vector &y) const
   {
     v_workspace.SetSize(x.Size());
     v_workspace.UseDevice(x.UseDevice());
-    //
-    Mult(x, v_workspace);
+    W_inner_product_weight_bulk->Mult(x, v_workspace);
+    W_inner_product_weight_port->AddMult(x, v_workspace);
     return linalg::LocalDot(y, v_workspace);
   }
-
-  inline double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
+  inline double operator()(MPI_Comm comm, const Vector &x, const Vector &y) const
   {
-    auto dot = InnerProduct(x, y);
+    auto dot = (*this)(x, y);
     Mpi::GlobalSum(1, &dot, comm);
     return dot;
   }

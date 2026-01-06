@@ -27,30 +27,16 @@ namespace palace::linalg
 // acting on local degrees of freedom. Also add MPI reduction.
 
 // Simplest case is canonical inner product on R & C.
-
-class InnerProductStandard
+struct InnerProduct
 {
-public:
-  double InnerProduct(const Vector &x, const Vector &y) const { return LocalDot(x, y); }
-
-  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
-  {
-    return Dot(comm, x, y);
-  }
-
-  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
+  template <typename VecType>
+  auto operator()(const VecType &x, const VecType &y) const
   {
     return LocalDot(x, y);
   }
-
-  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
-                                    const ComplexVector &y) const
-  {
-    return Dot(comm, x, y);
-  }
 };
 
-class InnerProductRealWeight
+class RealWeightedInnerProduct
 {
   // Choose generic operator, although can improve by refining for specialized type.
   std::shared_ptr<Operator> weight_op;
@@ -67,26 +53,22 @@ class InnerProductRealWeight
 
 public:
   template <typename OpType>
-  explicit InnerProductRealWeight(const std::shared_ptr<OpType> &weight_op_)
+  explicit RealWeightedInnerProduct(const std::shared_ptr<OpType> &weight_op_)
     : weight_op(weight_op_)
   {
+    MFEM_VERIFY(weight_op->Height() == weight_op->Width(),
+                "Real weight operator must be square! ("
+                    << weight_op->Height() << " != " << weight_op->Width());
   }
-  // Follow same conventions as Dot:  yᴴ x or yᵀ x (not y comes second in the arguments).
-  double InnerProduct(const Vector &x, const Vector &y) const
+  // Follow same conventions as Dot:  yᴴ x or yᵀ x (note y comes second in the arguments).
+  double operator()(const Vector &x, const Vector &y) const
   {
     SetWorkspace(x);
     weight_op->Mult(x, v_workspace);
     return LocalDot(v_workspace, y);
   }
 
-  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
-  {
-    SetWorkspace(x);
-    weight_op->Mult(x, v_workspace);
-    return Dot(comm, v_workspace, y);
-  }
-
-  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
+  std::complex<double> operator()(const ComplexVector &x, const ComplexVector &y) const
   {
     using namespace std::complex_literals;
     SetWorkspace(x.Real());
@@ -102,18 +84,10 @@ public:
 
     return dot;
   }
-
-  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
-                                    const ComplexVector &y) const
-  {
-    auto dot = InnerProduct(x, y);
-    Mpi::GlobalSum(1, &dot, comm);
-    return dot;
-  }
 };
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = InnerProductStandard>
+          typename InnerProductW = InnerProduct>
 inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, std::size_t m,
                                    const InnerProductW &dot_op = {})
@@ -122,13 +96,14 @@ inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V,
   for (std::size_t j = 0; j < m; j++)
   {
     // Global inner product: Note order is important for complex vectors.
-    H[j] = dot_op.InnerProduct(comm, w, V[j]);
+    H[j] = dot_op(w, V[j]);
+    Mpi::GlobalSum(1, &H[j], comm);
     w.Add(-H[j], V[j]);
   }
 }
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = InnerProductStandard>
+          typename InnerProductW = InnerProduct>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, std::size_t m, bool refine = false,
                                    const InnerProductW &dot_op = {})
@@ -140,7 +115,7 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
   }
   for (std::size_t j = 0; j < m; j++)
   {
-    H[j] = dot_op.InnerProduct(w, V[j]);  // Local inner product
+    H[j] = dot_op(w, V[j]);  // Local inner product
   }
   Mpi::GlobalSum(m, H, comm);
   for (std::size_t j = 0; j < m; j++)
@@ -152,7 +127,7 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
     std::vector<ScalarType> dH(m);
     for (int j = 0; j < m; j++)
     {
-      dH[j] = dot_op.InnerProduct(w, V[j]);  // Local inner product
+      dH[j] = dot_op(w, V[j]);  // Local inner product
     }
     Mpi::GlobalSum(m, dH.data(), comm);
     for (std::size_t j = 0; j < m; j++)
