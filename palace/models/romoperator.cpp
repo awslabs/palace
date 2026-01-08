@@ -10,7 +10,6 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
-// #include <Eigen/SVD>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -65,22 +64,6 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
     case Orthogonalization::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true, dot_op);
       break;
-  }
-}
-
-// Weight should be a Hermitian operator so that norm is real.
-template <typename VecType>
-inline auto Norml2Weighted(MPI_Comm comm, Operator *weight, const VecType &x)
-{
-  if (weight == nullptr)
-  {
-    return linalg::Norml2(comm, x);
-  }
-  else
-  {
-    VecType x_tmp = x;
-    weight->Mult(x, x_tmp);
-    return std::sqrt(std::abs(linalg::Dot(comm, x, x_tmp)));
   }
 }
 

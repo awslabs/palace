@@ -270,13 +270,13 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   }
 
   // Debug Print.
-  // if constexpr (false)
-  // {
-  //   Eigen::IOFormat HeavyFmt(4, 0, ", ", ";\n", "[", "]", "[", "]");
-  //   std::cout << W_bulk_eigen.format(HeavyFmt) << "\n";
-  //   std::cout << W_port_eigen.format(HeavyFmt) << "\n";
-  //   std::cout << weight_op_eigen.format(HeavyFmt) << "\n";
-  // }
+  if constexpr (false)
+  {
+    Eigen::IOFormat HeavyFmt(4, 0, ", ", ";\n", "[", "]", "[", "]");
+    std::cout << W_bulk_eigen.format(HeavyFmt) << "\n";
+    std::cout << W_port_eigen.format(HeavyFmt) << "\n";
+    std::cout << weight_op_eigen.format(HeavyFmt) << "\n";
+  }
 
   // Now test against port vector. The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e
   // L_e / W_e but with Z_R = 1.0. In this case this = 1.0. See normalization tests of
@@ -419,7 +419,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   const auto &W_bulk = weight_op->W_inner_product_weight_bulk;
   const auto &W_port = weight_op->W_inner_product_weight_port;
 
-  // If serial — concertise as an Eigen matrix on a thread and manually check zeros of row
+  // If serial — concretize as an Eigen matrix on a thread and manually check zeros of row
   // and columns.
   if (Mpi::Size(world_comm) == 1)
   {
@@ -447,7 +447,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 
     auto W_port_eigen = toEigenMatrix(*W_port);
     auto W_bulk_eigen = toEigenMatrix(*W_bulk);
-    auto weight_op_eigen = toEigenMatrix(*weight_op);
 
     // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
     // matrix is zero.

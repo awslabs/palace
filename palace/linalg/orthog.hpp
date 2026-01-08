@@ -71,7 +71,7 @@ public:
     : weight_op(weight_op_)
   {
   }
-  // Follow same conventions as Dot:  yᴴ x or yᵀ x (not y comes second in the arguments).
+  // Follow same conventions as Dot: yᴴ x or yᵀ x (note y comes second in the arguments).
   double InnerProduct(const Vector &x, const Vector &y) const
   {
     SetWorkspace(x);
