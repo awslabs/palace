@@ -271,15 +271,13 @@ void IoData::CheckConfiguration()
   {
     // Driven (frequency) solver itself has no unsupported domain or boundary objects.
     // Can't synthesize non-LRC circuit (same conditions as eigenmode solver)
-    if (solver.driven.adaptive_circuit_synthesis)
-    {
-      MFEM_VERIFY(
-          !(!boundaries.auxpec.empty() || !boundaries.waveport.empty() ||
-            (!boundaries.farfield.empty() && boundaries.farfield.order > 1) ||
-            !boundaries.conductivity.empty()),
-          "Driven system with circuit synthesis is not supported in systems with any of: "
-          "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
-    }
+    MFEM_VERIFY(
+        !solver.driven.adaptive_circuit_synthesis ||
+            (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
+             (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
+             boundaries.conductivity.empty()),
+        "Driven system with circuit synthesis is not supported in systems with any of: "
+        "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
