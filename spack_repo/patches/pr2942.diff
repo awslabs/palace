@@ -1,0 +1,390 @@
+diff --git a/repos/spack_repo/builtin/packages/hypre/hypre30000-tpls+mixedprec.patch b/repos/spack_repo/builtin/packages/hypre/hypre30000-tpls+mixedprec.patch
+index 2c063eedef..18d32bb2d2 100644
+--- a/repos/spack_repo/builtin/packages/hypre/hypre30000-tpls+mixedprec.patch
++++ b/repos/spack_repo/builtin/packages/hypre/hypre30000-tpls+mixedprec.patch
+@@ -1,8 +1,336 @@
+ diff --git a/src/config/cmake/HYPRE_CMakeUtilities.cmake b/src/config/cmake/HYPRE_CMakeUtilities.cmake
+-index 43a059d16..782616851 100644
++index 43a059d16..124607844 100644
+ --- a/src/config/cmake/HYPRE_CMakeUtilities.cmake
+ +++ b/src/config/cmake/HYPRE_CMakeUtilities.cmake
+-@@ -704,6 +704,13 @@ macro(setup_mixed_precision_compilation module_name)
++@@ -81,17 +81,17 @@ endfunction()
++ 
++ # Function to check if two options have different values
++ function(ensure_options_differ option1 option2)
++-  if(DEFINED ${option1} AND DEFINED ${option2})
++-    if(${option1} AND ${${option2}})
+++  if(DEFINED HYPRE_ENABLE_${option1} AND DEFINED HYPRE_ENABLE_${option2})
+++    if(HYPRE_ENABLE_${option1} AND ${HYPRE_ENABLE_${option2}})
++       # Save the value of the conflicting options
++-      set(saved_value1 "${${option1}}")
++-      set(saved_value2 "${${option2}}")
+++      set(saved_value1 "${HYPRE_ENABLE_${option1}}")
+++      set(saved_value2 "${HYPRE_ENABLE_${option2}}")
++ 
++       # Unset conflicting options
++-      unset(${option1} CACHE)
++-      unset(${option2} CACHE)
+++      unset(HYPRE_ENABLE_${option1} CACHE)
+++      unset(HYPRE_ENABLE_${option2} CACHE)
++ 
++-      message(FATAL_ERROR "Error: ${option1} (${saved_value1}) and ${option2} (${saved_value2}) are mutually exclusive. Only one can be set to ON. Unsetting both options.")
+++      message(FATAL_ERROR "Error: HYPRE_ENABLE_${option1} (${saved_value1}) and HYPRE_ENABLE_${option2} (${saved_value2}) are mutually exclusive. Only one can be set to ON. Unsetting both options.")
++     endif()
++   endif()
++ endfunction()
++@@ -266,6 +266,48 @@ function(setup_tpl LIBNAME)
++   # Note we need to check for "USING" instead of "WITH" because
++   # we want to allow for post-processing of build options via cmake
++   if(HYPRE_USING_${LIBNAME_UPPER})
+++    # If the TPL was already added as a subproject, prefer using the existing target
+++    if(${LIBNAME_UPPER} STREQUAL "UMPIRE")
+++      if(TARGET umpire::umpire)
+++        # Link privately but propagate include directories so dependents see headers
+++        target_link_libraries(${PROJECT_NAME} PRIVATE umpire::umpire)
+++        get_target_property(_UMPIRE_INCLUDES umpire::umpire INTERFACE_INCLUDE_DIRECTORIES)
+++        if(_UMPIRE_INCLUDES)
+++          target_include_directories(${PROJECT_NAME} PUBLIC ${_UMPIRE_INCLUDES})
+++        endif()
+++        # Ensure C++ standard library is linked for non-MSVC toolchains
+++        if(UNIX)
+++          target_link_libraries(${PROJECT_NAME} PUBLIC stdc++)
+++        endif()
+++        fixup_umpire_cuda_runtime()
+++        message(STATUS "Found existing Umpire target: umpire::umpire")
+++        set(${LIBNAME_UPPER}_FOUND TRUE PARENT_SCOPE)
+++        set(HYPRE_NEEDS_CXX TRUE PARENT_SCOPE)
+++        message(STATUS "Enabled support for using ${LIBNAME_UPPER}")
+++        # Verify C interface headers are present
+++        check_umpire_c_interface()
+++        return()
+++      elseif(TARGET umpire)
+++        # Provide the standardized namespace alias if missing
+++        add_library(umpire::umpire ALIAS umpire)
+++        target_link_libraries(${PROJECT_NAME} PRIVATE umpire::umpire)
+++        get_target_property(_UMPIRE_INCLUDES umpire INTERFACE_INCLUDE_DIRECTORIES)
+++        if(_UMPIRE_INCLUDES)
+++          target_include_directories(${PROJECT_NAME} PUBLIC ${_UMPIRE_INCLUDES})
+++        endif()
+++        if(UNIX)
+++          target_link_libraries(${PROJECT_NAME} PUBLIC stdc++)
+++        endif()
+++        fixup_umpire_cuda_runtime()
+++        message(STATUS "Found existing Umpire target: umpire")
+++        set(${LIBNAME_UPPER}_FOUND TRUE PARENT_SCOPE)
+++        set(HYPRE_NEEDS_CXX TRUE PARENT_SCOPE)
+++        message(STATUS "Enabled support for using ${LIBNAME_UPPER}")
+++        # Verify C interface headers are present
+++        check_umpire_c_interface()
+++        return()
+++      endif()
+++    endif()
++     if(TPL_${LIBNAME_UPPER}_LIBRARIES AND TPL_${LIBNAME_UPPER}_INCLUDE_DIRS)
++       # Use specified TPL libraries and include dirs
++       foreach(dir ${TPL_${LIBNAME_UPPER}_INCLUDE_DIRS})
++@@ -274,12 +316,14 @@ function(setup_tpl LIBNAME)
++         endif()
++       endforeach()
++ 
+++      set(_tpl_libdirs)
++       foreach(lib ${TPL_${LIBNAME_UPPER}_LIBRARIES})
++         if(EXISTS ${lib})
++           message(STATUS "${LIBNAME_UPPER} library found: ${lib}")
++           get_filename_component(LIB_DIR "${lib}" DIRECTORY)
++           set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY BUILD_RPATH "${LIB_DIR}")
++           set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY INSTALL_RPATH "${LIB_DIR}")
+++          list(APPEND _tpl_libdirs "${LIB_DIR}")
++         else()
++           message(WARNING "${LIBNAME_UPPER} library not found at specified path: ${lib}")
++         endif()
++@@ -287,6 +331,21 @@ function(setup_tpl LIBNAME)
++ 
++       target_link_libraries(${PROJECT_NAME} PUBLIC ${TPL_${LIBNAME_UPPER}_LIBRARIES})
++       target_include_directories(${PROJECT_NAME} PUBLIC ${TPL_${LIBNAME_UPPER}_INCLUDE_DIRS})
+++      # Record dependency dirs for export hints (include likely under <prefix>/include; libdir likely under <prefix>/lib)
+++      foreach(_d IN LISTS _tpl_libdirs TPL_${LIBNAME_UPPER}_INCLUDE_DIRS)
+++        if(_d)
+++          list(APPEND HYPRE_DEPENDENCY_DIRS "${_d}")
+++          # Also add the parent directory as a candidate install prefix
+++          get_filename_component(_parent "${_d}" DIRECTORY)
+++          list(APPEND HYPRE_DEPENDENCY_DIRS "${_parent}")
+++        endif()
+++      endforeach()
+++      list(REMOVE_DUPLICATES HYPRE_DEPENDENCY_DIRS)
+++      set(HYPRE_DEPENDENCY_DIRS "${HYPRE_DEPENDENCY_DIRS}" CACHE INTERNAL "" FORCE)
+++      if(${LIBNAME_UPPER} STREQUAL "UMPIRE")
+++        fixup_umpire_cuda_runtime()
+++        check_umpire_c_interface()
+++      endif()
++     else()
++       # Use find_package (prefer CONFIG). Provide clearer error for libraries when missing.
++       find_package(${LIBNAME} CONFIG)
++@@ -296,13 +355,33 @@ function(setup_tpl LIBNAME)
++ 
++         if(${LIBNAME} STREQUAL "caliper")
++           set(HYPRE_NEEDS_CXX TRUE PARENT_SCOPE)
+++        elseif(${LIBNAME} STREQUAL "umpire")
+++          set(HYPRE_NEEDS_CXX TRUE PARENT_SCOPE)
++         endif()
++ 
++         if(TARGET ${LIBNAME}::${LIBNAME})
++-          target_link_libraries(${PROJECT_NAME} PUBLIC ${LIBNAME}::${LIBNAME})
+++          if(${LIBNAME_UPPER} STREQUAL "UMPIRE")
+++            target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBNAME}::${LIBNAME})
+++            get_target_property(_UMPIRE_INCLUDES ${LIBNAME}::${LIBNAME} INTERFACE_INCLUDE_DIRECTORIES)
+++            if(_UMPIRE_INCLUDES)
+++              target_include_directories(${PROJECT_NAME} PUBLIC ${_UMPIRE_INCLUDES})
+++            endif()
+++            fixup_umpire_cuda_runtime()
+++          else()
+++            target_link_libraries(${PROJECT_NAME} PUBLIC ${LIBNAME}::${LIBNAME})
+++          endif()
++           message(STATUS "Found ${LIBNAME} target: ${LIBNAME}::${LIBNAME}")
++         elseif(TARGET ${LIBNAME})
++-          target_link_libraries(${PROJECT_NAME} PUBLIC ${LIBNAME})
+++          if(${LIBNAME_UPPER} STREQUAL "UMPIRE")
+++            target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBNAME})
+++            get_target_property(_UMPIRE_INCLUDES ${LIBNAME} INTERFACE_INCLUDE_DIRECTORIES)
+++            if(_UMPIRE_INCLUDES)
+++              target_include_directories(${PROJECT_NAME} PUBLIC ${_UMPIRE_INCLUDES})
+++            endif()
+++            fixup_umpire_cuda_runtime()
+++          else()
+++            target_link_libraries(${PROJECT_NAME} PUBLIC ${LIBNAME})
+++          endif()
++           message(STATUS "Found ${LIBNAME} target: ${LIBNAME}")
++         else()
++           message(FATAL_ERROR "${LIBNAME} target not found. Please check your ${LIBNAME} installation")
++@@ -329,6 +408,11 @@ function(setup_tpl LIBNAME)
++     endif()
++ 
++     set(${LIBNAME_UPPER}_FOUND TRUE PARENT_SCOPE)
+++
+++    # Run C interface check when Umpire is enabled and found via any path
+++    if(${LIBNAME_UPPER} STREQUAL "UMPIRE")
+++      check_umpire_c_interface()
+++    endif()
++   endif()
++ endfunction()
++ 
++@@ -374,6 +458,120 @@ function(setup_tpl_or_internal LIB_NAME)
++   endif()
++ endfunction()
++ 
+++# Verify that Umpire provides the C interface headers by compiling a tiny C program
+++function(check_umpire_c_interface)
+++  if(NOT HYPRE_ENABLE_UMPIRE)
+++    return()
+++  endif()
+++
+++  # Gather include directories for Umpire
+++  set(_umpire_includes)
+++  if(TARGET umpire::umpire)
+++    get_target_property(_umpire_includes umpire::umpire INTERFACE_INCLUDE_DIRECTORIES)
+++  elseif(TARGET umpire)
+++    get_target_property(_umpire_includes umpire INTERFACE_INCLUDE_DIRECTORIES)
+++  elseif(TPL_UMPIRE_INCLUDE_DIRS)
+++    set(_umpire_includes ${TPL_UMPIRE_INCLUDE_DIRS})
+++  endif()
+++
+++  if(NOT _umpire_includes)
+++    # Try to locate the header path as a last resort
+++    find_path(_umpire_hdr_dir
+++      NAMES umpire/interface/c_fortran/umpire.h
+++      HINTS ${HYPRE_DEPENDENCY_DIRS}
+++    )
+++    if(_umpire_hdr_dir)
+++      list(APPEND _umpire_includes ${_umpire_hdr_dir})
+++    endif()
+++
+++  endif()
+++
+++
+++  include(CheckCSourceCompiles)
+++
+++  # Preserve and set required includes for the compile test
+++  set(_old_required_includes "${CMAKE_REQUIRED_INCLUDES}")
+++  set(CMAKE_REQUIRED_INCLUDES ${_umpire_includes})
+++
+++  set(_code "#include \"umpire/interface/c_fortran/umpire.h\"\nint main(void) { umpire_resourcemanager rm; (void)rm; return 0; }")
+++  check_c_source_compiles("${_code}" UMPIRE_HAS_C_INTERFACE)
+++
+++  # Restore CMAKE_REQUIRED_INCLUDES
+++  set(CMAKE_REQUIRED_INCLUDES "${_old_required_includes}")
+++
+++  if(NOT UMPIRE_HAS_C_INTERFACE)
+++    message(FATAL_ERROR
+++      "Umpire does not appear to provide the C interface headers.\n"
+++      "Failed to compile a test including 'umpire/interface/c_fortran/umpire.h'.\n"
+++      "Ensure Umpire is built with its C interface enabled (e.g., -DUMPIRE_ENABLE_C=ON) and that headers are visible in the include path.\n"
+++      "For manual Umpire builds, see https://hypre.readthedocs.io/en/latest/ch-misc.html#building-umpire\n")
+++  else()
+++    message(STATUS "Verified Umpire C interface headers are available.")
+++  endif()
+++endfunction()
+++
+++# Fix up BLT/Umpire CUDA runtime linkage to use CUDA::cudart instead of legacy cuda_runtime
+++function(fixup_umpire_cuda_runtime)
+++  # Ensure BLT 'cuda_runtime' interface resolves to CUDA::cudart so shared links do not emit legacy -lcuda_runtime
+++  if(HYPRE_ENABLE_CUDA)
+++    find_package(CUDAToolkit REQUIRED)
+++    if(TARGET cuda_runtime)
+++      get_target_property(_iface cuda_runtime INTERFACE_LINK_LIBRARIES)
+++      if(_iface)
+++        set(_fixed_iface)
+++        foreach(_lib IN LISTS _iface)
+++          if(_lib STREQUAL "cuda_runtime")
+++            list(APPEND _fixed_iface CUDA::cudart)
+++          else()
+++            list(APPEND _fixed_iface ${_lib})
+++          endif()
+++        endforeach()
+++        set_target_properties(cuda_runtime PROPERTIES INTERFACE_LINK_LIBRARIES "${_fixed_iface}")
+++      else()
+++        target_link_libraries(cuda_runtime INTERFACE CUDA::cudart)
+++      endif()
+++      if(NOT TARGET blt::cuda_runtime)
+++        add_library(blt::cuda_runtime ALIAS cuda_runtime)
+++      endif()
+++    else()
+++      add_library(cuda_runtime INTERFACE IMPORTED)
+++      target_link_libraries(cuda_runtime INTERFACE CUDA::cudart)
+++      add_library(blt::cuda_runtime ALIAS cuda_runtime)
+++    endif()
+++
+++    # Replace any legacy 'cuda_runtime' link items on umpire/camp targets with CUDA::cudart
+++    foreach(_tgt IN ITEMS camp umpire umpire_resource umpire_strategy umpire_op umpire_event umpire_util umpire_interface)
+++      if(TARGET ${_tgt})
+++        get_target_property(_ll ${_tgt} LINK_LIBRARIES)
+++        if(_ll)
+++          set(_new_ll)
+++          foreach(_l IN LISTS _ll)
+++            if(_l STREQUAL "cuda_runtime")
+++              list(APPEND _new_ll CUDA::cudart)
+++            else()
+++              list(APPEND _new_ll ${_l})
+++            endif()
+++          endforeach()
+++          set_target_properties(${_tgt} PROPERTIES LINK_LIBRARIES "${_new_ll}")
+++        endif()
+++
+++        get_target_property(_ill ${_tgt} INTERFACE_LINK_LIBRARIES)
+++        if(_ill)
+++          set(_new_ill)
+++          foreach(_l IN LISTS _ill)
+++            if(_l STREQUAL "cuda_runtime")
+++              list(APPEND _new_ill CUDA::cudart)
+++            else()
+++              list(APPEND _new_ill ${_l})
+++            endif()
+++          endforeach()
+++          set_target_properties(${_tgt} PROPERTIES INTERFACE_LINK_LIBRARIES "${_new_ill}")
+++        endif()
+++      endif()
+++    endforeach()
+++  endif()
+++endfunction()
+++
++ # Function to setup FEI (to be phased out)
++ function(setup_fei)
++   if (HYPRE_USING_FEI)
++@@ -425,7 +623,7 @@ function(add_hypre_executable SRC_FILE DEP_SRC_FILE)
++   if (HYPRE_USING_CUDA)
++     set_source_files_properties(${SRC_FILENAME} PROPERTIES LANGUAGE CUDA)
++     if (DEP_SRC_FILE)
++-       set_source_files_properties(${DEP_SRC_FILENAME} PROPERTIES LANGUAGE CUDA)
+++      set_source_files_properties(${DEP_SRC_FILENAME} PROPERTIES LANGUAGE CUDA)
++     endif ()
++   endif ()
++ 
++@@ -513,24 +711,22 @@ function(add_hypre_executables EXE_SRCS)
++   endforeach()
++ endfunction()
++ 
++-# Function to add a tags target if etags is found
+++# Function to add a tags target if Universal Ctags is found
++ function(add_hypre_target_tags)
++-  find_program(ETAGS_EXECUTABLE etags)
++-  if(ETAGS_EXECUTABLE)
+++  find_program(CTAGS_EXECUTABLE ctags)
+++  if(CTAGS_EXECUTABLE)
++     add_custom_target(tags
++-      COMMAND find ${CMAKE_CURRENT_SOURCE_DIR}
++-              -type f
++-              "(" -name "*.h" -o -name "*.c" -o -name "*.cpp"
++-              -o -name "*.hpp" -o -name "*.cxx"
++-              -o -name "*.f" -o -name "*.f90" ")"
++-              -not -path "*/build/*"
++-              -print | ${ETAGS_EXECUTABLE}
++-              --declarations
++-              --ignore-indentation
++-              --no-members
++-              -
++-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
++-      COMMENT "Generating TAGS file with etags"
+++      COMMAND ${CTAGS_EXECUTABLE} -e -R
+++              --languages=C,C++,CUDA
+++              --langmap=C++:+.hip
+++              --c-kinds=+p
+++              --c++-kinds=+p
+++              --extras=+q
+++              --exclude=.git
+++              --exclude=build
+++              -o TAGS .
+++      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+++      COMMENT "Generating TAGS file with Universal Ctags"
++       VERBATIM
++     )
++   endif()
++@@ -704,6 +900,13 @@ macro(setup_mixed_precision_compilation module_name)
+        ${CMAKE_SOURCE_DIR}/matrix_matrix
+        ${CMAKE_SOURCE_DIR}/multivector
+      )
+diff --git a/repos/spack_repo/builtin/packages/hypre/package.py b/repos/spack_repo/builtin/packages/hypre/package.py
+index b6a857de0f..8886ed9719 100644
+--- a/repos/spack_repo/builtin/packages/hypre/package.py
++++ b/repos/spack_repo/builtin/packages/hypre/package.py
+@@ -191,25 +191,27 @@ class Hypre(CMakePackage, AutotoolsPackage, CudaPackage, ROCmPackage):
+     conflicts("+gpu-aware-mpi", when="~cuda~rocm~sycl")
+     with when("+cuda"):
+         depends_on("umpire+c+cuda", when="@3:")
++        requires("+umpire", when="@3:")
+ 
+         conflicts("@:2.18")
+         conflicts("cuda_arch=none")
+         conflicts("precision=longdouble")
+         conflicts("precision=mixed")
+-        conflicts("+shared +umpire")
++        conflicts("+shared +umpire", when="@:2")
+         conflicts("+int64", msg="Use +mixedint for 64-bit integer support for GPUs!")
+         conflicts("+rocm", msg="CUDA and ROCm are mutually exclusive")
+         conflicts("+sycl", msg="CUDA and SYCL are mutually exclusive")
+         conflicts("cxxstd=11", when="^cuda@13:")
+         conflicts("cxxstd=14", when="^cuda@13:")
+         depends_on("cuda@:11", when="@:2.28.0")
+-        # https://github.com/hypre-space/hypre/pull/1353
+         conflicts("^cuda@13:", when="@:2")
+         for pkg, sm_ in product(gpu_pkgs, CudaPackage.cuda_arch_values):
+             requires(f"^{pkg} cuda_arch={sm_}", when=f"+{pkg} cuda_arch={sm_}")
+ 
+     with when("+rocm"):
+         depends_on("umpire+c+rocm", when="@3:")
++        requires("+umpire", when="@3:")
++
+         depends_on("rocsparse")
+         depends_on("rocthrust")
+         depends_on("rocrand")
+diff --git a/repos/spack_repo/builtin/packages/umpire/package.py b/repos/spack_repo/builtin/packages/umpire/package.py
+index b703b3dc74..d277963e1d 100644
+--- a/repos/spack_repo/builtin/packages/umpire/package.py
++++ b/repos/spack_repo/builtin/packages/umpire/package.py
+@@ -323,7 +323,7 @@ class Umpire(CachedCMakePackage, CudaPackage, ROCmPackage):
+ 
+     # device allocator exports device code, which requires static libs
+     # currently only available for cuda.
+-    conflicts("+shared", when="+cuda")
++    conflicts("+shared", when="+cuda +device_alloc")
+ 
+     # https://github.com/LLNL/Umpire/pull/992
+     conflicts("^cuda@13:", when="+cuda")
