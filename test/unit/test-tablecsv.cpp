@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <iterator>
-#include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"

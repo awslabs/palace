@@ -4,12 +4,10 @@
 #include "drivensolver.hpp"
 
 #include <complex>
+#include <cstddef>
 #include <iostream>
-#include <Eigen/Core>
 #include <Eigen/Dense>
-#include <Eigen/src/Core/IO.h>
 #include <fmt/core.h>
-#include <fmt/ostream.h>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"

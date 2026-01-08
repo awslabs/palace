@@ -4,8 +4,6 @@
 #include "basesolver.hpp"
 
 #include <array>
-#include <complex>
-#include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
