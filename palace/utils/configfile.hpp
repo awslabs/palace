@@ -650,16 +650,16 @@ public:
 
   // Restart iteration for a partial sweep. 1-based indexing. So 1 <= restart <= nr_freq *
   // nr_excitations.
-  int restart = 1;
+  std::size_t restart = 1;
 
   // Error tolerance for enabling adaptive frequency sweep.
   double adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
-  int adaptive_max_size = 20;
+  std::size_t adaptive_max_size = 20;
 
   // Memory required for adaptive sampling convergence.
-  int adaptive_memory = 2;
+  std::size_t adaptive_memory = 2;
 
   // Return circuit matrices from port with port excitation vectors
   bool adaptive_circuit_synthesis = false;
