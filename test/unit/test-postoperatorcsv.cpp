@@ -1,13 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <complex>
-#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "fem/mesh.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
@@ -16,7 +11,6 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/meshio.hpp"
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-do-while)
 

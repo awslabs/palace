@@ -4,7 +4,6 @@
 #include "nleps.hpp"
 
 #include <algorithm>
-#include <string>
 #include <Eigen/Dense>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
