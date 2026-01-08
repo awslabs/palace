@@ -41,10 +41,10 @@ public:
   [[nodiscard]] auto format_row(std::size_t i, const ColumnOptions &defaults = {},
                                 const std::optional<std::size_t> &width = {}) const;
 
-  Column(std::string name, std::string header_text = "", long column_group_idx = 0,
-         std::optional<std::size_t> min_left_padding = {},
-         std::optional<std::size_t> float_precision = {},
-         std::optional<std::string> fmt_sign = {});
+  explicit Column(std::string name, std::string header_text = "", long column_group_idx = 0,
+                  std::optional<std::size_t> min_left_padding = {},
+                  std::optional<std::size_t> float_precision = {},
+                  std::optional<std::string> fmt_sign = {});
 
   // Actual Data in Column.
   std::vector<double> data;
@@ -90,9 +90,9 @@ class Table
 
 public:
   Table() = default;
-  Table(std::string_view table_str,
-        std::optional<std::string_view> print_col_separator_ = std::nullopt,
-        std::optional<std::string_view> print_row_separator_ = std::nullopt);
+  explicit Table(std::string_view table_str,
+                 std::optional<std::string_view> print_col_separator_ = std::nullopt,
+                 std::optional<std::string_view> print_row_separator_ = std::nullopt);
 
   // Default column options; can be overwritten column-wise.
   ColumnOptions col_options = {};
