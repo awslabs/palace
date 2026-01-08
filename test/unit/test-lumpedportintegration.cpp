@@ -67,7 +67,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   // PEC. This will cause the electric field of port on the shared edged to be set to zero
   // and change integrals and normalizations as the effective width of the port is changed.
   // In (c), we set the boundary square with diagonal (0, 1, 0)-(1, 2, 0) to be PEC. This
-  // should not alter the field with are perpendicularly incident on the metal so should
+  // should not alter the fields which are perpendicularly incident on the metal so should
   // give the same result as (a). However, this is not true for tet meshes
   //
   // All other boundaries are left unspecified (so PMC).
@@ -180,22 +180,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
     CHECK(bbox.Lengths().size() == 3);
     std::array<double, 3> bbox_lengths_out = {length_dx_m, length_dx_m, 0.0};
     CHECK(bbox.Lengths() == bbox_lengths_out);
-
-    // TODO: Figure out tests for axes, Normals()
-
-    // CHECK(bbox.axes.size() == 3);
-    // std::array<std::array<double, 3>, 3> bbox_axes_out = {
-    //     std::array<double, 3>{1.0, 0.0, 0.0}, std::array<double, 3>{0.0, 1.0, 0.0},
-    //     std::array<double, 3>{0.0, 0.0, 0.0}};
-    // CHECK(bbox.axes == bbox_axes_out);
-
-    // CHECK(bbox.Normals().size() == 3);
-    // std::array<std::array<double, 3>, 3> bbox_normals_out = {
-    //     std::array<double, 3>{0.0, 0.0, 0.0}, std::array<double, 3>{0.0, 0.0, 0.0},
-    //     std::array<double, 3>{0.0, 0.0, 0.0}};
-    // CHECK(bbox.Normals() == bbox_normals_out);
-
-    // TODO: Test bbox.Deviations().
   }
 
   mfem::Array<int> attr_marker_loc;
