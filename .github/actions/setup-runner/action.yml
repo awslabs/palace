@@ -109,8 +109,13 @@ runs:
         cd $(spack location --repo builtin)
         for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
           if [ -f "$patch" ]; then
-            echo "Applying patch: $patch"
-            git apply "$patch"
+            if ! git apply --check "$patch" 2>/dev/null; then
+              echo "Cannot apply $patch (PR may have already been merged)"
+              echo "Please remove $patch from the Palace repo if the PR was merged"
+            else
+              echo "Applying patch: $patch"
+              git apply "$patch"
+            fi
           fi
         done
 
