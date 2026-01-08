@@ -188,8 +188,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
 
-            # TODO: Remove me after blt > 0.7.1 is released
-            depends_on(f"blt@develop")
+            # We need https://github.com/llnl/blt/pull/735, which is not available
+            # in <= 0.7.1
+            depends_on("blt@0.7.2:")
 
             depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
