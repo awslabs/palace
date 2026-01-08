@@ -1347,8 +1347,8 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
     nr_expected_measurement_rows = iodata.solver.driven.sample_f.size();
     reload_table = (iodata.solver.driven.restart != 1);
 
-    row_i = std::size_t(iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
-    ex_idx_i = std::size_t(iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;
+    row_i = (iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
+    ex_idx_i = (iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
   }
 

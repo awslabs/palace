@@ -57,10 +57,10 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
 
-  auto restart = iodata.solver.driven.restart;
+  std::size_t restart = iodata.solver.driven.restart;
   if (restart != 1)
   {
-    int max_iter = omega_sample.size() * space_op.GetPortExcitations().Size();
+    std::size_t max_iter = omega_sample.size() * space_op.GetPortExcitations().Size();
     MFEM_VERIFY(
         restart - 1 < max_iter,
         fmt::format("\"Restart\" ({}) is greater than the number of total samples ({})!",
@@ -124,10 +124,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Main excitation and frequency loop.
   auto t0 = Timer::Now();
-  int excitation_counter = 0;
-  const int excitation_restart_counter =
+  std::size_t excitation_counter = 0;
+  const std::size_t excitation_restart_counter =
       ((iodata.solver.driven.restart - 1) / omega_sample.size()) + 1;
-  const int freq_restart_idx = (iodata.solver.driven.restart - 1) % omega_sample.size();
+  const std::size_t freq_restart_idx =
+      (iodata.solver.driven.restart - 1) % omega_sample.size();
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (++excitation_counter < excitation_restart_counter)
@@ -217,10 +218,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
-  int convergence_memory = iodata.solver.driven.adaptive_memory;
-  auto max_size_per_excitation =
-      static_cast<std::size_t>(iodata.solver.driven.adaptive_max_size);
-  int nprom_indices = static_cast<int>(iodata.solver.driven.prom_indices.size());
+  std::size_t convergence_memory = iodata.solver.driven.adaptive_memory;
+  std::size_t max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
+  std::size_t nprom_indices = iodata.solver.driven.prom_indices.size();
   MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_indices,
               "Adaptive frequency sweep must sample at least " << nprom_indices
                                                                << " frequency points!");
@@ -331,14 +331,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // The estimates associated to the end points are assumed inaccurate.
     max_errors[0] = std::numeric_limits<double>::infinity();
     max_errors[1] = std::numeric_limits<double>::infinity();
-    int memory = std::distance(max_errors.rbegin(),
-                               std::find_if(max_errors.rbegin(), max_errors.rend(),
-                                            [=](auto x) { return x > offline_tol; }));
+    auto memory = std::distance(max_errors.rbegin(),
+                                std::find_if(max_errors.rbegin(), max_errors.rend(),
+                                             [=](auto x) { return x > offline_tol; }));
+    memory = std::max(0L, memory);  // Ensure memory >= 0 as it should be.
 
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints and explicit sample frequencies.
-    int it = static_cast<int>(max_errors.size());
-    for (int it0 = it; it < max_size_per_excitation && memory < convergence_memory; it++)
+    std::size_t it = max_errors.size();
+    for (std::size_t it0 = it; it < max_size_per_excitation && memory < convergence_memory;
+         it++)
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
       // previous samples).
