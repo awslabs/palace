@@ -5,7 +5,6 @@
 
 #include <charconv>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <regex>
 #include <set>

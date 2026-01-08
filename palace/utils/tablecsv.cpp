@@ -10,7 +10,6 @@
 #include <utility>
 #include <fmt/format.h>
 #include <fmt/os.h>
-#include <fmt/ranges.h>
 #include <scn/scan.h>
 #include <mfem/general/error.hpp>
 

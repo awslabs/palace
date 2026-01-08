@@ -33,6 +33,10 @@ Checks: >
     -readability-uppercase-literal-suffix,
     performance-*,
     mpi-*,
-    openmp-*'
+    openmp-*',
+    misc-include-cleaner
 HeaderFilterRegex: 'palace/drivers|palace/fem|palace/linalg|palace/utils'
 FormatStyle: 'file'
+CheckOptions:
+    misc-include-cleaner.MissingIncludes: false
+    misc-include-cleaner.UnusedIncludes: true
