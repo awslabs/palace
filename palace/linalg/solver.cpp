@@ -3,7 +3,7 @@
 
 #include "solver.hpp"
 // #include <mfem.hpp> // for PetscPar? in solver.hpp?
-#include <petsc.h>
+#include <petsc.h> //move to solver.hpp?
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 
@@ -38,21 +38,37 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
   const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
+  bool petsc_matis = true;
+  mfem::OperatorHandle Ar_handle(mfem::Operator::PETSC_MATIS), Ai_handle(mfem::Operator::PETSC_MATIS);
   if (op.Real() && !hAr)
   {
     PtAPr = dynamic_cast<const ParOperator *>(op.Real());
     MFEM_VERIFY(PtAPr,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    hAr = &PtAPr->ParallelAssemble();
+    if (petsc_matis)
+    {
+      PtAPr->ParallelAssemble(Ar_handle);
+    }
+    else
+    {
+      hAr = &PtAPr->ParallelAssemble();
+    }
   }
   if (op.Imag() && !hAi)
   {
     PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
     MFEM_VERIFY(PtAPi,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    hAi = &PtAPi->ParallelAssemble();
+    if (petsc_matis)
+    {
+      PtAPi->ParallelAssemble(Ai_handle);
+    }
+    else
+    {
+      hAi = &PtAPi->ParallelAssemble();
+    }
   }
-  if (hAr && hAi)
+  if ((hAr && hAi) || petsc_matis)
   {
     if (complex_matrix)
     {
@@ -73,7 +89,27 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     else
     {
       // A = Ar + Ai.
-      A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+      if (petsc_matis)
+      {
+        mfem::PetscParMatrix *pAr = dynamic_cast<mfem::PetscParMatrix*>(Ar_handle.Ptr());
+        mfem::PetscParMatrix *pAi = dynamic_cast<mfem::PetscParMatrix*>(Ai_handle.Ptr());
+
+        Mat matAr = pAr->GetMat();
+        Mat matAi = pAi->GetMat();
+
+        // Create result matrix A = Ar + Ai
+        Mat matA;
+        MatDuplicate(matAr, MAT_COPY_VALUES, &matA);
+        MatAXPY(matA, 1.0, matAi, SAME_NONZERO_PATTERN);
+
+        // Create OperatorHandle for the result
+        Ah.SetType(mfem::Operator::PETSC_MATIS);
+        Ah.Reset(new mfem::PetscParMatrix(matA, mfem::Operator::PETSC_MATIS));
+      }
+      else
+      {
+        A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+      }
     }
 
     if (PtAPr)
@@ -88,7 +124,14 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       DropSmallEntries();
     }
-    pc->SetOperator(*A);
+    if (petsc_matis)
+    {
+      pc->SetOperator(*Ah.Ptr());
+    }
+    else
+    {
+      pc->SetOperator(*A);
+    }
     if (!save_assembled)
     {
       A.reset();

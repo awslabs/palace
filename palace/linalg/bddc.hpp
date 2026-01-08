@@ -29,6 +29,7 @@ class BDDCSolver : public mfem::Solver
 private:
   MPI_Comm comm;
   std::unique_ptr<mfem::PetscBDDCSolver> solver;
+  //std::unique_ptr<mfem::PetscLinearSolver> solver;
   mfem::Array<int> ess_tdof_list, block_ess_tdof_list, nat_tdof_list;
   FiniteElementSpace &fespace;
   bool complex_coarse;

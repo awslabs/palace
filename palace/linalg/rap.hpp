@@ -41,6 +41,7 @@ private:
   // Assembled operator as a parallel Hypre matrix. If assembled, the local operator is not
   // deleted.
   mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
+  //mfem::OperatorHandle RAP_handle; // test??
 
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
@@ -101,6 +102,9 @@ public:
   // Assemble the operator as a parallel sparse matrix. The memory associated with the
   // local operator is free'd.
   mfem::HypreParMatrix &ParallelAssemble(bool skip_zeros = false) const;
+
+  // test? probably need a stealparallel version too?
+  void ParallelAssemble(mfem::OperatorHandle &A, bool skip_zeros = false) const;
 
   // Steal the assembled parallel sparse matrix.
   std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble(bool skip_zeros = false) const

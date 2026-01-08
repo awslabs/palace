@@ -81,8 +81,117 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   }
 }
 
+// test
+void ParOperator::ParallelAssemble(mfem::OperatorHandle &RAP_handle, bool skip_zeros) const
+{
+  RAP_handle.Clear();
+
+  mfem::OperatorHandle Ah(RAP_handle.Type()), Ph(RAP_handle.Type()), Rh(RAP_handle.Type()), hAh, hRh;
+
+  // Build the square or rectangular assembled HypreParMatrix.
+  const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
+  std::unique_ptr<hypre::HypreCSRMatrix> data_sA;
+  if (!sA)
+  {
+    const auto *cA = dynamic_cast<const ceed::Operator *>(A);
+    MFEM_VERIFY(cA,
+                "ParOperator::ParallelAssemble requires A as an hypre::HypreCSRMatrix or "
+                "ceed::Operator!");
+    data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
+    sA = data_sA.get();
+  }
+
+  /*
+  hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
+      trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
+      test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), 0, sA->NNZ(),
+      0);
+  hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
+  hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
+  //hypre_ParCSRMatrixDiag(hA) = const_cast<hypre_CSRMatrix*>(static_cast<const hypre_CSRMatrix*>(*sA)); //test suggested by Kiro
+  hypre_ParCSRMatrixInitialize(hA);
+
+  //mfem::HypreParMatrix *hypreMatrix = new mfem::HypreParMatrix(hA, true); // causes failure!
+  //hAh.Reset(hypreMatrix);
+  //Ah.ConvertFrom(hAh);
+  hAh.Reset(new mfem::HypreParMatrix(hA, true)); //test Causes failure
+  Ah.ConvertFrom(hAh);
+  //Ah.ConvertFrom(new mfem::HypreParMatrix(hA));
+
+  hypre_ParCSRMatrixDiag(hA) = hA_diag;
+  hypre_ParCSRMatrixDestroy(hA);
+  //delete hypreMatrix;
+  */
+
+  // Get the data from the HypreCSRMatrix.
+  int nrows = sA->Height();
+  int ncols = sA->Width();
+  int *I = const_cast<int*>(sA->GetI());
+  int *J = const_cast<int*>(sA->GetJ());
+  double *data = const_cast<double*>(sA->GetData());
+
+  // Create SparseMatrix from CSR data.
+  mfem::SparseMatrix *diag = new mfem::SparseMatrix(I, J, data, nrows, ncols);
+
+  // Create HypreParMatrix and convert into OperatorHandle.
+  hAh.Reset(new mfem::HypreParMatrix(
+    trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
+    test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), diag));
+  Ah.ConvertFrom(hAh);
+
+  //const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
+  Ph.ConvertFrom(trial_fespace.Get().Dof_TrueDof_Matrix());
+  if (!use_R)
+  {
+    //const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
+    Rh.ConvertFrom(test_fespace.Get().Dof_TrueDof_Matrix());
+    RAP_handle.MakeRAP(Rh, Ah, Ph);
+    //RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1),
+    //                                             true);
+  }
+  else
+  {
+    hRh.Reset(new mfem::HypreParMatrix(
+        test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
+        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+        const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix())));
+    //Rh.ConvertFrom(new mfem::HypreParMatrix(
+    //    test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
+    //    test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+    //    const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix())));
+    Rh.ConvertFrom(hRh);
+    RAP_handle.MakeRAP(Rh, Ah, Ph);
+    //hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+    //RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    //hypre_ParCSRMatrixDestroy(AP);
+    //delete hR;
+  }
+
+
+  //hypre_ParCSRMatrixSetNumNonzeros(*RAP);
+  if (&trial_fespace == &test_fespace)
+  {
+    // Make sure that the first entry in each row is the diagonal one, for a square matrix.
+    //hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*RAP));
+  }
+
+  // Eliminate boundary conditions on the assembled (square) matrix.
+  if (&trial_fespace == &test_fespace)
+  {
+    RAP_handle.EliminateBC(dbc_tdof_list, diag_policy);
+  }
+  else
+  {
+    MFEM_VERIFY(dbc_tdof_list.Size() == 0,
+                "Essential BC elimination is only available for square ParOperator!");
+  }
+  std::cout << "Done with RAP ParallelAssemble into OperatorHandle\n";
+}
+
+
 mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 {
+  std::cout << "calling ParallelAssemble into HypreParMatrix RAP\n";
   if (RAP)
   {
     return *RAP;

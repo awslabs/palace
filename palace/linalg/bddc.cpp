@@ -52,27 +52,28 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
 
 void BDDCSolver::SetOperator(const Operator &op)
 {
+  std::cout << "In BDDC SetOperator\n";
   // See all BDDC options here: https://petsc.org/main/src/ksp/pc/impls/bddc/bddc.c.html
-  PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "0"); // int, Verbosity level
+  PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2"); // int, Verbosity/Checks level, setting to 0 reduces cpu time and memory usage
   //PetscOptionsSetValue(NULL, "-pc_bddc_interface_ext_type", "LUMP"); // enum, Use DIRICHLET or LUMP to extend interface corrections to interior. LUMP leads to error
-  //PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "0"); // bool, Use or not adjacency graph of local mat for interface analysis. No noticeable effect
-  //PetscOptionsSetValue(NULL, "-pc_bddc_local_mat_graph_square", "0"); // int, Square adjacency graph of local mat for interface analysis. No noticeable effect
-  PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // Maximum number of shared subdomains for a connected component
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_local_mat_graph", "1"); // bool, Use or not adjacency graph of local mat for interface analysis. No noticeable effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_local_mat_graph_square", "1"); // int, Square adjacency graph of local mat for interface analysis. No noticeable effect
+  //PetscOptionsSetValue(NULL, "-pc_bddc_graph_maxcount", "1"); // Maximum number of shared subdomains for a connected component
   // 0 or 1 converges well but uses a lot of memory. Not setting or using 2+ leads to much smaller coarse problem but worse convergence
-  //PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "0"); // Activates face-based corner selection. No effect?
-  PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // setting to 0 leads to coarse size = 0
-  //PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // No effect
-  //PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // No effect
+  PetscOptionsSetValue(NULL, "-pc_bddc_corner_selection", "1"); // Activates face-based corner selection. No effect?
+  PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // setting to 0 leads to coarse size = 0 if maxcount <2
+  PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // No effect
+  PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // Has an effect when graph_maxcount >=2!!cc
   //PetscOptionsSetValue(NULL, "-pc_bddc_vertex_size", "4"); // Connected components smaller or equal to vertex size will be considered as primal vertices
   // 0 -> error, 1 -> same as not setting, 2 -> same as 1, 10 -> same as 1
   // TRY IT AGAIN WITH GRAPH_MAXCOUNT > 1??!!! still no noticeable effect?
   //PetscOptionsSetValue(NULL, "-pc_bddc_use_nnsp", "1"); // No effect
-  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_of_basis", "0");  // Internal change of basis on local edge nodes
-  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_on_faces", "0");  // Internal change of basis on local face nodes
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_of_basis", "1");  // Internal change of basis on local edge nodes. No effect?
+  //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_on_faces", "1");  // Internal change of basis on local face nodes. No effect?
   //PetscOptionsSetValue(NULL, "-pc_bddc_switch_static", "1"); // Switch on static condensation ops around the interface preconditioner. Leads to MPI error
-  PetscOptionsSetValue(NULL, "-pc_bddc_coarse_eqs_per_proc", "10000"); // number of cores used for the coarse solve-> ncores = coarse_size/this
+  //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_eqs_per_proc", "10000"); // number of cores used for the coarse solve-> ncores = coarse_size/this
   //PetscOptionsSetValue(NULL, "-pc_bddc_coarsening_ratio","4"); // Coarsening ratio, only matters for multilevel
-  PetscOptionsSetValue(NULL, "-pc_bddc_levels", "0"); // Maximum number of levels. 0 disables multilevel
+  PetscOptionsSetValue(NULL, "-pc_bddc_levels", "0"); // Maximum number of levels. 0 disables multilevel. Multilevel requires local coordinates
   //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_eqs_limit", "100"); // maximum number of equations on coarsest grid. No effect...?
   //PetscOptionsSetValue(NULL, "-pc_bddc_use_coarse_estimates", "1"); // Use estimated eigenvalues for coarse problem. No effect
   //PetscOptionsSetValue(NULL, "-pc_bddc_use_deluxe_scaling", "1"); // Use deluxe scaling for BDDC. No effect when maxcount=1, error when maxcount>1
@@ -104,6 +105,20 @@ void BDDCSolver::SetOperator(const Operator &op)
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
 
+    const mfem::PetscParMatrix *petsc_mat = dynamic_cast<const mfem::PetscParMatrix*>(&op);
+    const mfem::HypreParMatrix *hypre_mat = dynamic_cast<const mfem::HypreParMatrix*>(&op);
+
+    if (petsc_mat) {
+      std::cout << "it's a PetscParMatrix!\n";
+    }
+    else if (hypre_mat) {
+      std::cout << "it's a HypreParMatrix!\n";
+    }
+    else {
+        std::cout << "it's neither petsc nor hypre!?\n";
+    }
+
+  /*
   // Convert HypreParMatrix (op) to PETSc MATAIJ first (not MATIS)
   auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
   // Now convert MATAIJ to MATIS
@@ -111,6 +126,8 @@ void BDDCSolver::SetOperator(const Operator &op)
   Mat matIS;
   MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
   auto pA = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
+*/
+  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix. Leads to 0 connected components
 
   // Set BDDC opts
   mfem::PetscBDDCSolverParams opts;
@@ -151,14 +168,22 @@ PetscOptionsSetValue(NULL, "-ksp_type", "gmres"); //preonly does not convegre
 PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "100");  // Larger restart
 PetscOptionsSetValue(NULL, "-pc_type", "asm");
 PetscOptionsSetValue(NULL, "-pc_asm_type", "restrict");//restrict is the default
-PetscOptionsSetValue(NULL, "-pc_asm_overlap", "2");  // Increase overlap?
+//PetscOptionsSetValue(NULL, "-pc_asm_type", "basic");//restrict is the default
+PetscOptionsSetValue(NULL, "-pc_asm_overlap", "10");  // Increase overlap?
 PetscOptionsSetValue(NULL, "-sub_pc_type", "lu");
 PetscOptionsSetValue(NULL, "-sub_pc_factor_mat_solver_type", "mumps");
 PetscOptionsSetValue(NULL, "-ksp_monitor", "");
   auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATAIJ); // op -> PetscParMatrix
-  solver2 = std::make_unique<mfem::PetscLinearSolver>(comm);
-  solver2->SetOperator(*pA);
+  solver = std::make_unique<mfem::PetscLinearSolver>(comm);
+  solver->SetOperator(*pA);
   */
+  // Single transmon on 6 cores.
+  // Using overlap 1 does not converge.
+  // 2 does (11 outer iterations, ~80 inner gmres its. Total 31 secs
+  // 3 leads to same 11 outer its, ~50 inner gmres its. Total 28 secs
+  // 7 leads to same 11 outer its, ~17 inner gmres its. Total 25 secs
+  // 10 leads to same 11 outer its, ~11 inner gmres its. Total 26 secs
+  // Need to try it on higher number of cores. varying overlap
 }
 
 }  // namespace palace
