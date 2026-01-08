@@ -107,7 +107,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   MPI_Comm world_comm = Mpi::World();
 
   // Generate 3 x 2 different test configuration.
-  size_t order = GENERATE(1ul, 2ul, 3ul);
+  size_t order = GENERATE(1UL, 2UL, 3UL);
   auto [mesh_is_hex, mesh_path] =
       GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
                                          "lumpedport_mesh/cube_mesh_1_1_1_hex.msh"),
@@ -337,7 +337,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   MPI_Comm world_comm = Mpi::World();
 
   // Generate 3 x 2 different test configuration.
-  size_t order = GENERATE(1ul, 2ul, 3ul);
+  size_t order = GENERATE(1UL, 2UL, 3UL);
   auto [mesh_is_hex, mesh_path] =
       GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
                                          "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
