@@ -2,18 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <vector>
-#include <Eigen/Core>
 #include <Eigen/Dense>
-#include <catch2/catch_approx.hpp>
-#include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
-#include <catch2/matchers/catch_matchers_all.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "drivers/drivensolver.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"

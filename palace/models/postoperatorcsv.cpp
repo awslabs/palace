@@ -11,7 +11,6 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
-#include "utils/timer.hpp"
 
 namespace palace
 {

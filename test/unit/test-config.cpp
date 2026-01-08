@@ -1,15 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
+#include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <string>
-#include <fmt/format.h>
+#include <vector>
+#include <fmt/core.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
