@@ -1,0 +1,129 @@
+diff --git a/fem/linearform.cpp b/fem/linearform.cpp
+index b69aaf6c79..95c1dae83a 100644
+--- a/fem/linearform.cpp
++++ b/fem/linearform.cpp
+@@ -391,13 +391,106 @@ void LinearForm::AssembleDelta()
+       // (Par)Mesh::FindPoints() failed to find this point:
+       if (elem_id < 0) { continue; }
+ 
+-      const IntegrationPoint &ip = domain_delta_integs_ip[i];
++      // Check for HCURL space with VectorDeltaCoefficient - apply weight averaging
++      if (fes->GetFE(elem_id)->GetMapType() == FiniteElement::H_CURL) {
++         AssembleVectorDeltaWithAveraging(i, elem_id);
++      } else {
++         Array<int> vdofs;
++         Vector elemvect;
++         ElementTransformation &Trans = *fes->GetElementTransformation(elem_id);
++         const IntegrationPoint &ip = domain_delta_integs_ip[i];
++         Trans.SetIntPoint(&ip);
++         fes->GetElementVDofs(elem_id, vdofs);
++         domain_delta_integs[i]->AssembleDeltaElementVect(*fes->GetFE(elem_id), Trans, elemvect);
++         AddElementVector(vdofs, elemvect);
++      }
++   }
++}
++
++void LinearForm::AssembleVectorDeltaWithAveraging(int integrator_idx, int elem_id)
++{
++   VectorFEDomainLFIntegrator* vec_integrator = dynamic_cast<VectorFEDomainLFIntegrator*>(
++      domain_delta_integs[integrator_idx]);
++
++   // Get the delta center
++   Vector delta_center;
++   vec_integrator->GetDeltaCenter(delta_center);
++
++   // Find closest vertex
++   Mesh* mesh = fes->GetMesh();
++   Array<int> elem_vertices;
++   mesh->GetElementVertices(elem_id, elem_vertices);
++
++   int closest_vertex = -1;
++   real_t min_dist = std::numeric_limits<real_t>::max();
++   const real_t tolerance = 1e-10 * mesh->GetElementSize(elem_id);
++
++   for (int i = 0; i < elem_vertices.Size(); i++) {
++      int vertex_id = elem_vertices[i];
++      const real_t* vertex_coords = mesh->GetVertex(vertex_id);
++
++      real_t dist = 0.0;
++      for (int d = 0; d < delta_center.Size(); d++) {
++         real_t diff = delta_center[d] - vertex_coords[d];
++         dist += diff * diff;
++      }
++      dist = sqrt(dist);
++
++      if (dist < min_dist) {
++         min_dist = dist;
++         closest_vertex = vertex_id;
++      }
++   }
++
++   if (min_dist < tolerance) { // Delta center is on a vertex
++      // Find all elements that share this vertex
++      Array<int> vertex_elements;
++      for (int e = 0; e < mesh->GetNE(); e++) {
++         Array<int> elem_verts;
++         mesh->GetElementVertices(e, elem_verts);
++         for (int v = 0; v < elem_verts.Size(); v++) {
++            if (elem_verts[v] == closest_vertex) {
++               vertex_elements.Append(e);
++               break;
++            }
++         }
++      }
++
++      // Calculate volume weights for each element
++      real_t total_volume = 0.0;
++      Array<real_t> element_volumes(vertex_elements.Size());
++      for (int i = 0; i < vertex_elements.Size(); i++) {
++         element_volumes[i] = mesh->GetElementVolume(vertex_elements[i]);
++         total_volume += element_volumes[i];
++      }
++
++      // Apply weighted delta assembly to each element
++      Array<int> vdofs;
++      Vector elemvect;
++      for (int i = 0; i < vertex_elements.Size(); i++) {
++         int e = vertex_elements[i];
++         real_t weight = element_volumes[i] / total_volume;
++
++         ElementTransformation &Trans = *fes->GetElementTransformation(e);
++         IntegrationPoint vertex_ip;
++         Trans.TransformBack(delta_center, vertex_ip);
++
++         Trans.SetIntPoint(&vertex_ip);
++         fes->GetElementVDofs(e, vdofs);
++
++         // Assemble
++         domain_delta_integs[integrator_idx]->AssembleDeltaElementVect(*fes->GetFE(e), Trans, elemvect);
++         elemvect *= weight;
++         AddElementVector(vdofs, elemvect);
++      }
++   } else {
++      Array<int> vdofs;
++      Vector elemvect;
+       ElementTransformation &Trans = *fes->GetElementTransformation(elem_id);
++      const IntegrationPoint &ip = domain_delta_integs_ip[integrator_idx];
+       Trans.SetIntPoint(&ip);
+-
+       fes->GetElementVDofs(elem_id, vdofs);
+-      domain_delta_integs[i]->AssembleDeltaElementVect(*fes->GetFE(elem_id),
+-                                                       Trans, elemvect);
++      domain_delta_integs[integrator_idx]->AssembleDeltaElementVect(*fes->GetFE(elem_id), Trans, elemvect);
+       AddElementVector(vdofs, elemvect);
+    }
+ }
+diff --git a/fem/linearform.hpp b/fem/linearform.hpp
+index 1e93565c69..a673ea44b5 100644
+--- a/fem/linearform.hpp
++++ b/fem/linearform.hpp
+@@ -208,6 +208,9 @@ public:
+    /// Assembles delta functions of the linear form
+    void AssembleDelta();
+ 
++   /// Assembles VectorDeltaCoefficient with weight averaging for HCURL elements
++   void AssembleVectorDeltaWithAveraging(int integrator_idx, int elem_id);
++
+    /// Update the object according to the associated FE space #fes.
+    /** This method should be called when the associated FE space #fes has been
+        updated, e.g. after its associated Mesh object has been refined.
