@@ -268,7 +268,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    prom_op.AddLumpedPortModesForSynthesis(iodata);
+    prom_op.AddLumpedPortModesForSynthesis();
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency

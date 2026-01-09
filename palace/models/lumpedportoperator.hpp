@@ -55,7 +55,7 @@ public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);
 
-  [[nodiscard]] double GetToSquare(const LumpedElementData &elem) const
+  double GetToSquare(const LumpedElementData &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
@@ -64,7 +64,7 @@ public:
   // ∑(Wₑ/Lₑ). In this function we set the impedance magnitude|Z₀| = 1 in internal units (=
   // Z_freespace Ohm). The actual lumped impedance is frequency dependant for ports with L,C
   // so it is more convenient to add this factor later as needed.
-  [[nodiscard]] double GetExcitationFieldEtNormSqWithUnityZR() const
+  double GetExcitationFieldEtNormSqWithUnityZR() const
   {
     double norm_et = 0.0;
     for (const auto &el : elems)
@@ -76,7 +76,7 @@ public:
 
   // Normalization of tangential electric field of port corresponding ∫|H|²ds = 1 / (|Z₀|
   // nₑₗₑₘₛ²) * ∑(Lₑ/Wₑ). Same details as in GetExcitationFieldEtNormSqWithUnityZR above.
-  [[nodiscard]] double GetExcitationFieldHtNormSqWithUnityZR() const
+  double GetExcitationFieldHtNormSqWithUnityZR() const
   {
     double norm_ht = 0.0;
     for (const auto &el : elems)
@@ -87,7 +87,7 @@ public:
     return norm_ht;
   }
 
-  [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
+  constexpr bool HasExcitation() const { return excitation != 0; }
 
   enum class Branch
   {
