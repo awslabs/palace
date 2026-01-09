@@ -524,7 +524,7 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
+void RomOperator::AddLumpedPortModesForSynthesis()
 {
   // Add modes for lumped port to use them a circuit matrices.
   //
@@ -561,14 +561,6 @@ void RomOperator::AddLumpedPortModesForSynthesis(const IoData &iodata)
   MFEM_VERIFY(orth_R.isDiagonal(),
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
-
-  // // Debug Print
-  // if constexpr (false)
-  // {
-  //   fs::path folder_tmp = fs::path(iodata.problem.output) / "prom_port_debug";
-  //   fs::create_directories(folder_tmp);
-  //   PrintPROMMatrices(iodata.units, folder_tmp);
-  // }
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
