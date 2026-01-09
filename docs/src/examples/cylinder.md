@@ -63,12 +63,12 @@ where ``k=\omega\sqrt{\mu\varepsilon}``, ``\eta=\sqrt{\mu/\varepsilon}``, and
 ``\beta=l\pi/d``.
 
 The initial Gmsh mesh for this problem, from
-[`mesh/cavity_prism.msh`](../../../examples/cylinder/mesh/cavity_prism.msh),
+[`mesh/cavity_prism.msh`](../../../examples/cylinder/mesh/cylinder_prism.msh),
 is shown below. We use quadratic triangular prism elements. There are also two other
 included mesh files,
-[`mesh/cavity_tet.msh`](../../../examples/cylinder/mesh/cavity_tet.msh)
+[`mesh/cavity_tet.msh`](../../../examples/cylinder/mesh/cylinder_tet.msh)
 and
-[`mesh/cavity_hex.msh`](../../../examples/cylinder/mesh/cavity_hex.msh),
+[`mesh/cavity_hex.msh`](../../../examples/cylinder/mesh/cylinder_hex.msh),
 which use curved tetrahedral and hexahedral elements, respectively.
 
 ```@raw html
@@ -229,7 +229,7 @@ such modes to higher frequencies. The relevant modes are tabulated as
 | ``(3,1,2)`` | ``6.334023\text{ GHz}`` | ``8.586796\text{ GHz}`` |
 
 For this problem, we use curved tetrahedral elements from the mesh file
-[`mesh/cavity_tet.msh`](../../../examples/cylinder/mesh/cavity_tet.msh),
+[`mesh/cavity_tet.msh`](../../../examples/cylinder/mesh/cylinder_tet.msh),
 and the configuration files
 [`waveguide.json`](../../../examples/cylinder/waveguide.json) and
 [`floquet.json`](../../../examples/cylinder/floquet.json).
