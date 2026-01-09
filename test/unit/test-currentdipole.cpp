@@ -105,6 +105,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
   iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.linear.type = LinearSolver::AMS;
   iodata.solver.order = Order;
   iodata.solver.linear.max_it = 1000;
   iodata.solver.linear.tol = 1e-10;
@@ -119,6 +120,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
   // Read parallel mesh.
   const int dim = serial_mesh->Dimension();
+  REQUIRE(Mpi::Size(comm) <= serial_mesh->GetNE());
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   iodata.NondimensionalizeInputs(*par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
@@ -425,7 +427,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
 }
 
-TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]")
+TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][Parallel]")
 {
   double freq_Hz = 350e6;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
@@ -436,7 +438,7 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]"
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
           resolution, resolution, resolution, mfem::Element::HEXAHEDRON));
-
+  serial_mesh->PrintInfo();
   // Transform to center the origin
   serial_mesh->Transform(
       [](const mfem::Vector &x, mfem::Vector &p)
@@ -452,7 +454,7 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]"
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0);
 }
 
-TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial]")
+TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial][Parallel]")
 {
   double freq_Hz = 350e6;
 
@@ -463,7 +465,7 @@ TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Seri
 
   std::vector<int> domain_attributes = {2};    // Domain volume
   std::vector<int> farfield_attributes = {1};  // Outer boundary (absorbing boundary)
-
+  serial_mesh->PrintInfo();
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), farfield_attributes,
                        domain_attributes, 1.0, 1.0);
 }
