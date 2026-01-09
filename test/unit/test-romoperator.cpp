@@ -307,7 +307,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   CHECK_THAT(overlap_combined, WithinRel(1.0));
 
   // Test actually adding port primary vectors to PROM.
-  prom_op.AddLumpedPortModesForSynthesis(iodata);
+  prom_op.AddLumpedPortModesForSynthesis();
   CHECK(prom_op.GetReducedDimension() == 1);
   const auto [m_Linv, m_Rinv, m_C] = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
   const auto orth_R = prom_op.GetOrthR();
@@ -511,7 +511,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   }
 
   // // Test actually adding port primary vectors to PROM.
-  prom_op.AddLumpedPortModesForSynthesis(iodata);
+  prom_op.AddLumpedPortModesForSynthesis();
   auto rom_dim = prom_op.GetReducedDimension();
   REQUIRE(rom_dim == 2);
   const auto [m_Linv, m_Rinv, m_C] = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
@@ -700,6 +700,6 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 
   RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
 
-  CHECK_THROWS(prom_op.AddLumpedPortModesForSynthesis(iodata),
+  CHECK_THROWS(prom_op.AddLumpedPortModesForSynthesis(),
                Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
 }
