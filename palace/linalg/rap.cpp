@@ -185,13 +185,13 @@ void ParOperator::ParallelAssemble(mfem::OperatorHandle &RAP_handle, bool skip_z
     MFEM_VERIFY(dbc_tdof_list.Size() == 0,
                 "Essential BC elimination is only available for square ParOperator!");
   }
-  std::cout << "Done with RAP ParallelAssemble into OperatorHandle\n";
+
 }
 
 
 mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 {
-  std::cout << "calling ParallelAssemble into HypreParMatrix RAP\n";
+
   if (RAP)
   {
     return *RAP;

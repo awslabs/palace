@@ -25,7 +25,7 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
     ess_bdr = 0;
     for (auto attr : iodata.boundaries.pec.attributes)
     {
-      std::cout << "Setting ess bdr for PEC attribute: " << attr << "\n";
+      //std::cout << "Setting ess bdr for PEC attribute: " << attr << "\n";
       ess_bdr[attr] = 1;
     }
     fespace.Get().GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
@@ -52,7 +52,7 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
 
 void BDDCSolver::SetOperator(const Operator &op)
 {
-  std::cout << "In BDDC SetOperator\n";
+  //std::cout << "In BDDC SetOperator\n";
   // See all BDDC options here: https://petsc.org/main/src/ksp/pc/impls/bddc/bddc.c.html
   PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2"); // int, Verbosity/Checks level, setting to 0 reduces cpu time and memory usage
   //PetscOptionsSetValue(NULL, "-pc_bddc_interface_ext_type", "LUMP"); // enum, Use DIRICHLET or LUMP to extend interface corrections to interior. LUMP leads to error
@@ -107,7 +107,7 @@ void BDDCSolver::SetOperator(const Operator &op)
 
     const mfem::PetscParMatrix *petsc_mat = dynamic_cast<const mfem::PetscParMatrix*>(&op);
     const mfem::HypreParMatrix *hypre_mat = dynamic_cast<const mfem::HypreParMatrix*>(&op);
-
+/*
     if (petsc_mat) {
       std::cout << "it's a PetscParMatrix!\n";
     }
@@ -117,7 +117,7 @@ void BDDCSolver::SetOperator(const Operator &op)
     else {
         std::cout << "it's neither petsc nor hypre!?\n";
     }
-
+*/
   /*
   // Convert HypreParMatrix (op) to PETSc MATAIJ first (not MATIS)
   auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
