@@ -210,7 +210,7 @@ public:
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
   // fields that are orthogonal to boundary overlap and primary fields, which requires
   // custom weight matrix in orthogonality — see weight_op_W.
-  void AddLumpedPortModesForSynthesis(const IoData &iodata);
+  void AddLumpedPortModesForSynthesis();
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
