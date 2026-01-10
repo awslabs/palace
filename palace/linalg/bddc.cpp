@@ -25,13 +25,13 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
     ess_bdr = 0;
     for (auto attr : iodata.boundaries.pec.attributes)
     {
-      //std::cout << "Setting ess bdr for PEC attribute: " << attr << "\n";
       ess_bdr[attr] = 1;
     }
     fespace.Get().GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
 
-    // set everything else as nat?!
     mfem::Array<int> nat_bdr(fespace.GetParMesh().bdr_attributes.Max());
+    nat_bdr = 0;
+    // set everything else as natural?
     for (int i = 0; i < ess_bdr.Size(); i++)
     {
       nat_bdr[i] = 1 - ess_bdr[i];
@@ -64,8 +64,8 @@ void BDDCSolver::SetOperator(const Operator &op)
   PetscOptionsSetValue(NULL, "-pc_bddc_use_vertices", "1"); // setting to 0 leads to coarse size = 0 if maxcount <2
   PetscOptionsSetValue(NULL, "-pc_bddc_use_edges", "1"); // No effect
   PetscOptionsSetValue(NULL, "-pc_bddc_use_faces", "1"); // Has an effect when graph_maxcount >=2!!cc
-  //PetscOptionsSetValue(NULL, "-pc_bddc_vertex_size", "4"); // Connected components smaller or equal to vertex size will be considered as primal vertices
-  // 0 -> error, 1 -> same as not setting, 2 -> same as 1, 10 -> same as 1
+  //PetscOptionsSetValue(NULL, "-pc_bddc_vertex_size", "1"); // Connected components smaller or equal to vertex size will be considered as primal vertices
+  // 0 -> error, 1 -> same as not setting, 2 -> same as 1, larger values lead to larger coarse problem but fewer GMRES its
   // TRY IT AGAIN WITH GRAPH_MAXCOUNT > 1??!!! still no noticeable effect?
   //PetscOptionsSetValue(NULL, "-pc_bddc_use_nnsp", "1"); // No effect
   //PetscOptionsSetValue(NULL, "-pc_bddc_use_change_of_basis", "1");  // Internal change of basis on local edge nodes. No effect?
@@ -101,10 +101,9 @@ void BDDCSolver::SetOperator(const Operator &op)
   PetscOptionsSetValue(NULL, "-pc_bddc_neumann_pc_factor_mat_solver_type", "mumps");
   PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_type", "lu");
   PetscOptionsSetValue(NULL, "-pc_bddc_dirichlet_pc_factor_mat_solver_type", "mumps");
-  //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_ksp_type", "preonly");
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
-
+//PetscOptionsSetValue(NULL, "-pc_bddc_coarse_ksp_type", "preonly");
     const mfem::PetscParMatrix *petsc_mat = dynamic_cast<const mfem::PetscParMatrix*>(&op);
     const mfem::HypreParMatrix *hypre_mat = dynamic_cast<const mfem::HypreParMatrix*>(&op);
 /*
@@ -155,7 +154,7 @@ void BDDCSolver::SetOperator(const Operator &op)
     opts.SetEssBdrDofs(&ess_tdof_list);
   }
   // opts.SetComputeNetFlux(true); // leads to MFEM abort
-  //opts.SetNatBdrDofs(&nat_tdof_list);
+  opts.SetNatBdrDofs(&nat_tdof_list); // seems to help convergence but increases coarse problem size
   //opts.SetNatBdrDofs(&ess_tdof_list);
   solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
 
