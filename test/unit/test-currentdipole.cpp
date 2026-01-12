@@ -117,10 +117,19 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.CheckConfiguration();
 
   auto comm = Mpi::World();
+  const int num_ranks = Mpi::Size(comm);
+  const int rank = Mpi::Rank(comm);
+
+  if (rank == 0)
+  {
+    std::cout << "\nRunning current dipole test with " << num_ranks << " MPI ranks\n" << std::endl;
+
+    serial_mesh->PrintInfo();
+  }
 
   // Read parallel mesh.
   const int dim = serial_mesh->Dimension();
-  REQUIRE(Mpi::Size(comm) <= serial_mesh->GetNE());
+  REQUIRE(num_ranks <= serial_mesh->GetNE());
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   iodata.NondimensionalizeInputs(*par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
@@ -438,7 +447,6 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
           resolution, resolution, resolution, mfem::Element::HEXAHEDRON));
-  serial_mesh->PrintInfo();
   // Transform to center the origin
   serial_mesh->Transform(
       [](const mfem::Vector &x, mfem::Vector &p)
@@ -465,7 +473,6 @@ TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Seri
 
   std::vector<int> domain_attributes = {2};    // Domain volume
   std::vector<int> farfield_attributes = {1};  // Outer boundary (absorbing boundary)
-  serial_mesh->PrintInfo();
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), farfield_attributes,
                        domain_attributes, 1.0, 1.0);
 }
