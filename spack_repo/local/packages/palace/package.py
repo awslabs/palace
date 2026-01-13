@@ -141,9 +141,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre~mixedint", when="~int64")
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
-    depends_on("hypre+gpu-aware-mpi", when="^mpi+cuda")
     # Use external blas/lapack with hypre
     depends_on("hypre+lapack")
+
 
     # NOTE: hypre+gpu-profiling is also useful: it adds NVTX annotations, which
     # are great for GPU profiling with Nsight.
@@ -189,6 +189,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed+magma", when="@0.14:")
 
     with when("+cuda"):
+        # GPU-aware MPI
+        for var in ["openmpi", "mpich", "mvapich-plus"]:
+            depends_on(f"hypre+gpu-aware", when=f"^[virtuals=mpi] {var}+cuda")
+
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
             depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
@@ -202,6 +206,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
+            # GPU-aware MPI
+            depends_on(f"hypre+gpu-aware", when=f"^[virtuals=mpi] {var}+rocm")
+
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
             depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant}")
@@ -233,7 +241,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
-            self.define("PALACE_WITH_GPU_AWARE_MPI", self.spec.satisfies("^mpi+cuda")),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -243,12 +250,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
                 )
             )
+
         if self.spec.satisfies("+rocm"):
             args.append(
                 self.define(
                     "CMAKE_HIP_ARCHITECTURES", ";".join(self.spec.variants["amdgpu_target"].value)
                 )
             )
+
+        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") for var in ["openmpi", "mpich", "mvapich-plus"])
+
+        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
         # Pass down external BLAS/LAPACK
         args.extend(
