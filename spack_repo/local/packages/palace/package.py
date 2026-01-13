@@ -283,22 +283,187 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+strumpack"):
                 args.append(self.define("STRUMPACK_DIR", self.spec["strumpack"].prefix))
             if self.spec.satisfies("+superlu-dist"):
-                args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
+                args.append(
+                    self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix)
+                )
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
             args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
+        else:
+            # Pass libraries down to the ExternalMFEM cmake file. Needed only
+            # before 0.16 because we compile MFEM with Spack afterwards.
+            hypre_packages = ["LAPACK", "BLAS"]
+            if self.spec.satisfies("^hypre+umpire"):
+                hypre_packages.append("Umpire")
+            if self.spec.satisfies("+cuda"):
+                hypre_packages.append("CUDAToolkit")
+
+            args.append(
+                self.define("HYPRE_REQUIRED_PACKAGES", ";".join(hypre_packages))
+            )
+
+            # MPI compiler wrappers are not required, but MFEM test builds need to know to link
+            # against MPI libraries.
+            if self.spec.satisfies("+superlu-dist"):
+                superlu_packages = ["ParMETIS", "METIS", "LAPACK", "BLAS", "MPI"]
+                if self.spec.satisfies("+openmp"):
+                    superlu_packages.append("OpenMP")
+                args.append(
+                    self.define(
+                        "SuperLUDist_REQUIRED_PACKAGES", ";".join(superlu_packages)
+                    )
+                )
+            if self.spec.satisfies("+sundials"):
+                sundials_packages = ["LAPACK", "BLAS", "MPI"]
+                if self.spec.satisfies("+openmp"):
+                    sundials_packages.append("OpenMP")
+                args.append(
+                    self.define(
+                        "SUNDIALS_REQUIRED_PACKAGES", ";".join(sundials_packages)
+                    )
+                )
+            if self.spec.satisfies("+strumpack"):
+                strumpack_packages = [
+                    "ParMETIS",
+                    "METIS",
+                    "LAPACK",
+                    "BLAS",
+                    "MPI",
+                    "MPI_Fortran",
+                ]
+                if self.spec.satisfies("+openmp"):
+                    strumpack_packages.append("OpenMP")
+                if self.spec.satisfies("+cuda"):
+                    strumpack_packages.append("CUDAToolkit")
+                args.append(
+                    self.define(
+                        "STRUMPACK_REQUIRED_PACKAGES", ";".join(strumpack_packages)
+                    )
+                )
+
+                strumpack_libs = str(self.spec["scalapack"].libs).replace(" ", ";")
+
+                # Add OpenMP libraries - use compiler's OpenMP library
+                if self.spec.satisfies("+openmp"):
+                    # Get OpenMP library from compiler
+                    omp_lib = self.compiler.openmp_flag
+                    if omp_lib:
+                        strumpack_libs += ";" + omp_lib
+
+                # Add ButterflyPACK, ZFP, CUDA libraries...
+                if self.spec.satisfies("^strumpack+butterflypack"):
+                    butterflypack_libs = find_libraries(
+                        "*butterflypack*",
+                        self.spec["butterflypack"].prefix,
+                        shared=True,
+                        recursive=True,
+                    )
+                    if not butterflypack_libs:
+                        butterflypack_libs = find_libraries(
+                            "*butterflypack*",
+                            self.spec["butterflypack"].prefix,
+                            shared=False,
+                            recursive=True,
+                        )
+                    if butterflypack_libs:
+                        strumpack_libs += ";" + str(butterflypack_libs).replace(
+                            " ", ";"
+                        )
+
+                if self.spec.satisfies("^strumpack+zfp"):
+                    zfp_libs = str(self.spec["zfp"].libs).replace(" ", ";")
+                    strumpack_libs += ";" + zfp_libs
+
+                # Add SLATE, BLASPP, LAPACKPP libraries
+                for lib_name in ["slate", "lapackpp", "blaspp"]:
+                    try:
+                        lib = str(self.spec[lib_name].libs).replace(" ", ";")
+                        strumpack_libs += ";" + lib
+                    except (AttributeError, KeyError):
+                        pass
+
+                if self.spec.satisfies("+cuda"):
+                    # Add specific CUDA math libraries that STRUMPACK needs
+                    cuda_spec = self.spec["cuda"]
+                    cuda_libs = []
+                    # Add the libraries that ExternalMFEM.cmake includes
+                    for lib_name in ["cublas", "cublaslt", "cusolver", "cudart"]:
+                        try:
+                            lib = find_libraries(
+                                f"lib{lib_name}",
+                                cuda_spec.prefix,
+                                shared=True,
+                                recursive=True,
+                            )
+                            if lib:
+                                cuda_libs.extend(lib)
+                        except (OSError, AttributeError):
+                            pass
+                    if cuda_libs:
+                        strumpack_libs += ";" + ";".join(str(lib) for lib in cuda_libs)
+
+                # Add Fortran libraries
+                if "gfortran" in self.compiler.fc:
+                    strumpack_libs += ";gfortran"
+
+                args.append(self.define("STRUMPACK_REQUIRED_LIBRARIES", strumpack_libs))
+            if self.spec.satisfies("+superlu-dist"):
+                superlu_packages = ["ParMETIS", "METIS", "LAPACK", "BLAS", "MPI"]
+                if self.spec.satisfies("+openmp"):
+                    superlu_packages.append("OpenMP")
+                if self.spec.satisfies("+cuda"):
+                    superlu_packages.append("CUDAToolkit")
+                args.append(
+                    self.define(
+                        "SuperLUDist_REQUIRED_PACKAGES", ";".join(superlu_packages)
+                    )
+                )
+
+                superlu_libs = ""
+                if self.spec.satisfies("+cuda"):
+                    cuda_libs = str(self.spec["cuda"].libs).replace(" ", ";")
+                    superlu_libs = cuda_libs
+                if superlu_libs:
+                    args.append(
+                        self.define("SuperLUDist_REQUIRED_LIBRARIES", superlu_libs)
+                    )
+
+            if self.spec.satisfies("+mumps"):
+                mumps_packages = [
+                    "ParMETIS",
+                    "METIS",
+                    "LAPACK",
+                    "BLAS",
+                    "MPI",
+                    "MPI_Fortran",
+                    "Threads",
+                ]
+                if self.spec.satisfies("+openmp"):
+                    mumps_packages.append("OpenMP")
+                args.append(
+                    self.define("MUMPS_REQUIRED_PACKAGES", ";".join(mumps_packages))
+                )
+
+                mumps_libs = str(self.spec["scalapack"].libs).replace(" ", ";")
+                if "gfortran" in self.compiler.fc:
+                    mumps_libs += ";gfortran"
+                elif "ifort" in self.compiler.fc or "ifx" in self.compiler.fc:
+                    mumps_libs += ";ifport;ifcore"
+                args.append(self.define("MUMPS_REQUIRED_LIBRARIES", mumps_libs))
 
         # We guarantee that there are arch specs with conflicts above
         if self.spec.satisfies("+cuda"):
             args.append(
                 self.define(
-                    "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
+                    "CMAKE_CUDA_ARCHITECTURES",
+                    ";".join(self.spec.variants["cuda_arch"].value),
                 )
             )
         if self.spec.satisfies("+rocm"):
             args.append(
                 self.define(
-                    "CMAKE_HIP_ARCHITECTURES", ";".join(self.spec.variants["amdgpu_target"].value)
+                    "CMAKE_HIP_ARCHITECTURES",
+                    ";".join(self.spec.variants["amdgpu_target"].value),
                 )
             )
 
