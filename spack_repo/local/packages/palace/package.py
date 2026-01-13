@@ -260,17 +260,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        # HYPRE is always built with external BLAS/LAPACK and may need Umpire
         hypre_packages = ["LAPACK", "BLAS"]
         if self.spec.satisfies("^hypre+umpire"):
             hypre_packages.append("Umpire")
         if self.spec.satisfies("+cuda"):
             hypre_packages.append("CUDAToolkit")
 
+        args.append(self.define("HYPRE_REQUIRED_PACKAGES", ";".join(hypre_packages)))
+
         # Pass down external BLAS/LAPACK
         args.extend(
             [
-                self.define("HYPRE_REQUIRED_PACKAGES", ";".join(hypre_packages)),
                 self.define("BLAS_LIBRARIES", self.spec["blas"].libs.joined(";")),
                 self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs.joined(";")),
             ]

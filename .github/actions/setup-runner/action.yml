@@ -101,6 +101,7 @@ runs:
       run: |
         echo "$(realpath spack/bin)" >> "$GITHUB_PATH"
         echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
+        echo "SPACK_COLOR=always" >> "$GITHUB_ENV"
         
     - name: Install Julia
       id: setup-julia
