@@ -33,6 +33,9 @@ private:
   mfem::Array<int> ess_tdof_list, block_ess_tdof_list, nat_tdof_list;
   FiniteElementSpace &fespace;
   bool complex_coarse;
+  int overlap;
+  int num_subdomains;
+  double tol;
 
 public:
   BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int print = 0);

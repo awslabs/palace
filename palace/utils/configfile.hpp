@@ -938,6 +938,11 @@ public:
   // of just Jacobi).
   bool estimator_mg = false;
 
+  // PETSc Generalized ASM tests
+  int asm_overlap = 2;
+  int asm_subdomains = -1;
+  double asm_tol = 1e-3;
+
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;
