@@ -93,9 +93,8 @@ The format of this changelog is based on
     default value that is automatically determined to be the consistent with the
     GPU (when no GPU is detected, `CMAKE_CUDA_ARCHITECTURES` is set to 70). [PR
     530](https://github.com/awslabs/palace/pull/530).
-  - The spack Palace build now supports a new variant `+tests` to compile and
-    install the unit tests. [PR
-    549](https://github.com/awslabs/palace/pull/549).
+  - The spack Palace build now supports compilation of unit tests with Spack
+    tests. [PR 549](https://github.com/awslabs/palace/pull/549).
   - MFEM is no longer unconditionally compiled alongside of Palace and can now
     be built separately. This is used in the Palace spack build, which now
     explicitly depends on MFEM. [PR

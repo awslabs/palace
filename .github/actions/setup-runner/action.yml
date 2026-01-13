@@ -103,7 +103,7 @@ runs:
         echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
         echo "SPACK_COLOR=always" >> "$GITHUB_ENV"
 
-    - name: Patch Spack Packages for known problems
+    - name: Patch Spack package.py files for known problems
       shell: bash
       run: |
         PALACE_DIR=$PWD

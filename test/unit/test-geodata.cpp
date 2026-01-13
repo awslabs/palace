@@ -26,6 +26,7 @@ using namespace Catch::Matchers;
 
 // TODO: Add this test when we can access MFEM_DATA_PATH from Spack
 // This requires MFEM to move to a CMake-based build system for spack.
+// Waiting on https://github.com/spack/spack-packages/pull/143
 //
 // TEST_CASE("ReferenceTetrahedron", "[geodata][Serial]")
 // {
