@@ -258,7 +258,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") for var in ["openmpi", "mpich", "mvapich-plus"])
+        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") or
+                                        self.spec.satisfies(f"{var}+rocm")
+                                        for var in ["openmpi", "mpich", "mvapich-plus"])
 
         args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
