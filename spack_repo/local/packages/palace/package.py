@@ -226,8 +226,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             cuda_variant = f"+cuda cuda_arch={arch}"
 
             # We need https://github.com/llnl/blt/pull/735, which is not available
-            # in <= 0.7.1
-            depends_on("blt@0.7.2:")
+            # in blt <= 0.7.1
+            depends_on("umpire ^blt@0.7.2:")
 
             depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
