@@ -63,6 +63,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
+    depends_on("blas")
+    depends_on("lapack")
     depends_on("zlib-api")
     depends_on("nlohmann-json")
     depends_on("fmt+shared", when="+shared")
@@ -132,12 +134,19 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre@:2", when="@:0.15.0")
     depends_on("hypre@3:")
     depends_on("hypre~complex")
+    depends_on("hypre~unified-memory")
     depends_on("hypre+shared", when="+shared")
     depends_on("hypre~shared", when="~shared")
     depends_on("hypre+mixedint", when="+int64")
     depends_on("hypre~mixedint", when="~int64")
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
+    depends_on("hypre+gpu-aware-mpi", when="^mpi+cuda")
+    # Use external blas/lapack with hypre
+    depends_on("hypre+lapack")
+
+    # NOTE: hypre+gpu-profiling is also useful: it adds NVTX annotations, which
+    # are great for GPU profiling with Nsight.
 
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
@@ -234,6 +243,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+            self.define("PALACE_WITH_GPU_AWARE_MPI", self.spec.satisfies("^mpi+cuda")),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -256,6 +266,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             hypre_packages.append("Umpire")
         if self.spec.satisfies("+cuda"):
             hypre_packages.append("CUDAToolkit")
+
+        # Pass down external BLAS/LAPACK
         args.extend(
             [
                 self.define("HYPRE_REQUIRED_PACKAGES", ";".join(hypre_packages)),
