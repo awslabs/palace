@@ -52,6 +52,7 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
 
 void BDDCSolver::SetOperator(const Operator &op)
 {
+  /*
   //std::cout << "In BDDC SetOperator\n";
   // See all BDDC options here: https://petsc.org/main/src/ksp/pc/impls/bddc/bddc.c.html
   PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2"); // int, Verbosity/Checks level, setting to 0 reduces cpu time and memory usage
@@ -104,29 +105,29 @@ void BDDCSolver::SetOperator(const Operator &op)
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_type", "cholesky");
   PetscOptionsSetValue(NULL, "-pc_bddc_coarse_pc_factor_mat_solver_type", "mumps");
 //PetscOptionsSetValue(NULL, "-pc_bddc_coarse_ksp_type", "preonly");
-    const mfem::PetscParMatrix *petsc_mat = dynamic_cast<const mfem::PetscParMatrix*>(&op);
-    const mfem::HypreParMatrix *hypre_mat = dynamic_cast<const mfem::HypreParMatrix*>(&op);
-/*
-    if (petsc_mat) {
-      std::cout << "it's a PetscParMatrix!\n";
-    }
-    else if (hypre_mat) {
-      std::cout << "it's a HypreParMatrix!\n";
-    }
-    else {
-        std::cout << "it's neither petsc nor hypre!?\n";
-    }
-*/
-  /*
+  //  const mfem::PetscParMatrix *petsc_mat = dynamic_cast<const mfem::PetscParMatrix*>(&op);
+  // const mfem::HypreParMatrix *hypre_mat = dynamic_cast<const mfem::HypreParMatrix*>(&op);
+
+  //  if (petsc_mat) {
+  //    std::cout << "it's a PetscParMatrix!\n";
+  //  }
+  //  else if (hypre_mat) {
+  //    std::cout << "it's a HypreParMatrix!\n";
+  //  }
+  //  else {
+  //      std::cout << "it's neither petsc nor hypre!?\n";
+  //  }
+
+
   // Convert HypreParMatrix (op) to PETSc MATAIJ first (not MATIS)
-  auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
+  //auto temp = std::make_unique<mfem::PetscParMatrix>(comm, &op, mfem::Operator::PETSC_MATAIJ);
   // Now convert MATAIJ to MATIS
-  Mat matAIJ = temp->GetMat();
-  Mat matIS;
-  MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
-  auto pA = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
-*/
-  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS); // op -> PetscParMatrix. Leads to 0 connected components
+  //Mat matAIJ = temp->GetMat();
+  //Mat matIS;
+  //MatConvert(matAIJ, MATIS, MAT_INITIAL_MATRIX, &matIS);
+  //auto pA = std::make_unique<mfem::PetscParMatrix>(matIS, mfem::Operator::PETSC_MATIS);
+
+  auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATIS);
 
   // Set BDDC opts
   mfem::PetscBDDCSolverParams opts;
@@ -158,24 +159,30 @@ void BDDCSolver::SetOperator(const Operator &op)
   //opts.SetNatBdrDofs(&ess_tdof_list);
   solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
 
-
-  /*
+  */
+  /**/
   // try ASM?
   // gmres, restart100, asm, asm_overlap=2, lu. converges but takes many (~250) iterations coarse solve, increasing overlap helps
   // but the performance varies as np is changed...
-PetscOptionsSetValue(NULL, "-ksp_type", "gmres"); //preonly does not convegre
-PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "100");  // Larger restart
-PetscOptionsSetValue(NULL, "-pc_type", "asm");
-PetscOptionsSetValue(NULL, "-pc_asm_type", "restrict");//restrict is the default
-//PetscOptionsSetValue(NULL, "-pc_asm_type", "basic");//restrict is the default
-PetscOptionsSetValue(NULL, "-pc_asm_overlap", "10");  // Increase overlap?
+
+PetscOptionsSetValue(NULL, "-ksp_type", "gmres");
+PetscOptionsSetValue(NULL, "-ksp_rtol", "1e-3");
+//PetscOptionsSetValue(NULL, "-ksp_type", "dgmres");
+//PetscOptionsSetValue(NULL, "-ksp_dgmres_eigen", "10");
+PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "500");
+PetscOptionsSetValue(NULL, "-pc_type", "gasm");
+PetscOptionsSetValue(NULL, "-pc_gasm_type", "restrict");
+PetscOptionsSetValue(NULL, "-pc_gasm_overlap", "2");
+//PetscOptionsSetValue(NULL, "-pc_gasm_total_subdomains", "10");
 PetscOptionsSetValue(NULL, "-sub_pc_type", "lu");
 PetscOptionsSetValue(NULL, "-sub_pc_factor_mat_solver_type", "mumps");
 PetscOptionsSetValue(NULL, "-ksp_monitor", "");
+
+
   auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATAIJ); // op -> PetscParMatrix
   solver = std::make_unique<mfem::PetscLinearSolver>(comm);
   solver->SetOperator(*pA);
-  */
+  /**/
   // Single transmon on 6 cores.
   // Using overlap 1 does not converge.
   // 2 does (11 outer iterations, ~80 inner gmres its. Total 31 secs

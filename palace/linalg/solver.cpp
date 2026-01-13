@@ -39,7 +39,9 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
   const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
   bool petsc_matis = true;
-  mfem::OperatorHandle Ar_handle(mfem::Operator::PETSC_MATIS), Ai_handle(mfem::Operator::PETSC_MATIS);
+  auto petsc_type = mfem::Operator::PETSC_MATAIJ;
+  //auto petsc_type = mfem::Operator::PETSC_MATIS;
+  mfem::OperatorHandle Ar_handle(petsc_type), Ai_handle(petsc_type);
   if (op.Real() && !hAr)
   {
     PtAPr = dynamic_cast<const ParOperator *>(op.Real());
@@ -103,8 +105,8 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
         MatAXPY(matA, 1.0, matAi, SAME_NONZERO_PATTERN);
 
         // Create OperatorHandle for the result
-        Ah.SetType(mfem::Operator::PETSC_MATIS);
-        Ah.Reset(new mfem::PetscParMatrix(matA, mfem::Operator::PETSC_MATIS));
+        Ah.SetType(petsc_type);
+        Ah.Reset(new mfem::PetscParMatrix(matA, petsc_type));
       }
       else
       {
