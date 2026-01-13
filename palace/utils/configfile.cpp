@@ -2367,6 +2367,7 @@ void LinearSolverData::SetUp(json &solver)
   asm_overlap = linear->value("ASMOverlap", asm_overlap);
   asm_subdomains = linear->value("ASMSubdomains", asm_subdomains);
   asm_tol = linear->value("ASMTol", asm_tol);
+  asm_max_it = linear->value("ASMMaxIts", asm_max_it);
 
   // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
@@ -2413,6 +2414,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("ASMOverlap");
   linear->erase("ASMSubdomains");
   linear->erase("ASMTol");
+  linear->erase("ASMMaxIts");
 
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");

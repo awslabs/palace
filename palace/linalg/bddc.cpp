@@ -13,7 +13,8 @@ namespace palace
 
 BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int print)
   : mfem::Solver(fespace.Get().GetTrueVSize()), fespace(fespace), comm(fespace.GetComm()), complex_coarse(iodata.solver.linear.complex_coarse_solve),
-  overlap(iodata.solver.linear.asm_overlap), num_subdomains(iodata.solver.linear.asm_subdomains), tol(iodata.solver.linear.asm_tol)
+  overlap(iodata.solver.linear.asm_overlap), num_subdomains(iodata.solver.linear.asm_subdomains), tol(iodata.solver.linear.asm_tol),
+  max_it(iodata.solver.linear.asm_max_it)
 {
   const char *petscrc_file = "";
   mfem::MFEMInitializePetsc(NULL, NULL, petscrc_file, NULL);
@@ -169,9 +170,10 @@ void BDDCSolver::SetOperator(const Operator &op)
 PetscOptionsSetValue(NULL, "-ksp_type", "gmres");
 PetscOptionsSetValue(NULL, "-ksp_rtol", std::to_string(tol).c_str()); // for 2-3 orders of magnitude decrease is quick then it's slow, so loosen?
 // 1e-5 very slow, 1e-3 decent, 1e-2?
+PetscOptionsSetValue(NULL, "-ksp_max_it", std::to_string(max_it).c_str());
 //PetscOptionsSetValue(NULL, "-ksp_type", "dgmres");
 //PetscOptionsSetValue(NULL, "-ksp_dgmres_eigen", "10");
-PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "500");
+PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "300");
 PetscOptionsSetValue(NULL, "-pc_type", "gasm");
 PetscOptionsSetValue(NULL, "-pc_gasm_type", "restrict");
 PetscOptionsSetValue(NULL, "-pc_gasm_overlap", std::to_string(overlap).c_str()); // 1 doesn't converge, 2 and 3 yield similar runtimes, try higher?

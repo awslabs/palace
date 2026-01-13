@@ -36,6 +36,7 @@ private:
   int overlap;
   int num_subdomains;
   double tol;
+  int max_it;
 
 public:
   BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int print = 0);
