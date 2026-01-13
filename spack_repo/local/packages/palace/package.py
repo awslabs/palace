@@ -18,9 +18,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     git = "https://github.com/awslabs/palace.git"
     license("Apache-2.0")
 
-    maintainers("hughcars", "simlap", "cameronrutherford")
+    maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo")
 
     version("develop", branch="main")
+    version("0.15.0", tag="v0.15.0", commit="b6762777d85a06072fdf4cc96e8a365da73df170")
     version("0.14.0", tag="v0.14.0", commit="a428a3a32dbbd6a2a6013b3b577016c3e9425abc")
     version("0.13.0", tag="v0.13.0", commit="a61c8cbe0cacf496cde3c62e93085fae0d6299ac")
     version("0.12.0", tag="v0.12.0", commit="8c192071206466638d5818048ee712e1fada386f")
@@ -50,7 +51,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
     )
-    variant("tests", default=False, description="Build and install unit tests")
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
@@ -63,6 +63,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cmake@3.21:", type="build")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
+    depends_on("blas")
+    depends_on("lapack")
     depends_on("zlib-api")
     depends_on("nlohmann-json")
     depends_on("fmt+shared", when="+shared")
@@ -129,14 +131,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("metis~int64", when="~int64")
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
-    depends_on("hypre@:2")  # MFEM 4.8 is incompatible with hypre v3+ and we haven't updated yet
+    depends_on("hypre@:2", when="@:0.15.0")
+    depends_on("hypre@3:")
     depends_on("hypre~complex")
+    depends_on("hypre~unified-memory")
     depends_on("hypre+shared", when="+shared")
     depends_on("hypre~shared", when="~shared")
     depends_on("hypre+mixedint", when="+int64")
     depends_on("hypre~mixedint", when="~int64")
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
+    # Use external blas/lapack with hypre
+    depends_on("hypre+lapack")
+
+
+    # NOTE: hypre+gpu-profiling is also useful: it adds NVTX annotations, which
+    # are great for GPU profiling with Nsight.
 
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22
@@ -179,9 +189,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed+magma", when="@0.14:")
 
     with when("+cuda"):
+        # GPU-aware MPI
+        for var in ["openmpi", "mpich", "mvapich-plus"]:
+            depends_on(f"hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
+
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
-            depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
@@ -191,9 +206,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
+            # GPU-aware MPI
+            depends_on(f"hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
+
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
-            depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"hypre+umpire{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
@@ -202,8 +222,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"superlu-dist{rocm_variant}", when=f"+superlu-dist{rocm_variant}")
             depends_on(f"strumpack{rocm_variant}", when=f"+strumpack{rocm_variant}")
 
-    with when("+tests"):
-        depends_on("catch2@3:")
+    depends_on("catch2@3:", type="test")
 
     def cmake_args(self):
         args = [
@@ -221,7 +240,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
-            self.define_from_variant("PALACE_MFEM_USE_EXCEPTIONS", "tests"),
+            self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
         ]
 
         # We guarantee that there are arch specs with conflicts above
@@ -231,6 +250,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "CMAKE_CUDA_ARCHITECTURES", ";".join(self.spec.variants["cuda_arch"].value)
                 )
             )
+
         if self.spec.satisfies("+rocm"):
             args.append(
                 self.define(
@@ -238,7 +258,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        # HYPRE is always built with external BLAS/LAPACK
+        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") or
+                                        self.spec.satisfies(f"{var}+rocm")
+                                        for var in ["openmpi", "mpich", "mvapich-plus"])
+
+        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
+
+        # Pass down external BLAS/LAPACK
         args.extend(
             [
                 self.define("HYPRE_REQUIRED_PACKAGES", "LAPACK;BLAS"),
@@ -276,7 +302,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
-            if spec.satisfies("+tests"):
+            if self.run_tests:
                 make("palace-tests")
             else:
                 make()

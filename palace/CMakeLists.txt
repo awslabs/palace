@@ -327,6 +327,11 @@ target_link_libraries(${LIB_TARGET_NAME}
   PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC umpire camp
+  )
+endif()
 target_link_libraries(
   ${LIB_TARGET_NAME}
   PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
