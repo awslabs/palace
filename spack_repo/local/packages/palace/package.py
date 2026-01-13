@@ -61,6 +61,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cmake@3.24:", type="build", when="@0.16:")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
+    depends_on("blas")
+    depends_on("lapack")
     depends_on("zlib-api")
     depends_on("nlohmann-json")
     depends_on("fmt+shared", when="+shared")
@@ -130,12 +132,19 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("hypre@:2", when="@:0.15.0")
     depends_on("hypre@3:")
     depends_on("hypre~complex")
+    depends_on("hypre~unified-memory")
     depends_on("hypre+shared", when="+shared")
     depends_on("hypre~shared", when="~shared")
     depends_on("hypre+mixedint", when="+int64")
     depends_on("hypre~mixedint", when="~int64")
     depends_on("hypre+openmp", when="+openmp")
     depends_on("hypre~openmp", when="~openmp")
+    depends_on("hypre+gpu-aware-mpi", when="^mpi+cuda")
+    # Use external blas/lapack with hypre
+    depends_on("hypre+lapack")
+
+    # NOTE: hypre+gpu-profiling is also useful: it adds NVTX annotations, which
+    # are great for GPU profiling with Nsight.
 
     with when("@0.16:"):
         # +lapack means: use external lapack
@@ -264,6 +273,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+            self.define("PALACE_WITH_GPU_AWARE_MPI", self.spec.satisfies("^mpi+cuda")),
         ]
 
         if self.spec.satisfies("@0.16:"):
@@ -292,6 +302,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
+        # Pass down external BLAS/LAPACK
         args.extend(
             [
                 self.define("BLAS_LIBRARIES", self.spec["blas"].libs.joined(";")),

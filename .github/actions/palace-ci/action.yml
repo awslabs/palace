@@ -59,6 +59,8 @@ runs:
           C_CXX_COMPILER="intel-oneapi-compilers"
           FORTRAN_COMPILER="intel-oneapi-compilers"
         else
+          # OpenBlas 0.3.30 has issues on arm
+          # https://github.com/OpenMathLib/OpenBLAS/issues/5459
           MATH_LIBS="${{ inputs.math-libs || 'openblas@0.3.29' }}"
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
@@ -262,6 +264,9 @@ runs:
         palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
         mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
 
+    # We upload the spack environment as an artifact so that next runners can
+    # pick up the very same environment and have consistent binaries (pulled
+    # from the cache).
     - name: Upload spack environment
       uses: actions/upload-artifact@v4
       if: inputs.run-regression-tests != 'true'

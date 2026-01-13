@@ -1,6 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# This action should be run in/after the palace-ci action.
+
 name: 'Test Palace'
 description: 'Run Palace integration tests'
 inputs:
@@ -36,6 +38,9 @@ runs:
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
 
+    # The palace-ci action uploads the spack lock and yaml files. Here, we
+    # download them. This ensures we can download the same binaries we built in
+    # the previous step.
     - name: Download spack environment
       if: inputs.testing-on-build-runner != 'true'
       uses: actions/download-artifact@v4

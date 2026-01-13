@@ -36,7 +36,7 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  // on_dev determines if py is already on the device.
+  // on_dev specifies if py is already on the device.
   ComplexVector(const std::complex<double> *py, int size, bool on_dev);
 
   // Create a vector referencing the memory of another vector, at the given base offset and
@@ -76,11 +76,11 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  // on_dev determines if py is already on the device.
+  // on_dev specifies if py is already on the device.
   void Set(const std::complex<double> *py, int size, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  // on_dev determines if py is already on the device.
+  // on_dev specifies if py is already on the device.
   void Get(std::complex<double> *py, int size, bool on_dev) const;
 
   // Set all entries equal to s.
