@@ -196,7 +196,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+cuda"):
         # GPU-aware MPI
         for var in ["openmpi", "mpich", "mvapich-plus"]:
-            depends_on(f"hypre+gpu-aware", when=f"^[virtuals=mpi] {var}+cuda")
+            depends_on(f"hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
 
         for arch in CudaPackage.cuda_arch_values:
             cuda_variant = f"+cuda cuda_arch={arch}"
@@ -218,7 +218,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+rocm"):
         for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
             # GPU-aware MPI
-            depends_on(f"hypre+gpu-aware", when=f"^[virtuals=mpi] {var}+rocm")
+            depends_on(f"hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
@@ -268,7 +268,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") for var in ["openmpi", "mpich", "mvapich-plus"])
+        palace_with_gpu_aware_mpi = any(self.spec.satisfies(f"{var}+cuda") or
+                                        self.spec.satisfies(f"{var}+rocm")
+                                        for var in ["openmpi", "mpich", "mvapich-plus"])
 
         args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
