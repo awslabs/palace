@@ -279,7 +279,7 @@ runs:
 
     - name: Push to GHCR cache
       shell: bash
-      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
 
     - name: Run Regression Tests
       if: inputs.run-regression-tests == 'true'
