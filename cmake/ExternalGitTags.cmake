@@ -82,7 +82,7 @@ set(EXTERN_LIBCEED_GIT_TAG
 
 # LIBXSMM (for libCEED)
 set(EXTERN_LIBXSMM_URL
-  "https://github.com/hfp/libxsmm.git" CACHE STRING
+  "https://github.com/libxsmm/libxsmm.git" CACHE STRING
   "URL for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_BRANCH
