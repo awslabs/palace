@@ -189,7 +189,7 @@ set(EXTERN_SCALAPACK_GIT_BRANCH
   "Git branch for external ScaLAPACK build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
-  "v2.2.2" CACHE STRING
+  "6423f17933eb9a2522814b78ab3c0d6da25ee85a" CACHE STRING
   "Git tag for external ScaLAPACK build"
 )
 
