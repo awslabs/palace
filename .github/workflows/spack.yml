@@ -137,7 +137,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
     runs-on: [self-hosted, x64, 4xlarge]
     steps:
       - uses: actions/checkout@v6
@@ -152,7 +156,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
     runs-on: [self-hosted, gpu, 4xlarge]
     steps:
       - uses: actions/checkout@v6
@@ -168,7 +176,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        solver: [MUMPS, SuperLU, STRUMPACK, Default]
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
     runs-on: [self-hosted, x64, 4xlarge]
     steps:
       - uses: actions/checkout@v6

@@ -224,5 +224,5 @@ git reset --hard origin/develop
 # Apply relevant patches
 ```
 
-Patches are often more less common build options, so you might not need all of
-them.
+It is often the case that patches are required for uncommon build
+configurations, so you might not need all of them.
