@@ -34,18 +34,6 @@ runs:
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
 
-    - name: Patch Spack Packages for known problems
-      shell: bash
-      run: |
-        PALACE_DIR=$PWD
-        cd $(spack location --repo builtin)
-        for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
-          if [ -f "$patch" ]; then
-            echo "Applying patch: $patch"
-            git apply "$patch"
-          fi
-        done
-
     - name: Prepare spack.yaml
       shell: bash
       run: |

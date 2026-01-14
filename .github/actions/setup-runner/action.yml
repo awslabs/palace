@@ -102,6 +102,26 @@ runs:
         echo "$(realpath spack/bin)" >> "$GITHUB_PATH"
         echo "SPACK_DISABLE_LOCAL_CONFIG=1" >> "$GITHUB_ENV"
         echo "SPACK_COLOR=always" >> "$GITHUB_ENV"
+
+    - name: Patch Spack package.py files for known problems
+      shell: bash
+      run: |
+        PALACE_DIR=$PWD
+        cd $(spack location --repo builtin)
+        for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+          if [ -f "$patch" ]; then
+            if ! git apply --check "$patch" 2>/dev/null; then
+              echo "Cannot apply $patch (PR may have already been merged)"
+              echo "Please remove $patch from the Palace repo if the PR was merged"
+            else
+              echo "Applying patch: $patch"
+              git apply "$patch"
+            fi
+          fi
+        done
+
+        # Workaround for https://github.com/spack/spack/issues/51505
+        ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
         
     - name: Install Julia
       id: setup-julia

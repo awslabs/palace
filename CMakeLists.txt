@@ -219,10 +219,6 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
 endif()
 
-# Add MFEM (always built as part of Palace)
-message(STATUS "====================== Configuring MFEM dependency =====================")
-include(ExternalMFEM)
-
 # Add the main Palace project
 message(STATUS "========================== Configuring Palace ==========================")
 include(ExternalPalace)
