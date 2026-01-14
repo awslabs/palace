@@ -766,10 +766,10 @@ index 3f0997e..6776359 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 8727508..3762473 100644
+index cd0f2e5..6813b71 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -1,103 +1 @@
+@@ -1,103 +1,1 @@
 -include(ExternalProject)
 -include(GNUInstallDirs)
 -
@@ -798,7 +798,7 @@ index 8727508..3762473 100644
 -endif()
 -
 -if(MKL IN_LIST SCALAPACK_VENDOR AND NOT MKL64 IN_LIST SCALAPACK_VENDOR)
--  if(intsize64)
+-  if(MUMPS_intsize64)
 -    list(APPEND SCALAPACK_VENDOR MKL64)
 -  endif()
 -endif()
@@ -826,7 +826,7 @@ index 8727508..3762473 100644
 --DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_INSTALL_PREFIX}
 --DCMAKE_C_COMPILER:PATH=${CMAKE_C_COMPILER}
 --DCMAKE_Fortran_COMPILER:PATH=${CMAKE_Fortran_COMPILER}
---DBUILD_TESTING:BOOL=off
+--DSCALAPACK_BUILD_TESTING:BOOL=off
 --DCMAKE_BUILD_TYPE:STRING=Release
 -)
 -
