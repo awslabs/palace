@@ -23,6 +23,9 @@ set(PETSC_OPTIONS
   "--with-x=0"
   "--with-hypre-dir=${CMAKE_INSTALL_PREFIX}"
   "--download-mumps"
+  "--download-hpddm"
+  ##"HPDDM-CXXFLAGS=-DHPDDM_NUMBERING='C' -DHPDDM_NO_CATLAS"
+  "--download-slepc"
   # "--download-scalapack"
   # "--with-mumps-dir=${CMAKE_INSTALL_PREFIX}"
   "--with-scalapack-dir=${CMAKE_INSTALL_PREFIX}"
@@ -36,7 +39,7 @@ endif()
 if(BUILD_SHARED_LIBS)
   list(APPEND PETSC_OPTIONS "--with-shared-libraries=1")
 else()
-  list(APPEND PETSC_OPTIONS "--with-shared-libraries=0")
+  list(APPEND PETSC_OPTIONS "--with-shared-libraries=1") ## MODIFIED FOR HPDDM
 endif()
 if(PALACE_WITH_64BIT_INT)
   list(APPEND PETSC_OPTIONS "--with-64-bit-indices")
@@ -75,6 +78,7 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   string(REPLACE "$<SEMICOLON>" "," PETSC_BLAS_LAPACK_INCLUDE_DIRS "${BLAS_LAPACK_INCLUDE_DIRS}")
   list(APPEND PETSC_OPTIONS
     "--with-blaslapack-lib=[${PETSC_BLAS_LAPACK_LIBRARIES}]"
+  ##"--with-blaslapack-lib=-framework Accelerate"
     "--with-blaslapack-include=[${BLAS_LAPACK_INCLUDE_DIRS}]"
   )
 endif()

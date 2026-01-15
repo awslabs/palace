@@ -54,7 +54,7 @@ BDDCSolver::BDDCSolver(const IoData &iodata, FiniteElementSpace &fespace, int pr
 
 void BDDCSolver::SetOperator(const Operator &op)
 {
-  /*
+  /**/
   //std::cout << "In BDDC SetOperator\n";
   // See all BDDC options here: https://petsc.org/main/src/ksp/pc/impls/bddc/bddc.c.html
   PetscOptionsSetValue(NULL, "-pc_bddc_check_level", "2"); // int, Verbosity/Checks level, setting to 0 reduces cpu time and memory usage
@@ -137,20 +137,20 @@ void BDDCSolver::SetOperator(const Operator &op)
   if (complex_coarse)
   {
     MFEM_ABORT("BDDC solver does not support complex coarse matrix!");
-    if (ess_tdof_list.Size() > 0)
-    {
-      // Block matrix has structure [Ar, -Ai; Ai, Ar]
-      // Essential DOFs appear in both blocks
-      int n = ess_tdof_list.Size();
-      int offset = pA->Height() / 2;
-      block_ess_tdof_list.SetSize(2 * n);
-      for (int i = 0; i < n; i++)
-      {
-        block_ess_tdof_list[i] = ess_tdof_list[i];           // Block (0,0) and (0,1)
-        block_ess_tdof_list[n + i] = ess_tdof_list[i] + offset;  // Block (1,0) and (1,1)
-      }
-    }
-    opts.SetEssBdrDofs(&block_ess_tdof_list);
+    //if (ess_tdof_list.Size() > 0)
+    //{
+    //  // Block matrix has structure [Ar, -Ai; Ai, Ar]
+    //  // Essential DOFs appear in both blocks
+    //  int n = ess_tdof_list.Size();
+    //  int offset = pA->Height() / 2;
+    //  block_ess_tdof_list.SetSize(2 * n);
+    //  for (int i = 0; i < n; i++)
+    //  {
+    //    block_ess_tdof_list[i] = ess_tdof_list[i];           // Block (0,0) and (0,1)
+    //    block_ess_tdof_list[n + i] = ess_tdof_list[i] + offset;  // Block (1,0) and (1,1)
+    //  }
+    //}
+    //opts.SetEssBdrDofs(&block_ess_tdof_list);
   }
   else
   {
@@ -160,10 +160,12 @@ void BDDCSolver::SetOperator(const Operator &op)
   opts.SetNatBdrDofs(&nat_tdof_list); // seems to help convergence but increases coarse problem size
   //opts.SetNatBdrDofs(&ess_tdof_list);
   solver = std::make_unique<mfem::PetscBDDCSolver>(*pA, opts);
+  //auto &petsc_op = const_cast<mfem::PetscParMatrix&>(dynamic_cast<const mfem::PetscParMatrix&>(op));
+  //solver = std::make_unique<mfem::PetscBDDCSolver>(petsc_op, opts);
 
-  */
   /**/
-  // try ASM?
+  /*
+  // try ASM/GASM?
   // gmres, restart100, asm, asm_overlap=2, lu. converges but takes many (~250) iterations coarse solve, increasing overlap helps
   // but the performance varies as np is changed...
 
@@ -173,14 +175,14 @@ PetscOptionsSetValue(NULL, "-ksp_rtol", std::to_string(tol).c_str()); // for 2-3
 PetscOptionsSetValue(NULL, "-ksp_max_it", std::to_string(max_it).c_str());
 //PetscOptionsSetValue(NULL, "-ksp_type", "dgmres");
 //PetscOptionsSetValue(NULL, "-ksp_dgmres_eigen", "10");
-PetscOptionsSetValue(NULL, "-ksp_gmres_restart", "300");
-PetscOptionsSetValue(NULL, "-pc_type", "gasm");
-PetscOptionsSetValue(NULL, "-pc_gasm_type", "restrict");
-PetscOptionsSetValue(NULL, "-pc_gasm_overlap", std::to_string(overlap).c_str()); // 1 doesn't converge, 2 and 3 yield similar runtimes, try higher?
-if (num_subdomains > 0)
-{
-  PetscOptionsSetValue(NULL, "-pc_gasm_total_subdomains", std::to_string(num_subdomains).c_str());
-}
+PetscOptionsSetValue(NULL, "-ksp_gmres_restart", std::to_string(max_it).c_str());
+PetscOptionsSetValue(NULL, "-pc_type", "asm");
+//PetscOptionsSetValue(NULL, "-pc_gasm_type", "restrict");
+PetscOptionsSetValue(NULL, "-pc_asm_overlap", std::to_string(overlap).c_str()); // 1 doesn't converge, 2 and 3 yield similar runtimes, try higher?
+//if (num_subdomains > 0)
+//{
+//  PetscOptionsSetValue(NULL, "-pc_gasm_total_subdomains", std::to_string(num_subdomains).c_str());
+//}
 PetscOptionsSetValue(NULL, "-sub_pc_type", "lu");
 PetscOptionsSetValue(NULL, "-sub_pc_factor_mat_solver_type", "mumps");
 PetscOptionsSetValue(NULL, "-ksp_monitor", "");
@@ -189,14 +191,56 @@ PetscOptionsSetValue(NULL, "-ksp_monitor", "");
   auto pA = std::make_unique<mfem::PetscParMatrix>(comm, &op, Operator::PETSC_MATAIJ); // op -> PetscParMatrix
   solver = std::make_unique<mfem::PetscLinearSolver>(comm);
   solver->SetOperator(*pA);
-  /**/
-  // Single transmon on 6 cores.
-  // Using overlap 1 does not converge.
-  // 2 does (11 outer iterations, ~80 inner gmres its. Total 31 secs
-  // 3 leads to same 11 outer its, ~50 inner gmres its. Total 28 secs
-  // 7 leads to same 11 outer its, ~17 inner gmres its. Total 25 secs
-  // 10 leads to same 11 outer its, ~11 inner gmres its. Total 26 secs
-  // Need to try it on higher number of cores. varying overlap
+  */
+  /*
+
+  // try HPDDM?
+  PetscOptionsSetValue(NULL, "-ksp_type", "gmres");
+  PetscOptionsSetValue(NULL, "-ksp_monitor", "");
+  PetscOptionsSetValue(NULL, "-ksp_rtol", std::to_string(tol).c_str());
+  PetscOptionsSetValue(NULL, "-ksp_max_it", std::to_string(max_it).c_str());
+  PetscOptionsSetValue(NULL, "-pc_type", "hpddm");
+  //PetscOptionsSetValue(NULL, "-pc_hpddm_harmonic_overlap", "1");//?
+//PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_correction", "deflated");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_st_pc_type", "mat"); //?
+  //PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_pc_type", "asm");
+ //PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_pc_asm_overlap", std::to_string(overlap).c_str());
+
+  PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_eps_nev", "10");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_eps_gen_non_hermitian", "");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_sub_pc_type", "lu");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_sub_pc_factor_mat_solver_type", "mumps");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_st_pc_factor_mat_solver_type", "mumps");
+PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_p", "2");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_pc_type", "asm");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_pc_asm_overlap", std::to_string(overlap).c_str());
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_st_pc_type", "mat");//?
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_sub_pc_type", "lu");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_eps_nev", "10");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_sub_pc_factor_mat_solver_type", "mumps");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_2_st_pc_factor_mat_solver_type", "mumps");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_p", "1");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_pc_type", "lu");
+  PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_pc_factor_mat_solver_type", "mumps");
+
+// View HPDDM configuration
+//PetscOptionsSetValue(NULL, "-pc_hpddm_view", ""); // does nothing
+
+PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_eps_monitor", "");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_levels_1_eps_view", "");
+
+//PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_ksp_monitor", "");
+//PetscOptionsSetValue(NULL, "-pc_hpddm_coarse_pc_view", "");
+
+
+  //PetscOptionsSetValue(NULL, "-pc_hpddm_define_subdomains", "");
+  //PetscOptionsSetValue(NULL, "-pc_hpddm_has_neumann", "");
+
+  //MFEM_VERIFY(petsc_op && petsc_op->GetType() == Operator::PETSC_MATIS,
+  //            "Operator must be PetscParMatrix of type PETSC_MATIS");
+  solver = std::make_unique<mfem::PetscLinearSolver>(comm);
+  solver->SetOperator(op);
+  */
 }
 
 }  // namespace palace
