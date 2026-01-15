@@ -240,7 +240,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   constexpr double atol = 1e-4;
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
-  int Order = 1;
+  int Order = 2;
 
   Units units(L0, Lc);
   IoData iodata{units};
@@ -358,7 +358,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   }
 
   // Higher-order integration for accuracy
-  int order = 2;
+  int order = 3;
   int order_quad = std::max(2, 2 * order + 1);
   const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
   for (int i = 0; i < mfem::Geometry::NumGeom; ++i)
