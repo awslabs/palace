@@ -4,17 +4,17 @@
 // Verification test for Electrical Current Dipole from:
 // https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_frequency/analytic_solution.html
 //
-// For a time-harmonic electrical current dipole in the x-direction (p=Ids·x̂):
+// For a time-harmonic electrical current dipole in the z-direction (p=Ids·ẑ):
 //
-// Electric field (Eq. 206):
-// Ex = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [x² * (-k²r² + 3ikr + 3)/r² + (k²r² - ikr - 1)]
-// Ey = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xy * (-k²r² + 3ikr + 3)/r²]
-// Ez = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xz * (-k²r² + 3ikr + 3)/r²]
+// Electric field (Eq. 206, adapted for z-direction):
+// Ex = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xz * (-k²r² + 3ikr + 3)/r²]
+// Ey = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [yz * (-k²r² + 3ikr + 3)/r²]
+// Ez = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [z² * (-k²r² + 3ikr + 3)/r² + (k²r² - ikr - 1)]
 //
-// Magnetic field (Eq. 207):
-// Hx = 0
-// Hy = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (-z/r)
-// Hz = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (y/r)
+// Magnetic field (Eq. 207, adapted for z-direction):
+// Hx = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (y/r)
+// Hy = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (-x/r)
+// Hz = 0
 //
 // where k² = ω²με - iωμσ, r = √(x² + y² + z²), and p is the dipole moment (A.m).
 
@@ -198,7 +198,7 @@ namespace
 {
 
 // Compute the Cartesian components electric field of a time-harmonic electrical
-// current dipole aligned in the x-direction (Ids·δ(x)δ(y)δ(z)·x̂) at a given point in space.
+// current dipole aligned in the z-direction (Ids·δ(x)δ(y)δ(z)·ẑ) at a given point in space.
 // The returned field is non-dimensionalized according to the provided units.
 //
 // We want the non-dimensional E field to mock a Palace-computed field.
@@ -227,8 +227,8 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 
   std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
-  return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.), factor1 * (x * y * factor2),
-           factor1 * (x * z * factor2)}};
+  return {{factor1 * (x * z * factor2), factor1 * (y * z * factor2),
+           factor1 * (z * z * factor2 + kr * kr - ikr - 1.)}};
 }
 
 // Compare the implementation in CurrentDipoleOperator with the analytic solution.
@@ -247,7 +247,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.domains.materials.emplace_back().attributes = domain_attributes;
   auto &dipole_config = iodata.domains.current_dipole[1];
   dipole_config.moment = Ids;
-  dipole_config.direction = {1, 0, 0};
+  dipole_config.direction = {0, 0, 1};
   dipole_config.center = {0.0, 0.0, 0.0};
   iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
