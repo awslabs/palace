@@ -9,6 +9,7 @@
 #include "linalg/ams.hpp"
 #include "linalg/bddc.hpp"
 #include "linalg/gmg.hpp"
+#include "linalg/ilu.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/strumpack.hpp"
@@ -186,6 +187,9 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       break;
     case LinearSolver::BDDC:
       pc = MakeWrapperSolver<OperType, BDDCSolver>(iodata, fespaces.GetFESpaceAtLevel(0), print);
+      break;
+    case LinearSolver::ILU:
+      pc = MakeWrapperSolver<OperType, ILUSolver>(iodata, print);
       break;
     case LinearSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");

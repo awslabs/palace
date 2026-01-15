@@ -120,7 +120,8 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
                                           {LinearSolver::STRUMPACK, "STRUMPACK"},
                                           {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
                                           {LinearSolver::JACOBI, "Jacobi"},
-                                          {LinearSolver::BDDC, "BDDC"}})
+                                          {LinearSolver::BDDC, "BDDC"},
+                                          {LinearSolver::ILU, "ILU"}})
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                           {KrylovSolver::CG, "CG"},
                                           {KrylovSolver::MINRES, "MINRES"},
@@ -2369,6 +2370,9 @@ void LinearSolverData::SetUp(json &solver)
   asm_tol = linear->value("ASMTol", asm_tol);
   asm_max_it = linear->value("ASMMaxIts", asm_max_it);
 
+  ilu_type = linear->value("ILUType", ilu_type);
+  ilu_fill_level = linear->value("ILUFillLevel", ilu_fill_level);
+
   // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
@@ -2415,6 +2419,8 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("ASMSubdomains");
   linear->erase("ASMTol");
   linear->erase("ASMMaxIts");
+  linear->erase("ILUType");
+  linear->erase("ILUFillLevel");
 
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");

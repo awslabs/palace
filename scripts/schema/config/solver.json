@@ -183,6 +183,8 @@
         "ASMSubdomains": { "type": "integer", "minimum": 1 },
         "ASMTol": { "type": "number", "minimum": 0.0 },
         "ASMMaxIts": { "type": "integer", "minimum": 0 },
+        "ILUType": { "type": "integer", "minimum": 0 },
+        "ILUFillLevel": { "type": "integer", "minimum": 0 },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
         "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorTol": { "type": "number", "minimum": 0.0 },

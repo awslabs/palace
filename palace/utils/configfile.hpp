@@ -944,6 +944,10 @@ public:
   double asm_tol = 1e-3;
   int asm_max_it = 300;
 
+  // Hypre ILU
+  int ilu_type = 0;
+  int ilu_fill_level = 1;
+
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;

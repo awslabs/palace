@@ -97,7 +97,8 @@ enum class LinearSolver : char
   STRUMPACK,
   STRUMPACK_MP,
   JACOBI,
-  BDDC
+  BDDC,
+  ILU
 };
 
 // Krylov solvers to use in the linear solver.
