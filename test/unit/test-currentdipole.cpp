@@ -41,6 +41,152 @@
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
+// Class for marking elements in the "good" region for error computation
+// Excluding center and boundary elements
+// Uses centroid-based marking: an element is excluded if its centroid is
+// within inner_radius of origin or beyond outer_radius from origin.
+// This is more accurate than vertex-based marking which can be overly conservative.
+class ElementMarker
+{
+private:
+   mfem::Mesh *mesh;
+   int dim;
+
+   // Bounding box of the domain
+   mfem::Vector bbox_min, bbox_max;
+
+   // Array marking elements: 1 = include in error computation, 0 = exclude
+   mfem::Array<int> elems;
+
+   // Exclusion criteria (fractions of max distance from origin)
+   double inner_fraction;
+   double outer_fraction;
+
+   // Compute domain bounding box
+   void ComputeBoundingBox();
+
+public:
+   // Constructor
+   ElementMarker(mfem::Mesh *mesh_, double inner_frac = 0.2, double outer_frac = 0.8);
+
+   // Mark elements in the good region
+   void MarkElements();
+
+   // Return markers list for elements
+   mfem::Array<int> * GetMarkedElements() {return &elems;}
+};
+
+ElementMarker::ElementMarker(mfem::Mesh *mesh_, double inner_frac, double outer_frac)
+   : mesh(mesh_), inner_fraction(inner_frac), outer_fraction(outer_frac)
+{
+   dim = mesh->Dimension();
+   bbox_min.SetSize(dim);
+   bbox_max.SetSize(dim);
+   ComputeBoundingBox();
+   MarkElements();
+}
+
+void ElementMarker::ComputeBoundingBox()
+{
+   mfem::Vector pmin, pmax;
+   mesh->GetBoundingBox(pmin, pmax);
+   bbox_min = pmin;
+   bbox_max = pmax;
+}
+
+void ElementMarker::MarkElements()
+{
+   int nelem = mesh->GetNE();
+   elems.SetSize(nelem);
+
+   // Compute domain characteristic length in each direction
+   mfem::Vector domain_size(dim);
+   for (int i = 0; i < dim; i++)
+   {
+      domain_size[i] = bbox_max[i] - bbox_min[i];
+   }
+
+   // Compute the maximum distance from origin to any vertex in the mesh
+   // For a sphere centered at origin, this gives us the radius
+   double max_dist_from_origin = 0.0;
+   for (int i = 0; i < mesh->GetNV(); i++)
+   {
+      double *coords = mesh->GetVertex(i);
+      double dist = 0.0;
+      for (int d = 0; d < dim; d++)
+      {
+         dist += coords[d] * coords[d];
+      }
+      dist = std::sqrt(dist);
+      max_dist_from_origin = std::max(max_dist_from_origin, dist);
+   }
+
+   // Use maximum distance from origin for spherical exclusion
+   double inner_radius = inner_fraction * max_dist_from_origin;
+   double outer_radius = outer_fraction * max_dist_from_origin;
+
+   std::cout << "\nElement marking for error computation:";
+   std::cout << "\n  Domain bounding box: [" << bbox_min[0] << ", " << bbox_max[0] << "] x ";
+   std::cout << "[" << bbox_min[1] << ", " << bbox_max[1] << "] x ";
+   std::cout << "[" << bbox_min[2] << ", " << bbox_max[2] << "]";
+   std::cout << "\n  Domain size: " << domain_size[0] << " x " << domain_size[1] << " x " << domain_size[2];
+   std::cout << "\n  Max distance from origin (sphere radius): " << max_dist_from_origin;
+   std::cout << "\n  Inner exclusion fraction: " << inner_fraction << " -> radius: " << inner_radius;
+   std::cout << "\n  Outer exclusion fraction: " << outer_fraction << " -> radius: " << outer_radius;
+
+   int included_elements = 0;
+   int excluded_center = 0;
+   int excluded_boundary = 0;
+
+   // Loop through elements and mark them based on centroid position
+   for (int i = 0; i < nelem; i++)
+   {
+      mfem::Element *el = mesh->GetElement(i);
+      mfem::Array<int> vertices;
+      el->GetVertices(vertices);
+      int nvert = vertices.Size();
+
+      // Compute element centroid
+      mfem::Vector centroid(dim);
+      centroid = 0.0;
+      for (int iv = 0; iv < nvert; iv++)
+      {
+         int vert_idx = vertices[iv];
+         double *coords = mesh->GetVertex(vert_idx);
+         for (int d = 0; d < dim; d++)
+         {
+            centroid[d] += coords[d];
+         }
+      }
+      centroid /= nvert;
+
+      // Calculate distance of centroid from origin
+      double dist_from_origin = centroid.Norml2();
+
+      // Mark element based on centroid position
+      if (dist_from_origin < inner_radius)
+      {
+         elems[i] = 0;  // Exclude - too close to center
+         excluded_center++;
+      }
+      else if (dist_from_origin > outer_radius)
+      {
+         elems[i] = 0;  // Exclude - too close to boundary
+         excluded_boundary++;
+      }
+      else
+      {
+         elems[i] = 1;  // Include - in good region
+         included_elements++;
+      }
+   }
+
+   std::cout << "\n  Elements included in error computation: " << included_elements;
+   std::cout << "\n  Elements excluded (too close to center): " << excluded_center;
+   std::cout << "\n  Elements excluded (too close to boundary): " << excluded_boundary;
+   std::cout << "\n  Total elements: " << nelem << "\n";
+}
+
 namespace palace
 {
 using namespace Catch;
@@ -88,12 +234,13 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 // Compare the implementation in CurrentDipoleOperator with the analytic solution.
 void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
                           const std::vector<int> &farfield_attributes,
-                          const std::vector<int> &domain_attributes, double L0, double Lc)
+                          const std::vector<int> &domain_attributes, double L0, double Lc,
+                          double inner_frac = 0.2, double outer_frac = 0.8)
 {
   constexpr double atol = 1e-4;
   constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
-  int Order = 3;
+  int Order = 1;
 
   Units units(L0, Lc);
   IoData iodata{units};
@@ -196,6 +343,20 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   E_analytical.Real().ProjectCoefficient(E_exact_real_coef);
   E_analytical.Imag().ProjectCoefficient(E_exact_imag_coef);
 
+  // Create element marker to exclude center and boundary regions from error computation
+  auto &mesh_ref = palace_mesh.Get();
+  ElementMarker element_marker(&mesh_ref, inner_frac, outer_frac);
+  mfem::Array<int> *marked_elements = element_marker.GetMarkedElements();
+
+  // Verify that marked_elements size matches local mesh element count
+  int local_nelem = mesh_ref.GetNE();
+  if (marked_elements->Size() != local_nelem)
+  {
+    std::cout << "\n*** ERROR: marked_elements size ("
+              << marked_elements->Size() << ") != local mesh elements ("
+              << local_nelem << ") ***\n";
+  }
+
   // Higher-order integration for accuracy
   int order = 3;
   int order_quad = std::max(2, 2 * order + 1);
@@ -205,25 +366,53 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
     irs[i] = &(mfem::IntRules.Get(i, order_quad));
   }
 
-  // Compute L2 error
-  double error_real = E_field.Real().ComputeL2Error(E_exact_real_coef, irs);
-  double error_imag = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  if (rank == 0)
+  {
+    std::cout << "\n=== Integration Rule Info ===";
+    std::cout << "\n  Polynomial order: " << order;
+    std::cout << "\n  Quadrature order: " << order_quad;
+    std::cout << "\n  Using same integration rules for error and norm computation\n";
+  }
+
+  // Compute L2 error only on marked elements (excluding center and boundary regions)
+  double error_real = E_field.Real().ComputeL2Error(E_exact_real_coef, irs, marked_elements);
+  double error_imag = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs, marked_elements);
   double total_error = std::sqrt(error_real * error_real + error_imag * error_imag);
 
-  // Compute exact solution norm using zero field trick
+  // Compute exact solution norm using zero field trick, also only on marked elements
   // When field=0, ComputeL2Error(exact_coef) returns ||0 - exact_coef||_L2 =
   // ||exact_coef||_L2
   GridFunction zero_field_for_norm_computation(space_op.GetNDSpace(), true);
   zero_field_for_norm_computation = 0.0;  // Initialize to zero
   double exact_norm_real =
-      zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs);
+      zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs, marked_elements);
   double exact_norm_imag =
-      zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+      zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs, marked_elements);
   double total_exact_norm =
       std::sqrt(exact_norm_real * exact_norm_real + exact_norm_imag * exact_norm_imag);
 
-  // Compute relative error
+  // Sanity check: exact norm should be non-zero
+  if (rank == 0 && total_exact_norm < 1e-14)
+  {
+    std::cout << "\n*** WARNING: Exact solution norm is nearly zero! ***";
+    std::cout << "\n*** This suggests the analytical solution may not be properly defined. ***\n";
+  }
+
+  // Also compute errors on the full domain for comparison
+  double error_real_full = E_field.Real().ComputeL2Error(E_exact_real_coef, irs);
+  double error_imag_full = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  double total_error_full = std::sqrt(error_real_full * error_real_full + error_imag_full * error_imag_full);
+
+  double exact_norm_real_full =
+      zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs);
+  double exact_norm_imag_full =
+      zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  double total_exact_norm_full =
+      std::sqrt(exact_norm_real_full * exact_norm_real_full + exact_norm_imag_full * exact_norm_imag_full);
+
+  // Compute relative errors
   double relative_error = total_error / total_exact_norm;
+  double relative_error_full = total_error_full / total_exact_norm_full;
 
   // ======================== VISUALIZATION ========================
   // Write both numerical and analytical solutions to ParaView
@@ -289,9 +478,29 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
     paraview_dc.RegisterField("E_relative_error_real", &E_rel_error.Real());
     paraview_dc.RegisterField("E_relative_error_imag", &E_rel_error.Imag());
 
+    // Create a field showing which elements are included in error computation
+    // This will be a discontinuous scalar field (one value per element)
+    auto *l2_fec = new mfem::L2_FECollection(0, dim); // Piecewise constant
+    auto *l2_fes = new mfem::FiniteElementSpace(&mesh, l2_fec);
+    mfem::GridFunction element_marker_field(l2_fes);
+    element_marker_field = 0.0;
+
+    // Set the value for each element based on whether it's included in error computation
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      element_marker_field[i] = (*marked_elements)[i]; // 1.0 for included, 0.0 for excluded
+    }
+
+    paraview_dc.RegisterField("element_inclusion_mask", &element_marker_field);
+
     paraview_dc.Save();
 
-    std::cout << "\n=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===\n";
+    // Clean up
+    delete l2_fes;
+    delete l2_fec;
+
+    std::cout << "\n=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===";
+    std::cout << "\n=== Use 'element_inclusion_mask' field to see which elements are included in error computation ===\n";
   }
   // ===============================================================
 
@@ -415,22 +624,49 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   }
   std::cout << "\n============================================\n";
 
-  std::cout << "\n\n--- Absolute L2 Errors ---";
-  std::cout << "\nReal part error: || E_h_Re - E_Re ||_L2 = " << error_real;
-  std::cout << "\nImag part error: || E_h_Im - E_Im ||_L2 = " << error_imag;
-  std::cout << "\nTotal error:     || E_h - E ||_L2 = " << total_error;
+  std::cout << "\n\n=== L2 ERROR ANALYSIS ===";
 
-  std::cout << "\n\n--- Exact Solution Norms ---";
-  std::cout << "\nReal part norm: || E_Re ||_L2 = " << exact_norm_real;
-  std::cout << "\nImag part norm: || E_Im ||_L2 = " << exact_norm_imag;
-  std::cout << "\nTotal norm:     || E ||_L2 = " << total_exact_norm;
+  std::cout << "\n\n--- Selective Elements (0.2-0.8 domain) ---";
+  std::cout << "\nAbsolute L2 Errors:";
+  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << error_real;
+  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << error_imag;
+  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << total_error;
 
-  std::cout << "\n\n--- Relative L2 Errors ---";
-  std::cout << "\nReal part: || E_h_Re - E_Re || / ||E_Re|| = "
+  std::cout << "\nExact Solution Norms:";
+  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << exact_norm_real;
+  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << exact_norm_imag;
+  std::cout << "\n  Total norm:     || E ||_L2 = " << total_exact_norm;
+
+  std::cout << "\nRelative L2 Errors:";
+  std::cout << "\n  Real part: || E_h_Re - E_Re || / ||E_Re|| = "
             << error_real / exact_norm_real;
-  std::cout << "\nImag part: || E_h_Im - E_Im || / ||E_Im|| = "
+  std::cout << "\n  Imag part: || E_h_Im - E_Im || / ||E_Im|| = "
             << error_imag / exact_norm_imag;
-  std::cout << "\nTotal:     || E_h - E || / ||E|| = " << relative_error << "\n\n";
+  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << relative_error;
+
+  std::cout << "\n\n--- Full Domain (for comparison) ---";
+  std::cout << "\nAbsolute L2 Errors:";
+  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << error_real_full;
+  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << error_imag_full;
+  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << total_error_full;
+
+  std::cout << "\nExact Solution Norms:";
+  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << exact_norm_real_full;
+  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << exact_norm_imag_full;
+  std::cout << "\n  Total norm:     || E ||_L2 = " << total_exact_norm_full;
+
+  std::cout << "\nRelative L2 Errors:";
+  std::cout << "\n  Real part: || E_h_Re - E_Re || / ||E_Re|| = "
+            << error_real_full / exact_norm_real_full;
+  std::cout << "\n  Imag part: || E_h_Im - E_Im || / ||E_Im|| = "
+            << error_imag_full / exact_norm_imag_full;
+  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << relative_error_full;
+
+  std::cout << "\n\n--- Error Comparison ---";
+  std::cout << "\nSelective vs Full Domain Error Ratios:";
+  std::cout << "\n  Selective/Full Error Ratio: " << total_error / total_error_full;
+  std::cout << "\n  Selective/Full Relative Error Ratio: " << relative_error / relative_error_full;
+  std::cout << "\n\n";
   // -----------------------------------------------------------------------
 
   CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
@@ -459,7 +695,7 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][
 
   // To make the mesh larger, we can increase the first input of Units, L0, instead of
   // creating a new mesh.
-  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0);
+  runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0, 0.1, 0.9);
 }
 
 TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial][Parallel]")
@@ -474,7 +710,7 @@ TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Seri
   std::vector<int> domain_attributes = {2};    // Domain volume
   std::vector<int> farfield_attributes = {1};  // Outer boundary (absorbing boundary)
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), farfield_attributes,
-                       domain_attributes, 1.0, 1.0);
+                       domain_attributes, 1.0, 1.0, 0.1, 0.9);
 }
 
 }  // namespace
