@@ -213,6 +213,7 @@ function generate_antenna_mesh(;
     @assert length(domain_dimtags) == 1        # Single 3D domain
 
     # Create physical groups (these become attributes in Palace).
+    # TODO: Add two volume groups for top and bot arms.
     top_arm_group =
         gmsh.model.addPhysicalGroup(2, extract_tag.(top_arm_dimtags), -1, "top_arm")
     bot_arm_group =
