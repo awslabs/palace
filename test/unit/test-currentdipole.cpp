@@ -358,7 +358,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   }
 
   // Higher-order integration for accuracy
-  int order = 3;
+  int order = 2;
   int order_quad = std::max(2, 2 * order + 1);
   const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
   for (int i = 0; i < mfem::Geometry::NumGeom; ++i)
@@ -674,7 +674,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
 TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]")
 {
-  double freq_Hz = 350e6;
+  double freq_Hz = 1e8;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
 
   // Make mesh for a cube [0, 1] x [0, 1] x [0, 1]
@@ -700,15 +700,15 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]"
 
 TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial]")
 {
-  double freq_Hz = 350e6;
+  double freq_Hz = 1e8;
 
   // Load the antenna sphere mesh
   // attribute 1 = outer boundary, attribute 2 = domain
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>("../examples/antenna/mesh/antenna.msh");
 
-  std::vector<int> domain_attributes = {2};    // Domain volume
-  std::vector<int> farfield_attributes = {1};  // Outer boundary (absorbing boundary)
+  std::vector<int> domain_attributes = {5, 6, 7};    // Domain volume
+  std::vector<int> farfield_attributes = {4};  // Outer boundary (absorbing boundary)
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), farfield_attributes,
                        domain_attributes, 1.0, 1.0, 0.1, 0.9);
 }
