@@ -7,7 +7,7 @@
     },
     "Model":
     {
-        "Mesh": "mesh/antenna_short_dipole.msh",
+        "Mesh": "mesh/antenna.msh",
         "L0": 1.0
     },
     "Domains":
@@ -15,14 +15,15 @@
         "Materials":
         [
             {
-                "Attributes": [2]
+                "Attributes": [5, 6, 7]
             }
         ],
         "CurrentDipole": [
             {
                 "Index": 1,
-                "Moment": [0.0, 0.0, 1],
-                "Center": [0.0, 0.0, 0.0]
+                "Moment": 1.0,
+                "Center": [0.0, 0.0, 0.0],
+                "Direction": [0, 0, 1]
             }
         ]
     },
@@ -30,11 +31,12 @@
     {
         "Absorbing":
         {
-            "Attributes": [1]
+            "Attributes": [4],
+            "Order": 2
         },
         "Postprocessing": {
             "FarField": {
-                "Attributes": [1],
+                "Attributes": [4],
                 "NSample": 100,
                 "ThetaPhis": [[35, 20]]
             }
