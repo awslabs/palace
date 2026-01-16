@@ -120,7 +120,7 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
     // This is a hot loop. Manually unrolling and avoiding Vectors significantly
     // increases performance.
     PalacePragmaOmp(parallel for schedule(static))
-    for (size_t i = 0; i < r_naughts.size(); i++)
+    for (std::size_t i = 0; i < r_naughts.size(); i++)
     {
       const auto &r = r_naughts[i];
 

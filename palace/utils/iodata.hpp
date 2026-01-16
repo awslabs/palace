@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
@@ -38,11 +39,15 @@ public:
 private:
   bool init;
 
-  // Check configuration file options and compatibility with requested problem type.
+public:
+  // Check configuration file options and compatibility with requested problem type. Should
+  // not be called by user, but temporarily made public for testing.
   void CheckConfiguration();
 
-public:
-  IoData(const Units &units) : units(units), init(false) {}
+  explicit IoData(const Units &units) : units(units), init(false) {}
+
+  // Take parsed json and override options defaults.
+  explicit IoData(nlohmann::json &&config);
 
   // Parse command line arguments and override options defaults.
   IoData(const char *filename, bool print);
