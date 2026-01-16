@@ -1,0 +1,318 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/spaceoperator.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - spaceoperator.hpp<span style="font-size: 80%;"> (source / <a href="spaceoperator.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">44.4&nbsp;%</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntry">4</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_SPACE_OPERATOR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_SPACE_OPERATOR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;memory&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;vector&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;models/farfieldboundaryoperator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;models/lumpedportoperator.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;models/portexcitations.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;models/surfaceconductivityoperator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;models/surfacecurrentoperator.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;models/surfaceimpedanceoperator.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;models/waveportoperator.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : </span>
+<span id="L23"><span class="lineNum">      23</span>              : namespace palace</span>
+<span id="L24"><span class="lineNum">      24</span>              : {</span>
+<span id="L25"><span class="lineNum">      25</span>              : </span>
+<span id="L26"><span class="lineNum">      26</span>              : class IoData;</span>
+<span id="L27"><span class="lineNum">      27</span>              : class Mesh;</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              : //</span>
+<span id="L30"><span class="lineNum">      30</span>              : // A class handling spatial discretization of the governing equations.</span>
+<span id="L31"><span class="lineNum">      31</span>              : //</span>
+<span id="L32"><span class="lineNum">      32</span>              : class SpaceOperator</span>
+<span id="L33"><span class="lineNum">      33</span>              : {</span>
+<span id="L34"><span class="lineNum">      34</span>              : private:</span>
+<span id="L35"><span class="lineNum">      35</span>              :   const bool pc_mat_real;     // Use real-valued matrix for preconditioner</span>
+<span id="L36"><span class="lineNum">      36</span>              :   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner</span>
+<span id="L37"><span class="lineNum">      37</span>              : </span>
+<span id="L38"><span class="lineNum">      38</span>              :   // Helper variables for log file printing.</span>
+<span id="L39"><span class="lineNum">      39</span>              :   bool print_hdr, print_prec_hdr;</span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span>              :   // Perfect electrical conductor essential boundary condition attributes.</span>
+<span id="L42"><span class="lineNum">      42</span>              :   mfem::Array&lt;int&gt; dbc_attr, aux_bdr_attr;</span>
+<span id="L43"><span class="lineNum">      43</span>              :   std::vector&lt;mfem::Array&lt;int&gt;&gt; nd_dbc_tdof_lists, h1_dbc_tdof_lists, aux_bdr_tdof_lists;</span>
+<span id="L44"><span class="lineNum">      44</span>              : </span>
+<span id="L45"><span class="lineNum">      45</span>              :   // Objects defining the finite element spaces for the electric field (Nedelec) and</span>
+<span id="L46"><span class="lineNum">      46</span>              :   // magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces are used for</span>
+<span id="L47"><span class="lineNum">      47</span>              :   // various purposes throughout the code including postprocessing.</span>
+<span id="L48"><span class="lineNum">      48</span>              :   std::vector&lt;std::unique_ptr&lt;mfem::ND_FECollection&gt;&gt; nd_fecs;</span>
+<span id="L49"><span class="lineNum">      49</span>              :   std::vector&lt;std::unique_ptr&lt;mfem::H1_FECollection&gt;&gt; h1_fecs;</span>
+<span id="L50"><span class="lineNum">      50</span>              :   std::vector&lt;std::unique_ptr&lt;mfem::RT_FECollection&gt;&gt; rt_fecs;</span>
+<span id="L51"><span class="lineNum">      51</span>              :   FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, rt_fespaces;</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span>              :   // Operator for domain material properties.</span>
+<span id="L54"><span class="lineNum">      54</span>              :   MaterialOperator mat_op;</span>
+<span id="L55"><span class="lineNum">      55</span>              : </span>
+<span id="L56"><span class="lineNum">      56</span>              :   // Operators for boundary conditions and source excitations.</span>
+<span id="L57"><span class="lineNum">      57</span>              :   FarfieldBoundaryOperator farfield_op;</span>
+<span id="L58"><span class="lineNum">      58</span>              :   SurfaceConductivityOperator surf_sigma_op;</span>
+<span id="L59"><span class="lineNum">      59</span>              :   SurfaceImpedanceOperator surf_z_op;</span>
+<span id="L60"><span class="lineNum">      60</span>              :   LumpedPortOperator lumped_port_op;</span>
+<span id="L61"><span class="lineNum">      61</span>              :   WavePortOperator wave_port_op;</span>
+<span id="L62"><span class="lineNum">      62</span>              :   SurfaceCurrentOperator surf_j_op;</span>
+<span id="L63"><span class="lineNum">      63</span>              : </span>
+<span id="L64"><span class="lineNum">      64</span>              :   PortExcitations port_excitation_helper;</span>
+<span id="L65"><span class="lineNum">      65</span>              : </span>
+<span id="L66"><span class="lineNum">      66</span>              :   mfem::Array&lt;int&gt; SetUpBoundaryProperties(const IoData &amp;iodata, const mfem::ParMesh &amp;mesh);</span>
+<span id="L67"><span class="lineNum">      67</span>              :   void CheckBoundaryProperties();</span>
+<span id="L68"><span class="lineNum">      68</span>              : </span>
+<span id="L69"><span class="lineNum">      69</span>              :   // Helper functions for building the bilinear forms corresponding to the discretized</span>
+<span id="L70"><span class="lineNum">      70</span>              :   // operators in Maxwell's equations.</span>
+<span id="L71"><span class="lineNum">      71</span>              :   void AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &amp;df,</span>
+<span id="L72"><span class="lineNum">      72</span>              :                                 MaterialPropertyCoefficient &amp;f);</span>
+<span id="L73"><span class="lineNum">      73</span>              :   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &amp;fb);</span>
+<span id="L74"><span class="lineNum">      74</span>              :   void AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L75"><span class="lineNum">      75</span>              :   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &amp;fb);</span>
+<span id="L76"><span class="lineNum">      76</span>              :   void AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L77"><span class="lineNum">      77</span>              :   void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &amp;fb);</span>
+<span id="L78"><span class="lineNum">      78</span>              :   void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L79"><span class="lineNum">      79</span>              :   void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L80"><span class="lineNum">      80</span>              :   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &amp;dfbr,</span>
+<span id="L81"><span class="lineNum">      81</span>              :                                      MaterialPropertyCoefficient &amp;dfbi,</span>
+<span id="L82"><span class="lineNum">      82</span>              :                                      MaterialPropertyCoefficient &amp;fbr,</span>
+<span id="L83"><span class="lineNum">      83</span>              :                                      MaterialPropertyCoefficient &amp;fbi);</span>
+<span id="L84"><span class="lineNum">      84</span>              :   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L85"><span class="lineNum">      85</span>              :   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &amp;f);</span>
+<span id="L86"><span class="lineNum">      86</span>              : </span>
+<span id="L87"><span class="lineNum">      87</span>              :   // Helper functions for excitation vector assembly.</span>
+<span id="L88"><span class="lineNum">      88</span>              :   bool AddExcitationVector1Internal(int excitation_idx, Vector &amp;RHS);</span>
+<span id="L89"><span class="lineNum">      89</span>              :   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &amp;RHS);</span>
+<span id="L90"><span class="lineNum">      90</span>              : </span>
+<span id="L91"><span class="lineNum">      91</span>              :   // Helper functions to build the preconditioner matrix.</span>
+<span id="L92"><span class="lineNum">      92</span>              :   void AssemblePreconditioner(std::complex&lt;double&gt; a0, std::complex&lt;double&gt; a1,</span>
+<span id="L93"><span class="lineNum">      93</span>              :                               std::complex&lt;double&gt; a2, double a3,</span>
+<span id="L94"><span class="lineNum">      94</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_vec,</span>
+<span id="L95"><span class="lineNum">      95</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_aux_vec,</span>
+<span id="L96"><span class="lineNum">      96</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;bi_vec,</span>
+<span id="L97"><span class="lineNum">      97</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;bi_aux_vec);</span>
+<span id="L98"><span class="lineNum">      98</span>              :   void AssemblePreconditioner(std::complex&lt;double&gt; a0, std::complex&lt;double&gt; a1,</span>
+<span id="L99"><span class="lineNum">      99</span>              :                               std::complex&lt;double&gt; a2, double a3,</span>
+<span id="L100"><span class="lineNum">     100</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_vec,</span>
+<span id="L101"><span class="lineNum">     101</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_aux_vec);</span>
+<span id="L102"><span class="lineNum">     102</span>              :   void AssemblePreconditioner(double a0, double a1, double a2, double a3,</span>
+<span id="L103"><span class="lineNum">     103</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_vec,</span>
+<span id="L104"><span class="lineNum">     104</span>              :                               std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; &amp;br_aux_vec);</span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span>              : public:</span>
+<span id="L107"><span class="lineNum">     107</span>              :   SpaceOperator(const IoData &amp;iodata, const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh);</span>
+<span id="L108"><span class="lineNum">     108</span>              : </span>
+<span id="L109"><span class="lineNum">     109</span>              :   // Return list of all PEC boundary true dofs for all finite element space levels.</span>
+<span id="L110"><span class="lineNum">     110</span>              :   const std::vector&lt;mfem::Array&lt;int&gt;&gt; &amp;GetNDDbcTDofLists() const</span>
+<span id="L111"><span class="lineNum">     111</span>              :   {</span>
+<span id="L112"><span class="lineNum">     112</span>              :     return nd_dbc_tdof_lists;</span>
+<span id="L113"><span class="lineNum">     113</span>              :   }</span>
+<span id="L114"><span class="lineNum">     114</span>              :   const std::vector&lt;mfem::Array&lt;int&gt;&gt; &amp;GetH1DbcTDofLists() const</span>
+<span id="L115"><span class="lineNum">     115</span>              :   {</span>
+<span id="L116"><span class="lineNum">     116</span>              :     return h1_dbc_tdof_lists;</span>
+<span id="L117"><span class="lineNum">     117</span>              :   }</span>
+<span id="L118"><span class="lineNum">     118</span>              : </span>
+<span id="L119"><span class="lineNum">     119</span>              :   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary</span>
+<span id="L120"><span class="lineNum">     120</span>              :   // H1 space hierarchy. These are all boundaries which affect the stiffness and damping</span>
+<span id="L121"><span class="lineNum">     121</span>              :   // (K and C) matrices, used for nullspace corrections.</span>
+<span id="L122"><span class="lineNum">     122</span>              :   const std::vector&lt;mfem::Array&lt;int&gt;&gt; &amp;GetAuxBdrTDofLists() const</span>
+<span id="L123"><span class="lineNum">     123</span>              :   {</span>
+<span id="L124"><span class="lineNum">     124</span>              :     return aux_bdr_tdof_lists;</span>
+<span id="L125"><span class="lineNum">     125</span>              :   }</span>
+<span id="L126"><span class="lineNum">     126</span>              : </span>
+<span id="L127"><span class="lineNum">     127</span>              :   // Return material operator for postprocessing.</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC tlaBgGNC">          75 :   const MaterialOperator &amp;GetMaterialOp() const { return mat_op; }</span></span>
+<span id="L129"><span class="lineNum">     129</span>              : </span>
+<span id="L130"><span class="lineNum">     130</span>              :   // Access to underlying BC operator objects for postprocessing.</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">          11 :   auto &amp;GetLumpedPortOp() { return lumped_port_op; }</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaUNC tlaBgUNC">           0 :   auto &amp;GetWavePortOp() { return wave_port_op; }</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC tlaBgGNC">           8 :   auto &amp;GetSurfaceCurrentOp() { return surf_j_op; }</span></span>
+<span id="L134"><span class="lineNum">     134</span>              :   const auto &amp;GetLumpedPortOp() const { return lumped_port_op; }</span>
+<span id="L135"><span class="lineNum">     135</span>              :   const auto &amp;GetWavePortOp() const { return wave_port_op; }</span>
+<span id="L136"><span class="lineNum">     136</span>              :   const auto &amp;GetSurfaceCurrentOp() const { return surf_j_op; }</span>
+<span id="L137"><span class="lineNum">     137</span>              : </span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">           5 :   const auto &amp;GetPortExcitations() const { return port_excitation_helper; }</span></span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span>              :   // Return the parallel finite element space objects.</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC tlaBgUNC">           0 :   auto &amp;GetNDSpaces() { return nd_fespaces; }</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :   const auto &amp;GetNDSpaces() const { return nd_fespaces; }</span>
+<span id="L143"><span class="lineNum">     143</span>              :   auto &amp;GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }</span>
+<span id="L144"><span class="lineNum">     144</span>              :   const auto &amp;GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaUNC">           0 :   auto &amp;GetH1Spaces() { return h1_fespaces; }</span></span>
+<span id="L146"><span class="lineNum">     146</span>              :   const auto &amp;GetH1Spaces() const { return h1_fespaces; }</span>
+<span id="L147"><span class="lineNum">     147</span>              :   auto &amp;GetH1Space() { return h1_fespaces.GetFinestFESpace(); }</span>
+<span id="L148"><span class="lineNum">     148</span>              :   const auto &amp;GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaUNC">           0 :   auto &amp;GetRTSpaces() { return rt_fespaces; }</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :   const auto &amp;GetRTSpaces() const { return rt_fespaces; }</span>
+<span id="L151"><span class="lineNum">     151</span>              :   auto &amp;GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }</span>
+<span id="L152"><span class="lineNum">     152</span>              :   const auto &amp;GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }</span>
+<span id="L153"><span class="lineNum">     153</span>              : </span>
+<span id="L154"><span class="lineNum">     154</span>              :   // Access the underlying mesh object.</span>
+<span id="L155"><span class="lineNum">     155</span>              :   const auto &amp;GetMesh() const { return GetNDSpace().GetMesh(); }</span>
+<span id="L156"><span class="lineNum">     156</span>              : </span>
+<span id="L157"><span class="lineNum">     157</span>              :   // Return the number of true (conforming) dofs on the finest ND space.</span>
+<span id="L158"><span class="lineNum">     158</span>              :   auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }</span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span>              :   // Construct any part of the frequency-dependent complex linear system matrix:</span>
+<span id="L161"><span class="lineNum">     161</span>              :   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω).</span>
+<span id="L162"><span class="lineNum">     162</span>              :   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument</span>
+<span id="L163"><span class="lineNum">     163</span>              :   // ω is required only for the constructing the &quot;extra&quot; matrix A2(ω).</span>
+<span id="L164"><span class="lineNum">     164</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L165"><span class="lineNum">     165</span>              :   std::unique_ptr&lt;OperType&gt; GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);</span>
+<span id="L166"><span class="lineNum">     166</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L167"><span class="lineNum">     167</span>              :   std::unique_ptr&lt;OperType&gt; GetDampingMatrix(Operator::DiagonalPolicy diag_policy);</span>
+<span id="L168"><span class="lineNum">     168</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L169"><span class="lineNum">     169</span>              :   std::unique_ptr&lt;OperType&gt; GetMassMatrix(Operator::DiagonalPolicy diag_policy);</span>
+<span id="L170"><span class="lineNum">     170</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L171"><span class="lineNum">     171</span>              :   std::unique_ptr&lt;OperType&gt; GetExtraSystemMatrix(double omega,</span>
+<span id="L172"><span class="lineNum">     172</span>              :                                                  Operator::DiagonalPolicy diag_policy);</span>
+<span id="L173"><span class="lineNum">     173</span>              : </span>
+<span id="L174"><span class="lineNum">     174</span>              :   // Construct the complete frequency or time domain system matrix using the provided</span>
+<span id="L175"><span class="lineNum">     175</span>              :   // stiffness, damping, mass, and extra matrices:</span>
+<span id="L176"><span class="lineNum">     176</span>              :   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.</span>
+<span id="L177"><span class="lineNum">     177</span>              :   // It is assumed that the inputs have been constructed using previous calls to</span>
+<span id="L178"><span class="lineNum">     178</span>              :   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.</span>
+<span id="L179"><span class="lineNum">     179</span>              :   template &lt;typename OperType, typename ScalarType&gt;</span>
+<span id="L180"><span class="lineNum">     180</span>              :   std::unique_ptr&lt;OperType&gt;</span>
+<span id="L181"><span class="lineNum">     181</span>              :   GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,</span>
+<span id="L182"><span class="lineNum">     182</span>              :                   const OperType *C, const OperType *M, const OperType *A2 = nullptr);</span>
+<span id="L183"><span class="lineNum">     183</span>              : </span>
+<span id="L184"><span class="lineNum">     184</span>              :   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:</span>
+<span id="L185"><span class="lineNum">     185</span>              :   //                           B = a0 Kr + a2 Mr .</span>
+<span id="L186"><span class="lineNum">     186</span>              :   // It is assumed that the inputs have been constructed using previous calls to</span>
+<span id="L187"><span class="lineNum">     187</span>              :   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.</span>
+<span id="L188"><span class="lineNum">     188</span>              :   // If K or M have eliminated boundary conditions, they are not eliminated from the</span>
+<span id="L189"><span class="lineNum">     189</span>              :   // returned operator.</span>
+<span id="L190"><span class="lineNum">     190</span>              :   std::unique_ptr&lt;Operator&gt; GetInnerProductMatrix(double a0, double a2,</span>
+<span id="L191"><span class="lineNum">     191</span>              :                                                   const ComplexOperator *K,</span>
+<span id="L192"><span class="lineNum">     192</span>              :                                                   const ComplexOperator *M);</span>
+<span id="L193"><span class="lineNum">     193</span>              : </span>
+<span id="L194"><span class="lineNum">     194</span>              :   // Construct the matrix for frequency or time domain linear system preconditioning. If it</span>
+<span id="L195"><span class="lineNum">     195</span>              :   // is real-valued (Mr &gt; 0, Mi &lt; 0, |Mr + Mi| is done on the material property coefficient,</span>
+<span id="L196"><span class="lineNum">     196</span>              :   // not the matrix entries themselves):</span>
+<span id="L197"><span class="lineNum">     197</span>              :   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).</span>
+<span id="L198"><span class="lineNum">     198</span>              :   template &lt;typename OperType, typename ScalarType&gt;</span>
+<span id="L199"><span class="lineNum">     199</span>              :   std::unique_ptr&lt;OperType&gt; GetPreconditionerMatrix(ScalarType a0, ScalarType a1,</span>
+<span id="L200"><span class="lineNum">     200</span>              :                                                     ScalarType a2, double a3);</span>
+<span id="L201"><span class="lineNum">     201</span>              : </span>
+<span id="L202"><span class="lineNum">     202</span>              :   // Construct and return the discrete curl or gradient matrices.</span>
+<span id="L203"><span class="lineNum">     203</span>              :   const Operator &amp;GetGradMatrix() const</span>
+<span id="L204"><span class="lineNum">     204</span>              :   {</span>
+<span id="L205"><span class="lineNum">     205</span>              :     return GetNDSpace().GetDiscreteInterpolator(GetH1Space());</span>
+<span id="L206"><span class="lineNum">     206</span>              :   }</span>
+<span id="L207"><span class="lineNum">     207</span>              :   const Operator &amp;GetCurlMatrix() const</span>
+<span id="L208"><span class="lineNum">     208</span>              :   {</span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :     return GetRTSpace().GetDiscreteInterpolator(GetNDSpace());</span></span>
+<span id="L210"><span class="lineNum">     210</span>              :   }</span>
+<span id="L211"><span class="lineNum">     211</span>              : </span>
+<span id="L212"><span class="lineNum">     212</span>              :   // Assemble the right-hand side source term vector for an incident field or current source</span>
+<span id="L213"><span class="lineNum">     213</span>              :   // applied on specified excited boundaries. The return value indicates whether or not the</span>
+<span id="L214"><span class="lineNum">     214</span>              :   // excitation is nonzero (and thus is true most of the time).</span>
+<span id="L215"><span class="lineNum">     215</span>              :   bool GetExcitationVector(int excitation_idx, Vector &amp;RHS);</span>
+<span id="L216"><span class="lineNum">     216</span>              :   bool GetExcitationVector(int excitation_idx, double omega, ComplexVector &amp;RHS);</span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether</span>
+<span id="L219"><span class="lineNum">     219</span>              :   // or not the excitation is nonzero (and thus is true most of the time).</span>
+<span id="L220"><span class="lineNum">     220</span>              :   bool GetExcitationVector1(int excitation_idx, ComplexVector &amp;RHS1);</span>
+<span id="L221"><span class="lineNum">     221</span>              :   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &amp;RHS2);</span>
+<span id="L222"><span class="lineNum">     222</span>              : </span>
+<span id="L223"><span class="lineNum">     223</span>              :   // Construct a constant or randomly initialized vector which satisfies the PEC essential</span>
+<span id="L224"><span class="lineNum">     224</span>              :   // boundary conditions.</span>
+<span id="L225"><span class="lineNum">     225</span>              :   void GetRandomInitialVector(ComplexVector &amp;v);</span>
+<span id="L226"><span class="lineNum">     226</span>              :   void GetConstantInitialVector(ComplexVector &amp;v);</span>
+<span id="L227"><span class="lineNum">     227</span>              : </span>
+<span id="L228"><span class="lineNum">     228</span>              :   // Get the associated MPI communicator.</span>
+<span id="L229"><span class="lineNum">     229</span>              :   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }</span>
+<span id="L230"><span class="lineNum">     230</span>              : };</span>
+<span id="L231"><span class="lineNum">     231</span>              : </span>
+<span id="L232"><span class="lineNum">     232</span>              : }  // namespace palace</span>
+<span id="L233"><span class="lineNum">     233</span>              : </span>
+<span id="L234"><span class="lineNum">     234</span>              : #endif  // PALACE_MODELS_SPACE_OPERATOR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

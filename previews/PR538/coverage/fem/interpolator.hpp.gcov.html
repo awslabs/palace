@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - fem/interpolator.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">fem</a> - interpolator.hpp<span style="font-size: 80%;"> (source / <a href="interpolator.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_FEM_INTERPOLATOR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_FEM_INTERPOLATOR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;vector&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : </span>
+<span id="L11"><span class="lineNum">      11</span>              : namespace palace</span>
+<span id="L12"><span class="lineNum">      12</span>              : {</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : class GridFunction;</span>
+<span id="L15"><span class="lineNum">      15</span>              : class IoData;</span>
+<span id="L16"><span class="lineNum">      16</span>              : class FiniteElementSpace;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : //</span>
+<span id="L19"><span class="lineNum">      19</span>              : // A class which wraps MFEM's GSLIB interface for high-order field interpolation.</span>
+<span id="L20"><span class="lineNum">      20</span>              : //</span>
+<span id="L21"><span class="lineNum">      21</span>              : class InterpolationOperator</span>
+<span id="L22"><span class="lineNum">      22</span>              : {</span>
+<span id="L23"><span class="lineNum">      23</span>              : private:</span>
+<span id="L24"><span class="lineNum">      24</span>              : #if defined(MFEM_USE_GSLIB)</span>
+<span id="L25"><span class="lineNum">      25</span>              :   mfem::FindPointsGSLIB op;</span>
+<span id="L26"><span class="lineNum">      26</span>              : #endif</span>
+<span id="L27"><span class="lineNum">      27</span>              :   std::vector&lt;int&gt; op_idx;</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              :   int v_dim_fes;  // dimension of interpolated vector from NDSpace</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              :   std::vector&lt;double&gt; ProbeField(const mfem::ParGridFunction &amp;U);</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              : public:</span>
+<span id="L34"><span class="lineNum">      34</span>              :   InterpolationOperator(const IoData &amp;iodata, FiniteElementSpace &amp;nd_space);</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC tlaBgUNC">           0 :   auto GetVDim() const { return v_dim_fes; }</span></span>
+<span id="L37"><span class="lineNum">      37</span>              :   const auto &amp;GetProbes() const { return op_idx; }</span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; ProbeField(const GridFunction &amp;U);</span>
+<span id="L40"><span class="lineNum">      40</span>              : };</span>
+<span id="L41"><span class="lineNum">      41</span>              : </span>
+<span id="L42"><span class="lineNum">      42</span>              : namespace fem</span>
+<span id="L43"><span class="lineNum">      43</span>              : {</span>
+<span id="L44"><span class="lineNum">      44</span>              : </span>
+<span id="L45"><span class="lineNum">      45</span>              : // Interpolate a function on a serial or parallel mesh to a different mesh, using GSLIB.</span>
+<span id="L46"><span class="lineNum">      46</span>              : // Similar to MFEM's field-interp miniapp.</span>
+<span id="L47"><span class="lineNum">      47</span>              : void InterpolateFunction(const mfem::GridFunction &amp;U, mfem::GridFunction &amp;V);</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : // Interpolate a function at a specific list of points, specified using the provided</span>
+<span id="L50"><span class="lineNum">      50</span>              : // ordering. The output vector values are always arranged byVDIM.</span>
+<span id="L51"><span class="lineNum">      51</span>              : void InterpolateFunction(const mfem::Vector &amp;xyz, const mfem::GridFunction &amp;U,</span>
+<span id="L52"><span class="lineNum">      52</span>              :                          mfem::Vector &amp;V,</span>
+<span id="L53"><span class="lineNum">      53</span>              :                          mfem::Ordering::Type ordering = mfem::Ordering::byNODES);</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              : }  // namespace fem</span>
+<span id="L56"><span class="lineNum">      56</span>              : </span>
+<span id="L57"><span class="lineNum">      57</span>              : }  // namespace palace</span>
+<span id="L58"><span class="lineNum">      58</span>              : </span>
+<span id="L59"><span class="lineNum">      59</span>              : #endif  // PALACE_FEM_INTERPOLATOR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
