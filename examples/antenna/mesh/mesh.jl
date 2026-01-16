@@ -188,7 +188,6 @@ function generate_antenna_mesh(;
     find_3D_top_arm() = filter(x -> zmin(x) > 0 && !spans_domain(x), all_3d_entities)
     find_3D_bot_arm() = filter(x -> zmax(x) < 0 && !spans_domain(x), all_3d_entities)
 
-
     # We find the rectangle because we know its precise location and size (filling the
     # entire gap and being oriented on the XZ plane at y=0).
     function is_gap_rectangle(x)
@@ -221,8 +220,6 @@ function generate_antenna_mesh(;
     @assert length(bot_arm_domain_dimtags) == 1  # Single 3D domain top bottom arm
     @assert length(domain_dimtags) == 1          # Single 3D domain (top and bottom arms subtracted)
 
-
-
     # Create physical groups (these become attributes in Palace).
     top_arm_group =
         gmsh.model.addPhysicalGroup(2, extract_tag.(top_arm_dimtags), -1, "top_arm")
@@ -236,10 +233,18 @@ function generate_antenna_mesh(;
         -1,
         "outer_boundary"
     )
-    top_arm_domain_group =
-        gmsh.model.addPhysicalGroup(3, extract_tag.(top_arm_domain_dimtags), -1, "top_arm_domain")
-    bot_arm_domain_group =
-        gmsh.model.addPhysicalGroup(3, extract_tag.(bot_arm_domain_dimtags), -1, "bot_arm_domain")
+    top_arm_domain_group = gmsh.model.addPhysicalGroup(
+        3,
+        extract_tag.(top_arm_domain_dimtags),
+        -1,
+        "top_arm_domain"
+    )
+    bot_arm_domain_group = gmsh.model.addPhysicalGroup(
+        3,
+        extract_tag.(bot_arm_domain_dimtags),
+        -1,
+        "bot_arm_domain"
+    )
     domain_group =
         gmsh.model.addPhysicalGroup(3, extract_tag.(domain_dimtags), -1, "domain")
 
