@@ -14,7 +14,7 @@ end
 # Dipole Antenna and Radiation Fields
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/antenna/`](https://github.com/awslabs/palace/blob/main/examples/antenna)
     directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 86400.
@@ -108,7 +108,7 @@ the uniform distribution, the resolution changes as one moves towards the
 poles).
 
 !!! tip "ComplexCoarseSolve solver optimization"
-    
+
     This simulation benefits from the `"ComplexCoarseSolve"` option. This
     setting uses a complex preconditioner of the form `P = [Ar, -Ai; Ai, Ar]` rather than
     the default `P = Ar + Ai`, where `A` is the true system matrix with
@@ -155,7 +155,7 @@ figure-eight pattern of a dipole antenna, with maximum radiation perpendicular
 to the antenna axis and nulls approximately along the antenna axis.
 
 !!! note "Do your results look different?"
-    
+
     If you are trying to reproduce this plot, but find that your plots are not as nice
     as the one above, you might have a missed a note at the top of this page: the example
     was run with 64800 sampling points instead of the 100 that the JSON file specifies.
@@ -175,20 +175,115 @@ again, we see the expected donut shape, with maximal electric field strength on
 the equator, and minimum along the z axis.
 
 !!! note "Running the Julia script"
-    
+
     The `plot_radiation_pattern.jl` requires a number of Julia packages (including
     the plotting library). The simplest way to ensure that you have all the required
     packages is to use the `Project.toml` included with the examples. To install this
     environment, navigate to the `examples` folder and run
-    
+
     ```bash
     julia --project -e 'using Pkg; Pkg.instantiate();'
     ```
-    
+
     All the subsequent times, just make sure to start Julia with `--project` from the `examples`
-    
+
     folder or one of its subfolders.
+
+## Alternative: Short Dipole Using the Electric Current Dipole Operator
+
+Instead of explicitly modeling the antenna geometry with a lumped port excitation, *Palace* provides an electric current dipole operator that represents an infinitesimally short current-carrying wire. This approach is particularly useful for theoretical studies or when the detailed geometry of the feeding structure is not critical to the analysis.
+
+### Background
+
+An electrical current dipole can be thought of as the limiting case of a finite wire segment carrying current ``I`` over length ``\Delta s`` as ``\Delta s \rightarrow 0``. The strength of the source is characterized by its dipole moment ``\mathbf{p} = I \, ds``, where ``ds`` is the infinitesimal length [[2]](#References). The source term in Maxwell's equations becomes
+
+```math
+\mathbf{J}_e^s = \mathbf{p} \, \delta(x) \delta(y) \delta(z)\,,
+```
+
+where ``\delta`` represents the Dirac delta function, indicating that the source is concentrated at a single point in space.
+
+For a z-oriented electrical current dipole (short dipole) in free space, the far-field radiation pattern in the E-plane (xz-plane) follows
+
+```math
+|\mathbf{E}_\theta|^2 \propto |\sin\theta|^2\,,
+```
+
+with omnidirectional radiation in the H-plane (xy-plane). This differs from the half-wave dipole pattern shown earlier, which exhibits the characteristic ``\left|\frac{\cos\left(\frac{\pi}{2}\cos\theta\right)}{\sin\theta}\right|^2`` dependence due to finite-size effects.
+
+### Configuration and Running the Example
+
+A complete example using the current dipole operator is provided in
+[`antenna_short_dipole.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_short_dipole.json).
+The configuration uses a `"CurrentDipole"` specification in the `"Domains"` section:
+
+```json
+"Domains":
+{
+    "Materials":
+    [
+        {
+            "Attributes": [7]
+        }
+    ],
+    "CurrentDipole": [
+        {
+            "Index": 1,
+            "Moment": 1.0,
+            "Center": [0.0, 0.0, 0.0],
+            "Direction": [0, 0, 1]
+        }
+    ]
+}
+```
+
+The key parameters are:
+
+- `"Index"`: Identifier for this current dipole source (used in postprocessing output)
+- `"Moment"`: Current dipole moment magnitude ``\mathbf{p}`` in A·m
+- `"Center"`: Coordinates of the dipole center position in mesh length units
+- `"Direction"`: Direction vector of the current dipole moment (automatically normalized)
+
+With this configuration, the physical antenna geometry and `"LumpedPort"` specification are removed. The outer spherical boundary with `"Absorbing"` conditions and the far-field postprocessing setup remain the same as in the half-wave dipole example.
+
+A visualization of the simplified model for the short dipole is shown below.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-short-dipole-model.png" width="60%" />
+</p><br/>
+```
+
+The image shows the outer spherical domain with the current dipole source located at the center, eliminating the need for the complex wire geometry and feeding structure required in the half-wave dipole model.
+
+!!! note "Changing dipole orientation"
+
+    One of the key advantages of using the current dipole operator is the ease of changing the antenna orientation. By simply modifying the `"Direction"` parameter, you can align the dipole along any axis without needing to regenerate the mesh or redefine boundary conditions. For example, `"Direction": [1, 0, 0]` creates an x-oriented dipole, while `"Direction": [0, 1, 0]` creates a y-oriented dipole. This makes it straightforward to study radiation patterns for different antenna orientations.
+
+### Results
+
+The far-field radiation pattern can be visualized using the same plotting script, specifying the short dipole model type:
+
+```bash
+julia --project plot_farfield.jl model=antenna_short_dipole file=postpro/antenna_short_dipole/farfield-rE.csv
+```
+
+This will generate polar plots showing the characteristic ``|\sin\theta|^2`` pattern in the E-plane and omnidirectional pattern in the H-plane, as expected for an infinitesimal dipole.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-short-dipole-polar.png" width="100%" />
+</p><br/>
+```
+
+The polar plots clearly show the theoretical radiation pattern for a short dipole: the E-plane exhibits the ``|\sin\theta|^2`` dependence with nulls along the dipole axis (θ = 0° and 180°) and maximum radiation perpendicular to the dipole (θ = 90°), while the H-plane shows the expected omnidirectional pattern.
+
+### Comparison with Physical Antenna Model
+
+The current dipole operator provides an idealized point source representation that is most accurate when the dipole length is small compared to the wavelength. For the half-wave dipole example, the physical antenna model with lumped port excitation captures finite-size effects and provides more realistic results. However, for initial design studies or when studying fundamental radiation properties of infinitesimal dipoles, the current dipole operator offers a convenient alternative that eliminates the need to mesh thin wire structures.
 
 ## References
 
 [1] Stutzman, W. L., & Thiele, G. A., *Antenna Theory and Design* (3rd ed.), John Wiley & Sons, 2012.
+
+[2] Heagy, L. J., Cockett, R., Kang, S., Rosenkjaer, G. K., & Oldenburg, D. W., "Defining the Electrical Current Dipole," *EM GeoSci*, [https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html](https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html).
