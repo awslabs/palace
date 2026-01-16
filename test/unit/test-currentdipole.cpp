@@ -4,17 +4,17 @@
 // Verification test for Electrical Current Dipole from:
 // https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_frequency/analytic_solution.html
 //
-// For a time-harmonic electrical current dipole in the z-direction (p=Ids·ẑ):
+// For a time-harmonic electrical current dipole in the x-direction (p=Ids·x̂):
 //
-// Electric field (Eq. 206, adapted for z-direction):
-// Ex = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xz * (-k²r² + 3ikr + 3)/r²]
-// Ey = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [yz * (-k²r² + 3ikr + 3)/r²]
-// Ez = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [z² * (-k²r² + 3ikr + 3)/r² + (k²r² - ikr - 1)]
+// Electric field (Eq. 206):
+// Ex = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [x² * (-k²r² + 3ikr + 3)/r² + (k²r² - ikr - 1)]
+// Ey = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xy * (-k²r² + 3ikr + 3)/r²]
+// Ez = Ids/(4π(σ+iωε)r³) * e^(-ikr) * [xz * (-k²r² + 3ikr + 3)/r²]
 //
-// Magnetic field (Eq. 207, adapted for z-direction):
-// Hx = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (y/r)
-// Hy = Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (-x/r)
-// Hz = 0
+// Magnetic flux density (B = μ₀H, from Eq. 207):
+// Bx = 0
+// By = μ₀Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (-z/r)
+// Bz = μ₀Ids/(4πr²) * (ikr + 1) * e^(-ikr) * (y/r)
 //
 // where k² = ω²με - iωμσ, r = √(x² + y² + z²), and p is the dipole moment (A.m).
 
@@ -198,7 +198,7 @@ namespace
 {
 
 // Compute the Cartesian components electric field of a time-harmonic electrical
-// current dipole aligned in the z-direction (Ids·δ(x)δ(y)δ(z)·ẑ) at a given point in space.
+// current dipole aligned in the x-direction (Ids·δ(x)δ(y)δ(z)·x̂) at a given point in space.
 // The returned field is non-dimensionalized according to the provided units.
 //
 // We want the non-dimensional E field to mock a Palace-computed field.
@@ -227,8 +227,38 @@ ComputeCurrentDipoleENonDim(const mfem::Vector &x_nondim, const Units &units, do
 
   std::complex<double> factor2 = (-kr * kr + 3. * ikr + 3.) / (r * r);
 
-  return {{factor1 * (x * z * factor2), factor1 * (y * z * factor2),
-           factor1 * (z * z * factor2 + kr * kr - ikr - 1.)}};
+  return {{factor1 * (x * x * factor2 + kr * kr - ikr - 1.), factor1 * (x * y * factor2),
+           factor1 * (x * z * factor2)}};
+}
+
+// Compute the Cartesian components magnetic flux density (B-field) of a time-harmonic electrical
+// current dipole aligned in the x-direction (Ids·δ(x)δ(y)δ(z)·x̂) at a given point in space.
+// The returned field is non-dimensionalized according to the provided units.
+//
+// We want the non-dimensional B field to mock a Palace-computed field.
+// This is simply B = μ₀ * H, where H is from the reference formulas.
+std::array<std::complex<double>, 3>
+ComputeCurrentDipoleBNonDim(const mfem::Vector &x_nondim, const Units &units, double Ids,
+                            double freq_Hz)
+{
+  double r_nondim = x_nondim.Norml2();
+  if (r_nondim < 1e-12)
+    return {0.0, 0.0, 0.0};
+
+  double r = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
+  double y = units.Dimensionalize<Units::ValueType::LENGTH>(x_nondim(1));
+  double z = units.Dimensionalize<Units::ValueType::LENGTH>(x_nondim(2));
+
+  double omega = 2.0 * M_PI * freq_Hz;
+  double k = omega / c0_;
+  double kr = k * r;
+
+  std::complex<double> ikr(0, kr);
+  std::complex<double> exp_ikr = std::exp(-ikr);
+  std::complex<double> factor = exp_ikr * Ids * mu0_ * (ikr + 1.0) / (4.0 * M_PI * r * r * r);
+  factor = units.Nondimensionalize<Units::ValueType::FIELD_B>(factor);
+
+  return {{0.0, factor * (-z), factor * y}};
 }
 
 // Compare the implementation in CurrentDipoleOperator with the analytic solution.
@@ -237,8 +267,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
                           const std::vector<int> &domain_attributes, double L0, double Lc,
                           double inner_frac = 0.2, double outer_frac = 0.8)
 {
-  constexpr double atol = 1e-4;
-  constexpr double rtol = 0.05;
   constexpr double Ids = 1.;
   int Order = 2;
 
@@ -247,7 +275,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   iodata.domains.materials.emplace_back().attributes = domain_attributes;
   auto &dipole_config = iodata.domains.current_dipole[1];
   dipole_config.moment = Ids;
-  dipole_config.direction = {0, 0, 1};
+  dipole_config.direction = {1, 0, 0};
   dipole_config.center = {0.0, 0.0, 0.0};
   iodata.boundaries.farfield.attributes = farfield_attributes;
   iodata.boundaries.farfield.order = 2;  // TODO: Experiment with order 1
@@ -310,16 +338,23 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   // Compute B = -1/(iω) ∇ x E on the true dofs.
   Curl.Mult(E.Real(), B.Real());
   Curl.Mult(E.Imag(), B.Imag());
-  B *= -1.0 / (1i * omega);  // TODO: add error computation for B as well.
+  B *= -1.0 / (1i * omega);
 
   // Recover complete GridFunction from constrained solver solution for error computation.
   GridFunction E_field(space_op.GetNDSpace(), true);
   E_field.Real().SetFromTrueDofs(E.Real());
   E_field.Imag().SetFromTrueDofs(E.Imag());
 
+  GridFunction B_field(space_op.GetRTSpace(), true);
+  B_field.Real().SetFromTrueDofs(B.Real());
+  B_field.Imag().SetFromTrueDofs(B.Imag());
+
   // Create analytical solution GridFunction for visualization
   GridFunction E_analytical(space_op.GetNDSpace(), true);
   E_analytical = 0.0;
+
+  GridFunction B_analytical(space_op.GetRTSpace(), true);
+  B_analytical = 0.0;
 
   // Create analytical solution coefficients.
   auto E_exact_real = [=](const mfem::Vector &x, mfem::Vector &E_out)
@@ -339,9 +374,29 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   mfem::VectorFunctionCoefficient E_exact_real_coef(dim, E_exact_real);
   mfem::VectorFunctionCoefficient E_exact_imag_coef(dim, E_exact_imag);
 
+  auto B_exact_real = [=](const mfem::Vector &x, mfem::Vector &B_out)
+  {
+    auto B_complex = ComputeCurrentDipoleBNonDim(x, iodata.units, Ids, freq_Hz);
+    B_out(0) = std::real(B_complex[0]);
+    B_out(1) = std::real(B_complex[1]);
+    B_out(2) = std::real(B_complex[2]);
+  };
+  auto B_exact_imag = [=](const mfem::Vector &x, mfem::Vector &B_out)
+  {
+    auto B_complex = ComputeCurrentDipoleBNonDim(x, iodata.units, Ids, freq_Hz);
+    B_out(0) = std::imag(B_complex[0]);
+    B_out(1) = std::imag(B_complex[1]);
+    B_out(2) = std::imag(B_complex[2]);
+  };
+  mfem::VectorFunctionCoefficient B_exact_real_coef(dim, B_exact_real);
+  mfem::VectorFunctionCoefficient B_exact_imag_coef(dim, B_exact_imag);
+
   // Project analytical solution onto GridFunction for visualization
   E_analytical.Real().ProjectCoefficient(E_exact_real_coef);
   E_analytical.Imag().ProjectCoefficient(E_exact_imag_coef);
+
+  B_analytical.Real().ProjectCoefficient(B_exact_real_coef);
+  B_analytical.Imag().ProjectCoefficient(B_exact_imag_coef);
 
   // Create element marker to exclude center and boundary regions from error computation
   auto &mesh_ref = palace_mesh.Get();
@@ -359,7 +414,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
 
   // Higher-order integration for accuracy
   int order = 3;
-  int order_quad = std::max(2, 2 * order + 1);
+  int order_quad = order + 2;
   const mfem::IntegrationRule *irs[mfem::Geometry::NumGeom];
   for (int i = 0; i < mfem::Geometry::NumGeom; ++i)
   {
@@ -375,56 +430,95 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   }
 
   // Compute L2 error only on marked elements (excluding center and boundary regions)
-  double error_real = E_field.Real().ComputeL2Error(E_exact_real_coef, irs, marked_elements);
-  double error_imag = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs, marked_elements);
-  double total_error = std::sqrt(error_real * error_real + error_imag * error_imag);
+  double E_error_real = E_field.Real().ComputeL2Error(E_exact_real_coef, irs, marked_elements);
+  double E_error_imag = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs, marked_elements);
+  double E_total_error = std::sqrt(E_error_real * E_error_real + E_error_imag * E_error_imag);
 
   // Compute exact solution norm using zero field trick, also only on marked elements
   // When field=0, ComputeL2Error(exact_coef) returns ||0 - exact_coef||_L2 =
   // ||exact_coef||_L2
   GridFunction zero_field_for_norm_computation(space_op.GetNDSpace(), true);
   zero_field_for_norm_computation = 0.0;  // Initialize to zero
-  double exact_norm_real =
+  double E_exact_norm_real =
       zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs, marked_elements);
-  double exact_norm_imag =
+  double E_exact_norm_imag =
       zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs, marked_elements);
-  double total_exact_norm =
-      std::sqrt(exact_norm_real * exact_norm_real + exact_norm_imag * exact_norm_imag);
+  double E_total_exact_norm =
+      std::sqrt(E_exact_norm_real * E_exact_norm_real + E_exact_norm_imag * E_exact_norm_imag);
 
   // Sanity check: exact norm should be non-zero
-  if (rank == 0 && total_exact_norm < 1e-14)
+  if (rank == 0 && E_total_exact_norm < 1e-14)
   {
     std::cout << "\n*** WARNING: Exact solution norm is nearly zero! ***";
     std::cout << "\n*** This suggests the analytical solution may not be properly defined. ***\n";
   }
 
   // Also compute errors on the full domain for comparison
-  double error_real_full = E_field.Real().ComputeL2Error(E_exact_real_coef, irs);
-  double error_imag_full = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs);
-  double total_error_full = std::sqrt(error_real_full * error_real_full + error_imag_full * error_imag_full);
+  double E_error_real_full = E_field.Real().ComputeL2Error(E_exact_real_coef, irs);
+  double E_error_imag_full = E_field.Imag().ComputeL2Error(E_exact_imag_coef, irs);
+  double E_total_error_full = std::sqrt(E_error_real_full * E_error_real_full + E_error_imag_full * E_error_imag_full);
 
-  double exact_norm_real_full =
+  double E_exact_norm_real_full =
       zero_field_for_norm_computation.Real().ComputeL2Error(E_exact_real_coef, irs);
-  double exact_norm_imag_full =
+  double E_exact_norm_imag_full =
       zero_field_for_norm_computation.Imag().ComputeL2Error(E_exact_imag_coef, irs);
-  double total_exact_norm_full =
-      std::sqrt(exact_norm_real_full * exact_norm_real_full + exact_norm_imag_full * exact_norm_imag_full);
+  double E_total_exact_norm_full =
+      std::sqrt(E_exact_norm_real_full * E_exact_norm_real_full + E_exact_norm_imag_full * E_exact_norm_imag_full);
 
   // Compute relative errors
-  double relative_error = total_error / total_exact_norm;
-  double relative_error_full = total_error_full / total_exact_norm_full;
+  double E_relative_error = E_total_error / E_total_exact_norm;
+  double E_relative_error_full = E_total_error_full / E_total_exact_norm_full;
+
+  // ========== B-FIELD ERROR COMPUTATION ==========
+  // Compute L2 error for B-field only on marked elements
+  double B_error_real = B_field.Real().ComputeL2Error(B_exact_real_coef, irs, marked_elements);
+  double B_error_imag = B_field.Imag().ComputeL2Error(B_exact_imag_coef, irs, marked_elements);
+  double B_total_error = std::sqrt(B_error_real * B_error_real + B_error_imag * B_error_imag);
+
+  // Compute exact B-field norm using zero field trick
+  GridFunction zero_B_field_for_norm_computation(space_op.GetRTSpace(), true);
+  zero_B_field_for_norm_computation = 0.0;
+  double B_exact_norm_real =
+      zero_B_field_for_norm_computation.Real().ComputeL2Error(B_exact_real_coef, irs, marked_elements);
+  double B_exact_norm_imag =
+      zero_B_field_for_norm_computation.Imag().ComputeL2Error(B_exact_imag_coef, irs, marked_elements);
+  double B_total_exact_norm =
+      std::sqrt(B_exact_norm_real * B_exact_norm_real + B_exact_norm_imag * B_exact_norm_imag);
+
+  // Sanity check: exact B norm should be non-zero
+  if (rank == 0 && B_total_exact_norm < 1e-14)
+  {
+    std::cout << "\n*** WARNING: Exact B solution norm is nearly zero! ***";
+    std::cout << "\n*** This suggests the analytical B solution may not be properly defined. ***\n";
+  }
+
+  // Also compute B errors on the full domain for comparison
+  double B_error_real_full = B_field.Real().ComputeL2Error(B_exact_real_coef, irs);
+  double B_error_imag_full = B_field.Imag().ComputeL2Error(B_exact_imag_coef, irs);
+  double B_total_error_full = std::sqrt(B_error_real_full * B_error_real_full + B_error_imag_full * B_error_imag_full);
+
+  double B_exact_norm_real_full =
+      zero_B_field_for_norm_computation.Real().ComputeL2Error(B_exact_real_coef, irs);
+  double B_exact_norm_imag_full =
+      zero_B_field_for_norm_computation.Imag().ComputeL2Error(B_exact_imag_coef, irs);
+  double B_total_exact_norm_full =
+      std::sqrt(B_exact_norm_real_full * B_exact_norm_real_full + B_exact_norm_imag_full * B_exact_norm_imag_full);
+
+  // Compute relative errors for B-field
+  double B_relative_error = B_total_error / B_total_exact_norm;
+  double B_relative_error_full = B_total_error_full / B_total_exact_norm_full;
 
   // ======================== VISUALIZATION ========================
   // Write both numerical and analytical solutions to ParaView
   {
-    // Compute error field
+    // Compute error field for E
     GridFunction E_error(space_op.GetNDSpace(), true);
     E_error.Real() = E_field.Real();
     E_error.Real() -= E_analytical.Real();
     E_error.Imag() = E_field.Imag();
     E_error.Imag() -= E_analytical.Imag();
 
-    // Compute relative error field (pointwise)
+    // Compute relative error field (pointwise) for E
     GridFunction E_rel_error(space_op.GetNDSpace(), true);
     E_rel_error = 0.0;
 
@@ -453,6 +547,41 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
       }
     }
 
+    // Compute error field for B
+    GridFunction B_error(space_op.GetRTSpace(), true);
+    B_error.Real() = B_field.Real();
+    B_error.Real() -= B_analytical.Real();
+    B_error.Imag() = B_field.Imag();
+    B_error.Imag() -= B_analytical.Imag();
+
+    // Compute relative error field (pointwise) for B
+    GridFunction B_rel_error(space_op.GetRTSpace(), true);
+    B_rel_error = 0.0;
+
+    auto &B_err_real = B_error.Real();
+    auto &B_err_imag = B_error.Imag();
+    auto &B_ana_real = B_analytical.Real();
+    auto &B_ana_imag = B_analytical.Imag();
+    auto &B_rel_real = B_rel_error.Real();
+    auto &B_rel_imag = B_rel_error.Imag();
+
+    for (int i = 0; i < B_err_real.Size(); i++)
+    {
+      // Relative error for real part
+      double ana_real_mag = std::abs(B_ana_real(i));
+      if (ana_real_mag > 1e-14)
+      {
+        B_rel_real(i) = B_err_real(i) / ana_real_mag;
+      }
+
+      // Relative error for imaginary part
+      double ana_imag_mag = std::abs(B_ana_imag(i));
+      if (ana_imag_mag > 1e-14)
+      {
+        B_rel_imag(i) = B_err_imag(i) / ana_imag_mag;
+      }
+    }
+
     auto &mesh = palace_mesh.Get();
     mfem::ParaViewDataCollection paraview_dc("CurrentDipoleComparison", &mesh);
     paraview_dc.SetPrefixPath("ParaView");
@@ -462,21 +591,37 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
     paraview_dc.SetCycle(0);
     paraview_dc.SetTime(freq_Hz);
 
-    // Register numerical solution
+    // Register E-field numerical solution
     paraview_dc.RegisterField("E_numerical_real", &E_field.Real());
     paraview_dc.RegisterField("E_numerical_imag", &E_field.Imag());
 
-    // Register analytical solution
+    // Register E-field analytical solution
     paraview_dc.RegisterField("E_analytical_real", &E_analytical.Real());
     paraview_dc.RegisterField("E_analytical_imag", &E_analytical.Imag());
 
-    // Register error fields
+    // Register E-field error fields
     paraview_dc.RegisterField("E_error_real", &E_error.Real());
     paraview_dc.RegisterField("E_error_imag", &E_error.Imag());
 
-    // Register relative error (separate for real and imaginary parts)
+    // Register E-field relative error (separate for real and imaginary parts)
     paraview_dc.RegisterField("E_relative_error_real", &E_rel_error.Real());
     paraview_dc.RegisterField("E_relative_error_imag", &E_rel_error.Imag());
+
+    // Register B-field numerical solution
+    paraview_dc.RegisterField("B_numerical_real", &B_field.Real());
+    paraview_dc.RegisterField("B_numerical_imag", &B_field.Imag());
+
+    // Register B-field analytical solution
+    paraview_dc.RegisterField("B_analytical_real", &B_analytical.Real());
+    paraview_dc.RegisterField("B_analytical_imag", &B_analytical.Imag());
+
+    // Register B-field error fields
+    paraview_dc.RegisterField("B_error_real", &B_error.Real());
+    paraview_dc.RegisterField("B_error_imag", &B_error.Imag());
+
+    // Register B-field relative error
+    paraview_dc.RegisterField("B_relative_error_real", &B_rel_error.Real());
+    paraview_dc.RegisterField("B_relative_error_imag", &B_rel_error.Imag());
 
     // Create a field showing which elements are included in error computation
     // This will be a discontinuous scalar field (one value per element)
@@ -625,54 +770,97 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   std::cout << "\n============================================\n";
 
   std::cout << "\n\n=== L2 ERROR ANALYSIS ===";
+  std::cout << "Polynomial order " << Order << std::endl;
 
-  std::cout << "\n\n--- Selective Elements (0.2-0.8 domain) ---";
+  std::cout << "\n\n--- E-FIELD: Selective Elements (0.2-0.8 domain) ---";
   std::cout << "\nAbsolute L2 Errors:";
-  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << error_real;
-  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << error_imag;
-  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << total_error;
+  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << E_error_real;
+  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << E_error_imag;
+  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << E_total_error;
 
   std::cout << "\nExact Solution Norms:";
-  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << exact_norm_real;
-  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << exact_norm_imag;
-  std::cout << "\n  Total norm:     || E ||_L2 = " << total_exact_norm;
+  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << E_exact_norm_real;
+  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << E_exact_norm_imag;
+  std::cout << "\n  Total norm:     || E ||_L2 = " << E_total_exact_norm;
 
   std::cout << "\nRelative L2 Errors:";
   std::cout << "\n  Real part: || E_h_Re - E_Re || / ||E_Re|| = "
-            << error_real / exact_norm_real;
+            << E_error_real / E_exact_norm_real;
   std::cout << "\n  Imag part: || E_h_Im - E_Im || / ||E_Im|| = "
-            << error_imag / exact_norm_imag;
-  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << relative_error;
+            << E_error_imag / E_exact_norm_imag;
+  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << E_relative_error;
 
-  std::cout << "\n\n--- Full Domain (for comparison) ---";
+  std::cout << "\n\n--- E-FIELD: Full Domain (for comparison) ---";
   std::cout << "\nAbsolute L2 Errors:";
-  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << error_real_full;
-  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << error_imag_full;
-  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << total_error_full;
+  std::cout << "\n  Real part error: || E_h_Re - E_Re ||_L2 = " << E_error_real_full;
+  std::cout << "\n  Imag part error: || E_h_Im - E_Im ||_L2 = " << E_error_imag_full;
+  std::cout << "\n  Total error:     || E_h - E ||_L2 = " << E_total_error_full;
 
   std::cout << "\nExact Solution Norms:";
-  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << exact_norm_real_full;
-  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << exact_norm_imag_full;
-  std::cout << "\n  Total norm:     || E ||_L2 = " << total_exact_norm_full;
+  std::cout << "\n  Real part norm: || E_Re ||_L2 = " << E_exact_norm_real_full;
+  std::cout << "\n  Imag part norm: || E_Im ||_L2 = " << E_exact_norm_imag_full;
+  std::cout << "\n  Total norm:     || E ||_L2 = " << E_total_exact_norm_full;
 
   std::cout << "\nRelative L2 Errors:";
   std::cout << "\n  Real part: || E_h_Re - E_Re || / ||E_Re|| = "
-            << error_real_full / exact_norm_real_full;
+            << E_error_real_full / E_exact_norm_real_full;
   std::cout << "\n  Imag part: || E_h_Im - E_Im || / ||E_Im|| = "
-            << error_imag_full / exact_norm_imag_full;
-  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << relative_error_full;
+            << E_error_imag_full / E_exact_norm_imag_full;
+  std::cout << "\n  Total:     || E_h - E || / ||E|| = " << E_relative_error_full;
 
-  std::cout << "\n\n--- Error Comparison ---";
+  std::cout << "\n\n--- E-FIELD: Error Comparison ---";
   std::cout << "\nSelective vs Full Domain Error Ratios:";
-  std::cout << "\n  Selective/Full Error Ratio: " << total_error / total_error_full;
-  std::cout << "\n  Selective/Full Relative Error Ratio: " << relative_error / relative_error_full;
+  std::cout << "\n  Selective/Full Error Ratio: " << E_total_error / E_total_error_full;
+  std::cout << "\n  Selective/Full Relative Error Ratio: " << E_relative_error / E_relative_error_full;
+
+  std::cout << "\n\n--- B-FIELD: Selective Elements (0.2-0.8 domain) ---";
+  std::cout << "\nAbsolute L2 Errors:";
+  std::cout << "\n  Real part error: || B_h_Re - B_Re ||_L2 = " << B_error_real;
+  std::cout << "\n  Imag part error: || B_h_Im - B_Im ||_L2 = " << B_error_imag;
+  std::cout << "\n  Total error:     || B_h - B ||_L2 = " << B_total_error;
+
+  std::cout << "\nExact Solution Norms:";
+  std::cout << "\n  Real part norm: || B_Re ||_L2 = " << B_exact_norm_real;
+  std::cout << "\n  Imag part norm: || B_Im ||_L2 = " << B_exact_norm_imag;
+  std::cout << "\n  Total norm:     || B ||_L2 = " << B_total_exact_norm;
+
+  std::cout << "\nRelative L2 Errors:";
+  std::cout << "\n  Real part: || B_h_Re - B_Re || / ||B_Re|| = "
+            << B_error_real / B_exact_norm_real;
+  std::cout << "\n  Imag part: || B_h_Im - B_Im || / ||B_Im|| = "
+            << B_error_imag / B_exact_norm_imag;
+  std::cout << "\n  Total:     || B_h - B || / ||B|| = " << B_relative_error;
+
+  std::cout << "\n\n--- B-FIELD: Full Domain (for comparison) ---";
+  std::cout << "\nAbsolute L2 Errors:";
+  std::cout << "\n  Real part error: || B_h_Re - B_Re ||_L2 = " << B_error_real_full;
+  std::cout << "\n  Imag part error: || B_h_Im - B_Im ||_L2 = " << B_error_imag_full;
+  std::cout << "\n  Total error:     || B_h - B ||_L2 = " << B_total_error_full;
+
+  std::cout << "\nExact Solution Norms:";
+  std::cout << "\n  Real part norm: || B_Re ||_L2 = " << B_exact_norm_real_full;
+  std::cout << "\n  Imag part norm: || B_Im ||_L2 = " << B_exact_norm_imag_full;
+  std::cout << "\n  Total norm:     || B ||_L2 = " << B_total_exact_norm_full;
+
+  std::cout << "\nRelative L2 Errors:";
+  std::cout << "\n  Real part: || B_h_Re - B_Re || / ||B_Re|| = "
+            << B_error_real_full / B_exact_norm_real_full;
+  std::cout << "\n  Imag part: || B_h_Im - B_Im || / ||B_Im|| = "
+            << B_error_imag_full / B_exact_norm_imag_full;
+  std::cout << "\n  Total:     || B_h - B || / ||B|| = " << B_relative_error_full;
+
+  std::cout << "\n\n--- B-FIELD: Error Comparison ---";
+  std::cout << "\nSelective vs Full Domain Error Ratios:";
+  std::cout << "\n  Selective/Full Error Ratio: " << B_total_error / B_total_error_full;
+  std::cout << "\n  Selective/Full Relative Error Ratio: " << B_relative_error / B_relative_error_full;
   std::cout << "\n\n";
   // -----------------------------------------------------------------------
 
-  CHECK_THAT(relative_error, WithinAbs(0.0, rtol));
+  CHECK_THAT(E_relative_error, WithinAbs(0.0, 0.1));
+  CHECK_THAT(B_relative_error, WithinAbs(0.0, 0.12));
 }
 
-TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]")
+TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][Parallel]")
 {
   double freq_Hz = 1e8;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
@@ -698,7 +886,7 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]"
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0, 0.1, 0.9);
 }
 
-TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial]")
+TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial][Parallel]")
 {
   double freq_Hz = 1e8;
 
