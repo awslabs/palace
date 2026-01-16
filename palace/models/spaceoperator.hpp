@@ -11,6 +11,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -54,6 +55,7 @@ private:
   MaterialOperator mat_op;
 
   // Operators for boundary conditions and source excitations.
+  CurrentDipoleOperator current_dipole_op;
   FarfieldBoundaryOperator farfield_op;
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
