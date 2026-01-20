@@ -2373,6 +2373,8 @@ void LinearSolverData::SetUp(json &solver)
   ilu_type = linear->value("ILUType", ilu_type);
   ilu_fill_level = linear->value("ILUFillLevel", ilu_fill_level);
 
+  ams_max_it = linear->value("AMSMaxIts", ams_max_it);
+
   // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
@@ -2421,6 +2423,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("ASMMaxIts");
   linear->erase("ILUType");
   linear->erase("ILUFillLevel");
+  linear->erase("AMSMaxIts");
 
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
