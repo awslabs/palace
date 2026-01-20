@@ -15,13 +15,13 @@ namespace palace
 
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
                                FiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
-                               bool vector_interp, bool singular_op, bool agg_coarsen,
+                               bool vector_interp, bool singular_op, bool agg_coarsen, int cycle,
                                int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
     // scalar Pi-space corrections.
-    cycle_type(vector_interp ? 1 : 14), space_dim(nd_fespace.SpaceDimension()),
+    cycle_type(vector_interp ? 1 : cycle), space_dim(nd_fespace.SpaceDimension()),
     // When used as the coarse solver of geometric multigrid, always do only a single
     // V-cycle.
     ams_it(cycle_it), ams_smooth_it(smooth_it),

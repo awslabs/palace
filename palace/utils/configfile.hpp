@@ -950,6 +950,7 @@ public:
 
   // Additional AMS params?
   int ams_max_it = 1;
+  int ams_cycle_type = 14;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.

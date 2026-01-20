@@ -91,7 +91,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
   // multigrid solve.
   auto ams = std::make_unique<MfemWrapperSolver<OperType>>(std::make_unique<HypreAmsSolver>(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, false, true,
-      false, 0));
+      false, 14, 0));
   std::unique_ptr<Solver<OperType>> pc;
   if (n_levels > 1)
   {
