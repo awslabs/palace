@@ -55,7 +55,7 @@ public:
                  FiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
           nd_fespace, h1_fespace, coarse_solver ? iodata.solver.linear.ams_max_it : iodata.solver.linear.mg_cycle_it,
-          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector_interp,
+          iodata.solver.linear.ams_smooth_it, iodata.solver.linear.ams_vector_interp,
           iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen, iodata.solver.linear.ams_cycle_type, print)
   {
   }
