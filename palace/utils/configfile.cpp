@@ -770,6 +770,11 @@ void CurrentDipoleSourceData::SetUp(json &domains)
     {
       // Attempt to parse as an array.
       data.direction = direction->get<std::array<double, 3>>();
+      double norm = data.direction[0] * data.direction[0] +
+                    data.direction[1] * data.direction[1] +
+                    data.direction[2] * data.direction[2];
+      for (auto &x : data.direction)
+        x /= norm;
     }
     else
     {
@@ -795,7 +800,7 @@ void CurrentDipoleSourceData::SetUp(json &domains)
     if constexpr (JSON_DEBUG)
     {
       std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Direction: " << data.moment << '\n';
+      std::cout << "Direction: " << data.direction << '\n';
       std::cout << "Center: " << data.center << '\n';
       std::cout << "Moment: " << data.moment << '\n';
     }
