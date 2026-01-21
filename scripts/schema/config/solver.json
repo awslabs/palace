@@ -60,7 +60,7 @@
                   "Type": { "const": "Point" },
                   "Freq": { "type": "array", "items": { "type": "number" } },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["Freq"],
                 "additionalProperties": false
@@ -74,7 +74,7 @@
                   "FreqStep": { "type": "number", "minimum": 0.0 },
                   "NSample": { "type": "integer", "minimum": 0 },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["MinFreq", "MaxFreq"],
                 "additionalProperties": false
@@ -87,7 +87,7 @@
                   "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
                   "NSample": { "type": "integer", "minimum": 1 },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
                 "additionalProperties": false
