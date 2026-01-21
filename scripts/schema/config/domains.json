@@ -110,11 +110,21 @@
           },
           "Direction":
           {
-            "type": "array",
-            "additionalItems": false,
-            "items": { "type": "number" },
-            "minItems": 3,
-            "maxItems": 3
+            "anyOf":
+            [
+              {
+                "type": "string",
+                "enum": ["X", "Y", "Z", "+X", "+Y", "+Z", "-X", "-Y", "-Z",
+                         "x", "y", "z", "+x", "+y", "+z", "-x", "-y", "-z"]
+              },
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ]
           }
         }
       }

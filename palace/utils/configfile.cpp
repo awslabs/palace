@@ -198,6 +198,45 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
   data.v = mat.value("MaterialAxes", data.v);
 }
 
+std::pair<std::array<double, 3>, CoordinateSystem>
+ParseStringAsDirection(std::string str, const std::string &name)
+{
+  for (auto &c : str)
+  {
+    c = std::tolower(c);
+  }
+  const auto xpos = str.find("x");
+  const auto ypos = str.find("y");
+  const auto zpos = str.find("z");
+  const auto rpos = str.find("r");
+  const bool xfound = xpos != std::string::npos;
+  const bool yfound = ypos != std::string::npos;
+  const bool zfound = zpos != std::string::npos;
+  const bool rfound = rpos != std::string::npos;
+  const bool is_positive = str.length() == 1 || str[0] == '+';
+  MFEM_VERIFY(
+      xfound + yfound + zfound + rfound == 1 &&
+          (str.length() == 1 || (str.length() == 2 && (str[0] == '+' || str[0] == '-'))),
+      "Invalid string \"" << name << "\" in the configuration file!");
+  if (xfound)
+  {
+    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (yfound)
+  {
+    return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (zfound)
+  {
+    return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (rfound)
+  {
+    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CYLINDRICAL};
+  }
+  return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+}
+
 // Helper function for extracting element data from the configuration file, either from a
 // provided keyword argument of from a specified vector. In extracting the direction various
 // checks are performed for validity of the input combinations.
@@ -219,84 +258,12 @@ void ParseElementData(json &elem, const std::string &name, bool required,
     MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
                 "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
                 "using a string in the configuration file!");
+
     std::string direction;
     direction = elem.value(name, direction);
-    for (auto &c : direction)
-    {
-      c = std::tolower(c);
-    }
-    const auto xpos = direction.find("x");
-    const auto ypos = direction.find("y");
-    const auto zpos = direction.find("z");
-    const auto rpos = direction.find("r");
-    const bool xfound = xpos != std::string::npos;
-    const bool yfound = ypos != std::string::npos;
-    const bool zfound = zpos != std::string::npos;
-    const bool rfound = rpos != std::string::npos;
-    if (xfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
-                      direction[xpos - 1] == '+',
-                  "Missing required sign specification on \"X\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!yfound && !zfound && !rfound,
-                  "\"X\" cannot be combined with \"Y\", \"Z\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[0] =
-          (direction.length() == 1 || direction[xpos - 1] == '+') ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (yfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
-                      direction[ypos - 1] == '+',
-                  "Missing required sign specification on \"Y\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !zfound && !rfound,
-                  "\"Y\" cannot be combined with \"X\", \"Z\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[1] =
-          direction.length() == 1 || direction[ypos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (zfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
-                      direction[zpos - 1] == '+',
-                  "Missing required sign specification on \"Z\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !yfound && !rfound,
-                  "\"Z\" cannot be combined with \"X\", \"Y\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[2] =
-          direction.length() == 1 || direction[zpos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (rfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
-                      direction[rpos - 1] == '+',
-                  "Missing required sign specification on \"R\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !yfound && !zfound,
-                  "\"R\" cannot be combined with \"X\", \"Y\", or \"Z\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[0] =
-          direction.length() == 1 || direction[rpos - 1] == '+' ? 1.0 : -1.0;
-      data.direction[1] = 0.0;
-      data.direction[2] = 0.0;
-      data.coordinate_system = CoordinateSystem::CYLINDRICAL;
-    }
+    std::tie(data.direction, data.coordinate_system) =
+        ParseStringAsDirection(direction, name);
   }
-  MFEM_VERIFY(data.coordinate_system != CoordinateSystem::CYLINDRICAL ||
-                  (data.direction[1] == 0.0 && data.direction[2] == 0.0),
-              "Parsing azimuthal and longitudinal directions for cylindrical coordinate "
-              "system directions from the configuration file is not currently supported!");
-  MFEM_VERIFY(
-      !required || data.direction[0] != 0.0 || data.direction[1] != 0.0 ||
-          data.direction[2] != 0.0,
-      "Missing \"" << name
-                   << "\" for an object which requires it in the configuration file!");
 }
 
 template <typename T>
@@ -795,14 +762,25 @@ void CurrentDipoleSourceData::SetUp(json &domains)
         "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
     auto direction = it->find("Direction");
     auto center = it->find("Center");
-    MFEM_VERIFY(
-        direction->is_array() && center->is_array(),
-        "\"CurrentDipole\" source \"Direction\" and \"Center\" should specify arrays "
-        "in the configuration file!");
+    MFEM_VERIFY(center->is_array(),
+                "\"CurrentDipole\" source \"Center\" should specify an array "
+                "in the configuration file!");
 
-    data.direction = direction->get<std::array<double, 3>>();  // Required
-    data.center = center->get<std::array<double, 3>>();        // Required
-    data.moment = it->value("Moment", data.moment);            // Required
+    if (direction->is_array())
+    {
+      // Attempt to parse as an array.
+      data.direction = direction->get<std::array<double, 3>>();
+    }
+    else
+    {
+      auto direction_and_coord =
+          ParseStringAsDirection(direction->get<std::string>(), "Direction");  // Required
+      MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
+                  "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
+      data.direction = direction_and_coord.first;
+    }
+    data.center = center->get<std::array<double, 3>>();  // Required
+    data.moment = it->at("Moment");                      // Required
 
     // Cleanup
     it->erase("Index");
