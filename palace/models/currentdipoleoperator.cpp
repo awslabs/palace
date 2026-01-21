@@ -14,6 +14,7 @@ namespace palace
 
 CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
                                      const mfem::ParMesh &mesh, const Units &units)
+  : coef(mesh.SpaceDimension())
 {
   // Set up normalized direction
   direction.SetSize(mesh.SpaceDimension());
@@ -41,6 +42,11 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
   {
     center[d] = data.center[d];
   }
+
+  // Assemble the coefficient.
+  coef.SetDeltaCenter(center);
+  coef.SetDirection(direction);
+  coef.SetScale(-moment);
 }
 
 CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
@@ -72,8 +78,8 @@ void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::Pa
   for (const auto &[idx, data] : dipoles)
   {
     // Convert center coordinates back to physical units for display
-    mfem::Vector physical_center = data.center;
-    iodata.units.DimensionalizeInPlace<Units::ValueType::LENGTH>(physical_center);
+    auto physical_center =
+        iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.center);
 
     // Convert moment back to physical units for display
     double physical_moment = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(
@@ -81,43 +87,28 @@ void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::Pa
 
     Mpi::Print(" Dipole {:d}: \n"
                " \tMoment = {:.3e} A·m\n"
-               " \tCenter = ({:.3e}, {:.3e}, {:.3e})\n"
-               " \tDirection = ({:.3e}, {:.3e}, {:.3e})\n",
-               idx, physical_moment, physical_center[0], physical_center[1],
-               (mesh.SpaceDimension() > 2) ? physical_center[2] : 0.0, data.direction[0],
-               data.direction[1], (mesh.SpaceDimension() > 2) ? data.direction[2] : 0.0);
+               " \tCenter = ({:.3e}) m\n"
+               " \tDirection = ({:.3e}) m\n",
+               idx, physical_moment, fmt::join(physical_center, ", "),
+               fmt::join(data.direction, ", "));
   }
 }
 
-void CurrentDipoleOperator::AddExcitationDomainIntegrators(int idx, mfem::LinearForm &rhs)
+void CurrentDipoleOperator::AddExcitationDomainIntegrator(int idx, mfem::LinearForm &rhs)
 {
   auto it = dipoles.find(idx);
-  if (it != dipoles.end())
-  {
-    const auto &dipole = it->second;
-
-    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -iω J_e)
-    // RHS will be scaled by iω later in SpaceOperator.
-    auto dipole_coeff =
-        std::make_unique<mfem::VectorDeltaCoefficient>(dipole.direction.Size());
-    dipole_coeff->SetDirection(dipole.direction);
-    dipole_coeff->SetDeltaCenter(dipole.center);
-    dipole_coeff->SetScale(-dipole.moment);
-
-    // Add as domain integrator
-    rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(*dipole_coeff));
-
-    // Store the coefficient to prevent deletion.
-    dipole_integrator_coeffs.push_back(std::move(dipole_coeff));
-  }
+  MFEM_VERIFY(it != dipoles.end(), "Invalid dipole index!");
+  rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(it->second.coef));
 }
 
 void CurrentDipoleOperator::AddExcitationDomainIntegrators(mfem::LinearForm &rhs)
 {
   // Add each dipole as a separate integrator
-  for (const auto &[idx, dipole] : dipoles)
+  for (auto &[idx, dipole] : dipoles)
   {
-    AddExcitationDomainIntegrators(idx, rhs);
+    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -iω J_e)
+    // RHS will be scaled by iω later in SpaceOperator.
+    rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(dipole.coef));
   }
 }
 

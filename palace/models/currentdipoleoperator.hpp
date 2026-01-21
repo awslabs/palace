@@ -31,9 +31,8 @@ public:
   double moment;           // Dipole moment magnitude
   mfem::Vector center;     // Dipole center position
 
-  // Internal MFEM coefficient for the dipole
-  std::unique_ptr<mfem::VectorDeltaCoefficient> dipole_coeff;
-
+  // Coefficient stored with data given unique status of delta coefficient.
+  mfem::VectorDeltaCoefficient coef;  // Vector coefficient for dipole source
 public:
   CurrentDipoleData(const config::CurrentDipoleData &data, const mfem::ParMesh &mesh,
                     const class Units &units);
@@ -48,9 +47,8 @@ private:
   // Mapping from dipole index to data structure containing dipole information.
   std::map<int, CurrentDipoleData> dipoles;
 
-  // Storage for integrator coefficients to manage their lifetime
-  mutable std::vector<std::unique_ptr<mfem::VectorDeltaCoefficient>>
-      dipole_integrator_coeffs;
+  // // Storage for integrator coefficients to manage their lifetime
+  // mutable std::vector<mfem::VectorDeltaCoefficient> dipole_integrator_coeffs;
 
   void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);
@@ -67,8 +65,8 @@ public:
   bool Empty() const { return dipoles.empty(); }
 
   // Add integrators directly to a LinearForm
+  void AddExcitationDomainIntegrator(int idx, mfem::LinearForm &rhs);
   void AddExcitationDomainIntegrators(mfem::LinearForm &rhs);
-  void AddExcitationDomainIntegrators(int idx, mfem::LinearForm &rhs);
 };
 
 }  // namespace palace
