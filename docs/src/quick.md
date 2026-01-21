@@ -120,7 +120,10 @@ high-performance computing applications.
 Follow the [instructions on the official
 website](https://spack.readthedocs.io/en/latest/getting_started.html) to install
 Spack. This involves cloning a repository and sourcing a `setup-env` shell
-script. Come back here once you are done with that.
+script. Ensure this shell environment comes with the minimal requirements as
+listed in the [official
+documentation](https://spack.readthedocs.io/en/latest/installing_prerequisites.html).
+Come back here once you are done with that.
 
 Let's check that Spack is correctly installed on your system. This can be
 accomplished by running:
@@ -562,7 +565,7 @@ list of keys.
 
 ```@raw html
 <div id="glvis-container" style="width: 100%; height: 500px;">
-  <div id="glvis-div" style="width: 100%; height: 100%;" tabindex="0"></div>
+  <div id="glvis-div" style="width: 100%; height: 100%;"></div>
 </div>
 
 <!-- Note, the snippet below only works with one MPI process because we are
@@ -580,7 +583,11 @@ list of keys.
       var originalTitle = document.title;
       glv.display(stream).then(function() {
         document.title = originalTitle;
-        div.focus();
+        // Enable keyboard controls on click
+        div.addEventListener('click', function() {
+          this.setAttribute('tabindex', '0');
+          this.focus();
+        }, { once: true });
       });
     }).catch(function(e) {
       console.error('Failed to load GLVis data:', e);

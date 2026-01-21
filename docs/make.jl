@@ -16,7 +16,7 @@ makedocs(
         assets=["assets/favicon.ico"]
     ),
     sitename="Palace",
-    authors="Sebastian Grimberg, sjg@amazon.com",
+    authors="The Palace Developers and Maintainers, palace-maint@amazon.com",
     pages=[
         "Home" => "index.md",
         "Quick Start" => "quick.md",
@@ -44,13 +44,16 @@ makedocs(
             "examples/spheres.md",
             "examples/rings.md",
             "examples/antenna.md",
+            "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md"
         ],
+        "faq.md",
         "For Developers" => Any[
             "developer/notes.md",
             "developer/testing.md",
+            "developer/spack.md",
             "developer/tutorial_add_new_unit_test.md",
             "developer/tutorial_gpu_profiling.md"
         ],

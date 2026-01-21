@@ -113,7 +113,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   if (!use_R)
   {
     const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1),
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1),
                                                  true);
   }
   else

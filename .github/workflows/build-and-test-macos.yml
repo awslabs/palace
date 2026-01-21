@@ -21,7 +21,7 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -125,7 +125,7 @@ jobs:
 
     runs-on: macos-latest-xlarge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
@@ -134,6 +134,9 @@ jobs:
         if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Configure Open MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'

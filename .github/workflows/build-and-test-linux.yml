@@ -21,7 +21,7 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -227,7 +227,7 @@ jobs:
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
@@ -361,13 +361,13 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
-      - uses: julia-actions/cache@v2
-        if: needs.filter.outputs.test == 'true'
-
       - uses: julia-actions/setup-julia@v2
         if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -455,6 +455,10 @@ jobs:
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR="$ARMPL_DIR"
+            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
           cd $(pwd)/palace-build/palace-build/test/unit

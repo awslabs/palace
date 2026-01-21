@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_session.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "linalg/hypre.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
@@ -67,6 +68,10 @@ int main(int argc, char *argv[])
   mfem::Device device(
       device_str.c_str(),
       palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+
+  // Initialize HYPRE with correct memory location based on device.
+  // TODO: Create a palace::Device class that takes care of all of this.
+  hypre::Initialize();
 
   // The Palace test suite defines three key tags:
   // - [Serial], for tests that are meaningful when run on a single process

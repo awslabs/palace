@@ -157,6 +157,13 @@ if(PALACE_WITH_MAGMA AND NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
   )
 endif()
 
+# Umpire is only for GPU builds.
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  set(PALACE_WITH_UMPIRE ON)
+else()
+  set(PALACE_WITH_UMPIRE OFF)
+endif()
+
 # MPI is required for most dependency builds
 message(STATUS "====================== Configuring MPI dependency ======================")
 find_package(MPI REQUIRED)
@@ -211,10 +218,6 @@ include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
 endif()
-
-# Add MFEM (always built as part of Palace)
-message(STATUS "====================== Configuring MFEM dependency =====================")
-include(ExternalMFEM)
 
 # Add the main Palace project
 message(STATUS "========================== Configuring Palace ==========================")

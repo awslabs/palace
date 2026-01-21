@@ -4,6 +4,7 @@
 using Test
 using CSV
 using DataFrames
+using JSON
 
 # custom_tests is a dictionary that maps filenames to functions of the signature
 # (new_data, ref_data) -> None, where arbitrary tests can be implemented
@@ -11,7 +12,7 @@ function testcase(
     testdir,
     testconfig,
     testpostpro;
-    palace="palace",
+    palace=["palace"],
     np=1,
     rtol=1.0e-6,
     atol=1.0e-18,
@@ -20,12 +21,21 @@ function testcase(
     paraview_fields=true,
     gridfunction_fields=false,
     skip_rowcount=false,
-    generate_data=true
+    generate_data=true,
+    device="CPU",
+    linear_solver="Default",
+    eigen_solver="Default"
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
         return
     end
+
+    # Check that palace executable exists
+    if isnothing(Base.Sys.which(first(palace)))
+        error("Executable `$(first(palace))` not found. ")
+    end
+
     palacedir     = dirname(dirname(@__DIR__))
     refdir        = joinpath(@__DIR__, "ref", testdir)
     refpostprodir = joinpath(refdir, testpostpro)
@@ -34,6 +44,37 @@ function testcase(
     logdir        = joinpath(exampledir, "log")
 
     cd(exampledir)
+
+    # Adjust configuration depending on arguments
+    config_to_use = testconfig
+    temp_config = nothing
+
+    config_content = read(testconfig, String)
+    # Strip comments starting with //
+    lines = split(config_content, '\n')
+    filtered_lines = [split(line, "//")[1] for line in lines]
+    clean_content = join(filtered_lines, '\n')
+
+    # Remove trailing commas (handles multi-line cases)
+    clean_content = replace(clean_content, r",(\s*[\r\n]*\s*[}\]])" => s"\1")
+
+    config_json = JSON.parse(clean_content)
+    if !haskey(config_json, "Solver")
+        config_json["Solver"] = Dict()
+        config_json["Solver"]["Linear"] = Dict()
+    end
+    haskey(config_json["Solver"], "Linear") || (config_json["Solver"]["Linear"] = Dict())
+
+    config_json["Solver"]["Device"] = device
+
+    config_json["Solver"]["Linear"]["Type"] = linear_solver
+    haskey(config_json["Solver"], "Eigenmode") &&
+        (config_json["Solver"]["Eigenmode"]["Type"] = eigen_solver)
+
+    temp_config = tempname() * ".json"
+    write(temp_config, JSON.json(config_json, 2))
+    config_to_use = temp_config
+
     if generate_data
         # Cleanup
         rm(postprodir; force=true, recursive=true)
@@ -44,9 +85,10 @@ function testcase(
             # Run the example simulation
             logfile = "log.out"
             errfile = "err.out"
+
             proc = run(
                 pipeline(
-                    ignorestatus(`$palace -np $np $testconfig`);
+                    ignorestatus(`$palace -np $np $config_to_use`);
                     stdout=joinpath(logdir, logfile),
                     stderr=joinpath(logdir, errfile)
                 )
@@ -63,7 +105,26 @@ function testcase(
                 end
             end
             @test proc.exitcode == 0
+
+            # Check for GPU availability when device is GPU.
+            # Palace does not crash and revert to CPU if a GPU is not available,
+            # but this could lead to false positives
+            if device == "GPU" && isfile(joinpath(exampledir, logdir, logfile))
+                log_content = String(read(joinpath(exampledir, logdir, logfile)))
+                if occursin(
+                    "Palace must be built with either CUDA or HIP support for GPU device usage, reverting to CPU!",
+                    log_content
+                )
+                    @error "GPU was requested but Palace was not built with GPU support"
+                    @test false
+                end
+            end
         end
+    end
+
+    # Clean up temporary config file
+    if !isnothing(temp_config)
+        rm(temp_config; force=true)
     end
 
     @testset "Results" begin
@@ -80,6 +141,8 @@ function testcase(
         elseif (gridfunction_fields)
             @test length(dirs) == 1 && first(dirs) == "gridfunction" || (@show dirs; false)
         end
+        # When using AMR, `iterationN` directories are created
+        @test length(dirs) >= 1 && last(dirs) == "paraview" || (@show dirs; false)
         @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
               (@show metafiles; false)
         @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||

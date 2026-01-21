@@ -48,7 +48,7 @@ set(EXTERN_GSLIB_GIT_BRANCH
   "Git branch for external GSLIB build"
 )
 set(EXTERN_GSLIB_GIT_TAG
-  "95acf5b42301d6cb48fda88d662f1d784b863089" CACHE STRING
+  "v1.0.9" CACHE STRING
   "Git tag for external GSLIB build"
 )
 
@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "4dd96d0e83088890879612c58364f6c10756ed90" CACHE STRING
+  "fca98afcd78a26b784dc24b0c3edb0e6140598af" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -82,15 +82,16 @@ set(EXTERN_LIBCEED_GIT_TAG
 
 # LIBXSMM (for libCEED)
 set(EXTERN_LIBXSMM_URL
-  "https://github.com/hfp/libxsmm.git" CACHE STRING
+  "https://github.com/libxsmm/libxsmm.git" CACHE STRING
   "URL for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_BRANCH
   "main" CACHE STRING
   "Git branch for external LIBXSMM build"
 )
+# libxsmm does not tag versions very often (last was Dec 2021)
 set(EXTERN_LIBXSMM_GIT_TAG
-  "3469aa806f4acef8f30c1241d5c2705713811b4c" CACHE STRING
+  "ea0b20499a41377bab148257240adbbfe1b4a333" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 
@@ -118,7 +119,7 @@ set(EXTERN_METIS_GIT_BRANCH
   "Git branch for external METIS build"
 )
 set(EXTERN_METIS_GIT_TAG
-  "08c3082720ff9114b8e3cbaa4484a26739cd7d2d" CACHE STRING
+  "v5.1.0-p13" CACHE STRING
   "Git tag for external METIS build"
 )
 
@@ -132,7 +133,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "0c4c006ef86dc2b2cf415e5bc4ed9118c9768652" CACHE STRING
+  "bf1b25d82e232909e1d3aa1f416dbdae9931a550" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -160,7 +161,7 @@ set(EXTERN_PARMETIS_GIT_BRANCH
   "Git branch for external ParMETIS build"
 )
 set(EXTERN_PARMETIS_GIT_TAG
-  "53c9341b6c1ba876c97567cb52ddfc87c159dc36" CACHE STRING
+  "v4.0.3-p10" CACHE STRING
   "Git tag for external ParMETIS build"
 )
 
@@ -174,7 +175,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "0311516ef26856f9037490a5104151a9a9d292aa" CACHE STRING
+  "v3.24.3" CACHE STRING
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +203,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "61182f12f55a2c1e9f5f1ddbc66df7e264d4bfe8" CACHE STRING
+  "v3.24.1" CACHE STRING
   "Git tag for external SLEPc build"
 )
 
@@ -216,7 +217,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "5a5643c174eb64845bf397859d11a14d4f1d11a1" CACHE STRING
+  "cfba574f60b792433ee87e7e2a874eeb96c74d1f" CACHE STRING
   "Git tag for external STRUMPACK build"
 )
 
@@ -230,7 +231,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "e621c471cf23329e568df71c6b724329bc04b0f8" CACHE STRING
+  "v9.2.1" CACHE STRING
   "Git tag for external SuperLU_DIST build"
 )
 
@@ -243,20 +244,21 @@ set(EXTERN_ZFP_GIT_BRANCH
   "develop" CACHE STRING
   "Git branch for external ZFP build"
 )
+# ZFP does not tag versions very often (last was Dec 2023)
 set(EXTERN_ZFP_GIT_TAG
-  "c2dd2966f6bab18e352b0fa29c3c5f27836580f8" CACHE STRING
+  "a888ab7606c58cc5ab5f34298fec25473e0d28ad" CACHE STRING
   "Git tag for external ZFP build"
 )
 
 # nlohmann/json
 set(EXTERN_JSON_URL
-  "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz" CACHE STRING
+  "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz" CACHE STRING
   "URL for external nlohmann/json build"
 )
 
 # fmt
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/10.2.1/fmt-10.2.1.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/12.1.0/fmt-12.1.0.zip" CACHE STRING
   "URL for external fmt build"
 )
 
@@ -268,7 +270,7 @@ set(EXTERN_SCN_URL
 
 # Eigen
 set(EXTERN_EIGEN_URL
-  "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
+  "https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar.gz" CACHE STRING
   "URL for external Eigen build"
 )
 
@@ -282,6 +284,20 @@ set(EXTERN_SUNDIALS_GIT_BRANCH
   "Git branch for external SUNDIALS build"
 )
 set(EXTERN_SUNDIALS_GIT_TAG
-  "8e17876d3b4d682b4098684b07a85b005a122f81" CACHE STRING
+  "v7.5.0" CACHE STRING
   "Git tag for external SUNDIALS build"
+)
+
+# Umpire (for HYPRE)
+set(EXTERN_UMPIRE_URL
+  "https://github.com/LLNL/Umpire" CACHE STRING
+  "URL for external UMPIRE build"
+)
+set(EXTERN_UMPIRE_GIT_BRANCH
+  "develop" CACHE STRING
+  "Git branch for external UMPIRE build"
+)
+set(EXTERN_UMPIRE_GIT_TAG
+  "ac034c775c7b4d4f4ff0f66774398373cf5fce73" CACHE STRING
+  "Git tag for external UMPIRE build"
 )

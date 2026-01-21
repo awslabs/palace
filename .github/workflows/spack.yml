@@ -29,7 +29,7 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -43,166 +43,149 @@ jobs:
               - 'test/unit/**'
               - '.github/workflows/spack.yml'
 
-  build-and-test-spack:
+  # Build jobs
+  build-x64-gcc:
     needs: filter
-    strategy:
-      fail-fast: false # don't have one build stop others from finishing
-      matrix:
-        compiler: [gcc] #, clang, intel]
-        gpu: [none] #, cuda, rocm]
-        blas: [openblas] # ,intel-oneapi-mkl]
-        spack_version: [develop] # ,v0.23.1]
-        mpi: [openmpi] #, mpich, mvapich]
-
-    runs-on: palace_ubuntu-latest_16-core
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v4
-        if: needs.filter.outputs.test == 'true'
-
-      - name: Configure Clang compiler
-        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
-        run: sudo apt-get install -y clang lld
-
-      - name: Configure Intel oneAPI compiler
-        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'intel'
-        run:
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp=2024.2.1-1079 \
-          intel-oneapi-compiler-fortran=2024.2.1-1079
-
-      - name: Setup Spack
-        if: needs.filter.outputs.test == 'true'
-        uses: spack/setup-spack@v2
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
         with:
-          ref: develop
-          buildcache: true
-          color: true
+          toolchain: gcc
+          run-regression-tests: 'false'
 
-      - name: Setup Environment
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # Configure GPU variant
-          if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
-            GPU_VARIANT="+cuda cuda_arch=70"
-          elif [[ "${{ matrix.gpu }}" == 'rocm' ]]; then
-            GPU_VARIANT="+rocm amdgpu_target=gfx900"
-          else
-            GPU_VARIANT=""
-          fi
+  build-gpu-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: +cuda
+          run-regression-tests: 'false'
 
-          # Develop requires ^compiler, not %compiler
-          if [[ "${{ matrix.spack_version }}" == 'v0.23.1' ]]; then
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests %${{ matrix.compiler }} ${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }}"
-          else
-            PALACE_SPEC="local.palace@develop+strumpack+arpack+mumps+tests${GPU_VARIANT} ^${{ matrix.mpi }} ^${{ matrix.blas }} ^${{ matrix.compiler }}"
-          fi
+  build-x64-gcc-openmp:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+          run-regression-tests: 'false'
+ 
+  build-test-x64-llvm:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: llvm
 
-          # Spack.yaml with most / all settings configured
-          cat << EOF > spack.yaml
-          spack:
-            specs:
-              - ${PALACE_SPEC}
-            view: false
-            config:
-              install_tree:
-                root: /opt/spack
-                padded_length: False
-            concretizer:
-              reuse: false
-              unify: true
-              targets:
-                granularity: generic
-            packages:
-              petsc:
-                require: ~hdf5
-              rocblas:
-                require: ~tensile
-            repos:
-            - spack_repo/local
-            mirrors:
-              spack:
-                binary: true
-                url: https://binaries.spack.io/${SPACK_VERSION}
-              local-buildcache:
-                binary: true
-                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
-                signed: false
-                access_pair:
-                  id_variable: GITHUB_USER
-                  secret_variable: GITHUB_TOKEN
-          EOF
+  build-test-x64-intel:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: intel-oneapi
 
-      - name: Configure External Packages
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # These cause build issues if built as externals
-          #   - python : often distributed python isn't feature complete / not all dependencies get detected
-          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
-          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
-          spack -e . external find --all \
-            --exclude openssl \
-            --exclude openssh \
-            --exclude python \
-            --exclude ncurses \
-            --exclude bzip2 \
-            --exclude xz \
-            --exclude curl
+  build-test-arm64-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
 
-      - name: Configure Compilers
-        if: needs.filter.outputs.test == 'true'
-        run: spack -e . compiler find && spack -e . compiler list
+  build-test-arm64-llvm:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: llvm
 
-      - name: Configure Binary Mirror Keys
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          # If we cached these, that would be faster and safer
-          spack -e . buildcache keys --install --trust
+  build-test-arm64-gcc-armpl:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          math-libs: armpl-gcc
 
-      - name: Bootstrap
-        if: needs.filter.outputs.test == 'true'
-        run: spack -e . bootstrap now
+  # Test jobs
+  test-x64-gcc:
+    needs: [filter, build-x64-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
+    runs-on: [self-hosted, x64, 4xlarge]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          solver: ${{ matrix.solver }}
 
-      - name: Concretize
-        if: needs.filter.outputs.test == 'true'
-        # In theory we can re-use a concretization and pin a spack to speed this up.
-        # Unfortunately it then becomes difficult to know when to re-concretize.
-        run: |
-          # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
-          spack -e . concretize -f
+  test-gpu-gcc:
+    needs: [filter, build-gpu-gcc]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
+    runs-on: [self-hosted, gpu, 4xlarge]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          variant: +cuda
+          solver: ${{ matrix.solver }}
 
-      - name: Build Dependencies
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
-
-      - name: Build Palace
-        if: needs.filter.outputs.test == 'true'
-        # Build palace from source using this current directory
-        # We use `--no-cache` in order to force a rebuild
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache
-
-      - name: Run Unit Tests
-        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
-        run: |
-          eval $(spack -e . load --sh palace)
-          palace-unit-tests --skip-benchmarks
-          mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks
-
-      - name: Run Integration Tests
-        if: needs.filter.outputs.test == 'true' && matrix.gpu == 'none' # Skip tests for GPU builds
-        env:
-          NUM_PROC_TEST_MAX: "8"
-        run: |
-          eval $(spack -e . load --sh palace)
-          # Run tests
-          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test/examples --color=yes test/examples/runtests.jl
-
-      # Push built binaries, even if the build fails
-      # NOTE: This might fail as external fork PRs can't push to GHCR.
-      - name: Push to GHCR cache
-        if: |
-          needs.filter.outputs.test == 'true' &&
-          !cancelled() &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache
+  test-x64-gcc-openmp:
+    needs: [filter, build-x64-gcc-openmp]
+    if: success()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - solver: MUMPS
+          - solver: SuperLU
+          - solver: STRUMPACK
+          - solver: Default
+    runs-on: [self-hosted, x64, 4xlarge]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/run-regression-tests
+        with:
+          toolchain: gcc
+          variant: "+openmp+int64~shared"
+          solver: ${{ matrix.solver }}

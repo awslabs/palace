@@ -15,17 +15,17 @@
   // node
   if (typeof exports === "object" && typeof module === "object") {
     console.log("mod type 1");
-    module.exports = factory(require("./glvis"));
+    module.exports = factory(require("./glvis.js"));
   }
   // requirejs?
   else if (typeof define === "function" && define.amd) {
     console.log("mod type 2");
-    define(["./glvis"], factory);
+    define(["./glvis.js"], factory);
   }
   // unknown
   else if (typeof exports === "object") {
     console.warn("glvis: untested module load");
-    exports["someLibName"] = factory(require("./glvis"));
+    exports["someLibName"] = factory(require("./glvis.js"));
   }
   // browser global
   else {

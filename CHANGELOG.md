@@ -9,6 +9,13 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+#### Bug Fixes
+
+  - Fixed a bug in the computation of the waveport maximum propagation constant in parallel simulations
+    [PR 580](https://github.com/awslabs/palace/pull/580).
+
 ## [0.15.0] - 2025-12-2
 
 #### New Features
@@ -79,6 +86,19 @@ The format of this changelog is based on
   - Fixed a bug in transient solver implicit formulation affecting the magnetic flux density fields computed with
     `"GeneralizedAlpha"` or `"RungeKutta"` transient solver types (`config["Solver"]["Transient"]["Type"]`)
     [PR 568](https://github.com/awslabs/palace/pull/568).
+
+#### Build system
+
+  - When building on a machine with a GPU, `CMAKE_CUDA_ARCHITECTURES` has now a
+    default value that is automatically determined to be the consistent with the
+    GPU (when no GPU is detected, `CMAKE_CUDA_ARCHITECTURES` is set to 70). [PR
+    530](https://github.com/awslabs/palace/pull/530).
+  - The spack Palace build now supports compilation of unit tests with Spack
+    tests. [PR 549](https://github.com/awslabs/palace/pull/549).
+  - MFEM is no longer unconditionally compiled alongside of Palace and can now
+    be built separately. This is used in the Palace spack build, which now
+    explicitly depends on MFEM. [PR
+    550](https://github.com/awslabs/palace/pull/550).
 
 ## [0.14.0] - 2025-08-20
 
