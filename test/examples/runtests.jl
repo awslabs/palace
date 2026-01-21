@@ -301,7 +301,9 @@ if "antenna/antenna_halfwave_dipole" in cases
         palace=palace,
         np=numprocs,
         rtol=reltol,
-        atol=50abstol
+        atol=50abstol,
+        device=device,
+        linear_solver=solver
     )
 end
 
@@ -316,8 +318,7 @@ if "antenna/antenna_short_dipole" in cases
         rtol=reltol,
         atol=50abstol,
         device=device,
-        linear_solver=solver,
-        eigen_solver=eigensolver
+        linear_solver=solver
     )
 end
 
