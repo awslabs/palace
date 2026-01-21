@@ -293,7 +293,7 @@ reltol = 2.0e-2
 abstol = 1.0e-10
 
 if "antenna/antenna_halfwave_dipole" in cases
-    @info "Testing antenna/antenna_halfwave_dipole"
+    @info "Testing antenna/antenna_halfwave_dipole..."
     @time testcase(
         "antenna",
         "antenna_halfwave_dipole.json",
@@ -308,7 +308,7 @@ if "antenna/antenna_halfwave_dipole" in cases
 end
 
 if "antenna/antenna_short_dipole" in cases
-    @info "Testing antenna/antenna_short_dipole"
+    @info "Testing antenna/antenna_short_dipole..."
     @time testcase(
         "antenna",
         "antenna_short_dipole.json",

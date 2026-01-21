@@ -62,7 +62,7 @@
             "Type": "Default",
             "KSPType": "GMRES",
             "Tol": 1.0e-10,
-            "MaxIts": 1000
+            "MaxIts": 100
         }
     }
 }

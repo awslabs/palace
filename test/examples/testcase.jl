@@ -194,10 +194,16 @@ function testcase(
                     for (rowcol, rowcoldataref, rowcoldata) in
                         zip(pairs(row), pairs(rowdataref), pairs(rowdata))
                         if !last(rowcol)
+                            ref_val = last(rowcoldataref)
+                            new_val = last(rowcoldata)
+                            abs_err = abs(new_val - ref_val)
+                            rel_err = abs_err / max(abs(ref_val), abs(new_val), eps())
                             @warn string(
-                                "Regression test error at ",
+                                "Regression test error in file '$(file)' at ",
                                 "row $(rownumber(row)), column $(strip(string(first(rowcol)))): ",
-                                "$(last(rowcoldataref)) ≉ $(last(rowcoldata))"
+                                "$(ref_val) ≉ $(new_val), ",
+                                "abs_err = $(abs_err) (atol=$(atol)), ",
+                                "rel_err = $(rel_err) (rtol=$(rtol))"
                             )
                         end
                         @test last(rowcol)

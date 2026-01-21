@@ -125,10 +125,7 @@ minutes (depending on the hardware). The simulation produces a 160 MB `postpro`
 folder, which contains the electromagnetic fields that we will use to extract
 radiation patterns.
 
-First, let us look at the far-field output. The `postpro` folder contains a
-file, `farfield-rE.csv`, with the far-field electric fields for the all the
-target frequencies (in this case, only `7.49000000e-02` GHz). The first few
-lines of this file are:
+First, let us look at the far-field output. The `postpro/antenna_halfwave_dipole` folder contains a file, `farfield-rE.csv`, with the far-field electric fields for the all the target frequencies (in this case, only `7.49000000e-02` GHz). The first few lines of this file are:
 
 ```@example include_example
 include_example_file("antenna/antenna_halfwave_dipole", "farfield-rE.csv") #hide
@@ -138,7 +135,7 @@ The `plot_farfield.jl` Julia script processes this file and produces plots polar
 for the E- and H- planes (xz/xy-planes) and in the 3D.
 
 ```bash
-julia --project plot_farfield.jl postpro/farfield-rE.csv
+julia --project plot_farfield.jl model=antenna_halfwave_dipole file=postpro/antenna_halfwave_dipole/farfield-rE.csv
 ```
 
 The results for the polar plot are shown below.
@@ -191,7 +188,7 @@ the equator, and minimum along the z axis.
 
 ## Alternative: Short Dipole Using the Electric Current Dipole Operator
 
-Instead of explicitly modeling the antenna geometry with a lumped port excitation, *Palace* provides an electric current dipole operator that represents an infinitesimally short current-carrying wire. This approach is particularly useful for theoretical studies or when the detailed geometry of the feeding structure is not critical to the analysis.
+As an alternative to explicitly modeling the antenna geometry with a lumped port excitation, *Palace* provides an electric current dipole operator that represents an infinitesimally short current-carrying wire. This approach is particularly useful for theoretical studies or when the detailed geometry of the feeding structure is not critical to the analysis.
 
 ### Background
 
@@ -209,7 +206,7 @@ For a z-oriented electrical current dipole (short dipole) in free space, the far
 |\mathbf{E}_\theta|^2 \propto |\sin\theta|^2\,,
 ```
 
-with omnidirectional radiation in the H-plane (xy-plane). This differs from the half-wave dipole pattern shown earlier, which exhibits the characteristic ``\left|\frac{\cos\left(\frac{\pi}{2}\cos\theta\right)}{\sin\theta}\right|^2`` dependence.
+with omnidirectional radiation in the H-plane (xy-plane). This differs from the half-wave dipole pattern shown earlier, which exhibits a characteristic ``\left|\frac{\cos\left(\frac{\pi}{2}\cos\theta\right)}{\sin\theta}\right|^2`` dependence.
 
 ### Configuration and Running the Example
 
@@ -248,7 +245,7 @@ where the material attributes `5` and `6` represent the volume of the cylindrica
 
 !!! note "Changing dipole orientation"
     
-    One of the key advantages of using the current dipole operator is the ease of changing the antenna orientation. By simply modifying the `"Direction"` parameter, you can align the dipole along any axis without needing to regenerate the mesh or redefine boundary conditions. For example, `"Direction": [1, 0, 0]` creates an x-oriented dipole, while `"Direction": [0, 1, 0]` creates a y-oriented dipole using the same mesh.
+    One of the key advantages of using the current dipole operator is the ease of changing the antenna orientation. By modifying the `"Direction"` parameter, you can align the dipole along any axis without needing to regenerate a mesh. For example, `"Direction": [1, 0, 0]` creates an x-oriented dipole, while `"Direction": [0, 1, 0]` creates a y-oriented dipole.
 
 The following plots show the spatial distribution of the real part of the electric field in the yz-plane (left) and xy-plane (right), illustrating the near-field behavior of the short dipole antenna.
 
@@ -259,13 +256,11 @@ The following plots show the spatial distribution of the real part of the electr
 </p>
 ```
 
-The far-field radiation pattern can be visualized using the same plotting script, specifying the short dipole model type:
+The far-field radiation pattern can be visualized using the same plotting script used for the half wave dipole, by specifying the short dipole model type:
 
 ```bash
 julia --project plot_farfield.jl model=antenna_short_dipole file=postpro/antenna_short_dipole/farfield-rE.csv
 ```
-
-This will generate polar plots showing the characteristic ``|\sin\theta|^2`` pattern in the E-plane and omnidirectional pattern in the H-plane, as expected for an infinitesimal dipole.
 
 ```@raw html
 <br/><p align="center">
@@ -273,7 +268,7 @@ This will generate polar plots showing the characteristic ``|\sin\theta|^2`` pat
 </p><br/>
 ```
 
-The 3D far-field pattern can also be visualized:
+The polar plots show the theoretical radiation pattern for a short dipole: the E-plane exhibits the ``|\sin\theta|^2`` dependence decaying to zero on the dipole axis (θ = 0° and 180°) and maximum radiation perpendicular to the dipole (θ = 90°), while the H-plane shows the expected omnidirectional pattern. The 3D far-field pattern is also visualized:
 
 ```@raw html
 <br/><p align="center">
