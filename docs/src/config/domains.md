@@ -106,9 +106,9 @@ with
 
 `"Index" [None]` :  Index of this current dipole source, used in postprocessing output files.
 
-`"Direction" [None]` :  Floating point array of length equal to the model spatial dimension
-specifying the direction of the current dipole moment. The direction vector will be
-automatically normalized to unit length.
+`"Direction" [None]` :  Direction of the Dirac current source specifying the dipole. Axis aligned directions can be specified using
+keywords: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`. The direction can alternatively be specified as a
+normalized array of three values, for example `[0.0, 1.0, 0.0]`.
 
 `"Moment" [None]` :  Current dipole moment magnitude, specified in A·m.
 
