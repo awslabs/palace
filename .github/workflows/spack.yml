@@ -41,6 +41,8 @@ jobs:
               - 'examples/**'
               - 'test/examples/**'
               - 'test/unit/**'
+              - 'spack_repo/**'
+              - '.github/actions/**'
               - '.github/workflows/spack.yml'
 
   # Build jobs
