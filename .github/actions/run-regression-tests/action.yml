@@ -80,3 +80,7 @@ runs:
         fi
         
         julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ inputs.solver }}
+
+        if [[ "$NUM_PROC_TEST" -ge 32 ]]; then
+            julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon" --palace-solver ${{ inputs.solver }}
+        fi
