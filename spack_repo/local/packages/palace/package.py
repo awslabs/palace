@@ -130,7 +130,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
-    depends_on("hypre@3:")
+    depends_on("hypre@3:", when="@0.16.0:")
     depends_on("hypre~complex")
     depends_on("hypre~unified-memory")
     depends_on("hypre+shared", when="+shared")
