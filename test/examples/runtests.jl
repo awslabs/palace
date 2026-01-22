@@ -7,6 +7,25 @@ using Test
 include("argconfig.jl")
 include("testcase.jl")
 
+# Helper function to test farfield data by comparing E field magnitudes
+# (phase is not stable across architectures)
+function test_farfield(new_data, ref_data)
+    # Compute E field magnitudes.
+    Ex_new = new_data[:, 4] + 1im * new_data[:, 5]
+    Ey_new = new_data[:, 6] + 1im * new_data[:, 7]
+    Ez_new = new_data[:, 8] + 1im * new_data[:, 9]
+    E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
+
+    Ex_ref = ref_data[:, 4] + 1im * ref_data[:, 5]
+    Ey_ref = ref_data[:, 6] + 1im * ref_data[:, 7]
+    Ez_ref = ref_data[:, 8] + 1im * ref_data[:, 9]
+    E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
+
+    # Test magnitudes with relative tolerance.
+    @test E_mag_new ≈ E_mag_ref rtol=reltol
+    return true
+end
+
 # Configure arguments.
 arg_configs = [
     ArgConfig(
@@ -317,6 +336,7 @@ if "antenna/antenna_short_dipole" in cases
         np=numprocs,
         rtol=reltol,
         atol=50abstol,
+        custom_tests=Dict("farfield-rE.csv" => test_farfield),
         device=device,
         linear_solver=solver
     )
@@ -427,26 +447,6 @@ if "cpw/wave_adaptive" in cases && device != "GPU"
 end
 
 if "cpw/lumped_eigen" in cases
-
-    # The phase of the eigenmodes is not stable across architectures, so we
-    # compare the magnitudes.
-    function test_farfield(new_data, ref_data)
-        # Compute E field magnitudes.
-        Ex_new = new_data[:, 4] + 1im * new_data[:, 5]
-        Ey_new = new_data[:, 6] + 1im * new_data[:, 7]
-        Ez_new = new_data[:, 8] + 1im * new_data[:, 9]
-        E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
-
-        Ex_ref = ref_data[:, 4] + 1im * ref_data[:, 5]
-        Ey_ref = ref_data[:, 6] + 1im * ref_data[:, 7]
-        Ez_ref = ref_data[:, 8] + 1im * ref_data[:, 9]
-        E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
-
-        # Test magnitudes with relative tolerance.
-        @test E_mag_new ≈ E_mag_ref rtol=reltol
-        return true
-    end
-
     @info "Testing CPW (lumped ports, eigenmode)..."
     @time testcase(
         "cpw",

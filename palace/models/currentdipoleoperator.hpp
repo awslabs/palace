@@ -47,9 +47,6 @@ private:
   // Mapping from dipole index to data structure containing dipole information.
   std::map<int, CurrentDipoleData> dipoles;
 
-  // // Storage for integrator coefficients to manage their lifetime
-  // mutable std::vector<mfem::VectorDeltaCoefficient> dipole_integrator_coeffs;
-
   void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 

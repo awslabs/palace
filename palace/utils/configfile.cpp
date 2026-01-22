@@ -260,9 +260,17 @@ void ParseElementData(json &elem, const std::string &name, bool required,
                 "using a string in the configuration file!");
 
     std::string direction;
-    direction = elem.value(name, direction);
-    std::tie(data.direction, data.coordinate_system) =
-        ParseStringAsDirection(direction, name);
+    auto it_str = elem.find(name);
+    if (it_str != elem.end())
+    {
+      direction = it_str->get<std::string>();
+      std::tie(data.direction, data.coordinate_system) =
+          ParseStringAsDirection(direction, name);
+    }
+    else if (required)
+    {
+      MFEM_VERIFY(false, "Missing required \"" << name << "\" in the configuration file!");
+    }
   }
 }
 

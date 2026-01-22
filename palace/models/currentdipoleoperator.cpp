@@ -106,8 +106,8 @@ void CurrentDipoleOperator::AddExcitationDomainIntegrators(mfem::LinearForm &rhs
   // Add each dipole as a separate integrator
   for (auto &[idx, dipole] : dipoles)
   {
-    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -iω J_e)
-    // RHS will be scaled by iω later in SpaceOperator.
+    // Create a VectorDeltaCoefficient for this specific dipole (RHS = -iω J_e),
+    // where J_e = moment × δ(x-x₀). RHS will be scaled by iω later in SpaceOperator.
     rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(dipole.coef));
   }
 }

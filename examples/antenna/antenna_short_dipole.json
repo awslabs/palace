@@ -8,7 +8,7 @@
     "Model":
     {
         "Mesh": "mesh/antenna.msh",
-        "L0": 1.0
+        "L0": 1.0 // 1 meter
     },
     "Domains":
     {
@@ -52,7 +52,7 @@
             [
                 {
                     "Type": "Point",
-                    "Freq": [0.0749],
+                    "Freq": [0.0749], // GHz
                     "SaveStep": 1
                 }
             ]
