@@ -53,7 +53,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature
+        spack -e . install --only-package --no-check-signature
         end_timer "Install from cache"
 
     - name: Run Integration Tests

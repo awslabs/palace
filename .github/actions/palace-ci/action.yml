@@ -309,7 +309,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        spack -e . buildcache push --with-build-dependencies --unsigned --update-index local-buildcache || true
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests
