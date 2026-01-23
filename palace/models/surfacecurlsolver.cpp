@@ -42,7 +42,6 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   const mfem::ParFiniteElementSpace *fespace = &nd_fespace.Get();
   int order = iodata.solver.order;
 
-  MPI_Comm comm = mesh.GetComm();
   const auto &pmesh = mesh.Get();
 
   // Extract metal surface and hole attributes from flux_data
@@ -398,8 +397,7 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
 
     // Create magnetic flux coefficient with direction-based orientation
     BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC> flux_coeff(
-        nullptr, &B_gf, mat_op, false, flux_direction,
-        BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>::OrientationMode::DIRECTION_BASED);
+        nullptr, &B_gf, mat_op, false, flux_direction, false);
 
     mfem::ParMesh *pmesh = const_cast<mfem::ParMesh *>(&mesh.Get());
     mfem::ParFiniteElementSpace *fes =
@@ -477,9 +475,7 @@ void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &
       // Use the direction from flux_data
       mfem::Vector flux_direction(const_cast<double *>(flux_data.direction.data()), 3);
       BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC> flux_coeff(
-          nullptr, &B_gf, mat_op, false, flux_direction,
-          BdrSurfaceFluxCoefficient<
-              SurfaceFlux::MAGNETIC>::OrientationMode::DIRECTION_BASED);
+          nullptr, &B_gf, mat_op, false, flux_direction, false);
 
       double local_flux = 0.0;
       mfem::ParMesh *pmesh = const_cast<mfem::ParMesh *>(&mesh.Get());

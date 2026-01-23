@@ -145,40 +145,18 @@ private:
   const mfem::ParGridFunction *E, *B;
   const MaterialOperator &mat_op;
   bool two_sided;
-  const mfem::Vector &x0;
-  const mfem::Vector *ref_dir;  // Optional reference direction for field alignment
+  const StaticVector<3> x0; // Vector for defining orientation.
+  bool x0_is_center; // Interpret dir as a surface center or a reference direction.
 
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
 public:
-  // Orientation modes
-  enum class OrientationMode
-  {
-    CENTER_BASED,
-    DIRECTION_BASED
-  };
-
-  // Constructor with center-based orientation
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0, double scaling = 1.0)
+                            const mfem::Vector &x0, bool x0_is_center = true, double scaling = 1.0)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
                                                         : *B->ParFESpace()->GetParMesh(), scaling),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr)
-  {
-    MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
-                    (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
-                "Missing E or B field grid function for surface flux coefficient!");
-  }
-
-  // Constructor with direction-based orientation
-  BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
-                            const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &reference_direction, OrientationMode mode)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
-                                                        : *B->ParFESpace()->GetParMesh()),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction),
-      ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr)
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), x0_is_center(x0_is_center)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -230,19 +208,18 @@ public:
     }
     else
     {
-      if (ref_dir && Type == SurfaceFlux::MAGNETIC)
+      if (x0_is_center)
       {
-        // For magnetic flux with reference direction, orient based on field alignment
-        return VU * (*ref_dir);
-      }
-      else
-      {
-        // Orient outward from the surface with the given center
-        double x_data[3];
-        mfem::Vector x(x_data, vdim);
+        // For center-based orientation, orient based on field alignment
+        StaticVector<3> x;
         T.Transform(ip, x);
         x -= x0;
         return (x * normal < 0.0) ? -flux : flux;
+      }
+      else
+      {
+        // For direction-based orientation, orient based on alignment with x0
+        return (x0 * normal < 0.0) ? -flux : flux;
       }
     }
   }

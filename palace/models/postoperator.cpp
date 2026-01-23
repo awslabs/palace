@@ -196,13 +196,13 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), true, scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
       Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), true, scaling);
     }
   }
 

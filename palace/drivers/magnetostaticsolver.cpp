@@ -318,8 +318,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   using fmt::format;
 
   // Write matrix data using existing pattern
-  auto PrintMatrix = [&surf_j_op, &surf_flux_op, this, n_current,
-                      n_flux](const std::string &file, const std::string &name,
+  auto PrintMatrix = [&surf_j_op, &surf_flux_op, this](const std::string &file, const std::string &name,
                               const std::string &unit, const mfem::DenseMatrix &mat,
                               double scale)
   {

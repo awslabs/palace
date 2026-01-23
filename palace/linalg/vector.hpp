@@ -182,6 +182,10 @@ private:
 
 public:
   StaticVector() : Vector() { SetDataAndSize(buff, N); }
+  StaticVector(const Vector& v)
+  {
+    MFEM_ASSERT(v.Size() == N, "v.Size() (" << v.Size() << ") must be equal to N (" << N << ")");
+  }
 
   ~StaticVector()
   {
