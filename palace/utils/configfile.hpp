@@ -1002,6 +1002,10 @@ public:
 // end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
 
+// Parse a string as a direction vector, returning the direction and coordinate system.
+std::pair<std::array<double, 3>, CoordinateSystem>
+ParseStringAsDirection(std::string str, bool required = true);
+
 }  // namespace palace::config
 
 #endif  // PALACE_UTILS_CONFIG_FILE_HPP
