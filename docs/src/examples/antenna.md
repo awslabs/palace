@@ -17,7 +17,7 @@ end
     
     The files for this example can be found in the
     [`examples/antenna/`](https://github.com/awslabs/palace/blob/main/examples/antenna)
-    directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 86400.
+    directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 64800.
 
 In this example, we study a half-wave dipole antenna and analyze its radiation
 characteristics. The dipole antenna is one of the most fundamental antenna
@@ -83,7 +83,7 @@ aligned on the xz-plane and spans the diameter of the cylindrical conductors.
 ## Configuration File
 
 The configuration file for the *Palace* simulation is found in
-[`antenna.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna.json).
+[`antenna_halfwave_dipole.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_halfwave_dipole.json).
 The simulation is performed in the frequency domain using the `"Driven"` solver
 type, operating at a single frequency of ``0.0749\text{ GHz}``.
 
@@ -125,20 +125,17 @@ minutes (depending on the hardware). The simulation produces a 160 MB `postpro`
 folder, which contains the electromagnetic fields that we will use to extract
 radiation patterns.
 
-First, let us look at the far-field output. The `postpro` folder contains a
-file, `farfield-rE.csv`, with the far-field electric fields for the all the
-target frequencies (in this case, only `7.49000000e-02` GHz). The first few
-lines of this file are:
+First, let us look at the far-field output. The `postpro/antenna_halfwave_dipole` folder contains a file, `farfield-rE.csv`, with the far-field electric fields for the all the target frequencies (in this case, only `7.49000000e-02` GHz). The first few lines of this file are:
 
 ```@example include_example
-include_example_file("antenna", "farfield-rE.csv") #hide
+include_example_file("antenna/antenna_halfwave_dipole", "farfield-rE.csv") #hide
 ```
 
 The `plot_farfield.jl` Julia script processes this file and produces plots polar
 for the E- and H- planes (xz/xy-planes) and in the 3D.
 
 ```bash
-julia --project plot_radiation_pattern.jl postpro/farfield-rE.csv
+julia --project plot_farfield.jl model=antenna_halfwave_dipole file=postpro/antenna_halfwave_dipole/farfield-rE.csv
 ```
 
 The results for the polar plot are shown below.
@@ -159,7 +156,8 @@ to the antenna axis and nulls approximately along the antenna axis.
     If you are trying to reproduce this plot, but find that your plots are not as nice
     as the one above, you might have a missed a note at the top of this page: the example
     was run with 64800 sampling points instead of the 100 that the JSON file specifies.
-    Change `NSample` to 64800 and run your simulation again.
+    Change `NSample` to 64800 and run your simulation again. Moreover, the variable `n_farfield`
+    in `mesh.jl` was increased from 3 to 10 for creating the mesh.
 
 We can see the same pattern rendered in 3D as well
 
@@ -186,9 +184,104 @@ the equator, and minimum along the z axis.
     ```
     
     All the subsequent times, just make sure to start Julia with `--project` from the `examples`
-    
     folder or one of its subfolders.
+
+## Alternative: Short Dipole Using the Electric Current Dipole Operator
+
+As an alternative to explicitly modeling the antenna geometry with a lumped port excitation, *Palace* provides an electric current dipole operator that represents an infinitesimally short current-carrying wire. This approach is particularly useful for theoretical studies or when the detailed geometry of the feeding structure is not critical to the analysis.
+
+### Background
+
+An electrical current dipole can be thought of as the limiting case of a finite wire segment carrying current ``I`` over length ``\Delta s`` as ``\Delta s \rightarrow 0``. The strength of the source is characterized by its dipole moment ``\mathbf{p} = I \, ds``, where ``ds`` is the infinitesimal length [[2]](#References). The source term in Maxwell's equations becomes
+
+```math
+\mathbf{J}_e^s = \mathbf{p} \, \delta(x) \delta(y) \delta(z)\,,
+```
+
+where ``\delta`` represents the Dirac delta function, indicating that the source is concentrated at a single point in space.
+
+For a z-oriented electrical current dipole (short dipole) in free space, the far-field radiation pattern in the E-plane (xz-plane) follows
+
+```math
+|\mathbf{E}_\theta|^2 \propto |\sin\theta|^2\,,
+```
+
+with omnidirectional radiation in the H-plane (xy-plane). This differs from the half-wave dipole pattern shown earlier, which exhibits a characteristic ``\left|\frac{\cos\left(\frac{\pi}{2}\cos\theta\right)}{\sin\theta}\right|^2`` dependence.
+
+### Configuration and Running the Example
+
+A complete example using the current dipole operator is provided in
+[`antenna_short_dipole.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_short_dipole.json).
+The configuration uses a `"CurrentDipole"` specification in the `"Domains"` section:
+
+```json
+"Domains":
+{
+    "Materials":
+    [
+        {
+            "Attributes": [5, 6, 7]
+        }
+    ],
+    "CurrentDipole": [
+        {
+            "Index": 1,
+            "Moment": 1.0,
+            "Center": [0.0, 0.0, 0.0],
+            "Direction": [0, 0, 1]
+        }
+    ]
+}
+```
+
+The key parameters are:
+
+  - `"Index"`: Identifier for this current dipole source (used in postprocessing output)
+  - `"Moment"`: Current dipole moment magnitude ``\mathbf{p}`` in A·m
+  - `"Center"`: Coordinates of the dipole center position in mesh length units
+  - `"Direction"`: Direction vector of the current dipole moment (automatically normalized)
+
+where the material attributes `5` and `6` represent the volume of the cylindrical arms while the PEC boundary condition on the surface of these arms and the lumped port in the half-wave dipole example is removed. The outer spherical boundary with `"Absorbing"` conditions and the far-field postprocessing setup remain the same.
+
+!!! note "Changing dipole orientation"
+    
+    One of the key advantages of using the current dipole operator is the ease of changing the antenna orientation. By modifying the `"Direction"` parameter, you can align the dipole along any axis without needing to regenerate a mesh. For example, `"Direction": [1, 0, 0]` creates an x-oriented dipole, while `"Direction": [0, 1, 0]` creates a y-oriented dipole.
+
+The following plots show the spatial distribution of the real part of the electric field in the yz-plane (left) and xy-plane (right), illustrating the near-field behavior of the short dipole antenna.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-5a.png" width="45%" />
+  <img src="../../assets/examples/antenna-5b.png" width="45%" />
+</p>
+```
+
+The far-field radiation pattern can be visualized using the same plotting script used for the half wave dipole, by specifying the short dipole model type:
+
+```bash
+julia --project plot_farfield.jl model=antenna_short_dipole file=postpro/antenna_short_dipole/farfield-rE.csv
+```
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-6.png" width="100%" />
+</p><br/>
+```
+
+The polar plots show the theoretical radiation pattern for a short dipole: the E-plane exhibits the ``|\sin\theta|^2`` dependence decaying to zero on the dipole axis (θ = 0° and 180°) and maximum radiation perpendicular to the dipole (θ = 90°), while the H-plane shows the expected omnidirectional pattern. The 3D far-field pattern is also visualized:
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-7.png" width="80%" />
+</p><br/>
+```
+
+!!! note "Do your results look different?"
+    
+    In order to generate smooth, high-resolution plots as shown above and just like the half-wave dipole example, we used `NSample=64800` in the JSON file and `n_farfield=10` in `mesh.jl` to create the mesh.
 
 ## References
 
 [1] Stutzman, W. L., & Thiele, G. A., *Antenna Theory and Design* (3rd ed.), John Wiley & Sons, 2012.
+
+[2] Heagy, L. J., Cockett, R., Kang, S., Rosenkjaer, G. K., & Oldenburg, D. W., "Defining the Electrical Current Dipole," *EM GeoSci*, [https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html](https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html).

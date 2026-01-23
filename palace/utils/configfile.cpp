@@ -201,12 +201,11 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
 // Helper function for extracting element data from the configuration file, either from a
 // provided keyword argument of from a specified vector. In extracting the direction various
 // checks are performed for validity of the input combinations.
-void ParseElementData(json &elem, const std::string &name, bool required,
-                      internal::ElementData &data)
+void ParseElementData(json &elem, bool required, internal::ElementData &data)
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(data.attributes.begin(), data.attributes.end());
-  auto it = elem.find(name);
+  auto it = elem.find("Direction");
   if (it != elem.end() && it->is_array())
   {
     // Attempt to parse as an array.
@@ -219,84 +218,10 @@ void ParseElementData(json &elem, const std::string &name, bool required,
     MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
                 "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
                 "using a string in the configuration file!");
-    std::string direction;
-    direction = elem.value(name, direction);
-    for (auto &c : direction)
-    {
-      c = std::tolower(c);
-    }
-    const auto xpos = direction.find("x");
-    const auto ypos = direction.find("y");
-    const auto zpos = direction.find("z");
-    const auto rpos = direction.find("r");
-    const bool xfound = xpos != std::string::npos;
-    const bool yfound = ypos != std::string::npos;
-    const bool zfound = zpos != std::string::npos;
-    const bool rfound = rpos != std::string::npos;
-    if (xfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
-                      direction[xpos - 1] == '+',
-                  "Missing required sign specification on \"X\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!yfound && !zfound && !rfound,
-                  "\"X\" cannot be combined with \"Y\", \"Z\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[0] =
-          (direction.length() == 1 || direction[xpos - 1] == '+') ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (yfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
-                      direction[ypos - 1] == '+',
-                  "Missing required sign specification on \"Y\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !zfound && !rfound,
-                  "\"Y\" cannot be combined with \"X\", \"Z\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[1] =
-          direction.length() == 1 || direction[ypos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (zfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
-                      direction[zpos - 1] == '+',
-                  "Missing required sign specification on \"Z\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !yfound && !rfound,
-                  "\"Z\" cannot be combined with \"X\", \"Y\", or \"R\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[2] =
-          direction.length() == 1 || direction[zpos - 1] == '+' ? 1.0 : -1.0;
-      data.coordinate_system = CoordinateSystem::CARTESIAN;
-    }
-    if (rfound)
-    {
-      MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
-                      direction[rpos - 1] == '+',
-                  "Missing required sign specification on \"R\" for \""
-                      << name << "\" in the configuration file!");
-      MFEM_VERIFY(!xfound && !yfound && !zfound,
-                  "\"R\" cannot be combined with \"X\", \"Y\", or \"Z\" for \""
-                      << name << "\" in the configuration file!");
-      data.direction[0] =
-          direction.length() == 1 || direction[rpos - 1] == '+' ? 1.0 : -1.0;
-      data.direction[1] = 0.0;
-      data.direction[2] = 0.0;
-      data.coordinate_system = CoordinateSystem::CYLINDRICAL;
-    }
+
+    std::tie(data.direction, data.coordinate_system) =
+        ParseStringAsDirection(elem.value("Direction", ""), required);
   }
-  MFEM_VERIFY(data.coordinate_system != CoordinateSystem::CYLINDRICAL ||
-                  (data.direction[1] == 0.0 && data.direction[2] == 0.0),
-              "Parsing azimuthal and longitudinal directions for cylindrical coordinate "
-              "system directions from the configuration file is not currently supported!");
-  MFEM_VERIFY(
-      !required || data.direction[0] != 0.0 || data.direction[1] != 0.0 ||
-          data.direction[2] != 0.0,
-      "Missing \"" << name
-                   << "\" for an object which requires it in the configuration file!");
 }
 
 template <typename T>
@@ -767,12 +692,86 @@ void DomainPostData::SetUp(json &domains)
                   << postpro->dump(2));
 }
 
+void CurrentDipoleSourceData::SetUp(json &domains)
+{
+  auto current_dipole = domains.find("CurrentDipole");
+  if (current_dipole == domains.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(current_dipole->is_array(),
+              "\"CurrentDipole\" should specify an array in the configuration file!");
+
+  for (auto it = current_dipole->begin(); it != current_dipole->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"CurrentDipole\" source");
+    auto ret = mapdata.insert(std::make_pair(index, CurrentDipoleData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"CurrentDipole\" "
+                            "sources in the configuration file!");
+    auto &data = ret.first->second;
+
+    MFEM_VERIFY(
+        it->find("Direction") != it->end(),
+        "Missing \"CurrentDipole\" source \"Direction\" in the configuration file!");
+    MFEM_VERIFY(it->find("Center") != it->end(),
+                "Missing \"CurrentDipole\" source \"Center\" in the configuration file!");
+    MFEM_VERIFY(
+        it->find("Moment") != it->end(),
+        "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
+    auto direction = it->find("Direction");
+    auto center = it->find("Center");
+    MFEM_VERIFY(center->is_array(),
+                "\"CurrentDipole\" source \"Center\" should specify an array "
+                "in the configuration file!");
+
+    if (direction->is_array())
+    {
+      // Attempt to parse as an array.
+      data.direction = direction->get<std::array<double, 3>>();
+      double norm = data.direction[0] * data.direction[0] +
+                    data.direction[1] * data.direction[1] +
+                    data.direction[2] * data.direction[2];
+      for (auto &x : data.direction)
+        x /= norm;
+    }
+    else
+    {
+      auto direction_and_coord =
+          ParseStringAsDirection(direction->get<std::string>());  // Required
+      MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
+                  "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
+      data.direction = direction_and_coord.first;
+    }
+    data.center = center->get<std::array<double, 3>>();  // Required
+    data.moment = it->at("Moment");                      // Required
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("Direction");
+    it->erase("Center");
+    it->erase("Moment");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "Index: " << ret.first->first << '\n';
+      std::cout << "Direction: " << data.direction << '\n';
+      std::cout << "Center: " << data.center << '\n';
+      std::cout << "Moment: " << data.moment << '\n';
+    }
+  }
+}
+
 void DomainData::SetUp(json &config)
 {
   auto domains = config.find("Domains");
   MFEM_VERIFY(domains != config.end(),
               "\"Domains\" must be specified in the configuration file!");
   materials.SetUp(*domains);
+  current_dipole.SetUp(*domains);
   postpro.SetUp(*domains);
 
   // Store all unique domain attributes.
@@ -793,6 +792,7 @@ void DomainData::SetUp(json &config)
 
   // Cleanup
   domains->erase("Materials");
+  domains->erase("CurrentDipole");
   domains->erase("Postprocessing");
   MFEM_VERIFY(domains->empty(),
               "Found an unsupported configuration file keyword under \"Domains\"!\n"
@@ -1097,7 +1097,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
               "{} in the configuration file!",
               label));
       auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, "Direction", terminal == boundaries.end(), elem);
+      ParseElementData(*it, terminal == boundaries.end(), elem);
     }
     else
     {
@@ -1113,7 +1113,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
                                 "the configuration file!",
                                 label));
         auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, "Direction", terminal == boundaries.end(), elem);
+        ParseElementData(*elem_it, terminal == boundaries.end(), elem);
 
         // Cleanup
         elem_it->erase("Attributes");
@@ -1334,7 +1334,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in the configuration file!");
       auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, "Direction", true, elem);
+      ParseElementData(*it, true, elem);
     }
     else
     {
@@ -1350,7 +1350,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
         auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, "Direction", true, elem);
+        ParseElementData(*elem_it, true, elem);
 
         // Cleanup
         elem_it->erase("Attributes");
@@ -2526,6 +2526,44 @@ int GetNumSteps(double start, double end, double delta)
   double dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
                    (delta > 0.0 && dfinal - end < delta_eps * end));
+}
+
+std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,
+                                                                          bool required)
+{
+  for (auto &c : str)
+  {
+    c = std::tolower(c);
+  }
+  const bool xfound = str.find("x") != std::string::npos;
+  const bool yfound = str.find("y") != std::string::npos;
+  const bool zfound = str.find("z") != std::string::npos;
+  const bool rfound = str.find("r") != std::string::npos;
+  const bool is_positive = str.length() == 1 || str[0] == '+';
+  const int num_found = xfound + yfound + zfound + rfound;
+  const bool is_valid =
+      (num_found == 1) &&
+      (str.length() == 1 || (str.length() == 2 && (str[0] == '+' || str[0] == '-')));
+  // If not required, must be empty, otherwise must be valid
+  MFEM_VERIFY((!required && str.empty()) || is_valid,
+              "Invalid string \"Direction\" in the configuration file!");
+  if (xfound)
+  {
+    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (yfound)
+  {
+    return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (zfound)
+  {
+    return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
+  }
+  if (rfound)
+  {
+    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CYLINDRICAL};
+  }
+  return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
 }
 
 }  // namespace palace::config
