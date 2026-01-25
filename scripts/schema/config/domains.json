@@ -87,6 +87,48 @@
         }
       }
     },
+    "CurrentDipole":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "Moment", "Center", "Direction"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "Moment": { "type": "number" },
+          "Center":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "Direction":
+          {
+            "anyOf":
+            [
+              {
+                "type": "string",
+                "enum": ["X", "Y", "Z", "+X", "+Y", "+Z", "-X", "-Y", "-Z",
+                         "x", "y", "z", "+x", "+y", "+z", "-x", "-y", "-z"]
+              },
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ]
+          }
+        }
+      }
+    },
     "Postprocessing":
     {
       "type": "object",

@@ -44,7 +44,7 @@ set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 # Below we link using WHOLE_ARCHIVE with coverage, otherwise LLVM won't report coverage of
 # all palace files. The actual linker commands to do this by hand is delicate. (see
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_LINK_LIBRARY_USING_FEATURE.html#loading-a-whole-static-library)
-target_link_libraries(unit-tests 
+target_link_libraries(unit-tests
   PRIVATE Catch2::Catch2
           $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
