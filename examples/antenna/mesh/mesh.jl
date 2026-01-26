@@ -184,6 +184,10 @@ function generate_antenna_mesh(;
     find_2D_outer_sphere() = filter(spans_domain, all_2d_entities)
     find_3D_domain() = filter(spans_domain, all_3d_entities)
 
+    # Helper functions to find 3D arm domains (interior of cylinders)
+    find_3D_top_arm() = filter(x -> zmin(x) > 0 && !spans_domain(x), all_3d_entities)
+    find_3D_bot_arm() = filter(x -> zmax(x) < 0 && !spans_domain(x), all_3d_entities)
+
     # We find the rectangle because we know its precise location and size (filling the
     # entire gap and being oriented on the XZ plane at y=0).
     function is_gap_rectangle(x)
@@ -204,13 +208,17 @@ function generate_antenna_mesh(;
     bot_arm_dimtags = find_2D_bot_arm()
     domain_dimtags = find_3D_domain()
     gap_rectangle_dimtags = find_gap_rectangle()
+    top_arm_domain_dimtags = find_3D_top_arm()
+    bot_arm_domain_dimtags = find_3D_bot_arm()
 
     # Verify we found the expected number of entities.
-    @assert length(top_arm_dimtags) == 4      # Cylinder has 4 surfaces (curved + top cap + 2 fragment of bottom cap)
-    @assert length(bot_arm_dimtags) == 4      # Cylinder has 4 surfaces (curved + bottom cap + 2 fragment of top cap)
-    @assert length(gap_rectangle_dimtags) == 1 # Single rectangular port
-    @assert length(outer_sphere_dimtags) == 1  # Single outer boundary
-    @assert length(domain_dimtags) == 1        # Single 3D domain
+    @assert length(top_arm_dimtags) == 4         # Cylinder has 4 surfaces (curved + top cap + 2 fragment of bottom cap)
+    @assert length(bot_arm_dimtags) == 4         # Cylinder has 4 surfaces (curved + bottom cap + 2 fragment of top cap)
+    @assert length(gap_rectangle_dimtags) == 1   # Single rectangular port
+    @assert length(outer_sphere_dimtags) == 1    # Single outer boundary
+    @assert length(top_arm_domain_dimtags) == 1  # Single 3D domain top bottom arm
+    @assert length(bot_arm_domain_dimtags) == 1  # Single 3D domain top bottom arm
+    @assert length(domain_dimtags) == 1          # Single 3D domain (top and bottom arms subtracted)
 
     # Create physical groups (these become attributes in Palace).
     top_arm_group =
@@ -224,6 +232,18 @@ function generate_antenna_mesh(;
         extract_tag.(outer_sphere_dimtags),
         -1,
         "outer_boundary"
+    )
+    top_arm_domain_group = gmsh.model.addPhysicalGroup(
+        3,
+        extract_tag.(top_arm_domain_dimtags),
+        -1,
+        "top_arm_domain"
+    )
+    bot_arm_domain_group = gmsh.model.addPhysicalGroup(
+        3,
+        extract_tag.(bot_arm_domain_dimtags),
+        -1,
+        "bot_arm_domain"
     )
     domain_group =
         gmsh.model.addPhysicalGroup(3, extract_tag.(domain_dimtags), -1, "domain")
@@ -272,6 +292,8 @@ function generate_antenna_mesh(;
     println("Bottom arm (2D): ", bot_arm_group)
     println("Rectangular port (2D): ", gap_rectangle_group)
     println("Farfield boundary (2D): ", outer_boundary_group)
+    println("Top arm domain (3D): ", top_arm_domain_group)
+    println("Bottom arm domain (3D): ", bot_arm_domain_group)
     println("Domain (3D): ", domain_group)
     println()
 

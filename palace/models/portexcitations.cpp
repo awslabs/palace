@@ -3,6 +3,7 @@
 
 #include "portexcitations.hpp"
 
+#include "currentdipoleoperator.hpp"
 #include "lumpedportoperator.hpp"
 #include "surfacecurrentoperator.hpp"
 #include "waveportoperator.hpp"
@@ -40,6 +41,11 @@ namespace palace
       to(" Surface current port{} {:2d}\n", (ex.current_port.size() > 1) ? "s" : "",
          fmt::join(ex.current_port, " "));
     }
+    if (!ex.current_dipole.empty())
+    {
+      to(" Current dipole{} {:2d}\n", (ex.current_dipole.size() > 1) ? "s" : "",
+         fmt::join(ex.current_dipole, " "));
+    }
     i++;
   }
   return fmt::to_string(buf);
@@ -49,7 +55,8 @@ void to_json(nlohmann::json &j, const PortExcitations::SingleExcitationSpec &p)
 {
   j = nlohmann::json{{"LumpedPort", p.lumped_port},
                      {"WavePort", p.wave_port},
-                     {"SurfaceCurrent", p.current_port}};
+                     {"SurfaceCurrent", p.current_port},
+                     {"CurrentDipole", p.current_dipole}};
 }
 
 void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p)
@@ -57,6 +64,7 @@ void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p
   j.at("LumpedPort").get_to(p.lumped_port);
   j.at("WavePort").get_to(p.wave_port);
   j.at("SurfaceCurrent").get_to(p.current_port);
+  j.at("CurrentDipole").get_to(p.current_dipole);
 }
 
 void to_json(nlohmann::json &j, const PortExcitations &p)
@@ -71,7 +79,8 @@ void from_json(const nlohmann::json &j, PortExcitations &p)
 
 PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
                                  const WavePortOperator &wave_port_op,
-                                 const SurfaceCurrentOperator &surf_j_op)
+                                 const SurfaceCurrentOperator &surf_j_op,
+                                 const CurrentDipoleOperator &dipole_op)
 {
   for (const auto &[idx, port] : lumped_port_op)
   {
@@ -104,6 +113,24 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     for (auto &[ex_idx, ex_spec] : excitations)
     {
       ex_spec.current_port = current_port_idx;
+    }
+  }
+
+  // Current dipoles are always excited. Add them to all existing excitations.
+  std::vector<int> current_dipole_idx;
+  for (const auto &[idx, dipole] : dipole_op)
+  {
+    current_dipole_idx.push_back(idx);
+  }
+  if (!current_dipole_idx.empty())
+  {
+    if (excitations.empty())
+    {
+      excitations.try_emplace(1, SingleExcitationSpec{});
+    }
+    for (auto &[ex_idx, ex_spec] : excitations)
+    {
+      ex_spec.current_dipole = current_dipole_idx;
     }
   }
 };
