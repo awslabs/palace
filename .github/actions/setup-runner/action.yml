@@ -28,6 +28,41 @@ runs:
   using: 'composite'
   steps:
 
+    # Unfortunately, GitHub hides all the timing information for the various
+    # steps when composite actions are used. Timing is useful to optimize
+    # runtime, so we add a bash function that computes the time a step (or
+    # substep) takes. The function is used in the following way:
+    # 
+    # - start the timer by calling `start_timer`
+    # - end the timer with `end_timer "Name of timer"`
+    # 
+    # The result is stored to a file /tmp/timing.log, this file can be printed
+    # to stdout at the end of the execution of the action.
+    - name: Initialize timing functions
+      shell: bash
+      run: |
+        echo "=== TIMING LOG ===" > /tmp/timing.log
+        cat << 'EOF' > /tmp/timing_functions.sh
+        start_timer() { export STEP_START=$(date +%s); }
+        end_timer() {
+          local duration=$(($(date +%s) - STEP_START))
+          local formatted_time
+          if [ $duration -lt 60 ]; then
+            formatted_time="${duration}s"
+          elif [ $duration -lt 3600 ]; then
+            local minutes=$((duration / 60))
+            local seconds=$((duration % 60))
+            formatted_time="${minutes}m ${seconds}s"
+          else
+            local hours=$((duration / 3600))
+            local minutes=$(((duration % 3600) / 60))
+            local seconds=$((duration % 60))
+            formatted_time="${hours}h ${minutes}m ${seconds}s"
+          fi
+          echo "$1: $formatted_time" >> /tmp/timing.log
+        }
+        EOF
+
     # This can sometimes interfere with sudo apt operations below. We don't
     # really care about these updates anyway, as we spin up new instances all
     # the time.
@@ -58,6 +93,9 @@ runs:
     - name: Setup repositories
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
         # Intel
         echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
         wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
@@ -70,11 +108,16 @@ runs:
 
         sudo apt update
 
+        end_timer "Setup repositories"
+
     - name: Setup Intel OneAPI
       if: inputs.setup-intel == 'true'
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-compiler-fortran
+        end_timer "Setup Intel OneAPI"
 
     - name: Setup LLVM
       if: inputs.llvm-version != 'dont-install'
@@ -82,12 +125,18 @@ runs:
       env:
         LLVM_VERSION: ${{ inputs.llvm-version }}
       run: |
-        sudo apt-get install -y clang-${LLVM_VERSION} llvm-${LLVM_VERSION} lld-${LLVM_VERSION} lldb-${LLVM_VERSION} libomp5-${LLVM_VERSION} libomp-${LLVM_VERSION}-dev flang-${LLVM_VERSION}  
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo apt-get install -y clang-${LLVM_VERSION} llvm-${LLVM_VERSION} lld-${LLVM_VERSION} lldb-${LLVM_VERSION} libomp5-${LLVM_VERSION} libomp-${LLVM_VERSION}-dev flang-${LLVM_VERSION}
+        end_timer "Setup LLVM"  
 
     - name: Setup GNU
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         sudo apt-get install -y gcc g++ gfortran libgomp1
+        end_timer "Setup GNU"
         
     - name: Install Spack
       uses: actions/checkout@v6
@@ -129,6 +178,8 @@ runs:
       env:
         JULIA_VERSION: ${{ inputs.julia-version }}
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         # Install juliaup (installs release by default)
         curl -fsSL https://install.julialang.org | sh -s -- --yes
         
@@ -144,3 +195,4 @@ runs:
         # Output the installed version
         echo "julia-version=$JULIA_VERSION" >> $GITHUB_OUTPUT
         echo "Installed Julia version: $JULIA_VERSION"
+        end_timer "Install Julia"
