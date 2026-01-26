@@ -396,10 +396,8 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
 # A number of patches to MFEM for our use cases
 set(MFEM_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_race_condition_fix.diff"
 )
 
 include(ExternalProject)
