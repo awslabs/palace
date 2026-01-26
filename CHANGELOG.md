@@ -11,6 +11,14 @@ The format of this changelog is based on
 
 ## In progress
 
+#### New Features
+
+  - Added support for electric current dipole source excitations. Current dipoles can be
+    configured as an array in `config["Domains"]["CurrentDipole"]` with specifications for
+    `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
+    [documentation](https://awslabs.github.io/palace/dev/examples/antenna/#alternative-short-dipole-using-the-electric-current-dipole-operator)
+    for additional information. [PR 556](https://github.com/awslabs/palace/pull/556).
+
 #### Bug Fixes
 
   - Fixed a bug in the computation of the waveport maximum propagation constant in parallel simulations
