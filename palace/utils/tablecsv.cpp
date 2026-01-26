@@ -17,7 +17,7 @@
 namespace palace
 {
 
-[[nodiscard]] size_t Column::col_width(const ColumnOptions &defaults) const
+[[nodiscard]] std::size_t Column::col_width(const ColumnOptions &defaults) const
 {
   // Quickfix to specify full column width in integer case to match current formatting.
   if (print_as_int)
@@ -25,8 +25,8 @@ namespace palace
     return std::max(min_left_padding.value_or(defaults.min_left_padding),
                     header_text.size());
   }
-  size_t pad = min_left_padding.value_or(defaults.min_left_padding);
-  size_t prec = float_precision.value_or(defaults.float_precision);
+  std::size_t pad = min_left_padding.value_or(defaults.min_left_padding);
+  std::size_t prec = float_precision.value_or(defaults.float_precision);
 
   // Normal float in our exponent format needs float_precision + 7 ("+" , leading digit,
   // ".", "e", "+", +2 exponent. Sometimes exponent maybe +3 if very small or large; see
@@ -36,14 +36,14 @@ namespace palace
 }
 
 [[nodiscard]] auto Column::format_header(const ColumnOptions &defaults,
-                                         const std::optional<size_t> &width) const
+                                         const std::optional<std::size_t> &width) const
 {
   auto w = width.value_or(col_width(defaults));
   return fmt::format("{0:>{1}s}", header_text, w);
 }
 
-[[nodiscard]] auto Column::format_row(size_t i, const ColumnOptions &defaults,
-                                      const std::optional<size_t> &width) const
+[[nodiscard]] auto Column::format_row(std::size_t i, const ColumnOptions &defaults,
+                                      const std::optional<std::size_t> &width) const
 {
   auto width_ = width.value_or(col_width(defaults));
   // If data available format double.
@@ -68,15 +68,16 @@ namespace palace
 }
 
 Column::Column(std::string name_, std::string header_text_, long column_group_idx_,
-               std::optional<size_t> min_left_padding_,
-               std::optional<size_t> float_precision_, std::optional<std::string> fmt_sign_)
+               std::optional<std::size_t> min_left_padding_,
+               std::optional<std::size_t> float_precision_,
+               std::optional<std::string> fmt_sign_)
   : name(std::move(name_)), header_text(std::move(header_text_)),
     column_group_idx(column_group_idx_), min_left_padding(min_left_padding_),
     float_precision(float_precision_), fmt_sign(std::move(fmt_sign_))
 {
 }
 
-[[nodiscard]] size_t Table::n_rows() const
+[[nodiscard]] std::size_t Table::n_rows() const
 {
   if (n_cols() == 0)
   {
@@ -87,7 +88,7 @@ Column::Column(std::string name_, std::string header_text_, long column_group_id
   return max_col->n_rows();
 }
 
-void Table::reserve(size_t n_rows, size_t n_cols)
+void Table::reserve(std::size_t n_rows, std::size_t n_cols)
 {
   reserve_n_rows = n_rows;
   cols.reserve(n_cols);
@@ -127,7 +128,7 @@ Column &Table::operator[](std::string_view name)
 template <typename T>
 void Table::append_header(T &buf) const
 {
-  for (size_t i = 0; i < n_cols(); i++)
+  for (std::size_t i = 0; i < n_cols(); i++)
   {
     if (i > 0)
     {
@@ -139,9 +140,9 @@ void Table::append_header(T &buf) const
 }
 
 template <typename T>
-void Table::append_row(T &buf, size_t row_j) const
+void Table::append_row(T &buf, std::size_t row_j) const
 {
-  for (size_t i = 0; i < n_cols(); i++)
+  for (std::size_t i = 0; i < n_cols(); i++)
   {
     if (i > 0)
     {
@@ -159,7 +160,7 @@ void Table::append_row(T &buf, size_t row_j) const
   return {buf.data(), buf.size()};
 }
 
-[[nodiscard]] std::string Table::format_row(size_t j) const
+[[nodiscard]] std::string Table::format_row(std::size_t j) const
 {
   fmt::memory_buffer buf{};
   append_row(buf, j);
@@ -170,7 +171,7 @@ void Table::append_row(T &buf, size_t row_j) const
 {
   fmt::memory_buffer buf{};
   append_header(buf);
-  for (size_t j = 0; j < n_rows(); j++)
+  for (std::size_t j = 0; j < n_rows(); j++)
   {
     append_row(buf, j);
   }
@@ -273,7 +274,7 @@ Table::Table(std::string_view table_str,
 
 // explicit instantiation to avoid fmt inclusion.
 template void Table::append_header(fmt::memory_buffer &) const;
-template void Table::append_row(fmt::memory_buffer &, size_t) const;
+template void Table::append_row(fmt::memory_buffer &, std::size_t) const;
 
 TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file)
   : csv_file_fullpath_{std::move(csv_file_fullpath)}

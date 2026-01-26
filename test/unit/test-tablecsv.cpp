@@ -95,11 +95,11 @@ TEST_CASE("TableCSV", "[tablecsv][Serial]")
     col_3 << 6.0;
   }
 
-  std::vector<size_t> cols_n_row;
+  std::vector<std::size_t> cols_n_row;
   std::transform(table.cbegin(), table.cend(), std::back_inserter(cols_n_row),
                  [](auto &c) { return c.n_rows(); });
 
-  CHECK(cols_n_row == std::vector<size_t>{0, 1, 2});
+  CHECK(cols_n_row == std::vector<std::size_t>{0, 1, 2});
 
   CHECK(table.n_cols() == 3);
   CHECK(table.n_rows() == 2);
