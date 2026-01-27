@@ -454,7 +454,7 @@ linear systems of equations arising for each simulation type. The available opti
 
 `"Tol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver.
 
-`"MaxIts" [100]` :  Maximum number of iterations for the iterative linear solver.
+`"MaxIts" [100]` :  Maximum number of iterations for the iterative linear solver. Must be greater than zero.
 
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
