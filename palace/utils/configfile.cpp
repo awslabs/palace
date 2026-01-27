@@ -202,17 +202,14 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
   auto it = elem.find("Direction");
   if (it != elem.end() && it->is_array())
   {
-    // Attempt to parse as an array.
     data.direction = it->get<std::array<double, 3>>();
     data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
   }
   else
   {
-    // Fall back to parsing as a string (value is optional).
+    // String direction - CoordinateSystem is implicit in the string value.
     MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
-                "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
-                "using a string in the configuration file!");
-
+                "Cannot specify \"CoordinateSystem\" with string \"Direction\"!");
     std::tie(data.direction, data.coordinate_system) =
         ParseStringAsDirection(elem.value("Direction", ""), required);
   }
@@ -1633,39 +1630,27 @@ int GetNumSteps(double start, double end, double delta)
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,
                                                                           bool required)
 {
-  for (auto &c : str)
+  if (str.empty())
   {
-    c = std::tolower(c);
+    MFEM_VERIFY(!required, "Missing required \"Direction\" in the configuration file!");
+    return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
-  const bool xfound = str.find("x") != std::string::npos;
-  const bool yfound = str.find("y") != std::string::npos;
-  const bool zfound = str.find("z") != std::string::npos;
-  const bool rfound = str.find("r") != std::string::npos;
   const bool is_positive = str.length() == 1 || str[0] == '+';
-  const int num_found = xfound + yfound + zfound + rfound;
-  const bool is_valid =
-      (num_found == 1) &&
-      (str.length() == 1 || (str.length() == 2 && (str[0] == '+' || str[0] == '-')));
-  // If not required, must be empty, otherwise must be valid
-  MFEM_VERIFY((!required && str.empty()) || is_valid,
-              "Invalid string \"Direction\" in the configuration file!");
-  if (xfound)
+  const char axis = std::tolower(str.back());
+  switch (axis)
   {
-    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'x':
+      return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'y':
+      return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'z':
+      return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
+    case 'r':
+      return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0},
+              CoordinateSystem::CYLINDRICAL};
+    default:
+      return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
-  if (yfound)
-  {
-    return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
-  }
-  if (zfound)
-  {
-    return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
-  }
-  if (rfound)
-  {
-    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CYLINDRICAL};
-  }
-  return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
 }
 
 }  // namespace palace::config
