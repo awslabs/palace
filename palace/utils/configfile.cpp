@@ -252,7 +252,7 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-void ProblemData::SetUp(json &config)
+void ProblemData::SetUp(const json &config)
 {
   auto problem = config.find("Problem");
   MFEM_VERIFY(problem != config.end(),
@@ -287,35 +287,12 @@ void ProblemData::SetUp(json &config)
                 "config[\"Problem\"][\"Type\"] == \"Eigenmode\" should be accompanied by a "
                 "config[\"Solver\"][\"Eigenmode\"] configuration!");
   }
-  else if (type == ProblemType::ELECTROSTATIC)
-  {
-    // MFEM_VERIFY(
-    //     solver->find("Electrostatic") != solver->end(),
-    //     "config[\"Problem\"][\"Type\"] == \"Electrostatic\" should be accompanied by a "
-    //     "config[\"Solver\"][\"Electrostatic\"] configuration!");
-  }
-  else if (type == ProblemType::MAGNETOSTATIC)
-  {
-    // MFEM_VERIFY(
-    //     solver->find("Magnetostatic") != solver->end(),
-    //     "config[\"Problem\"][\"Type\"] == \"Magnetostatic\" should be accompanied by a "
-    //     "config[\"Solver\"][\"Magnetostatic\"] configuration!");
-  }
   else if (type == ProblemType::TRANSIENT)
   {
     MFEM_VERIFY(solver->find("Transient") != solver->end(),
                 "config[\"Problem\"][\"Type\"] == \"Transient\" should be accompanied by a "
                 "config[\"Solver\"][\"Transient\"] configuration!");
   }
-
-  // Cleanup
-  problem->erase("Type");
-  problem->erase("Verbose");
-  problem->erase("Output");
-  problem->erase("OutputFormats");
-  MFEM_VERIFY(problem->empty(),
-              "Found an unsupported configuration file keyword under \"Problem\"!\n"
-                  << problem->dump(2));
 }
 
 void RefinementData::SetUp(json &model)
