@@ -12,5 +12,52 @@
     "Domains": { "$ref": "./config/domains.json" },
     "Boundaries": { "$ref": "./config/boundaries.json" },
     "Solver": { "$ref": "./config/solver.json" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "Problem": {
+            "properties": { "Type": { "const": "Driven" } },
+            "required": ["Type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "Solver": { "required": ["Driven"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "Problem": {
+            "properties": { "Type": { "const": "Eigenmode" } },
+            "required": ["Type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "Solver": { "required": ["Eigenmode"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "Problem": {
+            "properties": { "Type": { "const": "Transient" } },
+            "required": ["Type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "Solver": { "required": ["Transient"] }
+        }
+      }
+    }
+  ]
 }

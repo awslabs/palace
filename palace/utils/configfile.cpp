@@ -265,28 +265,6 @@ void ProblemData::SetUp(const json &config)
     output_formats.gridfunction =
         output_formats_it->value("GridFunction", output_formats.gridfunction);
   }
-
-  // Check for provided solver configuration data (not required for electrostatics or
-  // magnetostatics since defaults can be used for every option).
-  auto solver = config.find("Solver");
-  if (type == ProblemType::DRIVEN)
-  {
-    MFEM_VERIFY(solver->find("Driven") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Driven\" should be accompanied by a "
-                "config[\"Solver\"][\"Driven\"] configuration!");
-  }
-  else if (type == ProblemType::EIGENMODE)
-  {
-    MFEM_VERIFY(solver->find("Eigenmode") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Eigenmode\" should be accompanied by a "
-                "config[\"Solver\"][\"Eigenmode\"] configuration!");
-  }
-  else if (type == ProblemType::TRANSIENT)
-  {
-    MFEM_VERIFY(solver->find("Transient") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Transient\" should be accompanied by a "
-                "config[\"Solver\"][\"Transient\"] configuration!");
-  }
 }
 
 void RefinementData::SetUp(const json &model)
@@ -366,13 +344,12 @@ void ModelData::SetUp(const json &config)
 void DomainMaterialData::SetUp(const json &domains)
 {
   auto materials = domains.find("Materials");
-  MFEM_VERIFY(materials != domains.end() && materials->is_array(),
-              "\"Materials\" must be specified as an array in the configuration file!");
+  if (materials == domains.end())
+  {
+    return;
+  }
   for (auto it = materials->begin(); it != materials->end(); ++it)
   {
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Materials\" domain in the configuration file!");
     MaterialData &data = emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
@@ -391,14 +368,9 @@ void DomainEnergyPostData::SetUp(const json &postpro)
   {
     return;
   }
-  MFEM_VERIFY(energy->is_array(),
-              "\"Energy\" should specify an array in the configuration file!");
   for (auto it = energy->begin(); it != energy->end(); ++it)
   {
     auto index = AtIndex(it, "\"Energy\" domain");
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Energy\" domain in the configuration file!");
     auto ret = mapdata.insert(std::make_pair(index, DomainEnergyData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
                             "in the configuration file!");
