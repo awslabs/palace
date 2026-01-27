@@ -2330,6 +2330,8 @@ void LinearSolverData::SetUp(json &solver)
   krylov_solver = linear->value("KSPType", krylov_solver);
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
+  MFEM_VERIFY(max_it > 0,
+              "config[\"Solver\"][\"Linear\"][\"MaxIts\"] must be strictly positive!");
   max_size = linear->value("MaxSize", max_size);
   initial_guess = linear->value("InitialGuess", initial_guess);
 
