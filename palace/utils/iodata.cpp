@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <mfem.hpp>
+#include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -148,6 +149,80 @@ std::stringstream PreprocessFile(const char *filename)
 }
 
 using json = nlohmann::json;
+using nlohmann::json_schema::json_validator;
+
+namespace
+{
+
+// Custom $ref loader for schema files in the same directory.
+class SchemaLoader
+{
+  std::string base_dir;
+
+public:
+  SchemaLoader(const std::string &dir) : base_dir(dir) {}
+
+  json operator()(const nlohmann::json_uri &uri, json &schema)
+  {
+    std::string path = uri.path();
+    // Handle relative paths like "./config/problem.json"
+    if (path.substr(0, 2) == "./")
+    {
+      path = path.substr(2);
+    }
+    std::string full_path = base_dir + "/" + path;
+    std::ifstream f(full_path);
+    if (!f.is_open())
+    {
+      MFEM_ABORT("Failed to load schema file: " << full_path);
+    }
+    schema = json::parse(f);
+    return schema;
+  }
+};
+
+}  // namespace
+
+std::string ValidateConfig(const json &config, const std::string &schema_dir)
+{
+  std::string schema_path = schema_dir + "/config-schema.json";
+  std::ifstream f(schema_path);
+  if (!f.is_open())
+  {
+    return "Failed to open schema file: " + schema_path;
+  }
+
+  json schema;
+  try
+  {
+    schema = json::parse(f);
+  }
+  catch (json::parse_error &e)
+  {
+    return std::string("Failed to parse schema: ") + e.what();
+  }
+
+  json_validator validator{SchemaLoader(schema_dir)};
+  try
+  {
+    validator.set_root_schema(schema);
+  }
+  catch (std::exception &e)
+  {
+    return std::string("Failed to set schema: ") + e.what();
+  }
+
+  try
+  {
+    validator.validate(config);
+  }
+  catch (std::exception &e)
+  {
+    return e.what();
+  }
+
+  return "";  // Success
+}
 
 IoData::IoData(const Units &units) : units(units), init(false)
 {
@@ -199,6 +274,15 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   {
     MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
   }
+
+  // Validate against JSON schema.
+#ifdef PALACE_SCHEMA_DIR
+  {
+    std::string err = ValidateConfig(config, PALACE_SCHEMA_DIR);
+    MFEM_VERIFY(err.empty(), "Configuration file validation failed!\n  " << err);
+  }
+#endif
+
   if (print)
   {
     Mpi::Print("\n{}\n", config.dump(2));

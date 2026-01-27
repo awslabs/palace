@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Configuration File Schema -- \"Model\"",
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     "CleanUnusedElements": { "type": "boolean" },
     "CrackInternalBoundaryElements": { "type": "boolean" },
     "RefineCrackElements": { "type": "boolean" },
-    "CrackDisplacementFactor": { "type": "number", "inclusiveMinimum": 0.0 },
+    "CrackDisplacementFactor": { "type": "number", "minimum": 0.0 },
     "AddInterfaceBoundaryElements": { "type": "boolean" },
     "ExportPrerefinedMesh": { "type": "boolean" },
     "ReorientTetMesh": { "type": "boolean" },
@@ -29,12 +29,12 @@
       "properties":
       {
         "Tol": {"type": "number", "exclusiveMinimum": 0.0},
-        "MaxIts": {"type": "integer", "inclusiveMinimum": 0},
-        "MaxSize": {"type": "number", "inclusiveMinimum": 0},
+        "MaxIts": {"type": "integer", "minimum": 0},
+        "MaxSize": {"type": "number", "minimum": 0},
         "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
         "Nonconformal": {"type": "boolean"},
-        "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
-        "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
+        "MaxNCLevels": {"type": "integer", "minimum": 0},
+        "MaximumImbalance": {"type": "number", "minimum": 1.0},
         "SaveAdaptIterations": {"type": "boolean"},
         "SaveAdaptMesh": {"type": "boolean"},
         "UniformLevels": { "type": "integer", "minimum": 0 },

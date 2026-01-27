@@ -165,6 +165,10 @@ endif()
 find_package(nlohmann_json REQUIRED CONFIG)
 message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")
 
+# Find nlohmann/json-schema-validator
+find_package(nlohmann_json_schema_validator REQUIRED CONFIG)
+message(STATUS "Found nlohmann_json_schema_validator: ${nlohmann_json_schema_validator_VERSION} in ${nlohmann_json_schema_validator_DIR}")
+
 # Find fmt
 find_package(fmt REQUIRED CONFIG)
 message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
@@ -335,6 +339,12 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
+# Add schema directory path definition for JSON validation
+set_property(
+  SOURCE ${CMAKE_SOURCE_DIR}/utils/iodata.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SCHEMA_DIR=\"${CMAKE_INSTALL_PREFIX}/bin/schema\""
+)
+
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
 git_describe(GIT_COMMIT_ID)
@@ -384,7 +394,8 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(${LIB_TARGET_NAME}
-  PUBLIC ${MFEM_LIBRARY} ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
+  PUBLIC ${MFEM_LIBRARY} ${LIBCEED_TARGET} nlohmann_json::nlohmann_json
+         nlohmann_json_schema_validator::validator fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
 
