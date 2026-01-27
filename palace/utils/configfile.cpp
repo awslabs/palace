@@ -662,35 +662,16 @@ int ParsePortExcitation(json::const_iterator port_it, int default_excitation)
 void LumpedPortBoundaryData::SetUp(const json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
-  auto terminal = boundaries.find("Terminal");
-  if (port == boundaries.end() && terminal == boundaries.end())
+  if (port == boundaries.end())
   {
     return;
   }
-
-  if (port == boundaries.end())
-  {
-    port = terminal;
-  }
-  else if (terminal == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT("Configuration file should not specify both \"LumpedPort\" and \"Terminal\" "
-               "boundaries!");
-  }
-
-  std::string label = (terminal != boundaries.end()) ? "\"Terminal\"" : "\"LumpedPort\"";
-  MFEM_VERIFY(port->is_array(),
-              label << " should specify an array in the configuration file!");
   for (auto it = port->begin(); it != port->end(); ++it)
   {
-    auto index = AtIndex(it, label);
+    auto index = AtIndex(it, "\"LumpedPort\"");
     auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
-    MFEM_VERIFY(ret.second, fmt::format("Repeated \"Index\" found when processing {} "
-                                        "boundaries in the configuration file!",
-                                        label));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" "
+                            "boundaries in the configuration file!");
     auto &data = ret.first->second;
     data.R = it->value("R", data.R);
     data.L = it->value("L", data.L);
@@ -703,32 +684,43 @@ void LumpedPortBoundaryData::SetUp(const json &boundaries)
     data.active = it->value("Active", data.active);
     if (it->find("Attributes") != it->end())
     {
-      MFEM_VERIFY(
-          it->find("Elements") == it->end(),
-          fmt::format(
-              "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-              "{} in the configuration file!",
-              label));
+      MFEM_VERIFY(it->find("Elements") == it->end(),
+                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                  "\"LumpedPort\" in the configuration file!");
       auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, terminal == boundaries.end(), elem);
+      ParseElementData(*it, true, elem);
     }
     else
     {
       auto elements = it->find("Elements");
       MFEM_VERIFY(elements != it->end(),
-                  fmt::format("Missing top-level \"Attributes\" list or \"Elements\" for "
-                              "{} in the configuration file!",
-                              label));
+                  "Missing top-level \"Attributes\" list or \"Elements\" for "
+                  "\"LumpedPort\" in the configuration file!");
       for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
-        MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
-                    fmt::format("Missing \"Attributes\" list for {} element in "
-                                "the configuration file!",
-                                label));
         auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, terminal == boundaries.end(), elem);
+        ParseElementData(*elem_it, true, elem);
       }
     }
+  }
+}
+
+void TerminalBoundaryData::SetUp(const json &boundaries)
+{
+  auto terminal = boundaries.find("Terminal");
+  if (terminal == boundaries.end())
+  {
+    return;
+  }
+  for (auto it = terminal->begin(); it != terminal->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"Terminal\"");
+    auto ret = mapdata.insert(std::make_pair(index, TerminalData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Terminal\" "
+                            "boundaries in the configuration file!");
+    auto &data = ret.first->second;
+    data.attributes = it->at("Attributes").get<std::vector<int>>();
+    std::sort(data.attributes.begin(), data.attributes.end());
   }
 }
 
@@ -1123,6 +1115,7 @@ void BoundaryData::SetUp(const json &config)
   conductivity.SetUp(*boundaries);
   impedance.SetUp(*boundaries);
   lumpedport.SetUp(*boundaries);
+  terminal.SetUp(*boundaries);
   periodic.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
