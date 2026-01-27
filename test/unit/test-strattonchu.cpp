@@ -8,15 +8,15 @@
 // field and comparing the computed far-field against analytical expectations.
 //
 // More specifically, we set up a time-harmonic Hertzian dipole aligned on the z
-// axis, with fields:
+// axis, with fields (using Palace's e^(+iωt) convention):
 //
-// E_r = (p₀/(4πε₀r³)) * 2cos(θ) * (1 - ikr) * e^(ikr)
-// E_θ = (p₀/(4πε₀r³)) * sin(θ) * (1 - ikr - k²r²) * e^(ikr)
+// E_r = (p₀/(4πε₀r³)) * 2cos(θ) * (1 + ikr) * e^(-ikr)
+// E_θ = (p₀/(4πε₀r³)) * sin(θ) * (1 + ikr - k²r²) * e^(-ikr)
 // E_φ = 0
 //
 // H_r = 0
 // H_θ = 0
-// H_φ = iω/(4πε₀r²) * sin(θ) * (1 - ikr) * e^(ikr)
+// H_φ = -iωμ₀p₀/(4πε₀r²) * sin(θ) * (1 + ikr) * e^(-ikr)
 //
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
@@ -68,10 +68,10 @@ std::array<std::complex<double>, 3> ComputeDipoleENonDim(const mfem::Vector &x_n
 
   double factor = p0 / (4.0 * M_PI * epsilon0_ * r * r * r);
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_jkr = std::exp(jkr);
+  std::complex<double> exp_jkr = std::exp(-jkr);
 
-  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 - jkr) * exp_jkr;
-  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 - jkr - kr * kr) * exp_jkr;
+  std::complex<double> Er = factor * 2.0 * std::cos(theta) * (1.0 + jkr) * exp_jkr;
+  std::complex<double> Etheta = factor * std::sin(theta) * (1.0 + jkr + kr * kr) * exp_jkr;
 
   Er = units.Nondimensionalize<Units::ValueType::FIELD_E>(Er);
   Etheta = units.Nondimensionalize<Units::ValueType::FIELD_E>(Etheta);
@@ -100,10 +100,11 @@ std::array<std::complex<double>, 3> ComputeDipoleBNonDim(const mfem::Vector &x_n
   double kr = k * r;
 
   // The magnetic field has only φ component for z-directed dipole.
-  std::complex<double> factor(0, omega_rad_per_sec * mu0_ * p0 / (4.0 * M_PI * r * r));
+  // Palace uses e^(+iωt) convention, so H_φ = -iωμ₀p₀/(4πr²) * sin(θ) * (1 + ikr) * e^(-ikr)
+  std::complex<double> factor(0, -omega_rad_per_sec * mu0_ * p0 / (4.0 * M_PI * r * r));
   std::complex<double> jkr(0, kr);
-  std::complex<double> exp_jkr = std::exp(jkr);
-  std::complex<double> Bphi = factor * std::sin(theta) * (1.0 - jkr) * exp_jkr;
+  std::complex<double> exp_jkr = std::exp(-jkr);
+  std::complex<double> Bphi = factor * std::sin(theta) * (1.0 + jkr) * exp_jkr;
 
   Bphi = units.Nondimensionalize<Units::ValueType::FIELD_B>(Bphi);
 
@@ -111,7 +112,7 @@ std::array<std::complex<double>, 3> ComputeDipoleBNonDim(const mfem::Vector &x_n
 }
 
 // Take the analytic limit for kr >> 1 of the equations for E above and return
-// rE / exp(ijk). Note, this is dimensional.
+// rE / exp(-ikr). Note, this is dimensional.
 std::array<std::complex<double>, 3> ComputeAnalyticalFarFieldrE(double theta, double phi,
                                                                 double p0, double freq_Hz)
 {
@@ -119,6 +120,7 @@ std::array<std::complex<double>, 3> ComputeAnalyticalFarFieldrE(double theta, do
   double factor = k * k * p0 / (4.0 * M_PI * epsilon0_);
 
   // The only component that survives is the transverse (as expected for a wave).
+  // With Palace's e^(+iωt) convention, the far-field has a negative sign
   std::complex<double> E_theta(factor * std::sin(theta), 0);
 
   // Return in Cartesian coordinates.
