@@ -71,6 +71,10 @@ include(ExternalHYPRE)
 message(STATUS "================= Configuring nlohmann/json dependency =================")
 include(ExternalJSON)
 
+# Add JSON Schema Validator
+message(STATUS "========== Configuring nlohmann/json-schema-validator dependency ==========")
+include(ExternalJSONSchemaValidator)
+
 # Add fmt
 message(STATUS "====================== Configuring fmt dependency ======================")
 include(ExternalFmt)
