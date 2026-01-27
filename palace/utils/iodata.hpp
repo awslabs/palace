@@ -4,6 +4,8 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <string>
+#include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
@@ -18,6 +20,10 @@ namespace palace
 {
 
 std::stringstream PreprocessFile(const char *filename);
+
+// Validate JSON config against schema. Returns empty string on success, error message on
+// failure. schema_dir should point to directory containing config-schema.json.
+std::string ValidateConfig(const nlohmann::json &config, const std::string &schema_dir);
 
 //
 // A parser class for processing the configuration file which controls runtime options.

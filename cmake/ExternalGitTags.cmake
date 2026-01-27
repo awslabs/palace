@@ -256,6 +256,12 @@ set(EXTERN_JSON_URL
   "URL for external nlohmann/json build"
 )
 
+# nlohmann/json-schema-validator
+set(EXTERN_JSON_SCHEMA_VALIDATOR_URL
+  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/2.4.0.tar.gz" CACHE STRING
+  "URL for external nlohmann/json-schema-validator build"
+)
+
 # fmt
 set(EXTERN_FMT_URL
   "https://github.com/fmtlib/fmt/releases/download/12.1.0/fmt-12.1.0.zip" CACHE STRING
