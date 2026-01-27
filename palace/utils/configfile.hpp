@@ -116,7 +116,7 @@ public:
   // Output formats configuration.
   OutputFormatsData output_formats = {};
 
-  void SetUp(json &config);
+  void SetUp(const json &config);
 };
 
 struct BoxRefinementData
