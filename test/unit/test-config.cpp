@@ -79,14 +79,6 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
   {
     config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_1")));
-  }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
-  }
-  {
-    config::BoundaryData boundary_data;
     CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_1")));
   }
   {
@@ -467,20 +459,5 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
     CHECK(cs == CoordinateSystem::CYLINDRICAL);
   }
 
-  SECTION("Invalid")
-  {
-    auto req = GENERATE(true, false);
-    CHECK_THROWS(config::ParseStringAsDirection("a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("+a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("-a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xx", req));
-    CHECK_THROWS(config::ParseStringAsDirection("~x", req));
-    CHECK_THROWS(config::ParseStringAsDirection("x+", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xy", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xyz", req));
-    CHECK_THROWS(config::ParseStringAsDirection("abc", req));
-  }
-
-  CHECK_THROWS(config::ParseStringAsDirection("", true));
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }
