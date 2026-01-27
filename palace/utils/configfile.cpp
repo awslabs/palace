@@ -250,8 +250,6 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
   return os;
 }
 
-constexpr bool JSON_DEBUG = false;
-
 }  // namespace
 
 void ProblemData::SetUp(json &config)
@@ -318,16 +316,6 @@ void ProblemData::SetUp(json &config)
   MFEM_VERIFY(problem->empty(),
               "Found an unsupported configuration file keyword under \"Problem\"!\n"
                   << problem->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "Verbose: " << verbose << '\n';
-    std::cout << "Output: " << output << '\n';
-    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.GridFunction: " << output_formats.gridfunction << '\n';
-  }
 }
 
 void RefinementData::SetUp(json &model)
@@ -394,14 +382,6 @@ void RefinementData::SetUp(json &model)
       MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
                                "config[\"Refinement\"][\"Boxes\"]!\n"
                                    << it->dump(2));
-
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Levels: " << data.ref_levels << '\n';
-        std::cout << "BoundingBoxMin: " << data.bbmin << '\n';
-        std::cout << "BoundingBoxMax: " << data.bbmax << '\n';
-      }
     }
   }
   auto spheres = refinement->find("Spheres");
@@ -433,14 +413,6 @@ void RefinementData::SetUp(json &model)
       MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
                                "config[\"Refinement\"][\"Spheres\"]!\n"
                                    << it->dump(2));
-
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Levels: " << data.ref_levels << '\n';
-        std::cout << "Radius: " << data.r << '\n';
-        std::cout << "Center: " << data.center << '\n';
-      }
     }
   }
 
@@ -461,22 +433,6 @@ void RefinementData::SetUp(json &model)
   MFEM_VERIFY(refinement->empty(),
               "Found an unsupported configuration file keyword under \"Refinement\"!\n"
                   << refinement->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "Nonconformal: " << nonconformal << '\n';
-    std::cout << "MaxNCLevels: " << max_nc_levels << '\n';
-    std::cout << "UpdateFraction: " << update_fraction << '\n';
-    std::cout << "MaximumImbalance: " << maximum_imbalance << '\n';
-    std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';
-    std::cout << "SaveAdaptMesh: " << save_adapt_mesh << '\n';
-    std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
-    std::cout << "SerialUniformLevels: " << ser_uniform_ref_levels << '\n';
-  }
 }
 
 void ModelData::SetUp(json &config)
@@ -523,26 +479,6 @@ void ModelData::SetUp(json &config)
   MFEM_VERIFY(model->empty(),
               "Found an unsupported configuration file keyword under \"Model\"!\n"
                   << model->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Mesh: " << mesh << '\n';
-    std::cout << "L0: " << L0 << '\n';
-    std::cout << "Lc: " << Lc << '\n';
-    std::cout << "RemoveCurvature: " << remove_curvature << '\n';
-    std::cout << "MakeSimplex: " << make_simplex << '\n';
-    std::cout << "MakeHexahedral: " << make_hex << '\n';
-    std::cout << "ReorderElements: " << reorder_elements << '\n';
-    std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
-    std::cout << "CrackInternalBoundaryElements: " << crack_bdr_elements << '\n';
-    std::cout << "RefineCrackElements: " << refine_crack_elements << '\n';
-    std::cout << "CrackDisplacementFactor: " << crack_displ_factor << '\n';
-    std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
-    std::cout << "ExportPrerefinedMesh: " << export_prerefined_mesh << '\n';
-    std::cout << "ReorientTetMesh: " << reorient_tet_mesh << '\n';
-    std::cout << "Partitioning: " << partitioning << '\n';
-  }
 }
 
 void DomainMaterialData::SetUp(json &domains)
@@ -575,17 +511,6 @@ void DomainMaterialData::SetUp(json &domains)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Materials\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Permeability: " << data.mu_r << '\n';
-      std::cout << "Permittivity: " << data.epsilon_r << '\n';
-      std::cout << "LossTan: " << data.tandelta << '\n';
-      std::cout << "Conductivity: " << data.sigma << '\n';
-      std::cout << "LondonDepth: " << data.lambda_L << '\n';
-    }
   }
 }
 
@@ -617,13 +542,6 @@ void DomainEnergyPostData::SetUp(json &postpro)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Energy\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-    }
   }
 }
 
@@ -655,13 +573,6 @@ void ProbePostData::SetUp(json &postpro)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Probe\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Center: " << data.center << '\n';
-    }
   }
 }
 
@@ -753,15 +664,6 @@ void CurrentDipoleSourceData::SetUp(json &domains)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Direction: " << data.direction << '\n';
-      std::cout << "Center: " << data.center << '\n';
-      std::cout << "Moment: " << data.moment << '\n';
-    }
   }
 }
 
@@ -830,12 +732,6 @@ void PecBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(pec->empty(),
               "Found an unsupported configuration file keyword under \"PEC\"!\n"
                   << pec->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "PEC:" << attributes << '\n';
-  }
 }
 
 void PmcBoundaryData::SetUp(json &boundaries)
@@ -869,12 +765,6 @@ void PmcBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(pmc->empty(),
               "Found an unsupported configuration file keyword under \"PMC\"!\n"
                   << pmc->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "PMC:" << attributes << '\n';
-  }
 }
 
 void WavePortPecBoundaryData::SetUp(json &boundaries)
@@ -895,12 +785,6 @@ void WavePortPecBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(pec->empty(),
               "Found an unsupported configuration file keyword under \"WavePortPEC\"!\n"
                   << pec->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "WavePortPEC:" << attributes << '\n';
-  }
 }
 
 void FarfieldBoundaryData::SetUp(json &boundaries)
@@ -925,13 +809,6 @@ void FarfieldBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(absorbing->empty(),
               "Found an unsupported configuration file keyword under \"Absorbing\"!\n"
                   << absorbing->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Absorbing:" << attributes << '\n';
-    std::cout << "Order: " << order << '\n';
-  }
 }
 
 void ConductivityBoundaryData::SetUp(json &boundaries)
@@ -968,16 +845,6 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Conductivity\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Conductivity: " << data.sigma << '\n';
-      std::cout << "Permeability: " << data.mu_r << '\n';
-      std::cout << "Thickness: " << data.h << '\n';
-      std::cout << "External: " << data.external << '\n';
-    }
   }
 }
 
@@ -1010,15 +877,6 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Impedance\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Rs: " << data.Rs << '\n';
-      std::cout << "Ls: " << data.Ls << '\n';
-      std::cout << "Cs: " << data.Cs << '\n';
-    }
   }
 }
 
@@ -1142,26 +1000,6 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->empty(),
                 fmt::format("Found an unsupported configuration file keyword under {}!\n{}",
                             label, it->dump(2)));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "R: " << data.R << '\n';
-      std::cout << "L: " << data.L << '\n';
-      std::cout << "C: " << data.C << '\n';
-      std::cout << "Rs: " << data.Rs << '\n';
-      std::cout << "Ls: " << data.Ls << '\n';
-      std::cout << "Cs: " << data.Cs << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Active: " << data.active << '\n';
-      for (const auto &elem : data.elements)
-      {
-        std::cout << "Attributes: " << elem.attributes << '\n';
-        std::cout << "Direction: " << elem.direction << '\n';
-        std::cout << "CoordinateSystem: " << elem.coordinate_system << '\n';
-      }
-    }
   }
 }
 
@@ -1178,12 +1016,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(floquet->is_array(),
                 "\"FloquetWaveVector\" should specify an array in the configuration file!");
     wave_vector = floquet->get<std::array<double, 3>>();
-  }
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
   }
 
   auto pairs = periodic->find("BoundaryPairs");
@@ -1232,14 +1064,6 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Periodic\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
-      std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
-      std::cout << "AffineTransformation: " << data.affine_transform << '\n';
-    }
   }
 }
 
@@ -1293,22 +1117,6 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Mode: " << data.mode_idx << '\n';
-      std::cout << "Offset: " << data.d_offset << '\n';
-      std::cout << "SolverType: " << data.eigen_solver << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Active: " << data.active << '\n';
-      std::cout << "MaxIts: " << data.ksp_max_its << '\n';
-      std::cout << "KSPTol: " << data.ksp_tol << '\n';
-      std::cout << "EigenTol: " << data.eig_tol << '\n';
-      std::cout << "Verbose: " << data.verbose << '\n';
-    }
   }
 }
 
@@ -1372,18 +1180,6 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
         it->empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
             << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      for (const auto &elem : data.elements)
-      {
-        std::cout << "Attributes: " << elem.attributes << '\n';
-        std::cout << "Direction: " << elem.direction << '\n';
-        std::cout << "CoordinateSystem: " << elem.coordinate_system << '\n';
-      }
-    }
   }
 }
 
@@ -1428,16 +1224,6 @@ void SurfaceFluxPostData::SetUp(json &postpro)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"SurfaceFlux\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Type: " << data.type << '\n';
-      std::cout << "TwoSided: " << data.two_sided << '\n';
-      std::cout << "Center: " << data.center << '\n';
-    }
   }
 }
 
@@ -1478,17 +1264,6 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
                     << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Type: " << data.type << '\n';
-      std::cout << "Thickness: " << data.t << '\n';
-      std::cout << "Permittivity: " << data.epsilon_r << '\n';
-      std::cout << "LossTan: " << data.tandelta << '\n';
-    }
   }
 }
 void FarFieldPostData::SetUp(json &postpro)
@@ -1652,14 +1427,6 @@ void FarFieldPostData::SetUp(json &postpro)
   MFEM_VERIFY(farfield->empty(),
               "Found an unsupported configuration file keyword under \"FarField\"!\n"
                   << farfield->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Attributes: " << attributes << '\n';
-    std::cout << "NSample: " << nsample << '\n';
-    std::cout << "ThetaPhis: " << thetaphis << '\n';
-  }
 }
 void BoundaryPostData::SetUp(json &boundaries)
 {
@@ -1980,17 +1747,6 @@ void DrivenSolverData::SetUp(json &solver)
         prom_f.insert(prom_f.end(), f.begin(), f.end());
       }
 
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Type: " << type << '\n';
-        std::cout << "Freq: " << f << '\n';
-        std::cout << "FreqStep: " << r.value("FreqStep", 0.0) << '\n';
-        std::cout << "NSample: " << r.value("NSample", 0.0) << '\n';
-        std::cout << "SaveStep: " << r.value("SaveStep", 0) << '\n';
-        std::cout << "AddToPROM: " << r.value("AddToPROM", false) << '\n';
-      }
-
       // Cleanup
       r.erase("Type");
       r.erase("MinFreq");
@@ -2068,23 +1824,6 @@ void DrivenSolverData::SetUp(json &solver)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "MinFreq: " << driven->value("MinFreq", 0.0) << '\n';
-    std::cout << "MaxFreq: " << driven->value("MaxFreq", 0.0) << '\n';
-    std::cout << "FreqStep: " << driven->value("FreqStep", 0) << '\n';
-    std::cout << "Samples: " << sample_f << '\n';
-    std::cout << "SaveSamples: " << save_f << '\n';
-    std::cout << "PROMSamples: " << prom_f << '\n';
-    std::cout << "SaveIndices: " << save_indices << '\n';
-    std::cout << "PromIndices: " << prom_indices << '\n';
-    std::cout << "Restart: " << restart << '\n';
-    std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
-    std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
-    std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
-  }
 
   // Cleanup
   driven->erase("MinFreq");
@@ -2168,30 +1907,6 @@ void EigenSolverData::SetUp(json &solver)
   MFEM_VERIFY(eigenmode->empty(),
               "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
                   << eigenmode->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Target: " << target << '\n';
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "N: " << n << '\n';
-    std::cout << "Save: " << n_post << '\n';
-    std::cout << "Type: " << type << '\n';
-    std::cout << "PEPLinear: " << pep_linear << '\n';
-    std::cout << "Scaling: " << scale << '\n';
-    std::cout << "StartVector: " << init_v0 << '\n';
-    std::cout << "StartVectorConstant: " << init_v0_const << '\n';
-    std::cout << "MassOrthogonal: " << mass_orthog << '\n';
-    std::cout << "NonlinearType: " << nonlinear_type << '\n';
-    std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
-    std::cout << "LinearTol: " << linear_tol << '\n';
-    std::cout << "TargetUpper: " << target_upper << '\n';
-    std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
-    std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
-    std::cout << "MaxRestart: " << max_restart << '\n';
-  }
 }
 
 void ElectrostaticSolverData::SetUp(json &solver)
@@ -2208,12 +1923,6 @@ void ElectrostaticSolverData::SetUp(json &solver)
   MFEM_VERIFY(electrostatic->empty(),
               "Found an unsupported configuration file keyword under \"Electrostatic\"!\n"
                   << electrostatic->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Save: " << n_post << '\n';
-  }
 }
 
 void MagnetostaticSolverData::SetUp(json &solver)
@@ -2230,12 +1939,6 @@ void MagnetostaticSolverData::SetUp(json &solver)
   MFEM_VERIFY(magnetostatic->empty(),
               "Found an unsupported configuration file keyword under \"Magnetostatic\"!\n"
                   << magnetostatic->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Save: " << n_post << '\n';
-  }
 }
 
 void TransientSolverData::SetUp(json &solver)
@@ -2302,21 +2005,6 @@ void TransientSolverData::SetUp(json &solver)
   MFEM_VERIFY(transient->empty(),
               "Found an unsupported configuration file keyword under \"Transient\"!\n"
                   << transient->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "Excitation: " << excitation << '\n';
-    std::cout << "ExcitationFreq: " << pulse_f << '\n';
-    std::cout << "ExcitationWidth: " << pulse_tau << '\n';
-    std::cout << "MaxTime: " << max_t << '\n';
-    std::cout << "TimeStep: " << delta_t << '\n';
-    std::cout << "SaveStep: " << delta_post << '\n';
-    std::cout << "Order: " << order << '\n';
-    std::cout << "RelTol: " << rel_tol << '\n';
-    std::cout << "AbsTol: " << abs_tol << '\n';
-  }
 }
 
 void LinearSolverData::SetUp(json &solver)
@@ -2418,51 +2106,6 @@ void LinearSolverData::SetUp(json &solver)
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
                   << linear->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "KSPType: " << krylov_solver << '\n';
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "InitialGuess: " << initial_guess << '\n';
-
-    std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
-    std::cout << "MGCoarsenType: " << mg_coarsening << '\n';
-    std::cout << "MGUseMesh: " << mg_use_mesh << '\n';
-    std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
-    std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
-    std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
-    std::cout << "MGSmoothOrder: " << mg_smooth_order << '\n';
-    std::cout << "MGSmoothEigScaleMax: " << mg_smooth_sf_max << '\n';
-    std::cout << "MGSmoothEigScaleMin: " << mg_smooth_sf_min << '\n';
-    std::cout << "MGSmoothChebyshev4th: " << mg_smooth_cheby_4th << '\n';
-
-    std::cout << "PCMatReal: " << pc_mat_real << '\n';
-    std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
-    std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
-    std::cout << "DropSmallEntries: " << drop_small_entries << '\n';
-    std::cout << "ReorderingReuse: " << reorder_reuse << '\n';
-    std::cout << "PCSide: " << pc_side << '\n';
-    std::cout << "ColumnOrdering: " << sym_factorization << '\n';
-    std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
-    std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
-    std::cout << "STRUMPACKLossyPrecision: " << strumpack_lossy_precision << '\n';
-    std::cout << "STRUMPACKButterflyLevels: " << strumpack_butterfly_l << '\n';
-    std::cout << "SuperLU3DCommunicator: " << superlu_3d << '\n';
-    std::cout << "AMSVectorInterpolation: " << ams_vector_interp << '\n';
-    std::cout << "AMSSingularOperator: " << ams_singular_op << '\n';
-    std::cout << "AMGAggressiveCoarsening: " << amg_agg_coarsen << '\n';
-
-    std::cout << "DivFreeTol: " << divfree_tol << '\n';
-    std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
-    std::cout << "EstimatorTol: " << estimator_tol << '\n';
-    std::cout << "EstimatorMaxIts: " << estimator_max_it << '\n';
-    std::cout << "EstimatorMG: " << estimator_mg << '\n';
-    std::cout << "GSOrthogonalization: " << gs_orthog << '\n';
-  }
 }
 
 void SolverData::SetUp(json &config)
@@ -2503,17 +2146,6 @@ void SolverData::SetUp(json &config)
   MFEM_VERIFY(solver->empty(),
               "Found an unsupported configuration file keyword under \"Solver\"!\n"
                   << solver->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Order: " << order << '\n';
-    std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
-    std::cout << "QuadratureOrderJacobian: " << q_order_jac << '\n';
-    std::cout << "QuadratureOrderExtra: " << q_order_extra << '\n';
-    std::cout << "Device: " << device << '\n';
-    std::cout << "Backend: " << ceed_backend << '\n';
-  }
 }
 
 int GetNumSteps(double start, double end, double delta)
