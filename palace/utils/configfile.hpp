@@ -195,7 +195,7 @@ public:
   const auto &GetSpheres() const { return sphere_list; }
   auto &GetSpheres() { return sphere_list; }
 
-  void SetUp(json &model);
+  void SetUp(const json &model);
 };
 
 struct ModelData
@@ -254,7 +254,7 @@ public:
   // Object controlling mesh refinement.
   RefinementData refinement = {};
 
-  void SetUp(json &config);
+  void SetUp(const json &config);
 };
 
 // Domain Config.
@@ -304,7 +304,7 @@ public:
 struct DomainMaterialData : public internal::DataVector<MaterialData>
 {
 public:
-  void SetUp(json &domains);
+  void SetUp(const json &domains);
 };
 
 struct DomainEnergyData
@@ -317,7 +317,7 @@ public:
 struct DomainEnergyPostData : public internal::DataMap<DomainEnergyData>
 {
 public:
-  void SetUp(json &postpro);
+  void SetUp(const json &postpro);
 };
 
 struct ProbeData
@@ -330,7 +330,7 @@ public:
 struct ProbePostData : public internal::DataMap<ProbeData>
 {
 public:
-  void SetUp(json &postpro);
+  void SetUp(const json &postpro);
 };
 
 struct DomainPostData
@@ -343,7 +343,7 @@ public:
   DomainEnergyPostData energy;
   ProbePostData probe;
 
-  void SetUp(json &domains);
+  void SetUp(const json &domains);
 };
 
 struct CurrentDipoleData
@@ -362,7 +362,7 @@ public:
 struct CurrentDipoleSourceData : public internal::DataMap<CurrentDipoleData>
 {
 public:
-  void SetUp(json &domains);
+  void SetUp(const json &domains);
 };
 
 struct DomainData
@@ -376,7 +376,7 @@ public:
   CurrentDipoleSourceData current_dipole = {};
   DomainPostData postpro = {};
 
-  void SetUp(json &config);
+  void SetUp(const json &config);
 };
 
 // Boundary Configuration.
@@ -389,7 +389,7 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct PmcBoundaryData
@@ -400,7 +400,7 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct WavePortPecBoundaryData
@@ -411,7 +411,7 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct FarfieldBoundaryData
@@ -425,7 +425,7 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct ConductivityData
@@ -450,7 +450,7 @@ public:
 struct ConductivityBoundaryData : public internal::DataVector<ConductivityData>
 {
 public:
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct ImpedanceData
@@ -468,7 +468,7 @@ public:
 struct ImpedanceBoundaryData : public internal::DataVector<ImpedanceData>
 {
 public:
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct LumpedPortData
@@ -500,7 +500,7 @@ public:
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
 {
 public:
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct PeriodicData
@@ -526,7 +526,7 @@ public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct WavePortData
@@ -568,7 +568,7 @@ public:
 struct WavePortBoundaryData : public internal::DataMap<WavePortData>
 {
 public:
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct SurfaceCurrentData
@@ -582,7 +582,7 @@ public:
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
 {
 public:
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct SurfaceFluxData
@@ -609,7 +609,7 @@ public:
 struct SurfaceFluxPostData : public internal::DataMap<SurfaceFluxData>
 {
 public:
-  void SetUp(json &postpro);
+  void SetUp(const json &postpro);
 };
 
 struct InterfaceDielectricData
@@ -634,7 +634,7 @@ public:
 struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
 {
 public:
-  void SetUp(json &postpro);
+  void SetUp(const json &postpro);
 };
 
 struct FarFieldPostData
@@ -647,7 +647,7 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
-  void SetUp(json &postpro);
+  void SetUp(const json &postpro);
 
   bool empty() const { return thetaphis.empty(); };
 };
@@ -663,7 +663,7 @@ public:
   InterfaceDielectricPostData dielectric = {};
   FarFieldPostData farfield = {};
 
-  void SetUp(json &boundaries);
+  void SetUp(const json &boundaries);
 };
 
 struct BoundaryData
@@ -688,7 +688,7 @@ public:
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
-  void SetUp(json &config);
+  void SetUp(const json &config);
 };
 
 // Solver Configuration.
@@ -718,7 +718,7 @@ public:
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct EigenSolverData
@@ -785,7 +785,7 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct ElectrostaticSolverData
@@ -794,7 +794,7 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct MagnetostaticSolverData
@@ -803,7 +803,7 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct TransientSolverData
@@ -837,7 +837,7 @@ public:
   double rel_tol = 1e-4;
   double abs_tol = 1e-9;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct LinearSolverData
@@ -962,7 +962,7 @@ public:
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;
 
-  void SetUp(json &solver);
+  void SetUp(const json &solver);
 };
 
 struct SolverData
@@ -995,7 +995,7 @@ public:
   TransientSolverData transient = {};
   LinearSolverData linear = {};
 
-  void SetUp(json &config);
+  void SetUp(const json &config);
 };
 
 // Calculate the number of steps from [start, end) in increments of delta. Will only include

@@ -168,7 +168,7 @@ namespace palace::config
 namespace
 {
 
-int AtIndex(json::iterator &port_it, std::string_view errmsg_parent)
+int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
   MFEM_VERIFY(
       port_it->find("Index") != port_it->end(),
@@ -180,7 +180,7 @@ int AtIndex(json::iterator &port_it, std::string_view errmsg_parent)
 }
 
 template <std::size_t N>
-void ParseSymmetricMatrixData(json &mat, const std::string &name,
+void ParseSymmetricMatrixData(const json &mat, const std::string &name,
                               SymmetricMatrixData<N> &data)
 {
   auto it = mat.find(name);
@@ -201,7 +201,7 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
 // Helper function for extracting element data from the configuration file, either from a
 // provided keyword argument of from a specified vector. In extracting the direction various
 // checks are performed for validity of the input combinations.
-void ParseElementData(json &elem, bool required, internal::ElementData &data)
+void ParseElementData(const json &elem, bool required, internal::ElementData &data)
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(data.attributes.begin(), data.attributes.end());
@@ -295,7 +295,7 @@ void ProblemData::SetUp(const json &config)
   }
 }
 
-void RefinementData::SetUp(json &model)
+void RefinementData::SetUp(const json &model)
 {
   auto refinement = model.find("Refinement");
   if (refinement == model.end())
@@ -351,14 +351,6 @@ void RefinementData::SetUp(json &model)
       data.ref_levels = it->at("Levels");                // Required
       data.bbmin = bbmin->get<std::array<double, 3>>();  // Required
       data.bbmax = bbmax->get<std::array<double, 3>>();  // Required
-
-      // Cleanup
-      it->erase("Levels");
-      it->erase("BoundingBoxMin");
-      it->erase("BoundingBoxMax");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                               "config[\"Refinement\"][\"Boxes\"]!\n"
-                                   << it->dump(2));
     }
   }
   auto spheres = refinement->find("Spheres");
@@ -382,37 +374,11 @@ void RefinementData::SetUp(json &model)
       data.ref_levels = it->at("Levels");               // Required
       data.r = it->at("Radius");                        // Required
       data.center = ctr->get<std::array<double, 3>>();  // Required
-
-      // Cleanup
-      it->erase("Levels");
-      it->erase("Radius");
-      it->erase("Center");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                               "config[\"Refinement\"][\"Spheres\"]!\n"
-                                   << it->dump(2));
     }
   }
-
-  // Cleanup
-  refinement->erase("Tol");
-  refinement->erase("MaxIts");
-  refinement->erase("MaxSize");
-  refinement->erase("Nonconformal");
-  refinement->erase("MaxNCLevels");
-  refinement->erase("UpdateFraction");
-  refinement->erase("MaximumImbalance");
-  refinement->erase("SaveAdaptIterations");
-  refinement->erase("SaveAdaptMesh");
-  refinement->erase("UniformLevels");
-  refinement->erase("SerialUniformLevels");
-  refinement->erase("Boxes");
-  refinement->erase("Spheres");
-  MFEM_VERIFY(refinement->empty(),
-              "Found an unsupported configuration file keyword under \"Refinement\"!\n"
-                  << refinement->dump(2));
 }
 
-void ModelData::SetUp(json &config)
+void ModelData::SetUp(const json &config)
 {
   auto model = config.find("Model");
   MFEM_VERIFY(model != config.end(),
@@ -435,30 +401,9 @@ void ModelData::SetUp(json &config)
   reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
   partitioning = model->value("Partitioning", partitioning);
   refinement.SetUp(*model);
-
-  // Cleanup
-  model->erase("Mesh");
-  model->erase("L0");
-  model->erase("Lc");
-  model->erase("RemoveCurvature");
-  model->erase("MakeSimplex");
-  model->erase("MakeHexahedral");
-  model->erase("ReorderElements");
-  model->erase("CleanUnusedElements");
-  model->erase("CrackInternalBoundaryElements");
-  model->erase("RefineCrackElements");
-  model->erase("CrackDisplacementFactor");
-  model->erase("AddInterfaceBoundaryElements");
-  model->erase("ExportPrerefinedMesh");
-  model->erase("ReorientTetMesh");
-  model->erase("Partitioning");
-  model->erase("Refinement");
-  MFEM_VERIFY(model->empty(),
-              "Found an unsupported configuration file keyword under \"Model\"!\n"
-                  << model->dump(2));
 }
 
-void DomainMaterialData::SetUp(json &domains)
+void DomainMaterialData::SetUp(const json &domains)
 {
   auto materials = domains.find("Materials");
   MFEM_VERIFY(materials != domains.end() && materials->is_array(),
@@ -476,22 +421,10 @@ void DomainMaterialData::SetUp(json &domains)
     ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
     ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
     data.lambda_L = it->value("LondonDepth", data.lambda_L);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Permeability");
-    it->erase("Permittivity");
-    it->erase("LossTan");
-    it->erase("Conductivity");
-    it->erase("MaterialAxes");
-    it->erase("LondonDepth");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Materials\"!\n"
-                    << it->dump(2));
   }
 }
 
-void DomainEnergyPostData::SetUp(json &postpro)
+void DomainEnergyPostData::SetUp(const json &postpro)
 {
   auto energy = postpro.find("Energy");
   if (energy == postpro.end())
@@ -512,17 +445,10 @@ void DomainEnergyPostData::SetUp(json &postpro)
     auto &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Energy\"!\n"
-                    << it->dump(2));
   }
 }
 
-void ProbePostData::SetUp(json &postpro)
+void ProbePostData::SetUp(const json &postpro)
 {
   auto probe = postpro.find("Probe");
   if (probe == postpro.end())
@@ -543,17 +469,10 @@ void ProbePostData::SetUp(json &postpro)
                             "the configuration file!");
     auto &data = ret.first->second;
     data.center = ctr->get<std::array<double, 3>>();  // Required
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Center");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Probe\"!\n"
-                    << it->dump(2));
   }
 }
 
-void DomainPostData::SetUp(json &domains)
+void DomainPostData::SetUp(const json &domains)
 {
   auto postpro = domains.find("Postprocessing");
   if (postpro == domains.end())
@@ -571,16 +490,9 @@ void DomainPostData::SetUp(json &domains)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  postpro->erase("Energy");
-  postpro->erase("Probe");
-  MFEM_VERIFY(postpro->empty(),
-              "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
-                  << postpro->dump(2));
 }
 
-void CurrentDipoleSourceData::SetUp(json &domains)
+void CurrentDipoleSourceData::SetUp(const json &domains)
 {
   auto current_dipole = domains.find("CurrentDipole");
   if (current_dipole == domains.end())
@@ -632,19 +544,10 @@ void CurrentDipoleSourceData::SetUp(json &domains)
     }
     data.center = center->get<std::array<double, 3>>();  // Required
     data.moment = it->at("Moment");                      // Required
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Direction");
-    it->erase("Center");
-    it->erase("Moment");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
-                    << it->dump(2));
   }
 }
 
-void DomainData::SetUp(json &config)
+void DomainData::SetUp(const json &config)
 {
   auto domains = config.find("Domains");
   MFEM_VERIFY(domains != config.end(),
@@ -668,17 +571,9 @@ void DomainData::SetUp(json &config)
                 "Domain postprocessing can only be enabled on domains which have a "
                 "corresponding \"Materials\" entry!");
   }
-
-  // Cleanup
-  domains->erase("Materials");
-  domains->erase("CurrentDipole");
-  domains->erase("Postprocessing");
-  MFEM_VERIFY(domains->empty(),
-              "Found an unsupported configuration file keyword under \"Domains\"!\n"
-                  << domains->dump(2));
 }
 
-void PecBoundaryData::SetUp(json &boundaries)
+void PecBoundaryData::SetUp(const json &boundaries)
 {
   auto pec = boundaries.find("PEC");
   auto ground = boundaries.find("Ground");
@@ -703,15 +598,9 @@ void PecBoundaryData::SetUp(json &boundaries)
       "Missing \"Attributes\" list for \"PEC\" boundary in the configuration file!");
   attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pec->erase("Attributes");
-  MFEM_VERIFY(pec->empty(),
-              "Found an unsupported configuration file keyword under \"PEC\"!\n"
-                  << pec->dump(2));
 }
 
-void PmcBoundaryData::SetUp(json &boundaries)
+void PmcBoundaryData::SetUp(const json &boundaries)
 {
   auto pmc = boundaries.find("PMC");
   auto zeroq = boundaries.find("ZeroCharge");
@@ -736,15 +625,9 @@ void PmcBoundaryData::SetUp(json &boundaries)
       "Missing \"Attributes\" list for \"PMC\" boundary in the configuration file!");
   attributes = pmc->at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pmc->erase("Attributes");
-  MFEM_VERIFY(pmc->empty(),
-              "Found an unsupported configuration file keyword under \"PMC\"!\n"
-                  << pmc->dump(2));
 }
 
-void WavePortPecBoundaryData::SetUp(json &boundaries)
+void WavePortPecBoundaryData::SetUp(const json &boundaries)
 {
   auto pec = boundaries.find("WavePortPEC");
   if (pec == boundaries.end())
@@ -756,15 +639,9 @@ void WavePortPecBoundaryData::SetUp(json &boundaries)
               "configuration file!");
   attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pec->erase("Attributes");
-  MFEM_VERIFY(pec->empty(),
-              "Found an unsupported configuration file keyword under \"WavePortPEC\"!\n"
-                  << pec->dump(2));
 }
 
-void FarfieldBoundaryData::SetUp(json &boundaries)
+void FarfieldBoundaryData::SetUp(const json &boundaries)
 {
   auto absorbing = boundaries.find("Absorbing");
   if (absorbing == boundaries.end())
@@ -779,16 +656,9 @@ void FarfieldBoundaryData::SetUp(json &boundaries)
   order = absorbing->value("Order", order);
   MFEM_VERIFY(order == 1 || order == 2,
               "Supported values for config[\"Absorbing\"][\"Order\"] are 1 or 2!");
-
-  // Cleanup
-  absorbing->erase("Attributes");
-  absorbing->erase("Order");
-  MFEM_VERIFY(absorbing->empty(),
-              "Found an unsupported configuration file keyword under \"Absorbing\"!\n"
-                  << absorbing->dump(2));
 }
 
-void ConductivityBoundaryData::SetUp(json &boundaries)
+void ConductivityBoundaryData::SetUp(const json &boundaries)
 {
   auto conductivity = boundaries.find("Conductivity");
   if (conductivity == boundaries.end())
@@ -812,20 +682,10 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     data.mu_r = it->value("Permeability", data.mu_r);
     data.h = it->value("Thickness", data.h);
     data.external = it->value("External", data.external);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Conductivity");
-    it->erase("Permeability");
-    it->erase("Thickness");
-    it->erase("External");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Conductivity\"!\n"
-                    << it->dump(2));
   }
 }
 
-void ImpedanceBoundaryData::SetUp(json &boundaries)
+void ImpedanceBoundaryData::SetUp(const json &boundaries)
 {
   auto impedance = boundaries.find("Impedance");
   if (impedance == boundaries.end())
@@ -845,19 +705,10 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     data.Rs = it->value("Rs", data.Rs);
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Rs");
-    it->erase("Ls");
-    it->erase("Cs");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Impedance\"!\n"
-                    << it->dump(2));
   }
 }
 
-int ParsePortExcitation(json::iterator &port_it, int default_excitation)
+int ParsePortExcitation(json::const_iterator port_it, int default_excitation)
 {
   auto it_excitation = port_it->find("Excitation");
   if (it_excitation == port_it->end())
@@ -881,7 +732,7 @@ int ParsePortExcitation(json::iterator &port_it, int default_excitation)
   }
 }
 
-void LumpedPortBoundaryData::SetUp(json &boundaries)
+void LumpedPortBoundaryData::SetUp(const json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
   auto terminal = boundaries.find("Terminal");
@@ -949,38 +800,12 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
                                 label));
         auto &elem = data.elements.emplace_back();
         ParseElementData(*elem_it, terminal == boundaries.end(), elem);
-
-        // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(), fmt::format("Found an unsupported configuration file "
-                                                  "keyword under {} element!\n{}",
-                                                  label, elem_it->dump(2)));
       }
     }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("R");
-    it->erase("L");
-    it->erase("C");
-    it->erase("Rs");
-    it->erase("Ls");
-    it->erase("Cs");
-    it->erase("Excitation");
-    it->erase("Active");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("CoordinateSystem");
-    it->erase("Elements");
-    MFEM_VERIFY(it->empty(),
-                fmt::format("Found an unsupported configuration file keyword under {}!\n{}",
-                            label, it->dump(2)));
   }
 }
 
-void PeriodicBoundaryData::SetUp(json &boundaries)
+void PeriodicBoundaryData::SetUp(const json &boundaries)
 {
   auto periodic = boundaries.find("Periodic");
   if (periodic == boundaries.end())
@@ -1032,19 +857,10 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
-
-    // Cleanup
-    it->erase("DonorAttributes");
-    it->erase("ReceiverAttributes");
-    it->erase("Translation");
-    it->erase("AffineTransformation");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Periodic\"!\n"
-                    << it->dump(2));
   }
 }
 
-void WavePortBoundaryData::SetUp(json &boundaries)
+void WavePortBoundaryData::SetUp(const json &boundaries)
 {
   auto port = boundaries.find("WavePort");
   if (port == boundaries.end())
@@ -1078,26 +894,10 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
     data.eig_tol = it->value("EigenTol", data.eig_tol);
     data.verbose = it->value("Verbose", data.verbose);
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Mode");
-    it->erase("Offset");
-    it->erase("SolverType");
-    it->erase("Excitation");
-    it->erase("Active");
-    it->erase("MaxIts");
-    it->erase("KSPTol");
-    it->erase("EigenTol");
-    it->erase("Verbose");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"WavePort\"!\n"
-                    << it->dump(2));
   }
 }
 
-void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
+void SurfaceCurrentBoundaryData::SetUp(const json &boundaries)
 {
   auto source = boundaries.find("SurfaceCurrent");
   if (source == boundaries.end())
@@ -1136,31 +936,12 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             "configuration file!");
         auto &elem = data.elements.emplace_back();
         ParseElementData(*elem_it, true, elem);
-
-        // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
-                                      "under \"SurfaceCurrent\" boundary element!\n"
-                                          << elem_it->dump(2));
       }
     }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("Elements");
-    it->erase("CoordinateSystem");
-    MFEM_VERIFY(
-        it->empty(),
-        "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
-            << it->dump(2));
   }
 }
 
-void SurfaceFluxPostData::SetUp(json &postpro)
+void SurfaceFluxPostData::SetUp(const json &postpro)
 {
   auto flux = postpro.find("SurfaceFlux");
   if (flux == postpro.end())
@@ -1191,20 +972,10 @@ void SurfaceFluxPostData::SetUp(json &postpro)
       data.center = ctr->get<std::array<double, 3>>();
       data.no_center = false;
     }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Type");
-    it->erase("TwoSided");
-    it->erase("Center");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"SurfaceFlux\"!\n"
-                    << it->dump(2));
   }
 }
 
-void InterfaceDielectricPostData::SetUp(json &postpro)
+void InterfaceDielectricPostData::SetUp(const json &postpro)
 {
   auto dielectric = postpro.find("Dielectric");
   if (dielectric == postpro.end())
@@ -1230,20 +1001,9 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     data.t = it->at("Thickness");             // Required
     data.epsilon_r = it->at("Permittivity");  // Required
     data.tandelta = it->value("LossTan", data.tandelta);
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Type");
-    it->erase("Thickness");
-    it->erase("Permittivity");
-    it->erase("LossTan");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
-                    << it->dump(2));
   }
 }
-void FarFieldPostData::SetUp(json &postpro)
+void FarFieldPostData::SetUp(const json &postpro)
 {
   auto farfield = postpro.find("FarField");
   if (farfield == postpro.end())
@@ -1396,16 +1156,8 @@ void FarFieldPostData::SetUp(json &postpro)
   {
     MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
   }
-
-  // Cleanup
-  farfield->erase("Attributes");
-  farfield->erase("NSample");
-  farfield->erase("ThetaPhis");
-  MFEM_VERIFY(farfield->empty(),
-              "Found an unsupported configuration file keyword under \"FarField\"!\n"
-                  << farfield->dump(2));
 }
-void BoundaryPostData::SetUp(json &boundaries)
+void BoundaryPostData::SetUp(const json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
   if (postpro == boundaries.end())
@@ -1432,17 +1184,9 @@ void BoundaryPostData::SetUp(json &boundaries)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  postpro->erase("SurfaceFlux");
-  postpro->erase("Dielectric");
-  postpro->erase("FarField");
-  MFEM_VERIFY(postpro->empty(),
-              "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
-                  << postpro->dump(2));
 }
 
-void BoundaryData::SetUp(json &config)
+void BoundaryData::SetUp(const json &config)
 {
   auto boundaries = config.find("Boundaries");
   MFEM_VERIFY(boundaries != config.end(),
@@ -1556,26 +1300,6 @@ void BoundaryData::SetUp(json &config)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  boundaries->erase("PEC");
-  boundaries->erase("PMC");
-  boundaries->erase("WavePortPEC");
-  boundaries->erase("Absorbing");
-  boundaries->erase("Conductivity");
-  boundaries->erase("Impedance");
-  boundaries->erase("LumpedPort");
-  boundaries->erase("Periodic");
-  boundaries->erase("FloquetWaveVector");
-  boundaries->erase("WavePort");
-  boundaries->erase("SurfaceCurrent");
-  boundaries->erase("Ground");
-  boundaries->erase("ZeroCharge");
-  boundaries->erase("Terminal");
-  boundaries->erase("Postprocessing");
-  MFEM_VERIFY(boundaries->empty(),
-              "Found an unsupported configuration file keyword under \"Boundaries\"!\n"
-                  << boundaries->dump(2));
 }
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
@@ -1633,7 +1357,7 @@ auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
   return vec.end();
 }
 
-void DrivenSolverData::SetUp(json &solver)
+void DrivenSolverData::SetUp(const json &solver)
 {
   auto driven = solver.find("Driven");
   if (driven == solver.end())
@@ -1723,19 +1447,6 @@ void DrivenSolverData::SetUp(json &solver)
         }
         prom_f.insert(prom_f.end(), f.begin(), f.end());
       }
-
-      // Cleanup
-      r.erase("Type");
-      r.erase("MinFreq");
-      r.erase("MaxFreq");
-      r.erase("FreqStep");
-      r.erase("NSample");
-      r.erase("Freq");
-      r.erase("SaveStep");
-      r.erase("AddToPROM");
-      MFEM_VERIFY(r.empty(),
-                  "Found an unsupported configuration file keyword in \"Samples\"!\n"
-                      << r.dump(2));
     }
   }
 
@@ -1801,24 +1512,9 @@ void DrivenSolverData::SetUp(json &solver)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
-
-  // Cleanup
-  driven->erase("MinFreq");
-  driven->erase("MaxFreq");
-  driven->erase("FreqStep");
-  driven->erase("Samples");
-  driven->erase("Save");
-  driven->erase("SaveStep");
-  driven->erase("Restart");
-  driven->erase("AdaptiveTol");
-  driven->erase("AdaptiveMaxSamples");
-  driven->erase("AdaptiveConvergenceMemory");
-  MFEM_VERIFY(driven->empty(),
-              "Found an unsupported configuration file keyword under \"Driven\"!\n"
-                  << driven->dump(2));
 }
 
-void EigenSolverData::SetUp(json &solver)
+void EigenSolverData::SetUp(const json &solver)
 {
   auto eigenmode = solver.find("Eigenmode");
   if (eigenmode == solver.end())
@@ -1860,33 +1556,9 @@ void EigenSolverData::SetUp(json &solver)
               "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
 
   MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
-
-  // Cleanup
-  eigenmode->erase("Target");
-  eigenmode->erase("Tol");
-  eigenmode->erase("MaxIts");
-  eigenmode->erase("MaxSize");
-  eigenmode->erase("N");
-  eigenmode->erase("Save");
-  eigenmode->erase("Type");
-  eigenmode->erase("PEPLinear");
-  eigenmode->erase("Scaling");
-  eigenmode->erase("StartVector");
-  eigenmode->erase("StartVectorConstant");
-  eigenmode->erase("MassOrthogonal");
-  eigenmode->erase("NonlinearType");
-  eigenmode->erase("RefineNonlinear");
-  eigenmode->erase("LinearTol");
-  eigenmode->erase("TargetUpper");
-  eigenmode->erase("PreconditionerLag");
-  eigenmode->erase("PreconditionerLagTol");
-  eigenmode->erase("MaxRestart");
-  MFEM_VERIFY(eigenmode->empty(),
-              "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
-                  << eigenmode->dump(2));
 }
 
-void ElectrostaticSolverData::SetUp(json &solver)
+void ElectrostaticSolverData::SetUp(const json &solver)
 {
   auto electrostatic = solver.find("Electrostatic");
   if (electrostatic == solver.end())
@@ -1894,15 +1566,9 @@ void ElectrostaticSolverData::SetUp(json &solver)
     return;
   }
   n_post = electrostatic->value("Save", n_post);
-
-  // Cleanup
-  electrostatic->erase("Save");
-  MFEM_VERIFY(electrostatic->empty(),
-              "Found an unsupported configuration file keyword under \"Electrostatic\"!\n"
-                  << electrostatic->dump(2));
 }
 
-void MagnetostaticSolverData::SetUp(json &solver)
+void MagnetostaticSolverData::SetUp(const json &solver)
 {
   auto magnetostatic = solver.find("Magnetostatic");
   if (magnetostatic == solver.end())
@@ -1910,15 +1576,9 @@ void MagnetostaticSolverData::SetUp(json &solver)
     return;
   }
   n_post = magnetostatic->value("Save", n_post);
-
-  // Cleanup
-  magnetostatic->erase("Save");
-  MFEM_VERIFY(magnetostatic->empty(),
-              "Found an unsupported configuration file keyword under \"Magnetostatic\"!\n"
-                  << magnetostatic->dump(2));
 }
 
-void TransientSolverData::SetUp(json &solver)
+void TransientSolverData::SetUp(const json &solver)
 {
   auto transient = solver.find("Transient");
   if (transient == solver.end())
@@ -1967,24 +1627,9 @@ void TransientSolverData::SetUp(json &solver)
     MFEM_VERIFY(order >= 2 && order <= 5,
                 "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
   }
-
-  // Cleanup
-  transient->erase("Type");
-  transient->erase("Excitation");
-  transient->erase("ExcitationFreq");
-  transient->erase("ExcitationWidth");
-  transient->erase("MaxTime");
-  transient->erase("TimeStep");
-  transient->erase("SaveStep");
-  transient->erase("Order");
-  transient->erase("RelTol");
-  transient->erase("AbsTol");
-  MFEM_VERIFY(transient->empty(),
-              "Found an unsupported configuration file keyword under \"Transient\"!\n"
-                  << transient->dump(2));
 }
 
-void LinearSolverData::SetUp(json &solver)
+void LinearSolverData::SetUp(const json &solver)
 {
   auto linear = solver.find("Linear");
   if (linear == solver.end())
@@ -2038,54 +1683,9 @@ void LinearSolverData::SetUp(json &solver)
   estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
   estimator_mg = linear->value("EstimatorMG", estimator_mg);
   gs_orthog = linear->value("GSOrthogonalization", gs_orthog);
-
-  // Cleanup
-  linear->erase("Type");
-  linear->erase("KSPType");
-  linear->erase("Tol");
-  linear->erase("MaxIts");
-  linear->erase("MaxSize");
-  linear->erase("InitialGuess");
-
-  linear->erase("MGMaxLevels");
-  linear->erase("MGCoarsenType");
-  linear->erase("MGUseMesh");
-  linear->erase("MGCycleIts");
-  linear->erase("MGAuxiliarySmoother");
-  linear->erase("MGSmoothIts");
-  linear->erase("MGSmoothOrder");
-  linear->erase("MGSmoothEigScaleMax");
-  linear->erase("MGSmoothEigScaleMin");
-  linear->erase("MGSmoothChebyshev4th");
-
-  linear->erase("PCMatReal");
-  linear->erase("PCMatShifted");
-  linear->erase("ComplexCoarseSolve");
-  linear->erase("DropSmallEntries");
-  linear->erase("ReorderingReuse");
-  linear->erase("PCSide");
-  linear->erase("ColumnOrdering");
-  linear->erase("STRUMPACKCompressionType");
-  linear->erase("STRUMPACKCompressionTol");
-  linear->erase("STRUMPACKLossyPrecision");
-  linear->erase("STRUMPACKButterflyLevels");
-  linear->erase("SuperLU3DCommunicator");
-  linear->erase("AMSVectorInterpolation");
-  linear->erase("AMSSingularOperator");
-  linear->erase("AMGAggressiveCoarsening");
-
-  linear->erase("DivFreeTol");
-  linear->erase("DivFreeMaxIts");
-  linear->erase("EstimatorTol");
-  linear->erase("EstimatorMaxIts");
-  linear->erase("EstimatorMG");
-  linear->erase("GSOrthogonalization");
-  MFEM_VERIFY(linear->empty(),
-              "Found an unsupported configuration file keyword under \"Linear\"!\n"
-                  << linear->dump(2));
 }
 
-void SolverData::SetUp(json &config)
+void SolverData::SetUp(const json &config)
 {
   auto solver = config.find("Solver");
   if (solver == config.end())
@@ -2105,24 +1705,6 @@ void SolverData::SetUp(json &config)
   magnetostatic.SetUp(*solver);
   transient.SetUp(*solver);
   linear.SetUp(*solver);
-
-  // Cleanup
-  solver->erase("Order");
-  solver->erase("PartialAssemblyOrder");
-  solver->erase("QuadratureOrderJacobian");
-  solver->erase("QuadratureOrderExtra");
-  solver->erase("Device");
-  solver->erase("Backend");
-
-  solver->erase("Driven");
-  solver->erase("Eigenmode");
-  solver->erase("Electrostatic");
-  solver->erase("Magnetostatic");
-  solver->erase("Transient");
-  solver->erase("Linear");
-  MFEM_VERIFY(solver->empty(),
-              "Found an unsupported configuration file keyword under \"Solver\"!\n"
-                  << solver->dump(2));
 }
 
 int GetNumSteps(double start, double end, double delta)
