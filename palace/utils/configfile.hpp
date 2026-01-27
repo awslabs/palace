@@ -503,6 +503,19 @@ public:
   void SetUp(const json &boundaries);
 };
 
+struct TerminalData
+{
+public:
+  // List of boundary attributes for this terminal.
+  std::vector<int> attributes = {};
+};
+
+struct TerminalBoundaryData : public internal::DataMap<TerminalData>
+{
+public:
+  void SetUp(const json &boundaries);
+};
+
 struct PeriodicData
 {
 public:
@@ -683,6 +696,7 @@ public:
   ConductivityBoundaryData conductivity = {};
   ImpedanceBoundaryData impedance = {};
   LumpedPortBoundaryData lumpedport = {};
+  TerminalBoundaryData terminal = {};
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};

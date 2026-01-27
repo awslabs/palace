@@ -52,7 +52,7 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.pec.empty() || !iodata.boundaries.lumpedport.empty())
+  if (!iodata.boundaries.pec.empty() || !iodata.boundaries.terminal.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -80,19 +80,16 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
       utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
       Mpi::Print("\n");
     }
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    for (const auto &[idx, data] : iodata.boundaries.terminal)
     {
-      for (const auto &elem : data.elements)
+      for (auto attr : data.attributes)
       {
-        for (auto attr : elem.attributes)
-        {
-          MFEM_VERIFY(
-              attr > 0 && attr <= bdr_attr_max,
-              "Terminal boundary attribute tags must be non-negative and correspond to "
-              "attributes in the mesh!");
-          MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
-                      "Unknown terminal boundary attribute " << attr << "!");
-        }
+        MFEM_VERIFY(
+            attr > 0 && attr <= bdr_attr_max,
+            "Terminal boundary attribute tags must be non-negative and correspond to "
+            "attributes in the mesh!");
+        MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
+                    "Unknown terminal boundary attribute " << attr << "!");
       }
     }
   }
@@ -100,7 +97,7 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
   mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()) +
-                  static_cast<int>(iodata.boundaries.lumpedport.size()));
+                  static_cast<int>(iodata.boundaries.terminal.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
@@ -109,14 +106,11 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     dbc_bcs.Append(attr);
   }
-  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  for (const auto &[idx, data] : iodata.boundaries.terminal)
   {
-    for (const auto &elem : data.elements)
+    for (auto attr : data.attributes)
     {
-      for (auto attr : elem.attributes)
-      {
-        dbc_bcs.Append(attr);
-      }
+      dbc_bcs.Append(attr);
     }
   }
   MFEM_VERIFY(dbc_bcs.Size() > 0,
@@ -128,17 +122,13 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &
 {
   // Construct mapping from terminal index to list of associated attributes.
   std::map<int, mfem::Array<int>> attr_lists;
-  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  for (const auto &[idx, data] : iodata.boundaries.terminal)
   {
     mfem::Array<int> &attr_list = attr_lists[idx];
-    attr_list.Reserve(
-        static_cast<int>(data.elements.size()));  // Average one attribute per element
-    for (const auto &elem : data.elements)
+    attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    for (auto attr : data.attributes)
     {
-      for (auto attr : elem.attributes)
-      {
-        attr_list.Append(attr);
-      }
+      attr_list.Append(attr);
     }
   }
   return attr_lists;
