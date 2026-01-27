@@ -4,7 +4,7 @@
 // Test the near-to-far field transformations implemented in
 // SurfacePostOperator.
 //
-// This test validates the far-field computation by setting up a known dipole
+// This test verifies the far-field computation by setting up a known dipole
 // field and comparing the computed far-field against analytical expectations.
 //
 // More specifically, we set up a time-harmonic Hertzian dipole aligned on the z
@@ -241,7 +241,7 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   auto rE_computed =
       surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
 
-  // Validate computed far-field against analytical solution
+  // Verify computed far-field against analytical solution
   for (size_t i = 0; i < thetaphis.size(); i++)
   {
     const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
