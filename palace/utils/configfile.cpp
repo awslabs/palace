@@ -170,13 +170,7 @@ namespace
 
 int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
-  MFEM_VERIFY(
-      port_it->find("Index") != port_it->end(),
-      fmt::format("Missing {} \"Index\" in the configuration file!", errmsg_parent));
-  auto index = port_it->at("Index").get<int>();
-  MFEM_VERIFY(index > 0, fmt::format("The {} \"Index\" should be an integer > 0; got {}",
-                                     errmsg_parent, index));
-  return index;
+  return port_it->at("Index").get<int>();
 }
 
 template <std::size_t N>
@@ -313,40 +307,17 @@ void RefinementData::SetUp(const json &model)
   maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
   save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
   save_adapt_mesh = refinement->value("SaveAdaptMesh", save_adapt_mesh);
-  MFEM_VERIFY(tol > 0.0, "config[\"Refinement\"][\"Tol\"] must be strictly positive!");
-  MFEM_VERIFY(max_it >= 0, "config[\"Refinement\"][\"MaxIts\"] must be non-negative!");
-  MFEM_VERIFY(max_size >= 0, "config[\"Refinement\"][\"MaxSize\"] must be non-negative!");
-  MFEM_VERIFY(max_nc_levels >= 0,
-              "config[\"Refinement\"][\"MaxNCLevels\"] must be non-negative!");
-  MFEM_VERIFY(update_fraction > 0 && update_fraction < 1,
-              "config[\"Refinement\"][\"UpdateFraction\" must be in (0,1)!");
-  MFEM_VERIFY(
-      maximum_imbalance >= 1,
-      "config[\"Refinement\"][\"MaximumImbalance\"] must be greater than or equal to 1!");
 
   // Options for a priori refinement.
   uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
   ser_uniform_ref_levels = refinement->value("SerialUniformLevels", ser_uniform_ref_levels);
-  MFEM_VERIFY(uniform_ref_levels >= 0 && ser_uniform_ref_levels >= 0,
-              "Number of uniform mesh refinement levels must be non-negative!");
   auto boxes = refinement->find("Boxes");
   if (boxes != refinement->end())
   {
-    MFEM_VERIFY(boxes->is_array(), "config[\"Refinement\"][\"Boxes\"] should specify an "
-                                   "array in the configuration file!");
     for (auto it = boxes->begin(); it != boxes->end(); ++it)
     {
-      MFEM_VERIFY(
-          it->find("Levels") != it->end(),
-          "Missing \"Boxes\" refinement region \"Levels\" in the configuration file!");
       auto bbmin = it->find("BoundingBoxMin");
       auto bbmax = it->find("BoundingBoxMax");
-      MFEM_VERIFY(bbmin != it->end() && bbmax != it->end(),
-                  "Missing \"Boxes\" refinement region \"BoundingBoxMin/Max\" in the "
-                  "configuration file!");
-      MFEM_VERIFY(bbmin->is_array() && bbmin->is_array(),
-                  "config[\"Refinement\"][\"Boxes\"][\"BoundingBoxMin/Max\"] should "
-                  "specify an array in the configuration file!");
       BoxRefinementData &data = box_list.emplace_back();
       data.ref_levels = it->at("Levels");                // Required
       data.bbmin = bbmin->get<std::array<double, 3>>();  // Required
@@ -356,20 +327,9 @@ void RefinementData::SetUp(const json &model)
   auto spheres = refinement->find("Spheres");
   if (spheres != refinement->end())
   {
-    MFEM_VERIFY(spheres->is_array(), "config[\"Refinement\"][\"Spheres\"] should specify "
-                                     "an array in the configuration file!");
     for (auto it = spheres->begin(); it != spheres->end(); ++it)
     {
-      MFEM_VERIFY(
-          it->find("Levels") != it->end(),
-          "Missing \"Spheres\" refinement region \"Levels\" in the configuration file!");
       auto ctr = it->find("Center");
-      MFEM_VERIFY(ctr != it->end() && it->find("Radius") != it->end(),
-                  "Missing \"Spheres\" refinement region \"Center\" or \"Radius\" in "
-                  "configuration file!");
-      MFEM_VERIFY(ctr->is_array(),
-                  "config[\"Refinement\"][\"Spheres\"][\"Center\"] should specify "
-                  "an array in the configuration file!");
       SphereRefinementData &data = sphere_list.emplace_back();
       data.ref_levels = it->at("Levels");               // Required
       data.r = it->at("Radius");                        // Required
@@ -654,8 +614,6 @@ void FarfieldBoundaryData::SetUp(const json &boundaries)
   attributes = absorbing->at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   order = absorbing->value("Order", order);
-  MFEM_VERIFY(order == 1 || order == 2,
-              "Supported values for config[\"Absorbing\"][\"Order\"] are 1 or 2!");
 }
 
 void ConductivityBoundaryData::SetUp(const json &boundaries)
@@ -883,8 +841,6 @@ void WavePortBoundaryData::SetUp(const json &boundaries)
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.mode_idx = it->value("Mode", data.mode_idx);
-    MFEM_VERIFY(data.mode_idx > 0,
-                "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
     data.eigen_solver = it->value("SolverType", data.eigen_solver);
 
@@ -1545,17 +1501,8 @@ void EigenSolverData::SetUp(const json &solver)
   max_restart = eigenmode->value("MaxRestart", max_restart);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
-  MFEM_VERIFY(target > 0.0, "config[\"Eigenmode\"][\"Target\"] must be strictly positive!");
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
-  MFEM_VERIFY(preconditioner_lag >= 0,
-              "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
-  MFEM_VERIFY(preconditioner_lag_tol >= 0,
-              "config[\"Eigenmode\"][\"PreconditionerLagTol\"] must be non-negative!");
-  MFEM_VERIFY(max_restart >= 0,
-              "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
-
-  MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
 }
 
 void ElectrostaticSolverData::SetUp(const json &solver)
@@ -1602,7 +1549,6 @@ void TransientSolverData::SetUp(const json &solver)
   order = transient->value("Order", order);
   rel_tol = transient->value("RelTol", rel_tol);
   abs_tol = transient->value("AbsTol", abs_tol);
-  MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
 
   if (type == TimeSteppingScheme::GEN_ALPHA || type == TimeSteppingScheme::RUNGE_KUTTA)
   {
@@ -1617,15 +1563,6 @@ void TransientSolverData::SetUp(const json &solver)
           "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
           "config[\"Transient\"][\"RelTol\"] and config[\"Transient\"][\"AbsTol\"]!");
     }
-  }
-  else
-  {
-    MFEM_VERIFY(rel_tol > 0,
-                "config[\"Transient\"][\"RelTol\"] must be strictly positive!");
-    MFEM_VERIFY(abs_tol > 0,
-                "config[\"Transient\"][\"AbsTol\"] must be strictly positive!");
-    MFEM_VERIFY(order >= 2 && order <= 5,
-                "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
   }
 }
 
