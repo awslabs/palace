@@ -259,12 +259,9 @@ TEST_CASE("FarField", "[config][Serial]")
 {
   constexpr double delta_eps = 1.0e-6;  // Precision in angle comparisons (rad)
 
-  SECTION("Missing FarField section")
+  SECTION("Default constructor")
   {
-    json postpro = json::object();
     config::FarFieldPostData data;
-
-    data.SetUp(postpro);
 
     CHECK(data.attributes.empty());
     CHECK(data.thetaphis.empty());
@@ -273,10 +270,8 @@ TEST_CASE("FarField", "[config][Serial]")
   SECTION("Basic setup with attributes only")
   {
     // This should produce a warning because there is no target point.
-    json postpro = {{"FarField", {{"Attributes", {1, 3, 5}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1, 3, 5}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.attributes == std::vector<int>{1, 3, 5});
     CHECK(data.thetaphis.empty());
@@ -284,11 +279,8 @@ TEST_CASE("FarField", "[config][Serial]")
 
   SECTION("ThetaPhis conversion to radians")
   {
-    json postpro = {
-        {"FarField", {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 2);
     CHECK(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
@@ -299,13 +291,9 @@ TEST_CASE("FarField", "[config][Serial]")
 
   SECTION("Duplicate removal")
   {
-    json postpro = {
-        {"FarField",
-         {{"Attributes", {1}},
-          {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}},
+                     {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 2);
   }
@@ -314,46 +302,35 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     // Test pole singularity: (0°, any φ) should be treated as same point.
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}},
+                       {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // All should collapse to one pole.
     }
 
     // Test phi periodicity: φ and φ+360° are same point.
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}},
-            {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}}}};  // 390° = 30° + 360°
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}},
+                       {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}};  // 390° = 30° + 360°
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
     }
 
     // Test theta reflection: (θ, φ) ≡ (180°-θ, φ+180°).
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}},
-            {"ThetaPhis",
-             {{60.0, 45.0}, {120.0, 225.0}}}}}};  // 120° = 180°-60°, 225° = 45°+180°
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {
+          {"Attributes", {1}},
+          {"ThetaPhis",
+           {{60.0, 45.0}, {120.0, 225.0}}}};  // 120° = 180°-60°, 225° = 45°+180°
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
     }
   }
 
   SECTION("Combined NSample and ThetaPhis")
   {
-    json postpro = {
-        {"FarField",
-         {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis.
   }
@@ -362,9 +339,8 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     for (int nsample : {2, 6, 10, 15, 20, 25, 64800})
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", nsample}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", nsample}};
+      config::FarFieldPostData data(farfield);
 
       // Exact point count.
       CHECK(data.thetaphis.size() == nsample);
@@ -417,17 +393,15 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     // NSample = 0 produces no points.
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 0}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", 0}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.empty());
     }
 
     // NSample = 1 produces two points (the poles).
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 1}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", 1}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 2);
     }
   }

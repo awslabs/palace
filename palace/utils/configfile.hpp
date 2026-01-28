@@ -329,7 +329,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  PecBoundaryData() = default;
+  PecBoundaryData(const json &pec);
 };
 
 struct PmcBoundaryData
@@ -340,7 +341,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  PmcBoundaryData() = default;
+  PmcBoundaryData(const json &pmc);
 };
 
 struct WavePortPecBoundaryData
@@ -351,7 +353,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  WavePortPecBoundaryData() = default;
+  WavePortPecBoundaryData(const json &auxpec);
 };
 
 struct FarfieldBoundaryData
@@ -365,7 +368,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  FarfieldBoundaryData() = default;
+  FarfieldBoundaryData(const json &absorbing);
 };
 
 struct ConductivityData
@@ -429,23 +433,9 @@ public:
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
-};
 
-struct LumpedPortBoundaryData
-{
-public:
-  std::map<int, LumpedPortData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  LumpedPortData() = default;
+  LumpedPortData(const json &port, int index);
 };
 
 struct TerminalData
@@ -518,23 +508,9 @@ public:
 
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
-};
 
-struct WavePortBoundaryData
-{
-public:
-  std::map<int, WavePortData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  WavePortData() = default;
+  WavePortData(const json &port, int index);
 };
 
 struct SurfaceCurrentData
@@ -543,23 +519,9 @@ public:
   // For each surface current source index, each element contains a list of attributes
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};
-};
 
-struct SurfaceCurrentBoundaryData
-{
-public:
-  std::map<int, SurfaceCurrentData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  SurfaceCurrentData() = default;
+  SurfaceCurrentData(const json &source);
 };
 
 struct SurfaceFluxData
@@ -618,7 +580,8 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
-  void SetUp(const json &postpro);
+  FarFieldPostData() = default;
+  FarFieldPostData(const json &farfield);
 
   bool empty() const { return thetaphis.empty(); };
 };
@@ -653,10 +616,10 @@ public:
   FarfieldBoundaryData farfield = {};
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
-  LumpedPortBoundaryData lumpedport = {};
+  std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
-  WavePortBoundaryData waveport = {};
-  SurfaceCurrentBoundaryData current = {};
+  std::map<int, WavePortData> waveport = {};
+  std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
