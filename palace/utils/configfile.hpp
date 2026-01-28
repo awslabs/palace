@@ -148,7 +148,8 @@ public:
   const auto &GetSpheres() const { return sphere_list; }
   auto &GetSpheres() { return sphere_list; }
 
-  void SetUp(const json &model);
+  RefinementData() = default;
+  RefinementData(const json &refinement);
 };
 
 struct ModelData
@@ -207,7 +208,8 @@ public:
   // Object controlling mesh refinement.
   RefinementData refinement = {};
 
-  void SetUp(const json &config);
+  ModelData() = default;
+  ModelData(const json &model);
 };
 
 // Domain Config.
@@ -255,8 +257,6 @@ public:
 
   MaterialData() = default;
   MaterialData(const json &domain);
-
-  void SetUp(const json &domain);
 };
 
 struct DomainEnergyData
@@ -289,7 +289,8 @@ public:
   std::map<int, DomainEnergyData> energy = {};
   std::map<int, ProbeData> probe = {};
 
-  void SetUp(const json &domains);
+  DomainPostData() = default;
+  DomainPostData(const json &postpro);
 };
 
 struct CurrentDipoleData
@@ -319,7 +320,8 @@ public:
   std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
 
-  void SetUp(const json &config);
+  DomainData() = default;
+  DomainData(const json &domains);
 };
 
 // Boundary Configuration.
@@ -474,7 +476,8 @@ public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
-  void SetUp(const json &boundaries);
+  PeriodicBoundaryData() = default;
+  PeriodicBoundaryData(const json &periodic);
 };
 
 struct WavePortData
@@ -600,7 +603,8 @@ public:
   std::map<int, InterfaceDielectricData> dielectric = {};
   FarFieldPostData farfield = {};
 
-  void SetUp(const json &boundaries);
+  BoundaryPostData() = default;
+  BoundaryPostData(const json &postpro);
 };
 
 struct BoundaryData
@@ -626,7 +630,8 @@ public:
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
-  void SetUp(const json &config);
+  BoundaryData() = default;
+  BoundaryData(const json &boundaries);
 };
 
 // Solver Configuration.
@@ -939,7 +944,8 @@ public:
   TransientSolverData transient = {};
   LinearSolverData linear = {};
 
-  void SetUp(const json &config);
+  SolverData() = default;
+  SolverData(const json &solver);
 };
 
 // Calculate the number of steps from [start, end) in increments of delta. Will only include

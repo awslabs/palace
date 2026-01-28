@@ -26,8 +26,8 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
 
   {
     // Basic passing config with bool excitation.
-    config::BoundaryData boundary_ex_bool;
-    REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
+    auto entry = config.find("boundaries_1_pass")->find("Boundaries");
+    config::BoundaryData boundary_ex_bool(*entry);
 
     // Check simple parsing & defaults:
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
@@ -38,9 +38,8 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);
 
     // Equivalent config with int excitation.
-    config::BoundaryData boundary_ex_int;
-    REQUIRE_NOTHROW(
-        boundary_ex_int.SetUp(*config.find("boundaries_1_pass_excitation_int")));
+    auto entry_int = config.find("boundaries_1_pass_excitation_int")->find("Boundaries");
+    config::BoundaryData boundary_ex_int(*entry_int);
 
     // FUTURE: Default equality is C++20.
     // CHECK(boundary_ex_bool == boundary_ex_int);
@@ -56,62 +55,62 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
   // Excitation Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_1")));
+    auto entry = config.find("boundaries_negative_excitation_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_2")));
+    auto entry = config.find("boundaries_negative_excitation_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Index Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_lumped")));
+    auto entry = config.find("boundaries_repeated_index_lumped")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_wave")));
+    auto entry = config.find("boundaries_repeated_index_wave")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_mixed")));
+    auto entry = config.find("boundaries_repeated_index_mixed")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_1")));
+    auto entry = config.find("boundaries_mislabeled_index_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_2")));
+    auto entry = config.find("boundaries_mislabeled_index_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Mark single excitation index.
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_1")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_2")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_2")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_3")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_3")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 4);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_4")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_4")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 1);

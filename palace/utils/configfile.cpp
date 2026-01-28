@@ -259,30 +259,24 @@ ProblemData::ProblemData(const json &problem)
   }
 }
 
-void RefinementData::SetUp(const json &model)
+RefinementData::RefinementData(const json &refinement)
 {
-  auto refinement = model.find("Refinement");
-  if (refinement == model.end())
-  {
-    return;
-  }
-
   // Options for AMR.
-  tol = refinement->value("Tol", tol);
-  max_it = refinement->value("MaxIts", max_it);
-  max_size = refinement->value("MaxSize", max_size);
-  nonconformal = refinement->value("Nonconformal", nonconformal);
-  max_nc_levels = refinement->value("MaxNCLevels", max_nc_levels);
-  update_fraction = refinement->value("UpdateFraction", update_fraction);
-  maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
-  save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
-  save_adapt_mesh = refinement->value("SaveAdaptMesh", save_adapt_mesh);
+  tol = refinement.value("Tol", tol);
+  max_it = refinement.value("MaxIts", max_it);
+  max_size = refinement.value("MaxSize", max_size);
+  nonconformal = refinement.value("Nonconformal", nonconformal);
+  max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
+  update_fraction = refinement.value("UpdateFraction", update_fraction);
+  maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
+  save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
+  save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
 
   // Options for a priori refinement.
-  uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
-  ser_uniform_ref_levels = refinement->value("SerialUniformLevels", ser_uniform_ref_levels);
-  auto boxes = refinement->find("Boxes");
-  if (boxes != refinement->end())
+  uniform_ref_levels = refinement.value("UniformLevels", uniform_ref_levels);
+  ser_uniform_ref_levels = refinement.value("SerialUniformLevels", ser_uniform_ref_levels);
+  auto boxes = refinement.find("Boxes");
+  if (boxes != refinement.end())
   {
     for (auto it = boxes->begin(); it != boxes->end(); ++it)
     {
@@ -294,8 +288,8 @@ void RefinementData::SetUp(const json &model)
       data.bbmax = bbmax->get<std::array<double, 3>>();  // Required
     }
   }
-  auto spheres = refinement->find("Spheres");
-  if (spheres != refinement->end())
+  auto spheres = refinement.find("Spheres");
+  if (spheres != refinement.end())
   {
     for (auto it = spheres->begin(); it != spheres->end(); ++it)
     {
@@ -308,29 +302,27 @@ void RefinementData::SetUp(const json &model)
   }
 }
 
-void ModelData::SetUp(const json &config)
+ModelData::ModelData(const json &model)
 {
-  auto model = config.find("Model");
-  MFEM_VERIFY(model != config.end(),
-              "\"Model\" must be specified in the configuration file!");
-  MFEM_VERIFY(model->find("Mesh") != model->end(),
-              "Missing config[\"Model\"][\"Mesh\"] file in the configuration file!");
-  mesh = model->at("Mesh");  // Required
-  L0 = model->value("L0", L0);
-  Lc = model->value("Lc", Lc);
-  remove_curvature = model->value("RemoveCurvature", remove_curvature);
-  make_simplex = model->value("MakeSimplex", make_simplex);
-  make_hex = model->value("MakeHexahedral", make_hex);
-  reorder_elements = model->value("ReorderElements", reorder_elements);
-  clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
-  crack_bdr_elements = model->value("CrackInternalBoundaryElements", crack_bdr_elements);
-  refine_crack_elements = model->value("RefineCrackElements", refine_crack_elements);
-  crack_displ_factor = model->value("CrackDisplacementFactor", crack_displ_factor);
-  add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
-  export_prerefined_mesh = model->value("ExportPrerefinedMesh", export_prerefined_mesh);
-  reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
-  partitioning = model->value("Partitioning", partitioning);
-  refinement.SetUp(*model);
+  mesh = model.at("Mesh");  // Required
+  L0 = model.value("L0", L0);
+  Lc = model.value("Lc", Lc);
+  remove_curvature = model.value("RemoveCurvature", remove_curvature);
+  make_simplex = model.value("MakeSimplex", make_simplex);
+  make_hex = model.value("MakeHexahedral", make_hex);
+  reorder_elements = model.value("ReorderElements", reorder_elements);
+  clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
+  crack_bdr_elements = model.value("CrackInternalBoundaryElements", crack_bdr_elements);
+  refine_crack_elements = model.value("RefineCrackElements", refine_crack_elements);
+  crack_displ_factor = model.value("CrackDisplacementFactor", crack_displ_factor);
+  add_bdr_elements = model.value("AddInterfaceBoundaryElements", add_bdr_elements);
+  export_prerefined_mesh = model.value("ExportPrerefinedMesh", export_prerefined_mesh);
+  reorient_tet_mesh = model.value("ReorientTetMesh", reorient_tet_mesh);
+  partitioning = model.value("Partitioning", partitioning);
+  if (auto it = model.find("Refinement"); it != model.end())
+  {
+    refinement = RefinementData(*it);
+  }
 }
 
 MaterialData::MaterialData(const json &domain)
@@ -355,14 +347,9 @@ ProbeData::ProbeData(const json &probe)
   center = probe.at("Center").get<std::array<double, 3>>();  // Required
 }
 
-void DomainPostData::SetUp(const json &domains)
+DomainPostData::DomainPostData(const json &postpro)
 {
-  auto postpro = domains.find("Postprocessing");
-  if (postpro == domains.end())
-  {
-    return;
-  }
-  if (auto it = postpro->find("Energy"); it != postpro->end())
+  if (auto it = postpro.find("Energy"); it != postpro.end())
   {
     for (auto e = it->begin(); e != it->end(); ++e)
     {
@@ -372,7 +359,7 @@ void DomainPostData::SetUp(const json &domains)
                             "in the configuration file!");
     }
   }
-  if (auto it = postpro->find("Probe"); it != postpro->end())
+  if (auto it = postpro.find("Probe"); it != postpro.end())
   {
     for (auto p = it->begin(); p != it->end(); ++p)
     {
@@ -417,17 +404,13 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   moment = source.at("Moment");                               // Required
 }
 
-void DomainData::SetUp(const json &config)
+DomainData::DomainData(const json &domains)
 {
-  auto domains = config.find("Domains");
-  MFEM_VERIFY(domains != config.end(),
-              "\"Domains\" must be specified in the configuration file!");
-
-  for (const auto &d : *domains->find("Materials"))
+  for (const auto &d : *domains.find("Materials"))
   {
     materials.emplace_back(d);
   }
-  if (auto it = domains->find("CurrentDipole"); it != domains->end())
+  if (auto it = domains.find("CurrentDipole"); it != domains.end())
   {
     for (auto cd = it->begin(); cd != it->end(); ++cd)
     {
@@ -437,7 +420,10 @@ void DomainData::SetUp(const json &config)
                             "sources in the configuration file!");
     }
   }
-  postpro.SetUp(*domains);
+  if (auto it = domains.find("Postprocessing"); it != domains.end())
+  {
+    postpro = DomainPostData(*it);
+  }
 
   // Store all unique domain attributes.
   for (const auto &data : materials)
@@ -562,22 +548,17 @@ TerminalData::TerminalData(const json &terminal)
   std::sort(attributes.begin(), attributes.end());
 }
 
-void PeriodicBoundaryData::SetUp(const json &boundaries)
+PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
 {
-  auto periodic = boundaries.find("Periodic");
-  if (periodic == boundaries.end())
-  {
-    return;
-  }
-  auto floquet = periodic->find("FloquetWaveVector");
-  if (floquet != periodic->end())
+  auto floquet = periodic.find("FloquetWaveVector");
+  if (floquet != periodic.end())
   {
     MFEM_VERIFY(floquet->is_array(),
                 "\"FloquetWaveVector\" should specify an array in the configuration file!");
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
-  auto pairs = periodic->find("BoundaryPairs");
+  auto pairs = periodic.find("BoundaryPairs");
   MFEM_VERIFY(pairs->is_array(),
               "\"BoundaryPairs\" should specify an array in the configuration file!");
   for (auto it = pairs->begin(); it != pairs->end(); ++it)
@@ -825,14 +806,9 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
   }
 }
-void BoundaryPostData::SetUp(const json &boundaries)
+BoundaryPostData::BoundaryPostData(const json &postpro)
 {
-  auto postpro = boundaries.find("Postprocessing");
-  if (postpro == boundaries.end())
-  {
-    return;
-  }
-  if (auto it = postpro->find("SurfaceFlux"); it != postpro->end())
+  if (auto it = postpro.find("SurfaceFlux"); it != postpro.end())
   {
     for (auto f = it->begin(); f != it->end(); ++f)
     {
@@ -842,7 +818,7 @@ void BoundaryPostData::SetUp(const json &boundaries)
                             "boundaries in the configuration file!");
     }
   }
-  if (auto it = postpro->find("Dielectric"); it != postpro->end())
+  if (auto it = postpro.find("Dielectric"); it != postpro.end())
   {
     for (auto d = it->begin(); d != it->end(); ++d)
     {
@@ -852,7 +828,7 @@ void BoundaryPostData::SetUp(const json &boundaries)
                             "boundaries in the configuration file!");
     }
   }
-  if (auto it = postpro->find("FarField"); it != postpro->end())
+  if (auto it = postpro.find("FarField"); it != postpro.end())
   {
     farfield = FarFieldPostData(*it);
   }
@@ -875,65 +851,61 @@ void BoundaryPostData::SetUp(const json &boundaries)
   attributes.shrink_to_fit();
 }
 
-void BoundaryData::SetUp(const json &config)
+BoundaryData::BoundaryData(const json &boundaries)
 {
-  auto boundaries = config.find("Boundaries");
-  MFEM_VERIFY(boundaries != config.end(),
-              "\"Boundaries\" must be specified in the configuration file!");
-
   // PEC can be specified as "PEC" or "Ground".
-  auto pec_it = boundaries->find("PEC");
-  auto ground_it = boundaries->find("Ground");
+  auto pec_it = boundaries.find("PEC");
+  auto ground_it = boundaries.find("Ground");
   MFEM_VERIFY(
-      pec_it == boundaries->end() || ground_it == boundaries->end(),
+      pec_it == boundaries.end() || ground_it == boundaries.end(),
       "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
-  if (pec_it != boundaries->end())
+  if (pec_it != boundaries.end())
   {
     pec = PecBoundaryData(*pec_it);
   }
-  else if (ground_it != boundaries->end())
+  else if (ground_it != boundaries.end())
   {
     pec = PecBoundaryData(*ground_it);
   }
 
   // PMC can be specified as "PMC" or "ZeroCharge".
-  auto pmc_it = boundaries->find("PMC");
-  auto zeroq_it = boundaries->find("ZeroCharge");
-  MFEM_VERIFY(pmc_it == boundaries->end() || zeroq_it == boundaries->end(),
+  auto pmc_it = boundaries.find("PMC");
+  auto zeroq_it = boundaries.find("ZeroCharge");
+  MFEM_VERIFY(pmc_it == boundaries.end() || zeroq_it == boundaries.end(),
               "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
               "boundaries!");
-  if (pmc_it != boundaries->end())
+  if (pmc_it != boundaries.end())
   {
     pmc = PmcBoundaryData(*pmc_it);
   }
-  else if (zeroq_it != boundaries->end())
+  else if (zeroq_it != boundaries.end())
   {
     pmc = PmcBoundaryData(*zeroq_it);
   }
 
-  if (auto it = boundaries->find("WavePortPEC"); it != boundaries->end())
+  if (auto it = boundaries.find("WavePortPEC"); it != boundaries.end())
   {
     auxpec = WavePortPecBoundaryData(*it);
   }
-  if (auto it = boundaries->find("Absorbing"); it != boundaries->end())
+  if (auto it = boundaries.find("Absorbing"); it != boundaries.end())
   {
     farfield = FarfieldBoundaryData(*it);
   }
-  if (auto it = boundaries->find("Conductivity"); it != boundaries->end())
+  if (auto it = boundaries.find("Conductivity"); it != boundaries.end())
   {
     for (const auto &b : *it)
     {
       conductivity.emplace_back(b);
     }
   }
-  if (auto it = boundaries->find("Impedance"); it != boundaries->end())
+  if (auto it = boundaries.find("Impedance"); it != boundaries.end())
   {
     for (const auto &b : *it)
     {
       impedance.emplace_back(b);
     }
   }
-  if (auto it = boundaries->find("LumpedPort"); it != boundaries->end())
+  if (auto it = boundaries.find("LumpedPort"); it != boundaries.end())
   {
     for (auto lp = it->begin(); lp != it->end(); ++lp)
     {
@@ -943,7 +915,7 @@ void BoundaryData::SetUp(const json &config)
                             "boundaries in the configuration file!");
     }
   }
-  if (auto it = boundaries->find("Terminal"); it != boundaries->end())
+  if (auto it = boundaries.find("Terminal"); it != boundaries.end())
   {
     for (auto t = it->begin(); t != it->end(); ++t)
     {
@@ -953,8 +925,11 @@ void BoundaryData::SetUp(const json &config)
                             "boundaries in the configuration file!");
     }
   }
-  periodic.SetUp(*boundaries);
-  if (auto it = boundaries->find("WavePort"); it != boundaries->end())
+  if (auto it = boundaries.find("Periodic"); it != boundaries.end())
+  {
+    periodic = PeriodicBoundaryData(*it);
+  }
+  if (auto it = boundaries.find("WavePort"); it != boundaries.end())
   {
     for (auto wp = it->begin(); wp != it->end(); ++wp)
     {
@@ -964,7 +939,7 @@ void BoundaryData::SetUp(const json &config)
                             "boundaries in the configuration file!");
     }
   }
-  if (auto it = boundaries->find("SurfaceCurrent"); it != boundaries->end())
+  if (auto it = boundaries.find("SurfaceCurrent"); it != boundaries.end())
   {
     for (auto sc = it->begin(); sc != it->end(); ++sc)
     {
@@ -974,7 +949,10 @@ void BoundaryData::SetUp(const json &config)
                             "boundaries in the configuration file!");
     }
   }
-  postpro.SetUp(*boundaries);
+  if (auto it = boundaries.find("Postprocessing"); it != boundaries.end())
+  {
+    postpro = BoundaryPostData(*it);
+  }
 
   // Ensure unique indexing of lumpedport, waveport, current.
   {
@@ -1396,44 +1374,39 @@ LinearSolverData::LinearSolverData(const json &linear)
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 
-void SolverData::SetUp(const json &config)
+SolverData::SolverData(const json &solver)
 {
-  auto solver = config.find("Solver");
-  if (solver == config.end())
-  {
-    return;
-  }
-  order = solver->value("Order", order);
-  pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
-  q_order_jac = solver->value("QuadratureOrderJacobian", q_order_jac);
-  q_order_extra = solver->value("QuadratureOrderExtra", q_order_extra);
-  device = solver->value("Device", device);
-  ceed_backend = solver->value("Backend", ceed_backend);
+  order = solver.value("Order", order);
+  pa_order_threshold = solver.value("PartialAssemblyOrder", pa_order_threshold);
+  q_order_jac = solver.value("QuadratureOrderJacobian", q_order_jac);
+  q_order_extra = solver.value("QuadratureOrderExtra", q_order_extra);
+  device = solver.value("Device", device);
+  ceed_backend = solver.value("Backend", ceed_backend);
 
-  if (auto it = solver->find("Driven"); it != solver->end())
+  if (auto it = solver.find("Driven"); it != solver.end())
   {
     driven = DrivenSolverData(*it);
   }
-  if (auto it = solver->find("Eigenmode"); it != solver->end())
+  if (auto it = solver.find("Eigenmode"); it != solver.end())
   {
     // Target is required unless Driven section exists.
-    MFEM_VERIFY(it->find("Target") != it->end() || solver->find("Driven") != solver->end(),
+    MFEM_VERIFY(it->find("Target") != it->end() || solver.find("Driven") != solver.end(),
                 "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
     eigenmode = EigenSolverData(*it);
   }
-  if (auto it = solver->find("Electrostatic"); it != solver->end())
+  if (auto it = solver.find("Electrostatic"); it != solver.end())
   {
     electrostatic = ElectrostaticSolverData(*it);
   }
-  if (auto it = solver->find("Magnetostatic"); it != solver->end())
+  if (auto it = solver.find("Magnetostatic"); it != solver.end())
   {
     magnetostatic = MagnetostaticSolverData(*it);
   }
-  if (auto it = solver->find("Transient"); it != solver->end())
+  if (auto it = solver.find("Transient"); it != solver.end())
   {
     transient = TransientSolverData(*it);
   }
-  if (auto it = solver->find("Linear"); it != solver->end())
+  if (auto it = solver.find("Linear"); it != solver.end())
   {
     linear = LinearSolverData(*it);
   }
