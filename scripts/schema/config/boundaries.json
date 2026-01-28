@@ -83,6 +83,10 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["Index"],
+        "oneOf": [
+          { "required": ["Attributes"] },
+          { "required": ["Elements"] }
+        ],
         "properties":
         {
           "Index": { "type": "integer", "exclusiveMinimum": 0 },
@@ -171,6 +175,10 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["Index"],
+        "oneOf": [
+          { "required": ["Attributes"] },
+          { "required": ["Elements"] }
+        ],
         "properties":
         {
           "Index": { "type": "integer", "exclusiveMinimum": 0 },
