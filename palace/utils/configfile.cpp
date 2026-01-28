@@ -825,9 +825,6 @@ BoundaryData::BoundaryData(const json &boundaries)
   // PEC can be specified as "PEC" or "Ground".
   auto pec_it = boundaries.find("PEC");
   auto ground_it = boundaries.find("Ground");
-  MFEM_VERIFY(
-      pec_it == boundaries.end() || ground_it == boundaries.end(),
-      "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
   if (pec_it != boundaries.end())
   {
     pec = PecBoundaryData(*pec_it);
@@ -840,9 +837,6 @@ BoundaryData::BoundaryData(const json &boundaries)
   // PMC can be specified as "PMC" or "ZeroCharge".
   auto pmc_it = boundaries.find("PMC");
   auto zeroq_it = boundaries.find("ZeroCharge");
-  MFEM_VERIFY(pmc_it == boundaries.end() || zeroq_it == boundaries.end(),
-              "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
-              "boundaries!");
   if (pmc_it != boundaries.end())
   {
     pmc = PmcBoundaryData(*pmc_it);
@@ -982,8 +976,6 @@ std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
-  MFEM_VERIFY(start > 0 && end > 0,
-              "\"Type\": \"Log\" only valid for non-zero start and end!");
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);

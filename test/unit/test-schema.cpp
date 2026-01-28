@@ -503,3 +503,127 @@ TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
     CHECK(!err.empty());
   }
 }
+
+TEST_CASE("Schema Validation - Mutual Exclusion", "[schema][Serial]")
+{
+
+  SECTION("PEC and Ground are mutually exclusive")
+  {
+    // Valid: only PEC
+    json boundaries_pec = {{"PEC", {{"Attributes", {1}}}}};
+    std::string err = ValidateConfig(boundaries_pec, "Boundaries");
+    CHECK(err.empty());
+
+    // Valid: only Ground
+    json boundaries_ground = {{"Ground", {{"Attributes", {1}}}}};
+    err = ValidateConfig(boundaries_ground, "Boundaries");
+    CHECK(err.empty());
+
+    // Invalid: both PEC and Ground
+    json boundaries_both = {{"PEC", {{"Attributes", {1}}}},
+                            {"Ground", {{"Attributes", {2}}}}};
+    err = ValidateConfig(boundaries_both, "Boundaries");
+    CHECK(!err.empty());
+  }
+
+  SECTION("PMC and ZeroCharge are mutually exclusive")
+  {
+    // Valid: only PMC
+    json boundaries_pmc = {{"PMC", {{"Attributes", {1}}}}};
+    std::string err = ValidateConfig(boundaries_pmc, "Boundaries");
+    CHECK(err.empty());
+
+    // Valid: only ZeroCharge
+    json boundaries_zeroq = {{"ZeroCharge", {{"Attributes", {1}}}}};
+    err = ValidateConfig(boundaries_zeroq, "Boundaries");
+    CHECK(err.empty());
+
+    // Invalid: both PMC and ZeroCharge
+    json boundaries_both = {{"PMC", {{"Attributes", {1}}}},
+                            {"ZeroCharge", {{"Attributes", {2}}}}};
+    err = ValidateConfig(boundaries_both, "Boundaries");
+    CHECK(!err.empty());
+  }
+}
+
+TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
+{
+
+  SECTION("Invalid enum value shows valid options")
+  {
+    json config = {{"Problem", {{"Type", "InvalidType"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    std::string err = ValidateConfig(config);
+    CHECK(
+        err ==
+        "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
+        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+  }
+
+  SECTION("Invalid enum in nested array")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"LumpedPort", {{{"Index", 1}, {"Attributes", {1}}, {"Direction", "BadDir"}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    std::string err = ValidateConfig(config);
+    // Direction uses anyOf (string enum or array), so error shows subschema failures.
+    CHECK(err.find("[\"Boundaries\"][\"LumpedPort\"][0][\"Direction\"]") !=
+          std::string::npos);
+    CHECK(err.find("anyOf") != std::string::npos);
+  }
+
+  SECTION("Wrong type shows actual type")
+  {
+    json port = {{"Index", "not a number"}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(err == "At [\"Index\"]: unexpected instance type (got string)\n");
+  }
+
+  SECTION("Value below minimum")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(err == "At [\"Index\"]: instance is below or equals minimum of 0\n");
+  }
+
+  SECTION("Missing required field shows oneOf options")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"LumpedPort", {{{"Index", 1}, {"R", 50.0}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    std::string err = ValidateConfig(config);
+    CHECK(err ==
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: no subschema has succeeded, but one of "
+          "them is required to validate. Type: oneOf, number of failed subschemas: 2\n"
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: [combination: oneOf / case#0] required "
+          "property 'Attributes' not found in object\n"
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: [combination: oneOf / case#1] required "
+          "property 'Elements' not found in object\n");
+  }
+
+  SECTION("Additional property not allowed")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"UnknownField", 123}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    std::string err = ValidateConfig(config);
+    CHECK(err.find("[\"Problem\"]") != std::string::npos);
+    CHECK(err.find("UnknownField") != std::string::npos);
+  }
+}
