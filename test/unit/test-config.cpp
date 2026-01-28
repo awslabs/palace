@@ -125,6 +125,35 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_data.waveport.at(4).excitation == 1);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
+  // Multiple ports sharing same excitation (valid - excited together).
+  {
+    auto entry = config.find("boundaries_shared_excitation_valid")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
+    CHECK(config::Validate(boundary_data).empty());
+    CHECK(boundary_data.lumpedport.at(1).excitation == 1);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 1);
+  }
+  // Multi-excitation with matching indices (valid).
+  {
+    auto entry = config.find("boundaries_multi_excitation_valid")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
+    CHECK(config::Validate(boundary_data).empty());
+    CHECK(boundary_data.lumpedport.at(1).excitation == 1);
+    CHECK(boundary_data.lumpedport.at(2).excitation == 2);
+  }
+  // Terminal with duplicate index vs LumpedPort (invalid - indices must be unique).
+  {
+    auto entry = config.find("boundaries_terminal_duplicate_index")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
+    CHECK(!config::Validate(boundary_data).empty());
+  }
+  // SurfaceCurrent with duplicate index vs LumpedPort (invalid).
+  {
+    auto entry =
+        config.find("boundaries_surfacecurrent_duplicate_index")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
+    CHECK(!config::Validate(boundary_data).empty());
+  }
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")

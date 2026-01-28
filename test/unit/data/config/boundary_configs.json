@@ -153,5 +153,33 @@
         { "Attributes": [2], "Index": 1, "R": 50.0, "Direction": "+X", "Excitation": true }
       ]
     }
+  },
+  "boundaries_shared_excitation_valid": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": 1 },
+        { "Attributes": [6], "Index": 2, "R": 50, "Direction": "-Y", "Excitation": 1 }
+      ]
+    }
+  },
+  "boundaries_multi_excitation_valid": {
+    "Boundaries": {
+      "LumpedPort": [
+        { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y", "Excitation": 1 },
+        { "Attributes": [6], "Index": 2, "R": 50, "Direction": "-Y", "Excitation": 2 }
+      ]
+    }
+  },
+  "boundaries_terminal_duplicate_index": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y" } ],
+      "Terminal": [ { "Attributes": [6], "Index": 1 } ]
+    }
+  },
+  "boundaries_surfacecurrent_duplicate_index": {
+    "Boundaries": {
+      "LumpedPort": [ { "Attributes": [5], "Index": 1, "R": 50, "Direction": "+Y" } ],
+      "SurfaceCurrent": [ { "Attributes": [6], "Index": 1, "Direction": "+X" } ]
+    }
   }
 }
