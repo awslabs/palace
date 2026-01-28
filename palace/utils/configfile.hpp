@@ -655,7 +655,8 @@ public:
   // Memory required for adaptive sampling convergence.
   int adaptive_memory = 2;
 
-  void SetUp(const json &solver);
+  DrivenSolverData() = default;
+  DrivenSolverData(const json &driven);
 };
 
 struct EigenSolverData
@@ -722,7 +723,8 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
-  void SetUp(const json &solver);
+  EigenSolverData() = default;
+  EigenSolverData(const json &eigenmode);
 };
 
 struct ElectrostaticSolverData
@@ -731,7 +733,8 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(const json &solver);
+  ElectrostaticSolverData() = default;
+  ElectrostaticSolverData(const json &electrostatic);
 };
 
 struct MagnetostaticSolverData
@@ -740,7 +743,8 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(const json &solver);
+  MagnetostaticSolverData() = default;
+  MagnetostaticSolverData(const json &magnetostatic);
 };
 
 struct TransientSolverData
@@ -774,7 +778,8 @@ public:
   double rel_tol = 1e-4;
   double abs_tol = 1e-9;
 
-  void SetUp(const json &solver);
+  TransientSolverData() = default;
+  TransientSolverData(const json &transient);
 };
 
 struct LinearSolverData

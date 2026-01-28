@@ -1135,32 +1135,26 @@ auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
   return vec.end();
 }
 
-void DrivenSolverData::SetUp(const json &solver)
+DrivenSolverData::DrivenSolverData(const json &driven)
 {
-  auto driven = solver.find("Driven");
-  if (driven == solver.end())
-  {
-    return;
-  }
-
-  restart = driven->value("Restart", restart);
-  adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
-  adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
-  adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
+  restart = driven.value("Restart", restart);
+  adaptive_tol = driven.value("AdaptiveTol", adaptive_tol);
+  adaptive_max_size = driven.value("AdaptiveMaxSamples", adaptive_max_size);
+  adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
-  if (driven->find("MinFreq") != driven->end() &&
-      driven->find("MaxFreq") != driven->end() && driven->find("FreqStep") != driven->end())
+  if (driven.find("MinFreq") != driven.end() && driven.find("MaxFreq") != driven.end() &&
+      driven.find("FreqStep") != driven.end())
   {
-    double min_f = driven->at("MinFreq");     // Required
-    double max_f = driven->at("MaxFreq");     // Required
-    double delta_f = driven->at("FreqStep");  // Required
+    double min_f = driven.at("MinFreq");     // Required
+    double max_f = driven.at("MaxFreq");     // Required
+    double delta_f = driven.at("FreqStep");  // Required
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
-    if (int save_step = driven->value("SaveStep", 0); save_step > 0)
+    if (int save_step = driven.value("SaveStep", 0); save_step > 0)
     {
       for (std::size_t n = 0; n < sample_f.size(); n += save_step)
       {
@@ -1168,7 +1162,7 @@ void DrivenSolverData::SetUp(const json &solver)
       }
     }
   }
-  if (auto freq_samples = driven->find("Samples"); freq_samples != driven->end())
+  if (auto freq_samples = driven.find("Samples"); freq_samples != driven.end())
   {
     for (auto &r : *freq_samples)
     {
@@ -1239,7 +1233,7 @@ void DrivenSolverData::SetUp(const json &solver)
 
   // Enforce explicit saves exactly match the sample frequencies.
   deduplicate(sample_f);
-  auto explicit_save_f = driven->value("Save", std::vector<double>());
+  auto explicit_save_f = driven.value("Save", std::vector<double>());
   for (auto &f : explicit_save_f)
   {
     auto it = FindNearestValue(sample_f, f, delta_eps);
@@ -1292,94 +1286,64 @@ void DrivenSolverData::SetUp(const json &solver)
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
 }
 
-void EigenSolverData::SetUp(const json &solver)
+EigenSolverData::EigenSolverData(const json &eigenmode)
 {
-  auto eigenmode = solver.find("Eigenmode");
-  if (eigenmode == solver.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(eigenmode->find("Target") != eigenmode->end() ||
-                  solver.find("Driven") != solver.end(),
-              "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
-  target = eigenmode->value("Target", target);  // Required (only for eigenmode simulations)
-  tol = eigenmode->value("Tol", tol);
-  max_it = eigenmode->value("MaxIts", max_it);
-  max_size = eigenmode->value("MaxSize", max_size);
-  n = eigenmode->value("N", n);
-  n_post = eigenmode->value("Save", n_post);
-  type = eigenmode->value("Type", type);
-  pep_linear = eigenmode->value("PEPLinear", pep_linear);
-  scale = eigenmode->value("Scaling", scale);
-  init_v0 = eigenmode->value("StartVector", init_v0);
-  init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
-  mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
-  nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
-  refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
-  linear_tol = eigenmode->value("LinearTol", linear_tol);
-  target_upper = eigenmode->value("TargetUpper", target_upper);
-  preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
-  preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
-  max_restart = eigenmode->value("MaxRestart", max_restart);
+  target = eigenmode.value("Target", target);
+  tol = eigenmode.value("Tol", tol);
+  max_it = eigenmode.value("MaxIts", max_it);
+  max_size = eigenmode.value("MaxSize", max_size);
+  n = eigenmode.value("N", n);
+  n_post = eigenmode.value("Save", n_post);
+  type = eigenmode.value("Type", type);
+  pep_linear = eigenmode.value("PEPLinear", pep_linear);
+  scale = eigenmode.value("Scaling", scale);
+  init_v0 = eigenmode.value("StartVector", init_v0);
+  init_v0_const = eigenmode.value("StartVectorConstant", init_v0_const);
+  mass_orthog = eigenmode.value("MassOrthogonal", mass_orthog);
+  nonlinear_type = eigenmode.value("NonlinearType", nonlinear_type);
+  refine_nonlinear = eigenmode.value("RefineNonlinear", refine_nonlinear);
+  linear_tol = eigenmode.value("LinearTol", linear_tol);
+  target_upper = eigenmode.value("TargetUpper", target_upper);
+  preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
+  preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
+  max_restart = eigenmode.value("MaxRestart", max_restart);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
 }
 
-void ElectrostaticSolverData::SetUp(const json &solver)
+ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
-  auto electrostatic = solver.find("Electrostatic");
-  if (electrostatic == solver.end())
-  {
-    return;
-  }
-  n_post = electrostatic->value("Save", n_post);
+  n_post = electrostatic.value("Save", n_post);
 }
 
-void MagnetostaticSolverData::SetUp(const json &solver)
+MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
 {
-  auto magnetostatic = solver.find("Magnetostatic");
-  if (magnetostatic == solver.end())
-  {
-    return;
-  }
-  n_post = magnetostatic->value("Save", n_post);
+  n_post = magnetostatic.value("Save", n_post);
 }
 
-void TransientSolverData::SetUp(const json &solver)
+TransientSolverData::TransientSolverData(const json &transient)
 {
-  auto transient = solver.find("Transient");
-  if (transient == solver.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(
-      transient->find("Excitation") != transient->end(),
-      "Missing \"Transient\" solver \"Excitation\" type in the configuration file!");
-  MFEM_VERIFY(transient->find("MaxTime") != transient->end() &&
-                  transient->find("TimeStep") != transient->end(),
-              "Missing \"Transient\" solver \"MaxTime\" or \"TimeStep\" in the "
-              "configuration file!");
-  type = transient->value("Type", type);
-  excitation = transient->at("Excitation");  // Required
-  pulse_f = transient->value("ExcitationFreq", pulse_f);
-  pulse_tau = transient->value("ExcitationWidth", pulse_tau);
-  max_t = transient->at("MaxTime");     // Required
-  delta_t = transient->at("TimeStep");  // Required
-  delta_post = transient->value("SaveStep", delta_post);
-  order = transient->value("Order", order);
-  rel_tol = transient->value("RelTol", rel_tol);
-  abs_tol = transient->value("AbsTol", abs_tol);
+  type = transient.value("Type", type);
+  excitation = transient.at("Excitation");  // Required
+  pulse_f = transient.value("ExcitationFreq", pulse_f);
+  pulse_tau = transient.value("ExcitationWidth", pulse_tau);
+  max_t = transient.at("MaxTime");     // Required
+  delta_t = transient.at("TimeStep");  // Required
+  delta_post = transient.value("SaveStep", delta_post);
+  order = transient.value("Order", order);
+  rel_tol = transient.value("RelTol", rel_tol);
+  abs_tol = transient.value("AbsTol", abs_tol);
 
   if (type == TimeSteppingScheme::GEN_ALPHA || type == TimeSteppingScheme::RUNGE_KUTTA)
   {
-    if (transient->contains("Order"))
+    if (transient.contains("Order"))
     {
       MFEM_WARNING("GeneralizedAlpha and RungeKutta transient solvers do not use "
                    "config[\"Transient\"][\"Order\"]!");
     }
-    if (transient->contains("RelTol") || transient->contains("AbsTol"))
+    if (transient.contains("RelTol") || transient.contains("AbsTol"))
     {
       MFEM_WARNING(
           "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
@@ -1456,11 +1420,29 @@ void SolverData::SetUp(const json &config)
   device = solver->value("Device", device);
   ceed_backend = solver->value("Backend", ceed_backend);
 
-  driven.SetUp(*solver);
-  eigenmode.SetUp(*solver);
-  electrostatic.SetUp(*solver);
-  magnetostatic.SetUp(*solver);
-  transient.SetUp(*solver);
+  if (auto it = solver->find("Driven"); it != solver->end())
+  {
+    driven = DrivenSolverData(*it);
+  }
+  if (auto it = solver->find("Eigenmode"); it != solver->end())
+  {
+    // Target is required unless Driven section exists.
+    MFEM_VERIFY(it->find("Target") != it->end() || solver->find("Driven") != solver->end(),
+                "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
+    eigenmode = EigenSolverData(*it);
+  }
+  if (auto it = solver->find("Electrostatic"); it != solver->end())
+  {
+    electrostatic = ElectrostaticSolverData(*it);
+  }
+  if (auto it = solver->find("Magnetostatic"); it != solver->end())
+  {
+    magnetostatic = MagnetostaticSolverData(*it);
+  }
+  if (auto it = solver->find("Transient"); it != solver->end())
+  {
+    transient = TransientSolverData(*it);
+  }
   linear.SetUp(*solver);
 }
 
