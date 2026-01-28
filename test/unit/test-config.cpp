@@ -27,8 +27,8 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
 
   {
     // Basic passing config with bool excitation.
-    config::BoundaryData boundary_ex_bool;
-    REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
+    auto entry = config.find("boundaries_1_pass")->find("Boundaries");
+    config::BoundaryData boundary_ex_bool(*entry);
 
     // Check simple parsing & defaults:
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
@@ -39,9 +39,8 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);
 
     // Equivalent config with int excitation.
-    config::BoundaryData boundary_ex_int;
-    REQUIRE_NOTHROW(
-        boundary_ex_int.SetUp(*config.find("boundaries_1_pass_excitation_int")));
+    auto entry_int = config.find("boundaries_1_pass_excitation_int")->find("Boundaries");
+    config::BoundaryData boundary_ex_int(*entry_int);
 
     // FUTURE: Default equality is C++20.
     // CHECK(boundary_ex_bool == boundary_ex_int);
@@ -57,62 +56,62 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
   // Excitation Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_1")));
+    auto entry = config.find("boundaries_negative_excitation_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_2")));
+    auto entry = config.find("boundaries_negative_excitation_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Index Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_lumped")));
+    auto entry = config.find("boundaries_repeated_index_lumped")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_wave")));
+    auto entry = config.find("boundaries_repeated_index_wave")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_mixed")));
+    auto entry = config.find("boundaries_repeated_index_mixed")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_1")));
+    auto entry = config.find("boundaries_mislabeled_index_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_2")));
+    auto entry = config.find("boundaries_mislabeled_index_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Mark single excitation index.
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_1")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_2")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_2")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_3")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_3")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 4);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_4")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_4")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 1);
@@ -134,8 +133,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
     {
       // Top level configuration
-      config::DrivenSolverData driven_solver;
-      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_base_uniform_sample")));
+      auto driven = config.find("driven_base_uniform_sample")->find("Driven");
+      config::DrivenSolverData driven_solver(*driven);
 
       for (size_t i = 0; i < sample_f.size(); ++i)
       {
@@ -146,8 +145,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     }
     {
       // Equivalent to top level from within Samples, deduplicates
-      config::DrivenSolverData driven_solver;
-      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
+      auto driven = config.find("driven_uniform_freq_step")->find("Driven");
+      config::DrivenSolverData driven_solver(*driven);
 
       for (size_t i = 0; i < sample_f.size(); ++i)
       {
@@ -159,8 +158,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Specification through number of points rather than step size
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_nsample")));
+    auto driven = config.find("driven_uniform_nsample")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
     auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
@@ -174,8 +173,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_paired_uniform_sample")));
+    auto driven = config.find("driven_paired_uniform_sample")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
     auto save_indices =
@@ -190,8 +189,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_with_point")));
+    auto driven = config.find("driven_uniform_with_point")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
@@ -207,8 +206,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_log_with_point")));
+    auto driven = config.find("driven_log_with_point")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
                                 0.35, 0.55, 0.5623413251903491, 1.0};
@@ -230,8 +229,8 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
                                               "driven_uniform_with_point_invalid_save"};
   for (auto c : invalid_configs)
   {
-    config::DrivenSolverData driven_solver;
-    CHECK_THROWS(config::DrivenSolverData().SetUp(*config.find(c)));
+    auto driven = config.find(c)->find("Driven");
+    CHECK_THROWS(config::DrivenSolverData(*driven));
   }
 }
 

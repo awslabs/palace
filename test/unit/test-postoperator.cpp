@@ -358,8 +358,8 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
-  config::BoundaryData boundary_port;
-  REQUIRE_NOTHROW(boundary_port.SetUp(*config.find("boundaries_lumped_port_X_2")));
+  auto entry = config.find("boundaries_lumped_port_X_2")->find("Boundaries");
+  config::BoundaryData boundary_port(*entry);
 
   // Create serial mesh.
   int resolution = 3;
