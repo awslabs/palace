@@ -431,23 +431,9 @@ public:
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
-};
 
-struct LumpedPortBoundaryData
-{
-public:
-  std::map<int, LumpedPortData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  LumpedPortData() = default;
+  LumpedPortData(const json &port, int index);
 };
 
 struct TerminalData
@@ -655,7 +641,7 @@ public:
   FarfieldBoundaryData farfield = {};
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
-  LumpedPortBoundaryData lumpedport = {};
+  std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};

@@ -563,72 +563,58 @@ ImpedanceData::ImpedanceData(const json &boundary)
   Cs = boundary.value("Cs", Cs);
 }
 
-int ParsePortExcitation(json::const_iterator port_it, int default_excitation)
+int ParsePortExcitation(const json &port, int index)
 {
-  auto it_excitation = port_it->find("Excitation");
-  if (it_excitation == port_it->end())
+  auto it = port.find("Excitation");
+  if (it == port.end())
   {
-    // Keep default; don't set input flag.
-    return default_excitation;
+    return 0;  // Not excited
   }
-  else if (it_excitation->is_boolean())
+  else if (it->is_boolean())
   {
-    return int(it_excitation->get<bool>());  // 0 false; 1 true
+    return int(it->get<bool>());  // 0 false; 1 true
   }
-  else if (it_excitation->is_number_unsigned())
+  else if (it->is_number_unsigned())
   {
-    return it_excitation->get<int>();
+    return it->get<int>();
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
                            "as a bool or unsigned (non-negative) integer; got {}",
-                           int(port_it->at("Index")), it_excitation->dump(2)));
+                           index, it->dump(2)));
   }
 }
 
-void LumpedPortBoundaryData::SetUp(const json &boundaries)
+LumpedPortData::LumpedPortData(const json &port, int index)
 {
-  auto port = boundaries.find("LumpedPort");
-  if (port == boundaries.end())
-  {
-    return;
-  }
-  for (auto it = port->begin(); it != port->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"LumpedPort\"");
-    auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.R = it->value("R", data.R);
-    data.L = it->value("L", data.L);
-    data.C = it->value("C", data.C);
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
+  R = port.value("R", R);
+  L = port.value("L", L);
+  C = port.value("C", C);
+  Rs = port.value("Rs", Rs);
+  Ls = port.value("Ls", Ls);
+  Cs = port.value("Cs", Cs);
 
-    data.excitation = ParsePortExcitation(it, data.excitation);
-    data.active = it->value("Active", data.active);
-    if (it->find("Attributes") != it->end())
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  if (port.find("Attributes") != port.end())
+  {
+    MFEM_VERIFY(port.find("Elements") == port.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(port, true, elem);
+  }
+  else
+  {
+    auto elems = port.find("Elements");
+    MFEM_VERIFY(elems != port.end(),
+                "Missing top-level \"Attributes\" list or \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    for (const auto &e : *elems)
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"LumpedPort\" in the configuration file!");
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, true, elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(elements != it->end(),
-                  "Missing top-level \"Attributes\" list or \"Elements\" for "
-                  "\"LumpedPort\" in the configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, true, elem);
-      }
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
@@ -720,7 +706,7 @@ void WavePortBoundaryData::SetUp(const json &boundaries)
     data.d_offset = it->value("Offset", data.d_offset);
     data.eigen_solver = it->value("SolverType", data.eigen_solver);
 
-    data.excitation = ParsePortExcitation(it, data.excitation);
+    data.excitation = ParsePortExcitation(*it, index);
     data.active = it->value("Active", data.active);
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
@@ -1021,7 +1007,16 @@ void BoundaryData::SetUp(const json &config)
       impedance.emplace_back(b);
     }
   }
-  lumpedport.SetUp(*boundaries);
+  if (auto it = boundaries->find("LumpedPort"); it != boundaries->end())
+  {
+    for (auto lp = it->begin(); lp != it->end(); ++lp)
+    {
+      auto index = AtIndex(lp, "\"LumpedPort\"");
+      auto [iter, inserted] = lumpedport.try_emplace(index, *lp, index);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"LumpedPort\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   if (auto it = boundaries->find("Terminal"); it != boundaries->end())
   {
     for (auto t = it->begin(); t != it->end(); ++t)
