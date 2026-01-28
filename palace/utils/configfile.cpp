@@ -1282,8 +1282,8 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   max_restart = eigenmode.value("MaxRestart", max_restart);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
-  MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
-                                     "greater than config[\"Eigenmode\"][\"Target\"]!");
+  MFEM_VERIFY(target_upper >= target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
+                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
 }
 
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
@@ -1389,9 +1389,6 @@ SolverData::SolverData(const json &solver)
   }
   if (auto it = solver.find("Eigenmode"); it != solver.end())
   {
-    // Target is required unless Driven section exists.
-    MFEM_VERIFY(it->find("Target") != it->end() || solver.find("Driven") != solver.end(),
-                "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
     eigenmode = EigenSolverData(*it);
   }
   if (auto it = solver.find("Electrostatic"); it != solver.end())
