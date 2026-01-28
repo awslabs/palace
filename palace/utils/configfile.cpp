@@ -243,20 +243,15 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-void ProblemData::SetUp(const json &config)
+ProblemData::ProblemData(const json &problem)
 {
-  auto problem = config.find("Problem");
-  MFEM_VERIFY(problem != config.end(),
-              "\"Problem\" must be specified in the configuration file!");
-  MFEM_VERIFY(problem->find("Type") != problem->end(),
-              "Missing config[\"Problem\"][\"Type\"] in the configuration file!");
-  type = problem->at("Type");  // Required
-  verbose = problem->value("Verbose", verbose);
-  output = problem->value("Output", output);
+  type = problem.at("Type");  // Required
+  verbose = problem.value("Verbose", verbose);
+  output = problem.value("Output", output);
 
   // Parse output formats.
-  auto output_formats_it = problem->find("OutputFormats");
-  if (output_formats_it != problem->end())
+  auto output_formats_it = problem.find("OutputFormats");
+  if (output_formats_it != problem.end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
     output_formats.gridfunction =

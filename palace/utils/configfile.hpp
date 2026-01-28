@@ -68,7 +68,8 @@ public:
   // Output formats configuration.
   OutputFormatsData output_formats = {};
 
-  void SetUp(const json &config);
+  ProblemData() = default;
+  ProblemData(const json &problem);
 };
 
 struct BoxRefinementData

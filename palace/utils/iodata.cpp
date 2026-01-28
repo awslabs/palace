@@ -208,7 +208,10 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   }
 
   // Set up configuration option data structures.
-  problem.SetUp(config);
+  auto problem_it = config.find("Problem");
+  MFEM_VERIFY(problem_it != config.end(),
+              "\"Problem\" must be specified in the configuration file!");
+  problem = config::ProblemData(*problem_it);
   model.SetUp(config);
   domains.SetUp(config);
   boundaries.SetUp(config);
