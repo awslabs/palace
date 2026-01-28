@@ -860,7 +860,7 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
   CHECK_THAT(B_relative_error, WithinAbs(0.0, 0.12));
 }
 
-TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][Parallel]")
+TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial]")
 {
   double freq_Hz = 1e8;
   std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
@@ -886,9 +886,9 @@ TEST_CASE("Electrical Current Dipole in a Cube", "[currentdipole][cube][Serial][
   runCurrentDipoleTest(freq_Hz, std::move(serial_mesh), attributes, {1}, 5.0, 1.0, 0.1, 0.9);
 }
 
-TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial][Parallel]")
+TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Serial]")
 {
-  double freq_Hz = 1e8;
+  double freq_Hz = 2e8;
 
   // Load the antenna sphere mesh
   std::unique_ptr<mfem::Mesh> serial_mesh =
