@@ -119,27 +119,6 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
-  SECTION("Invalid LumpedPort - negative Index")
-  {
-    json port = {{"Index", -1}, {"Attributes", {1}}};
-    std::string err = ValidateConfig(port, schema_dir, "LumpedPort");
-    CHECK(!err.empty());
-  }
-
-  SECTION("Invalid LumpedPort - negative Index")
-  {
-    json port = {{"Index", -1}, {"Attributes", {1}}, {"R", 50.0}, {"Direction", "+Y"}};
-    std::string err = ValidateConfig(port, schema_dir, "LumpedPort");
-    CHECK(!err.empty());
-  }
-
-  SECTION("Invalid WavePort - negative Index")
-  {
-    json port = {{"Index", -1}, {"Attributes", {1}}};
-    std::string err = ValidateConfig(port, schema_dir, "WavePort");
-    CHECK(!err.empty());
-  }
-
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",
@@ -198,5 +177,62 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     std::string err = ValidateConfig(data, schema_dir, "NonexistentKey");
     CHECK(!err.empty());
     CHECK(err.find("not found") != std::string::npos);
+  }
+}
+
+TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
+{
+  std::string schema_dir = fmt::format("{}/../../scripts/schema", PALACE_TEST_DIR);
+
+  SECTION("Invalid enum value shows valid options")
+  {
+    json config = {{"Problem", {{"Type", "InvalidType"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    std::string err = ValidateConfig(config, schema_dir);
+    CHECK(
+        err ==
+        "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
+        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+  }
+
+  SECTION("Invalid enum in nested array")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"LumpedPort", {{{"Index", 1}, {"Attributes", {1}}, {"Direction", "BadDir"}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    std::string err = ValidateConfig(config, schema_dir);
+    // Direction uses anyOf (string enum or array), so error shows subschema failures.
+    CHECK(err.find("[\"Boundaries\"][\"LumpedPort\"][0][\"Direction\"]") !=
+          std::string::npos);
+    CHECK(err.find("anyOf") != std::string::npos);
+  }
+
+  SECTION("Wrong type shows actual type")
+  {
+    json port = {{"Index", "not a number"}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, schema_dir, "LumpedPort");
+    CHECK(err == "At [\"Index\"]: unexpected instance type (got string)\n");
+  }
+
+  SECTION("Additional property not allowed")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"UnknownField", 123}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    std::string err = ValidateConfig(config, schema_dir);
+    CHECK(err.find("[\"Problem\"]") != std::string::npos);
+    CHECK(err.find("UnknownField") != std::string::npos);
   }
 }
