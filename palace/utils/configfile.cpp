@@ -574,14 +574,10 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   auto floquet = periodic.find("FloquetWaveVector");
   if (floquet != periodic.end())
   {
-    MFEM_VERIFY(floquet->is_array(),
-                "\"FloquetWaveVector\" should specify an array in the configuration file!");
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
   auto pairs = periodic.find("BoundaryPairs");
-  MFEM_VERIFY(pairs->is_array(),
-              "\"BoundaryPairs\" should specify an array in the configuration file!");
   for (auto it = pairs->begin(); it != pairs->end(); ++it)
   {
     MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
@@ -598,8 +594,6 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     auto translation = it->find("Translation");
     if (translation != it->end())
     {
-      MFEM_VERIFY(translation->is_array(),
-                  "\"Translation\" should specify an array in the configuration file!");
       std::array<double, 3> translation_array = translation->get<std::array<double, 3>>();
       for (int i = 0; i < 3; i++)
       {
@@ -611,9 +605,6 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     auto transformation = it->find("AffineTransformation");
     if (transformation != it->end())
     {
-      MFEM_VERIFY(
-          transformation->is_array(),
-          "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
   }
@@ -776,9 +767,6 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
   auto thetaphis_json = farfield.find("ThetaPhis");
   if (thetaphis_json != farfield.end())
   {
-    MFEM_VERIFY(thetaphis_json->is_array(),
-                "\"ThetaPhis\" should specify an array in the configuration file!");
-
     // JSON does not support the notion of pair, so we read the theta and phis as vectors
     // of vectors, and then cast them to vectors of pairs.
     //
