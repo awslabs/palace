@@ -428,8 +428,6 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   else
   {
     auto direction_and_coord = ParseStringAsDirection(dir->get<std::string>());
-    MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
-                "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
     direction = direction_and_coord.first;
   }
   center = source.at("Center").get<std::array<double, 3>>();  // Required
@@ -1327,7 +1325,7 @@ std::string Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
-  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent.
+  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1353,6 +1351,14 @@ std::string Validate(const BoundaryData &boundaries)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second
              << " and SurfaceCurrent\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.terminal)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "Terminal");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and Terminal\n";
     }
   }
 
