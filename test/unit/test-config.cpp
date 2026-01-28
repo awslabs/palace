@@ -68,7 +68,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     auto entry = config.find("boundaries_negative_excitation_2")->find("Boundaries");
     CHECK_THROWS(config::BoundaryData(*entry));
   }
-  // Index Specification.
+  // Index Specification - within-array duplicates throw, cross-array uses Validate.
   {
     auto entry = config.find("boundaries_repeated_index_lumped")->find("Boundaries");
     CHECK_THROWS(config::BoundaryData(*entry));
@@ -79,15 +79,18 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
   {
     auto entry = config.find("boundaries_repeated_index_mixed")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    config::BoundaryData boundary_data(*entry);
+    CHECK(!config::Validate(boundary_data).empty());
   }
   {
     auto entry = config.find("boundaries_mislabeled_index_1")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    config::BoundaryData boundary_data(*entry);
+    CHECK(!config::Validate(boundary_data).empty());
   }
   {
     auto entry = config.find("boundaries_mislabeled_index_2")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    config::BoundaryData boundary_data(*entry);
+    CHECK(!config::Validate(boundary_data).empty());
   }
   // Mark single excitation index.
   {
