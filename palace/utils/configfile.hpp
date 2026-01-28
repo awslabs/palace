@@ -23,26 +23,6 @@ using json = nlohmann::json;
 namespace internal
 {
 
-template <typename DataType>
-struct DataMap
-{
-protected:
-  // Map keys are the object indices for postprocessing.
-  std::map<int, DataType> mapdata = {};
-
-public:
-  [[nodiscard]] const auto &operator[](int i) const { return mapdata[i]; }
-  [[nodiscard]] auto &operator[](int i) { return mapdata[i]; }
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
-};
-
 // An ElementData consists of a list of attributes making up a single element of a
 // potentially multielement boundary, and a direction and/or a normal defining the incident
 // field. These are used for lumped ports, terminals, surface currents, and other boundary
@@ -283,12 +263,9 @@ struct DomainEnergyData
 public:
   // List of domain attributes for this domain postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct DomainEnergyPostData : public internal::DataMap<DomainEnergyData>
-{
-public:
-  void SetUp(const json &postpro);
+  DomainEnergyData() = default;
+  DomainEnergyData(const json &domain);
 };
 
 struct ProbeData
@@ -296,12 +273,9 @@ struct ProbeData
 public:
   // Physical space coordinates for the probe location [m].
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
-};
 
-struct ProbePostData : public internal::DataMap<ProbeData>
-{
-public:
-  void SetUp(const json &postpro);
+  ProbeData() = default;
+  ProbeData(const json &probe);
 };
 
 struct DomainPostData
@@ -311,8 +285,8 @@ public:
   std::vector<int> attributes = {};
 
   // Domain postprocessing objects.
-  DomainEnergyPostData energy;
-  ProbePostData probe;
+  std::map<int, DomainEnergyData> energy = {};
+  std::map<int, ProbeData> probe = {};
 
   void SetUp(const json &domains);
 };
@@ -328,12 +302,9 @@ public:
 
   // Current dipole center position.
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
-};
 
-struct CurrentDipoleSourceData : public internal::DataMap<CurrentDipoleData>
-{
-public:
-  void SetUp(const json &domains);
+  CurrentDipoleData() = default;
+  CurrentDipoleData(const json &source);
 };
 
 struct DomainData
@@ -344,7 +315,7 @@ public:
 
   // Domain objects.
   std::vector<MaterialData> materials = {};
-  CurrentDipoleSourceData current_dipole = {};
+  std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
 
   void SetUp(const json &config);
@@ -462,10 +433,21 @@ public:
   std::vector<internal::ElementData> elements = {};
 };
 
-struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
+struct LumpedPortBoundaryData
 {
 public:
+  std::map<int, LumpedPortData> mapdata = {};
+
   void SetUp(const json &boundaries);
+
+  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
+  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
+  [[nodiscard]] auto size() const { return mapdata.size(); }
+  [[nodiscard]] auto empty() const { return mapdata.empty(); }
+  [[nodiscard]] auto begin() const { return mapdata.begin(); }
+  [[nodiscard]] auto end() const { return mapdata.end(); }
+  [[nodiscard]] auto begin() { return mapdata.begin(); }
+  [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
 struct TerminalData
@@ -473,12 +455,9 @@ struct TerminalData
 public:
   // List of boundary attributes for this terminal.
   std::vector<int> attributes = {};
-};
 
-struct TerminalBoundaryData : public internal::DataMap<TerminalData>
-{
-public:
-  void SetUp(const json &boundaries);
+  TerminalData() = default;
+  TerminalData(const json &terminal);
 };
 
 struct PeriodicData
@@ -543,10 +522,21 @@ public:
   int verbose = 0;
 };
 
-struct WavePortBoundaryData : public internal::DataMap<WavePortData>
+struct WavePortBoundaryData
 {
 public:
+  std::map<int, WavePortData> mapdata = {};
+
   void SetUp(const json &boundaries);
+
+  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
+  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
+  [[nodiscard]] auto size() const { return mapdata.size(); }
+  [[nodiscard]] auto empty() const { return mapdata.empty(); }
+  [[nodiscard]] auto begin() const { return mapdata.begin(); }
+  [[nodiscard]] auto end() const { return mapdata.end(); }
+  [[nodiscard]] auto begin() { return mapdata.begin(); }
+  [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
 struct SurfaceCurrentData
@@ -557,10 +547,21 @@ public:
   std::vector<internal::ElementData> elements = {};
 };
 
-struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
+struct SurfaceCurrentBoundaryData
 {
 public:
+  std::map<int, SurfaceCurrentData> mapdata = {};
+
   void SetUp(const json &boundaries);
+
+  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
+  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
+  [[nodiscard]] auto size() const { return mapdata.size(); }
+  [[nodiscard]] auto empty() const { return mapdata.empty(); }
+  [[nodiscard]] auto begin() const { return mapdata.begin(); }
+  [[nodiscard]] auto end() const { return mapdata.end(); }
+  [[nodiscard]] auto begin() { return mapdata.begin(); }
+  [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
 struct SurfaceFluxData
@@ -582,12 +583,9 @@ public:
 
   // List of boundary attributes for this surface flux postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct SurfaceFluxPostData : public internal::DataMap<SurfaceFluxData>
-{
-public:
-  void SetUp(const json &postpro);
+  SurfaceFluxData() = default;
+  SurfaceFluxData(const json &flux);
 };
 
 struct InterfaceDielectricData
@@ -607,12 +605,9 @@ public:
 
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
-{
-public:
-  void SetUp(const json &postpro);
+  InterfaceDielectricData() = default;
+  InterfaceDielectricData(const json &dielectric);
 };
 
 struct FarFieldPostData
@@ -637,8 +632,8 @@ public:
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
-  SurfaceFluxPostData flux = {};
-  InterfaceDielectricPostData dielectric = {};
+  std::map<int, SurfaceFluxData> flux = {};
+  std::map<int, InterfaceDielectricData> dielectric = {};
   FarFieldPostData farfield = {};
 
   void SetUp(const json &boundaries);
@@ -661,7 +656,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   LumpedPortBoundaryData lumpedport = {};
-  TerminalBoundaryData terminal = {};
+  std::map<int, TerminalData> terminal = {};
   WavePortBoundaryData waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
