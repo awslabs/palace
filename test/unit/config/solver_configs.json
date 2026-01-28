@@ -163,5 +163,15 @@
       "Save": [0.05],
       "AdaptiveTol": 1e-3
     }
+  },
+  "linear_maxits_zero": {
+    "Linear": {
+      "MaxIts": 0
+    }
+  },
+  "linear_maxits_one": {
+    "Linear": {
+      "MaxIts": 1
+    }
   }
 }
