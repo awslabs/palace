@@ -3,7 +3,9 @@
 
 #include "jsonschema.hpp"
 
+#include <algorithm>
 #include <fstream>
+#include <sstream>
 #include <nlohmann/json-schema.hpp>
 
 namespace palace
@@ -11,6 +13,7 @@ namespace palace
 
 using json = nlohmann::json;
 using json_validator = nlohmann::json_schema::json_validator;
+using error_handler = nlohmann::json_schema::error_handler;
 
 namespace
 {
@@ -126,7 +129,212 @@ json FindSchemaByKey(const json &schema, const std::string &key,
   return json();
 }
 
+// Find enum values in schema by following a JSON pointer path.
+json FindEnumInSchema(const json &schema, const std::string &ptr,
+                      const std::string &schema_dir)
+{
+  if (ptr.empty() || ptr == "/")
+  {
+    return json();
+  }
+
+  // Parse path into tokens (skip numeric indices for arrays).
+  std::vector<std::string> tokens;
+  std::size_t pos = 0;
+  while (pos < ptr.size())
+  {
+    if (ptr[pos] == '/')
+    {
+      pos++;
+      continue;
+    }
+    std::size_t next = ptr.find('/', pos);
+    std::string token = ptr.substr(pos, next - pos);
+    // Skip array indices.
+    if (token.empty() || !std::all_of(token.begin(), token.end(), ::isdigit))
+    {
+      tokens.push_back(token);
+    }
+    pos = next;
+  }
+
+  // Navigate schema following the path.
+  json current = schema;
+  for (const auto &token : tokens)
+  {
+    // Resolve $ref to external files or $defs.
+    while (current.contains("$ref"))
+    {
+      std::string ref = current["$ref"].get<std::string>();
+      if (ref.substr(0, 2) == "./")
+      {
+        std::string path = schema_dir + "/" + ref.substr(2);
+        std::ifstream f(path);
+        if (f.is_open())
+        {
+          current = json::parse(f);
+        }
+        else
+        {
+          return json();
+        }
+      }
+      else if (ref.substr(0, 8) == "#/$defs/")
+      {
+        std::string def_name = ref.substr(8);
+        if (current.contains("$defs") && current["$defs"].contains(def_name))
+        {
+          current = current["$defs"][def_name];
+        }
+        else
+        {
+          return json();
+        }
+      }
+      else
+      {
+        return json();
+      }
+    }
+
+    // Look in properties.
+    if (current.contains("properties") && current["properties"].contains(token))
+    {
+      current = current["properties"][token];
+      // Follow into array items.
+      if (current.contains("items"))
+      {
+        current = current["items"];
+      }
+    }
+    else
+    {
+      return json();
+    }
+  }
+
+  // Final $ref resolution.
+  while (current.contains("$ref"))
+  {
+    std::string ref = current["$ref"].get<std::string>();
+    if (ref.substr(0, 8) == "#/$defs/")
+    {
+      std::string def_name = ref.substr(8);
+      if (schema.contains("$defs") && schema["$defs"].contains(def_name))
+      {
+        current = schema["$defs"][def_name];
+      }
+      else
+      {
+        return json();
+      }
+    }
+    else
+    {
+      break;
+    }
+  }
+
+  // Extract enum values (handle anyOf).
+  if (current.contains("enum"))
+  {
+    return current["enum"];
+  }
+  if (current.contains("anyOf"))
+  {
+    for (const auto &opt : current["anyOf"])
+    {
+      if (opt.contains("enum"))
+      {
+        return opt["enum"];
+      }
+    }
+  }
+  return json();
+}
+
 }  // namespace
+
+// Custom error handler that formats errors with documentation-style paths.
+class SchemaErrorHandler : public error_handler
+{
+  std::ostringstream errors;
+  bool has_error = false;
+  const json *schema;
+  std::string schema_dir;
+
+  // Convert JSON pointer "/Boundaries/LumpedPort/0" to ["Boundaries"]["LumpedPort"][0]
+  static std::string FormatPath(const std::string &ptr)
+  {
+    if (ptr.empty() || ptr == "/")
+    {
+      return "config";
+    }
+    std::ostringstream result;
+    std::size_t pos = 0;
+    while (pos < ptr.size())
+    {
+      if (ptr[pos] == '/')
+      {
+        pos++;
+        continue;
+      }
+      std::size_t next = ptr.find('/', pos);
+      std::string token = ptr.substr(pos, next - pos);
+      // Check if token is a number (array index).
+      bool is_index = !token.empty() && std::all_of(token.begin(), token.end(), ::isdigit);
+      if (is_index)
+      {
+        result << "[" << token << "]";
+      }
+      else
+      {
+        result << "[\"" << token << "\"]";
+      }
+      pos = next;
+    }
+    return result.str();
+  }
+
+public:
+  SchemaErrorHandler(const json *s = nullptr, const std::string &dir = "")
+    : schema(s), schema_dir(dir)
+  {
+  }
+
+  void error(const json::json_pointer &ptr, const json &instance,
+             const std::string &message) override
+  {
+    errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
+    // Enhance type mismatch errors with actual type.
+    if (message == "unexpected instance type")
+    {
+      errors << " (got " << instance.type_name() << ")";
+    }
+    // Enhance enum errors with valid values.
+    else if (schema && message == "instance not found in required enum")
+    {
+      json enum_values = FindEnumInSchema(*schema, ptr.to_string(), schema_dir);
+      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
+      {
+        errors << "; valid values: ";
+        for (std::size_t i = 0; i < enum_values.size(); i++)
+        {
+          if (i > 0)
+          {
+            errors << ", ";
+          }
+          errors << enum_values[i].dump();
+        }
+      }
+    }
+    errors << "\n";
+    has_error = true;
+  }
+
+  operator bool() const { return has_error; }
+  std::string get_errors() const { return errors.str(); }
+};
 
 std::string ValidateConfig(const json &config, const std::string &schema_dir)
 {
@@ -151,7 +359,12 @@ std::string ValidateConfig(const json &config, const std::string &schema_dir)
   try
   {
     validator.set_root_schema(schema);
-    validator.validate(config);
+    SchemaErrorHandler handler(&schema, schema_dir);
+    validator.validate(config, handler);
+    if (handler)
+    {
+      return handler.get_errors();
+    }
     return "";
   }
   catch (std::exception &e)
@@ -191,7 +404,12 @@ std::string ValidateConfig(const json &config, const std::string &schema_dir,
   try
   {
     validator.set_root_schema(sub_schema);
-    validator.validate(config);
+    SchemaErrorHandler handler(&sub_schema, schema_dir);
+    validator.validate(config, handler);
+    if (handler)
+    {
+      return handler.get_errors();
+    }
     return "";
   }
   catch (std::exception &e)
