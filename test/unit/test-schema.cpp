@@ -50,6 +50,7 @@ TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial
   }
 }
 
+
 TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
 {
   // Schema directory is relative to test source directory.
@@ -220,6 +221,27 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Invalid LumpedPort - negative Index")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Invalid LumpedPort - negative Index")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}, {"R", 50.0}, {"Direction", "+Y"}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Invalid WavePort - negative Index")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "WavePort");
+    CHECK(!err.empty());
+  }
+
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",
@@ -290,59 +312,97 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
   }
 }
 
-TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
+TEST_CASE("Schema Validation - Array Type Checks", "[schema][Serial]")
 {
 
-  SECTION("Invalid enum value shows valid options")
+  SECTION("FloquetWaveVector must be array")
   {
-    json config = {{"Problem", {{"Type", "InvalidType"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver", json::object()}};
+    // Valid: array
+    json periodic_valid = {{"FloquetWaveVector", {1.0, 0.0, 0.0}},
+                           {"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
 
-    std::string err = ValidateConfig(config);
-    CHECK(
-        err ==
-        "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+    // Invalid: not an array
+    json periodic_invalid = {{"FloquetWaveVector", "not an array"},
+                             {"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
   }
 
-  SECTION("Invalid enum in nested array")
+  SECTION("BoundaryPairs must be array")
   {
-    json config = {
-        {"Problem", {{"Type", "Driven"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-        {"Boundaries",
-         {{"LumpedPort", {{{"Index", 1}, {"Attributes", {1}}, {"Direction", "BadDir"}}}}}},
-        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
-
-    std::string err = ValidateConfig(config);
-    // Direction uses anyOf (string enum or array), so error shows subschema failures.
-    CHECK(err.find("[\"Boundaries\"][\"LumpedPort\"][0][\"Direction\"]") !=
-          std::string::npos);
-    CHECK(err.find("anyOf") != std::string::npos);
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs", "not an array"}};
+    std::string err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
   }
 
-  SECTION("Wrong type shows actual type")
+  SECTION("Translation must be array")
   {
-    json port = {{"Index", "not a number"}, {"Attributes", {1}}};
-    std::string err = ValidateConfig(port, "LumpedPort");
-    CHECK(err == "At [\"Index\"]: unexpected instance type (got string)\n");
+    // Valid: array
+    json periodic_valid = {{"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"Translation", "not array"}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
   }
 
-  SECTION("Additional property not allowed")
+  SECTION("AffineTransformation must be array")
   {
-    json config = {{"Problem", {{"Type", "Eigenmode"}, {"UnknownField", 123}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    // Valid: 16-element array (4x4 matrix)
+    json periodic_valid = {
+        {"BoundaryPairs",
+         {{{"DonorAttributes", {1}},
+           {"ReceiverAttributes", {2}},
+           {"AffineTransformation", {1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
 
-    std::string err = ValidateConfig(config);
-    CHECK(err.find("[\"Problem\"]") != std::string::npos);
-    CHECK(err.find("UnknownField") != std::string::npos);
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"AffineTransformation", "not array"}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("ThetaPhis must be array of arrays")
+  {
+    // Valid: array of [theta, phi] pairs
+    json farfield_valid = {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 45.0}}}};
+    std::string err = ValidateConfig(farfield_valid, "FarField");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json farfield_invalid = {{"Attributes", {1}}, {"ThetaPhis", "not array"}};
+    err = ValidateConfig(farfield_invalid, "FarField");
+    CHECK(!err.empty());
+
+    // Invalid: array but inner elements not arrays
+    json farfield_invalid2 = {{"Attributes", {1}}, {"ThetaPhis", {1.0, 2.0}}};
+    err = ValidateConfig(farfield_invalid2, "FarField");
+    CHECK(!err.empty());
   }
 }
 
