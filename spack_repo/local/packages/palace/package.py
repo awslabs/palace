@@ -153,7 +153,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             patches=[
                 "patch_par_tet_mesh_fix_dev.diff",
                 "patch_gmsh_parser_performance.diff",
-                "patch_array_move_assignment_bugfix.diff"
             ],
         )
         depends_on("mfem+shared", when="+shared")
