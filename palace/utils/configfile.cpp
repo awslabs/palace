@@ -695,46 +695,27 @@ WavePortData::WavePortData(const json &port, int index)
   verbose = port.value("Verbose", verbose);
 }
 
-void SurfaceCurrentBoundaryData::SetUp(const json &boundaries)
+SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
-  auto source = boundaries.find("SurfaceCurrent");
-  if (source == boundaries.end())
+  if (source.find("Attributes") != source.end())
   {
-    return;
+    MFEM_VERIFY(source.find("Elements") == source.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"SurfaceCurrent\" boundary in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(source, true, elem);
   }
-  MFEM_VERIFY(source->is_array(),
-              "\"SurfaceCurrent\" should specify an array in the configuration file!");
-  for (auto it = source->begin(); it != source->end(); ++it)
+  else
   {
-    auto index = AtIndex(it, "\"SurfaceCurrent\" source");
-    auto ret = mapdata.insert(std::make_pair(index, SurfaceCurrentData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    if (it->find("Attributes") != it->end())
+    auto elems = source.find("Elements");
+    MFEM_VERIFY(
+        elems != source.end(),
+        "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
+        "boundary in the configuration file!");
+    for (const auto &e : *elems)
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"SurfaceCurrent\" boundary in the configuration file!");
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, true, elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(
-          elements != it->end(),
-          "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
-          "boundary in the configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        MFEM_VERIFY(
-            elem_it->find("Attributes") != elem_it->end(),
-            "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
-            "configuration file!");
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, true, elem);
-      }
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
@@ -1018,7 +999,16 @@ void BoundaryData::SetUp(const json &config)
                             "boundaries in the configuration file!");
     }
   }
-  current.SetUp(*boundaries);
+  if (auto it = boundaries->find("SurfaceCurrent"); it != boundaries->end())
+  {
+    for (auto sc = it->begin(); sc != it->end(); ++sc)
+    {
+      auto index = AtIndex(sc, "\"SurfaceCurrent\"");
+      auto [iter, inserted] = current.try_emplace(index, *sc);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   postpro.SetUp(*boundaries);
 
   // Ensure unique indexing of lumpedport, waveport, current.

@@ -517,23 +517,9 @@ public:
   // For each surface current source index, each element contains a list of attributes
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};
-};
 
-struct SurfaceCurrentBoundaryData
-{
-public:
-  std::map<int, SurfaceCurrentData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  SurfaceCurrentData() = default;
+  SurfaceCurrentData(const json &source);
 };
 
 struct SurfaceFluxData
@@ -630,7 +616,7 @@ public:
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
-  SurfaceCurrentBoundaryData current = {};
+  std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
