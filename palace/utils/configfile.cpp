@@ -543,19 +543,12 @@ LumpedPortData::LumpedPortData(const json &port)
   active = port.value("Active", active);
   if (port.find("Attributes") != port.end())
   {
-    MFEM_VERIFY(port.find("Elements") == port.end(),
-                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                "\"LumpedPort\" in the configuration file!");
     auto &elem = elements.emplace_back();
     ParseElementData(port, true, elem);
   }
   else
   {
-    auto elems = port.find("Elements");
-    MFEM_VERIFY(elems != port.end(),
-                "Missing top-level \"Attributes\" list or \"Elements\" for "
-                "\"LumpedPort\" in the configuration file!");
-    for (const auto &e : *elems)
+    for (const auto &e : *port.find("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
@@ -580,13 +573,6 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   auto pairs = periodic.find("BoundaryPairs");
   for (auto it = pairs->begin(); it != pairs->end(); ++it)
   {
-    MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
-                "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
-                "configuration file!");
-    MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
-                "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
-                "configuration file!");
-
     PeriodicData &data = boundary_pairs.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
@@ -630,20 +616,12 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
   if (source.find("Attributes") != source.end())
   {
-    MFEM_VERIFY(source.find("Elements") == source.end(),
-                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                "\"SurfaceCurrent\" boundary in the configuration file!");
     auto &elem = elements.emplace_back();
     ParseElementData(source, true, elem);
   }
   else
   {
-    auto elems = source.find("Elements");
-    MFEM_VERIFY(
-        elems != source.end(),
-        "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
-        "boundary in the configuration file!");
-    for (const auto &e : *elems)
+    for (const auto &e : *source.find("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);

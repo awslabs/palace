@@ -433,3 +433,73 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expans
   std::string err = ValidateConfig(config);
   CHECK(err.empty());
 }
+
+TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
+{
+
+  SECTION("Periodic BoundaryPairs requires DonorAttributes and ReceiverAttributes")
+  {
+    // Valid: both present
+    json periodic_valid = {{"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: missing DonorAttributes
+    json periodic_no_donor = {
+        {"BoundaryPairs", {{{"ReceiverAttributes", {2}}, {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_no_donor, "Periodic");
+    CHECK(!err.empty());
+
+    // Invalid: missing ReceiverAttributes
+    json periodic_no_receiver = {
+        {"BoundaryPairs", {{{"DonorAttributes", {1}}, {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_no_receiver, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("LumpedPort requires either Attributes or Elements")
+  {
+    // Valid: with Attributes
+    json port_attrs = {{"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(port_attrs, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Valid: with Elements
+    json port_elems = {{"Index", 1},
+                       {"Elements", {{{"Attributes", {1}}, {"Direction", "+X"}}}}};
+    err = ValidateConfig(port_elems, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: neither Attributes nor Elements
+    json port_neither = {{"Index", 1}, {"R", 50.0}};
+    err = ValidateConfig(port_neither, "LumpedPort");
+    CHECK(!err.empty());
+  }
+
+  SECTION("SurfaceCurrent requires either Attributes or Elements")
+  {
+    // Valid: with Attributes
+    json current_attrs = {{"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(current_attrs, "SurfaceCurrent");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Valid: with Elements
+    json current_elems = {{"Index", 1},
+                          {"Elements", {{{"Attributes", {1}}, {"Direction", "+X"}}}}};
+    err = ValidateConfig(current_elems, "SurfaceCurrent");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: neither Attributes nor Elements
+    json current_neither = {{"Index", 1}};
+    err = ValidateConfig(current_neither, "SurfaceCurrent");
+    CHECK(!err.empty());
+  }
+}
