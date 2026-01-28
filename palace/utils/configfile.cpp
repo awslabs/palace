@@ -461,87 +461,29 @@ void DomainData::SetUp(const json &config)
   }
 }
 
-void PecBoundaryData::SetUp(const json &boundaries)
+PecBoundaryData::PecBoundaryData(const json &pec)
 {
-  auto pec = boundaries.find("PEC");
-  auto ground = boundaries.find("Ground");
-  if (pec == boundaries.end() && ground == boundaries.end())
-  {
-    return;
-  }
-  if (pec == boundaries.end())
-  {
-    pec = ground;
-  }
-  else if (ground == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT(
-        "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
-  }
-  MFEM_VERIFY(
-      pec->find("Attributes") != pec->end(),
-      "Missing \"Attributes\" list for \"PEC\" boundary in the configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pec.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void PmcBoundaryData::SetUp(const json &boundaries)
+PmcBoundaryData::PmcBoundaryData(const json &pmc)
 {
-  auto pmc = boundaries.find("PMC");
-  auto zeroq = boundaries.find("ZeroCharge");
-  if (pmc == boundaries.end() && zeroq == boundaries.end())
-  {
-    return;
-  }
-  if (pmc == boundaries.end())
-  {
-    pmc = zeroq;
-  }
-  else if (zeroq == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT("Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
-               "boundaries!");
-  }
-  MFEM_VERIFY(
-      pmc->find("Attributes") != pmc->end(),
-      "Missing \"Attributes\" list for \"PMC\" boundary in the configuration file!");
-  attributes = pmc->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pmc.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void WavePortPecBoundaryData::SetUp(const json &boundaries)
+WavePortPecBoundaryData::WavePortPecBoundaryData(const json &auxpec)
 {
-  auto pec = boundaries.find("WavePortPEC");
-  if (pec == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(pec->find("Attributes") != pec->end(),
-              "Missing \"Attributes\" list for \"WavePortPEC\" boundary in the "
-              "configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = auxpec.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void FarfieldBoundaryData::SetUp(const json &boundaries)
+FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
 {
-  auto absorbing = boundaries.find("Absorbing");
-  if (absorbing == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(
-      absorbing->find("Attributes") != absorbing->end(),
-      "Missing \"Attributes\" list for \"Absorbing\" boundary in the configuration file!");
-  attributes = absorbing->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = absorbing.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
-  order = absorbing->value("Order", order);
+  order = absorbing.value("Order", order);
 }
 
 ConductivityData::ConductivityData(const json &boundary)
@@ -744,19 +686,9 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   tandelta = dielectric.value("LossTan", tandelta);
 }
 
-void FarFieldPostData::SetUp(const json &postpro)
+FarFieldPostData::FarFieldPostData(const json &farfield)
 {
-  auto farfield = postpro.find("FarField");
-  if (farfield == postpro.end())
-  {
-    return;
-  }
-
-  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
-              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
-              "configuration file!");
-
-  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = farfield.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 
   // Generate NSample points with the following properties:
@@ -766,9 +698,9 @@ void FarFieldPostData::SetUp(const json &postpro)
   //   previous condition.
   // - The points are on rings of constant theta.
 
-  auto nsample_json = farfield->find("NSample");
+  auto nsample_json = farfield.find("NSample");
   int nsample = 0;
-  if (nsample_json != farfield->end())
+  if (nsample_json != farfield.end())
   {
     nsample = nsample_json->get<int>();
     if (nsample > 0)
@@ -843,8 +775,8 @@ void FarFieldPostData::SetUp(const json &postpro)
     }
   }
 
-  auto thetaphis_json = farfield->find("ThetaPhis");
-  if (thetaphis_json != farfield->end())
+  auto thetaphis_json = farfield.find("ThetaPhis");
+  if (thetaphis_json != farfield.end())
   {
     MFEM_VERIFY(thetaphis_json->is_array(),
                 "\"ThetaPhis\" should specify an array in the configuration file!");
@@ -925,7 +857,10 @@ void BoundaryPostData::SetUp(const json &boundaries)
                             "boundaries in the configuration file!");
     }
   }
-  farfield.SetUp(*postpro);
+  if (auto it = postpro->find("FarField"); it != postpro->end())
+  {
+    farfield = FarFieldPostData(*it);
+  }
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -950,10 +885,45 @@ void BoundaryData::SetUp(const json &config)
   auto boundaries = config.find("Boundaries");
   MFEM_VERIFY(boundaries != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
-  pec.SetUp(*boundaries);
-  pmc.SetUp(*boundaries);
-  auxpec.SetUp(*boundaries);
-  farfield.SetUp(*boundaries);
+
+  // PEC can be specified as "PEC" or "Ground".
+  auto pec_it = boundaries->find("PEC");
+  auto ground_it = boundaries->find("Ground");
+  MFEM_VERIFY(
+      pec_it == boundaries->end() || ground_it == boundaries->end(),
+      "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
+  if (pec_it != boundaries->end())
+  {
+    pec = PecBoundaryData(*pec_it);
+  }
+  else if (ground_it != boundaries->end())
+  {
+    pec = PecBoundaryData(*ground_it);
+  }
+
+  // PMC can be specified as "PMC" or "ZeroCharge".
+  auto pmc_it = boundaries->find("PMC");
+  auto zeroq_it = boundaries->find("ZeroCharge");
+  MFEM_VERIFY(pmc_it == boundaries->end() || zeroq_it == boundaries->end(),
+              "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
+              "boundaries!");
+  if (pmc_it != boundaries->end())
+  {
+    pmc = PmcBoundaryData(*pmc_it);
+  }
+  else if (zeroq_it != boundaries->end())
+  {
+    pmc = PmcBoundaryData(*zeroq_it);
+  }
+
+  if (auto it = boundaries->find("WavePortPEC"); it != boundaries->end())
+  {
+    auxpec = WavePortPecBoundaryData(*it);
+  }
+  if (auto it = boundaries->find("Absorbing"); it != boundaries->end())
+  {
+    farfield = FarfieldBoundaryData(*it);
+  }
   if (auto it = boundaries->find("Conductivity"); it != boundaries->end())
   {
     for (const auto &b : *it)

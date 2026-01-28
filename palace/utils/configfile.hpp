@@ -331,7 +331,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  PecBoundaryData() = default;
+  PecBoundaryData(const json &pec);
 };
 
 struct PmcBoundaryData
@@ -342,7 +343,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  PmcBoundaryData() = default;
+  PmcBoundaryData(const json &pmc);
 };
 
 struct WavePortPecBoundaryData
@@ -353,7 +355,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  WavePortPecBoundaryData() = default;
+  WavePortPecBoundaryData(const json &auxpec);
 };
 
 struct FarfieldBoundaryData
@@ -367,7 +370,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(const json &boundaries);
+  FarfieldBoundaryData() = default;
+  FarfieldBoundaryData(const json &absorbing);
 };
 
 struct ConductivityData
@@ -578,7 +582,8 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
-  void SetUp(const json &postpro);
+  FarFieldPostData() = default;
+  FarFieldPostData(const json &farfield);
 
   bool empty() const { return thetaphis.empty(); };
 };
