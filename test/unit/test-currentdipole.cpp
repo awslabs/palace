@@ -538,12 +538,20 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
       {
         E_rel_real(i) = E_err_real(i) / ana_real_mag;
       }
+      else
+      {
+        E_rel_real(i) = 0.0;  // Explicitly set to zero when analytical is too small
+      }
 
       // Relative error for imaginary part
       double ana_imag_mag = std::abs(E_ana_imag(i));
       if (ana_imag_mag > 1e-14)
       {
         E_rel_imag(i) = E_err_imag(i) / ana_imag_mag;
+      }
+      else
+      {
+        E_rel_imag(i) = 0.0;  // Explicitly set to zero when analytical is too small
       }
     }
 
@@ -573,12 +581,20 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
       {
         B_rel_real(i) = B_err_real(i) / ana_real_mag;
       }
+      else
+      {
+        B_rel_real(i) = 0.0;  // Explicitly set to zero when analytical is too small
+      }
 
       // Relative error for imaginary part
       double ana_imag_mag = std::abs(B_ana_imag(i));
       if (ana_imag_mag > 1e-14)
       {
         B_rel_imag(i) = B_err_imag(i) / ana_imag_mag;
+      }
+      else
+      {
+        B_rel_imag(i) = 0.0;  // Explicitly set to zero when analytical is too small
       }
     }
 
@@ -599,10 +615,6 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
     paraview_dc.RegisterField("E_analytical_real", &E_analytical.Real());
     paraview_dc.RegisterField("E_analytical_imag", &E_analytical.Imag());
 
-    // Register E-field error fields
-    paraview_dc.RegisterField("E_error_real", &E_error.Real());
-    paraview_dc.RegisterField("E_error_imag", &E_error.Imag());
-
     // Register E-field relative error (separate for real and imaginary parts)
     paraview_dc.RegisterField("E_relative_error_real", &E_rel_error.Real());
     paraview_dc.RegisterField("E_relative_error_imag", &E_rel_error.Imag());
@@ -615,37 +627,13 @@ void runCurrentDipoleTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mes
     paraview_dc.RegisterField("B_analytical_real", &B_analytical.Real());
     paraview_dc.RegisterField("B_analytical_imag", &B_analytical.Imag());
 
-    // Register B-field error fields
-    paraview_dc.RegisterField("B_error_real", &B_error.Real());
-    paraview_dc.RegisterField("B_error_imag", &B_error.Imag());
-
-    // Register B-field relative error
+    // Register B-field relative error (separate for real and imaginary parts)
     paraview_dc.RegisterField("B_relative_error_real", &B_rel_error.Real());
     paraview_dc.RegisterField("B_relative_error_imag", &B_rel_error.Imag());
 
-    // Create a field showing which elements are included in error computation
-    // This will be a discontinuous scalar field (one value per element)
-    auto *l2_fec = new mfem::L2_FECollection(0, dim); // Piecewise constant
-    auto *l2_fes = new mfem::FiniteElementSpace(&mesh, l2_fec);
-    mfem::GridFunction element_marker_field(l2_fes);
-    element_marker_field = 0.0;
-
-    // Set the value for each element based on whether it's included in error computation
-    for (int i = 0; i < mesh.GetNE(); i++)
-    {
-      element_marker_field[i] = (*marked_elements)[i]; // 1.0 for included, 0.0 for excluded
-    }
-
-    paraview_dc.RegisterField("element_inclusion_mask", &element_marker_field);
-
     paraview_dc.Save();
 
-    // Clean up
-    delete l2_fes;
-    delete l2_fec;
-
-    std::cout << "\n=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===";
-    std::cout << "\n=== Use 'element_inclusion_mask' field to see which elements are included in error computation ===\n";
+    std::cout << "\n=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===\n";
   }
   // ===============================================================
 
