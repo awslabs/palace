@@ -144,8 +144,6 @@ TEST_CASE("TableCSV", "[tablecsv][Serial]")
   col_2.min_left_padding.reset();
   col_2.float_precision.reset();
   CHECK(table.format_table() == table_str1);
-
-  //   REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
 }
 
 TEST_CASE("TableCSVParsing1_Basic", "[tablecsv][Serial]")
