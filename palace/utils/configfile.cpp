@@ -349,47 +349,15 @@ MaterialData::MaterialData(const json &domain)
   lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
-void DomainEnergyPostData::SetUp(const json &postpro)
+DomainEnergyData::DomainEnergyData(const json &domain)
 {
-  auto energy = postpro.find("Energy");
-  if (energy == postpro.end())
-  {
-    return;
-  }
-  for (auto it = energy->begin(); it != energy->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Energy\" domain");
-    auto ret = mapdata.insert(std::make_pair(index, DomainEnergyData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
-                            "in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-  }
+  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
 }
 
-void ProbePostData::SetUp(const json &postpro)
+ProbeData::ProbeData(const json &probe)
 {
-  auto probe = postpro.find("Probe");
-  if (probe == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(probe->is_array(),
-              "\"Probe\" should specify an array in the configuration file!");
-  for (auto it = probe->begin(); it != probe->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Probe\" point");
-    auto ctr = it->find("Center");
-    MFEM_VERIFY(ctr != it->end() && ctr->is_array(),
-                "Missing \"Probe\" point \"Center\" or \"Center\" should specify an array "
-                "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, ProbeData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Probe\" points in "
-                            "the configuration file!");
-    auto &data = ret.first->second;
-    data.center = ctr->get<std::array<double, 3>>();  // Required
-  }
+  center = probe.at("Center").get<std::array<double, 3>>();  // Required
 }
 
 void DomainPostData::SetUp(const json &domains)
@@ -399,8 +367,26 @@ void DomainPostData::SetUp(const json &domains)
   {
     return;
   }
-  energy.SetUp(*postpro);
-  probe.SetUp(*postpro);
+  if (auto it = postpro->find("Energy"); it != postpro->end())
+  {
+    for (auto e = it->begin(); e != it->end(); ++e)
+    {
+      auto index = AtIndex(e, "\"Energy\" domain");
+      auto [iter, inserted] = energy.try_emplace(index, *e);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Energy\" domains "
+                            "in the configuration file!");
+    }
+  }
+  if (auto it = postpro->find("Probe"); it != postpro->end())
+  {
+    for (auto p = it->begin(); p != it->end(); ++p)
+    {
+      auto index = AtIndex(p, "\"Probe\" point");
+      auto [iter, inserted] = probe.try_emplace(index, *p);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Probe\" points "
+                            "in the configuration file!");
+    }
+  }
 
   // Store all unique postprocessing domain attributes.
   for (const auto &[idx, data] : energy)
@@ -412,59 +398,28 @@ void DomainPostData::SetUp(const json &domains)
   attributes.shrink_to_fit();
 }
 
-void CurrentDipoleSourceData::SetUp(const json &domains)
+CurrentDipoleData::CurrentDipoleData(const json &source)
 {
-  auto current_dipole = domains.find("CurrentDipole");
-  if (current_dipole == domains.end())
+  auto dir = source.find("Direction");
+  if (dir->is_array())
   {
-    return;
+    direction = dir->get<std::array<double, 3>>();
+    double norm = direction[0] * direction[0] + direction[1] * direction[1] +
+                  direction[2] * direction[2];
+    for (auto &x : direction)
+    {
+      x /= norm;
+    }
   }
-  MFEM_VERIFY(current_dipole->is_array(),
-              "\"CurrentDipole\" should specify an array in the configuration file!");
-
-  for (auto it = current_dipole->begin(); it != current_dipole->end(); ++it)
+  else
   {
-    auto index = AtIndex(it, "\"CurrentDipole\" source");
-    auto ret = mapdata.insert(std::make_pair(index, CurrentDipoleData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"CurrentDipole\" "
-                            "sources in the configuration file!");
-    auto &data = ret.first->second;
-
-    MFEM_VERIFY(
-        it->find("Direction") != it->end(),
-        "Missing \"CurrentDipole\" source \"Direction\" in the configuration file!");
-    MFEM_VERIFY(it->find("Center") != it->end(),
-                "Missing \"CurrentDipole\" source \"Center\" in the configuration file!");
-    MFEM_VERIFY(
-        it->find("Moment") != it->end(),
-        "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
-    auto direction = it->find("Direction");
-    auto center = it->find("Center");
-    MFEM_VERIFY(center->is_array(),
-                "\"CurrentDipole\" source \"Center\" should specify an array "
-                "in the configuration file!");
-
-    if (direction->is_array())
-    {
-      // Attempt to parse as an array.
-      data.direction = direction->get<std::array<double, 3>>();
-      double norm = data.direction[0] * data.direction[0] +
-                    data.direction[1] * data.direction[1] +
-                    data.direction[2] * data.direction[2];
-      for (auto &x : data.direction)
-        x /= norm;
-    }
-    else
-    {
-      auto direction_and_coord =
-          ParseStringAsDirection(direction->get<std::string>());  // Required
-      MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
-                  "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
-      data.direction = direction_and_coord.first;
-    }
-    data.center = center->get<std::array<double, 3>>();  // Required
-    data.moment = it->at("Moment");                      // Required
+    auto direction_and_coord = ParseStringAsDirection(dir->get<std::string>());
+    MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
+                "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
+    direction = direction_and_coord.first;
   }
+  center = source.at("Center").get<std::array<double, 3>>();  // Required
+  moment = source.at("Moment");                               // Required
 }
 
 void DomainData::SetUp(const json &config)
@@ -477,7 +432,16 @@ void DomainData::SetUp(const json &config)
   {
     materials.emplace_back(d);
   }
-  current_dipole.SetUp(*domains);
+  if (auto it = domains->find("CurrentDipole"); it != domains->end())
+  {
+    for (auto cd = it->begin(); cd != it->end(); ++cd)
+    {
+      auto index = AtIndex(cd, "\"CurrentDipole\" source");
+      auto [iter, inserted] = current_dipole.try_emplace(index, *cd);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"CurrentDipole\" "
+                            "sources in the configuration file!");
+    }
+  }
   postpro.SetUp(*domains);
 
   // Store all unique domain attributes.
@@ -669,23 +633,10 @@ void LumpedPortBoundaryData::SetUp(const json &boundaries)
   }
 }
 
-void TerminalBoundaryData::SetUp(const json &boundaries)
+TerminalData::TerminalData(const json &terminal)
 {
-  auto terminal = boundaries.find("Terminal");
-  if (terminal == boundaries.end())
-  {
-    return;
-  }
-  for (auto it = terminal->begin(); it != terminal->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Terminal\"");
-    auto ret = mapdata.insert(std::make_pair(index, TerminalData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Terminal\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();
-    std::sort(data.attributes.begin(), data.attributes.end());
-  }
+  attributes = terminal.at("Attributes").get<std::vector<int>>();
+  std::sort(attributes.begin(), attributes.end());
 }
 
 void PeriodicBoundaryData::SetUp(const json &boundaries)
@@ -822,68 +773,30 @@ void SurfaceCurrentBoundaryData::SetUp(const json &boundaries)
   }
 }
 
-void SurfaceFluxPostData::SetUp(const json &postpro)
+SurfaceFluxData::SurfaceFluxData(const json &flux)
 {
-  auto flux = postpro.find("SurfaceFlux");
-  if (flux == postpro.end())
+  attributes = flux.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  type = flux.at("Type");  // Required
+  two_sided = flux.value("TwoSided", two_sided);
+  auto ctr = flux.find("Center");
+  if (ctr != flux.end())
   {
-    return;
-  }
-  MFEM_VERIFY(flux->is_array(),
-              "\"SurfaceFlux\" should specify an array in the configuration file!");
-  for (auto it = flux->begin(); it != flux->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"SurfaceFlux\" boundary");
-    MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Type") != it->end(),
-                "Missing \"Attributes\" list or \"Type\" for \"SurfaceFlux\" boundary "
-                "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, SurfaceFluxData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceFlux\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.type = it->at("Type");  // Required
-    data.two_sided = it->value("TwoSided", data.two_sided);
-    auto ctr = it->find("Center");
-    if (ctr != it->end())
-    {
-      MFEM_VERIFY(ctr->is_array(),
-                  "\"Center\" should specify an array in the configuration file!");
-      data.center = ctr->get<std::array<double, 3>>();
-      data.no_center = false;
-    }
+    center = ctr->get<std::array<double, 3>>();
+    no_center = false;
   }
 }
 
-void InterfaceDielectricPostData::SetUp(const json &postpro)
+InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
 {
-  auto dielectric = postpro.find("Dielectric");
-  if (dielectric == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(dielectric->is_array(),
-              "\"Dielectric\" should specify an array in the configuration file!");
-  for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Dielectric\" boundary");
-    MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Thickness") != it->end() &&
-                    it->find("Permittivity") != it->end(),
-                "Missing \"Dielectric\" boundary \"Attributes\" list, \"Thickness\", or "
-                "\"Permittivity\" in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, InterfaceDielectricData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.type = it->value("Type", data.type);
-    data.t = it->at("Thickness");             // Required
-    data.epsilon_r = it->at("Permittivity");  // Required
-    data.tandelta = it->value("LossTan", data.tandelta);
-  }
+  attributes = dielectric.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  type = dielectric.value("Type", type);
+  t = dielectric.at("Thickness");             // Required
+  epsilon_r = dielectric.at("Permittivity");  // Required
+  tandelta = dielectric.value("LossTan", tandelta);
 }
+
 void FarFieldPostData::SetUp(const json &postpro)
 {
   auto farfield = postpro.find("FarField");
@@ -1045,8 +958,26 @@ void BoundaryPostData::SetUp(const json &boundaries)
   {
     return;
   }
-  flux.SetUp(*postpro);
-  dielectric.SetUp(*postpro);
+  if (auto it = postpro->find("SurfaceFlux"); it != postpro->end())
+  {
+    for (auto f = it->begin(); f != it->end(); ++f)
+    {
+      auto index = AtIndex(f, "\"SurfaceFlux\" boundary");
+      auto [iter, inserted] = flux.try_emplace(index, *f);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"SurfaceFlux\" "
+                            "boundaries in the configuration file!");
+    }
+  }
+  if (auto it = postpro->find("Dielectric"); it != postpro->end())
+  {
+    for (auto d = it->begin(); d != it->end(); ++d)
+    {
+      auto index = AtIndex(d, "\"Dielectric\" boundary");
+      auto [iter, inserted] = dielectric.try_emplace(index, *d);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Dielectric\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
@@ -1091,7 +1022,16 @@ void BoundaryData::SetUp(const json &config)
     }
   }
   lumpedport.SetUp(*boundaries);
-  terminal.SetUp(*boundaries);
+  if (auto it = boundaries->find("Terminal"); it != boundaries->end())
+  {
+    for (auto t = it->begin(); t != it->end(); ++t)
+    {
+      auto index = AtIndex(t, "\"Terminal\"");
+      auto [iter, inserted] = terminal.try_emplace(index, *t);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Terminal\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   periodic.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
