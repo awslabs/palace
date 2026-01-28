@@ -272,6 +272,7 @@ endif()
 set(LIB_TARGET_NAME libpalace)
 add_library(${LIB_TARGET_NAME} "")
 target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CMAKE_BINARY_DIR}/generated)
 
 # Add source files
 add_subdirectory(drivers)
@@ -339,11 +340,8 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add schema directory path definition for JSON validation
-set_property(
-  SOURCE ${CMAKE_SOURCE_DIR}/utils/iodata.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_SCHEMA_DIR=\"${CMAKE_INSTALL_PREFIX}/bin/schema\""
-)
+# Generate embedded schema header from JSON schema files
+include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
@@ -632,11 +630,6 @@ install(
   DESTINATION bin
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
               WORLD_READ WORLD_EXECUTE
-)
-install(
-  DIRECTORY ${CMAKE_SOURCE_DIR}/../scripts/schema
-  DESTINATION bin
-  FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/fem/qfunctions
