@@ -904,7 +904,8 @@ public:
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;
 
-  void SetUp(const json &solver);
+  LinearSolverData() = default;
+  LinearSolverData(const json &linear);
 };
 
 struct SolverData

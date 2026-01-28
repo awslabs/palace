@@ -1352,58 +1352,53 @@ TransientSolverData::TransientSolverData(const json &transient)
   }
 }
 
-void LinearSolverData::SetUp(const json &solver)
+LinearSolverData::LinearSolverData(const json &linear)
 {
-  auto linear = solver.find("Linear");
-  if (linear == solver.end())
-  {
-    return;
-  }
-  type = linear->value("Type", type);
-  krylov_solver = linear->value("KSPType", krylov_solver);
-  tol = linear->value("Tol", tol);
-  max_it = linear->value("MaxIts", max_it);
-  max_size = linear->value("MaxSize", max_size);
-  initial_guess = linear->value("InitialGuess", initial_guess);
+  type = linear.value("Type", type);
+  krylov_solver = linear.value("KSPType", krylov_solver);
+  tol = linear.value("Tol", tol);
+  max_it = linear.value("MaxIts", max_it);
+  max_size = linear.value("MaxSize", max_size);
+  initial_guess = linear.value("InitialGuess", initial_guess);
 
   // Options related to multigrid.
-  mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
-  mg_coarsening = linear->value("MGCoarsenType", mg_coarsening);
-  mg_use_mesh = linear->value("MGUseMesh", mg_use_mesh);
-  mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
-  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
-  mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
-  mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);
-  mg_smooth_sf_max = linear->value("MGSmoothEigScaleMax", mg_smooth_sf_max);
-  mg_smooth_sf_min = linear->value("MGSmoothEigScaleMin", mg_smooth_sf_min);
-  mg_smooth_cheby_4th = linear->value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
+  mg_max_levels = linear.value("MGMaxLevels", mg_max_levels);
+  mg_coarsening = linear.value("MGCoarsenType", mg_coarsening);
+  mg_use_mesh = linear.value("MGUseMesh", mg_use_mesh);
+  mg_cycle_it = linear.value("MGCycleIts", mg_cycle_it);
+  mg_smooth_aux = linear.value("MGAuxiliarySmoother", mg_smooth_aux);
+  mg_smooth_it = linear.value("MGSmoothIts", mg_smooth_it);
+  mg_smooth_order = linear.value("MGSmoothOrder", mg_smooth_order);
+  mg_smooth_sf_max = linear.value("MGSmoothEigScaleMax", mg_smooth_sf_max);
+  mg_smooth_sf_min = linear.value("MGSmoothEigScaleMin", mg_smooth_sf_min);
+  mg_smooth_cheby_4th = linear.value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
 
   // Preconditioner-specific options.
-  pc_mat_real = linear->value("PCMatReal", pc_mat_real);
-  pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
-  complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
-  drop_small_entries = linear->value("DropSmallEntries", drop_small_entries);
-  reorder_reuse = linear->value("ReorderingReuse", reorder_reuse);
-  pc_side = linear->value("PCSide", pc_side);
-  sym_factorization = linear->value("ColumnOrdering", sym_factorization);
+  pc_mat_real = linear.value("PCMatReal", pc_mat_real);
+  pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
+  complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
+  drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
+  reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
+  pc_side = linear.value("PCSide", pc_side);
+  sym_factorization = linear.value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
-      linear->value("STRUMPACKCompressionType", strumpack_compression_type);
-  strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
+      linear.value("STRUMPACKCompressionType", strumpack_compression_type);
+  strumpack_lr_tol = linear.value("STRUMPACKCompressionTol", strumpack_lr_tol);
   strumpack_lossy_precision =
-      linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
-  strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
-  superlu_3d = linear->value("SuperLU3DCommunicator", superlu_3d);
-  ams_vector_interp = linear->value("AMSVectorInterpolation", ams_vector_interp);
-  ams_singular_op = linear->value("AMSSingularOperator", ams_singular_op);
-  amg_agg_coarsen = linear->value("AMGAggressiveCoarsening", amg_agg_coarsen);
+      linear.value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
+  strumpack_butterfly_l = linear.value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
+  superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
+  ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
+  ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
+  amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
 
   // Other linear solver options.
-  divfree_tol = linear->value("DivFreeTol", divfree_tol);
-  divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
-  estimator_tol = linear->value("EstimatorTol", estimator_tol);
-  estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
-  estimator_mg = linear->value("EstimatorMG", estimator_mg);
-  gs_orthog = linear->value("GSOrthogonalization", gs_orthog);
+  divfree_tol = linear.value("DivFreeTol", divfree_tol);
+  divfree_max_it = linear.value("DivFreeMaxIts", divfree_max_it);
+  estimator_tol = linear.value("EstimatorTol", estimator_tol);
+  estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
+  estimator_mg = linear.value("EstimatorMG", estimator_mg);
+  gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 
 void SolverData::SetUp(const json &config)
@@ -1443,7 +1438,10 @@ void SolverData::SetUp(const json &config)
   {
     transient = TransientSolverData(*it);
   }
-  linear.SetUp(*solver);
+  if (auto it = solver->find("Linear"); it != solver->end())
+  {
+    linear = LinearSolverData(*it);
+  }
 }
 
 int GetNumSteps(double start, double end, double delta)
