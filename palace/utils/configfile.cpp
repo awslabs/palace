@@ -338,24 +338,15 @@ void ModelData::SetUp(const json &config)
   refinement.SetUp(*model);
 }
 
-void DomainMaterialData::SetUp(const json &domains)
+MaterialData::MaterialData(const json &domain)
 {
-  auto materials = domains.find("Materials");
-  if (materials == domains.end())
-  {
-    return;
-  }
-  for (auto it = materials->begin(); it != materials->end(); ++it)
-  {
-    MaterialData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
-    ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
-    ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
-    ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
-    data.lambda_L = it->value("LondonDepth", data.lambda_L);
-  }
+  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  ParseSymmetricMatrixData(domain, "Permeability", mu_r);
+  ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+  ParseSymmetricMatrixData(domain, "LossTan", tandelta);
+  ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
 void DomainEnergyPostData::SetUp(const json &postpro)
@@ -481,7 +472,11 @@ void DomainData::SetUp(const json &config)
   auto domains = config.find("Domains");
   MFEM_VERIFY(domains != config.end(),
               "\"Domains\" must be specified in the configuration file!");
-  materials.SetUp(*domains);
+
+  for (const auto &d : *domains->find("Materials"))
+  {
+    materials.emplace_back(d);
+  }
   current_dipole.SetUp(*domains);
   postpro.SetUp(*domains);
 
@@ -585,54 +580,23 @@ void FarfieldBoundaryData::SetUp(const json &boundaries)
   order = absorbing->value("Order", order);
 }
 
-void ConductivityBoundaryData::SetUp(const json &boundaries)
+ConductivityData::ConductivityData(const json &boundary)
 {
-  auto conductivity = boundaries.find("Conductivity");
-  if (conductivity == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(conductivity->is_array(),
-              "\"Conductivity\" should specify an array in the configuration file!");
-  for (auto it = conductivity->begin(); it != conductivity->end(); ++it)
-  {
-    MFEM_VERIFY(it->find("Attributes") != it->end(),
-                "Missing \"Attributes\" list for \"Conductivity\" boundary in the "
-                "configuration file!");
-    MFEM_VERIFY(
-        it->find("Conductivity") != it->end(),
-        "Missing \"Conductivity\" boundary \"Conductivity\" in the configuration file!");
-    ConductivityData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.sigma = it->at("Conductivity");  // Required
-    data.mu_r = it->value("Permeability", data.mu_r);
-    data.h = it->value("Thickness", data.h);
-    data.external = it->value("External", data.external);
-  }
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  sigma = boundary.at("Conductivity");  // Required
+  mu_r = boundary.value("Permeability", mu_r);
+  h = boundary.value("Thickness", h);
+  external = boundary.value("External", external);
 }
 
-void ImpedanceBoundaryData::SetUp(const json &boundaries)
+ImpedanceData::ImpedanceData(const json &boundary)
 {
-  auto impedance = boundaries.find("Impedance");
-  if (impedance == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(impedance->is_array(),
-              "\"Impedance\" should specify an array in the configuration file!");
-  for (auto it = impedance->begin(); it != impedance->end(); ++it)
-  {
-    MFEM_VERIFY(it->find("Attributes") != it->end(),
-                "Missing \"Attributes\" list for \"Impedance\" boundary in the "
-                "configuration file!");
-    ImpedanceData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
-  }
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  Rs = boundary.value("Rs", Rs);
+  Ls = boundary.value("Ls", Ls);
+  Cs = boundary.value("Cs", Cs);
 }
 
 int ParsePortExcitation(json::const_iterator port_it, int default_excitation)
@@ -1112,8 +1076,20 @@ void BoundaryData::SetUp(const json &config)
   pmc.SetUp(*boundaries);
   auxpec.SetUp(*boundaries);
   farfield.SetUp(*boundaries);
-  conductivity.SetUp(*boundaries);
-  impedance.SetUp(*boundaries);
+  if (auto it = boundaries->find("Conductivity"); it != boundaries->end())
+  {
+    for (const auto &b : *it)
+    {
+      conductivity.emplace_back(b);
+    }
+  }
+  if (auto it = boundaries->find("Impedance"); it != boundaries->end())
+  {
+    for (const auto &b : *it)
+    {
+      impedance.emplace_back(b);
+    }
+  }
   lumpedport.SetUp(*boundaries);
   terminal.SetUp(*boundaries);
   periodic.SetUp(*boundaries);

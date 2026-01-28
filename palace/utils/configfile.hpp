@@ -24,34 +24,6 @@ namespace internal
 {
 
 template <typename DataType>
-struct DataVector
-{
-protected:
-  std::vector<DataType> vecdata = {};
-
-public:
-  template <typename... Args>
-  decltype(auto) emplace_back(Args &&...args)
-  {
-    return vecdata.emplace_back(std::forward<Args>(args)...);
-  }
-  [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
-  [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
-  [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return vecdata.at(i); }
-  [[nodiscard]] auto size() const { return vecdata.size(); }
-  [[nodiscard]] auto empty() const { return vecdata.empty(); }
-  [[nodiscard]] auto begin() const { return vecdata.begin(); }
-  [[nodiscard]] auto end() const { return vecdata.end(); }
-  [[nodiscard]] auto begin() { return vecdata.begin(); }
-  [[nodiscard]] auto end() { return vecdata.end(); }
-  [[nodiscard]] auto front() const { return vecdata.front(); }
-  [[nodiscard]] auto back() const { return vecdata.back(); }
-  [[nodiscard]] auto front() { return vecdata.front(); }
-  [[nodiscard]] auto back() { return vecdata.back(); }
-};
-
-template <typename DataType>
 struct DataMap
 {
 protected:
@@ -299,12 +271,11 @@ public:
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
-};
 
-struct DomainMaterialData : public internal::DataVector<MaterialData>
-{
-public:
-  void SetUp(const json &domains);
+  MaterialData() = default;
+  MaterialData(const json &domain);
+
+  void SetUp(const json &domain);
 };
 
 struct DomainEnergyData
@@ -372,7 +343,7 @@ public:
   std::vector<int> attributes = {};
 
   // Domain objects.
-  DomainMaterialData materials = {};
+  std::vector<MaterialData> materials = {};
   CurrentDipoleSourceData current_dipole = {};
   DomainPostData postpro = {};
 
@@ -445,12 +416,9 @@ public:
 
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
-};
 
-struct ConductivityBoundaryData : public internal::DataVector<ConductivityData>
-{
-public:
-  void SetUp(const json &boundaries);
+  ConductivityData() = default;
+  ConductivityData(const json &boundary);
 };
 
 struct ImpedanceData
@@ -463,12 +431,9 @@ public:
 
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
-};
 
-struct ImpedanceBoundaryData : public internal::DataVector<ImpedanceData>
-{
-public:
-  void SetUp(const json &boundaries);
+  ImpedanceData() = default;
+  ImpedanceData(const json &boundary);
 };
 
 struct LumpedPortData
@@ -693,8 +658,8 @@ public:
   PmcBoundaryData pmc = {};
   WavePortPecBoundaryData auxpec = {};
   FarfieldBoundaryData farfield = {};
-  ConductivityBoundaryData conductivity = {};
-  ImpedanceBoundaryData impedance = {};
+  std::vector<ConductivityData> conductivity = {};
+  std::vector<ImpedanceData> impedance = {};
   LumpedPortBoundaryData lumpedport = {};
   TerminalBoundaryData terminal = {};
   WavePortBoundaryData waveport = {};
