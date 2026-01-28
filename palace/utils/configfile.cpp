@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <sstream>
 #include <string_view>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -858,63 +859,44 @@ BoundaryData::BoundaryData(const json &boundaries)
                                                  "\"SurfaceCurrent\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
-  // Ensure unique indexing of lumpedport, waveport, current.
+  // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
+  // calculating S-parameters (each port has a single excitation) and indices are valid.
   {
-    std::map<int, std::string> index_map;
     std::map<int, std::vector<int>> excitation_map;
-    const std::string lumpedport_str = "\"LumpedPort\"";
-    const std::string waveport_str = "WavePort";
-    const std::string current_str = "SurfaceCurrent";
-
-    for (const auto &data : lumpedport)
+    for (const auto &[idx, data] : lumpedport)
     {
-      auto result = index_map.insert({data.first, lumpedport_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-      excitation_map[data.second.excitation].emplace_back(data.first);
+      excitation_map[data.excitation].emplace_back(idx);
     }
-    for (const auto &data : waveport)
+    for (const auto &[idx, data] : waveport)
     {
-      auto result = index_map.insert({data.first, waveport_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-      excitation_map[data.second.excitation].emplace_back(data.first);
+      excitation_map[data.excitation].emplace_back(idx);
     }
-    for (const auto &data : current)
-    {
-      auto result = index_map.insert({data.first, current_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-    }
-    // Typical usecase: If each excitation is simple, S-parameters will be calculated.
-    //    If there were multiple excitations specified, check their indices match the
-    //    port indices. If there was only one, assign it.
     excitation_map.erase(0);  // zeroth index is unexcited.
     bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
                                      [](const auto &x) { return x.second.size() == 1; });
     if (calc_s_params && !excitation_map.empty())
     {
-      // If there's one excitation, needs to be 1 (set with bool) or the port index.
+      // Only normalize if excitation indices are valid (match port indices or are 1).
       const auto &ext1 = *excitation_map.begin();
-      MFEM_VERIFY(
-          (excitation_map.size() == 1 &&
-           (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-              std::all_of(excitation_map.begin(), excitation_map.end(),
-                          [](const auto &x) { return x.first == x.second[0]; }),
-          "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
-
-      for (auto &[port_idx, lp] : lumpedport)
+      bool valid = (excitation_map.size() == 1 &&
+                    (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+                   std::all_of(excitation_map.begin(), excitation_map.end(),
+                               [](const auto &x) { return x.first == x.second[0]; });
+      if (valid)
       {
-        if (lp.excitation == 1)
+        for (auto &[port_idx, lp] : lumpedport)
         {
-          lp.excitation = port_idx;
+          if (lp.excitation == 1)
+          {
+            lp.excitation = port_idx;
+          }
         }
-      }
-      for (auto &[port_idx, wp] : waveport)
-      {
-        if (wp.excitation == 1)
+        for (auto &[port_idx, wp] : waveport)
         {
-          wp.excitation = port_idx;
+          if (wp.excitation == 1)
+          {
+            wp.excitation = port_idx;
+          }
         }
       }
     }
@@ -1339,6 +1321,68 @@ std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::s
     default:
       return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
+}
+
+std::string Validate(const BoundaryData &boundaries)
+{
+  std::ostringstream errors;
+
+  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent.
+  std::map<int, std::string> index_map;
+  for (const auto &[idx, data] : boundaries.lumpedport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "LumpedPort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and LumpedPort\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "WavePort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and WavePort\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.current)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "SurfaceCurrent");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and SurfaceCurrent\n";
+    }
+  }
+
+  // Check excitation indices match port indices for S-parameter calculation.
+  std::map<int, std::vector<int>> excitation_map;
+  for (const auto &[idx, data] : boundaries.lumpedport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  excitation_map.erase(0);
+  bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
+                                   [](const auto &x) { return x.second.size() == 1; });
+  if (calc_s_params && !excitation_map.empty())
+  {
+    const auto &ext1 = *excitation_map.begin();
+    bool valid =
+        (excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+        std::all_of(excitation_map.begin(), excitation_map.end(),
+                    [](const auto &x) { return x.first == x.second[0]; });
+    if (!valid)
+    {
+      errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+    }
+  }
+
+  return errors.str();
 }
 
 }  // namespace palace::config

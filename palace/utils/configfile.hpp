@@ -970,6 +970,10 @@ int GetNumSteps(double start, double end, double delta);
 std::pair<std::array<double, 3>, CoordinateSystem>
 ParseStringAsDirection(std::string str, bool required = true);
 
+// Validation functions for cross-field checks. Return empty string if valid, otherwise
+// return all error messages concatenated.
+std::string Validate(const BoundaryData &boundaries);
+
 }  // namespace palace::config
 
 #endif  // PALACE_UTILS_CONFIG_FILE_HPP
