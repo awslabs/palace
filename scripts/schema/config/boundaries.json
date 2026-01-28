@@ -4,6 +4,10 @@
   "type": "object",
   "additionalProperties": false,
   "required": [],
+  "allOf": [
+    { "not": { "required": ["PEC", "Ground"] } },
+    { "not": { "required": ["PMC", "ZeroCharge"] } }
+  ],
   "properties":
   {
     "PEC":
