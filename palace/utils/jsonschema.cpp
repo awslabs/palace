@@ -4,9 +4,9 @@
 #include "jsonschema.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <sstream>
 #include <nlohmann/json-schema.hpp>
+#include "embedded_schema.hpp"
 
 namespace palace
 {
@@ -18,36 +18,38 @@ using error_handler = nlohmann::json_schema::error_handler;
 namespace
 {
 
-// Loader for resolving $ref in schemas.
-class SchemaLoader
+// Strip leading path prefixes (/, ./) to normalize schema references.
+std::string StripPathPrefix(std::string path)
 {
-  std::string base_dir;
+  while (!path.empty() && (path[0] == '/' || path[0] == '.'))
+  {
+    path = path.substr(1);
+  }
+  return path;
+}
 
+// Loader for resolving $ref in schemas using embedded schema strings.
+class EmbeddedSchemaLoader
+{
 public:
-  SchemaLoader(const std::string &dir) : base_dir(dir) {}
-
   json operator()(const nlohmann::json_uri &uri, json &schema)
   {
-    std::string path = uri.path();
-    if (path.substr(0, 2) == "./")
+    std::string path = StripPathPrefix(uri.path());
+    const auto &schema_map = schema::GetSchemaMap();
+    auto it = schema_map.find(path);
+    if (it == schema_map.end())
     {
-      path = path.substr(2);
+      throw std::runtime_error("Schema not found: " + path);
     }
-    std::string full_path = base_dir + "/" + path;
-    std::ifstream f(full_path);
-    if (!f.is_open())
-    {
-      throw std::runtime_error("Failed to open schema: " + full_path);
-    }
-    schema = json::parse(f);
+    schema = json::parse(it->second);
     return schema;
   }
 };
 
-// Depth-first search for a schema property by key name.
+// Search for a schema property by key name, checking each level before recursing.
 // Returns the schema for that key (with $defs preserved), or null if not found.
 json FindSchemaByKey(const json &schema, const std::string &key,
-                     const std::string &schema_dir, const json &root_defs = json())
+                     const json &root_defs = json())
 {
   if (!schema.is_object())
   {
@@ -87,40 +89,28 @@ json FindSchemaByKey(const json &schema, const std::string &key,
       // Handle $ref.
       if (v.contains("$ref"))
       {
-        std::string ref = v["$ref"].get<std::string>();
-        if (ref.substr(0, 2) == "./")
+        std::string ref = StripPathPrefix(v["$ref"].get<std::string>());
+        const auto &schema_map = schema::GetSchemaMap();
+        if (auto it = schema_map.find(ref); it != schema_map.end())
         {
-          ref = ref.substr(2);
-        }
-        std::string path = schema_dir + "/" + ref;
-        std::ifstream f(path);
-        if (f.is_open())
-        {
-          json resolved = json::parse(f);
-          auto result = FindSchemaByKey(resolved, key, schema_dir, defs);
-          if (!result.is_null())
+          if (auto result = FindSchemaByKey(json::parse(it->second), key, defs);
+              !result.is_null())
           {
             return result;
           }
         }
       }
-      else
+      else if (auto result = FindSchemaByKey(v, key, defs); !result.is_null())
       {
-        auto result = FindSchemaByKey(v, key, schema_dir, defs);
-        if (!result.is_null())
-        {
-          return result;
-        }
+        return result;
       }
     }
   }
 
   // Check items for arrays.
-  auto items_it = schema.find("items");
-  if (items_it != schema.end())
+  if (auto items_it = schema.find("items"); items_it != schema.end())
   {
-    auto result = FindSchemaByKey(*items_it, key, schema_dir, defs);
-    if (!result.is_null())
+    if (auto result = FindSchemaByKey(*items_it, key, defs); !result.is_null())
     {
       return result;
     }
@@ -130,8 +120,7 @@ json FindSchemaByKey(const json &schema, const std::string &key,
 }
 
 // Find enum values in schema by following a JSON pointer path.
-json FindEnumInSchema(const json &schema, const std::string &ptr,
-                      const std::string &schema_dir)
+json FindEnumInSchema(const json &schema, const std::string &ptr)
 {
   if (ptr.empty() || ptr == "/")
   {
@@ -166,13 +155,12 @@ json FindEnumInSchema(const json &schema, const std::string &ptr,
     while (current.contains("$ref"))
     {
       std::string ref = current["$ref"].get<std::string>();
-      if (ref.substr(0, 2) == "./")
+      if (ref[0] == '.')
       {
-        std::string path = schema_dir + "/" + ref.substr(2);
-        std::ifstream f(path);
-        if (f.is_open())
+        const auto &schema_map = schema::GetSchemaMap();
+        if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
         {
-          current = json::parse(f);
+          current = json::parse(it->second);
         }
         else
         {
@@ -261,7 +249,6 @@ class SchemaErrorHandler : public error_handler
   std::ostringstream errors;
   bool has_error = false;
   const json *schema;
-  std::string schema_dir;
 
   // Convert JSON pointer "/Boundaries/LumpedPort/0" to ["Boundaries"]["LumpedPort"][0]
   static std::string FormatPath(const std::string &ptr)
@@ -297,10 +284,7 @@ class SchemaErrorHandler : public error_handler
   }
 
 public:
-  SchemaErrorHandler(const json *s = nullptr, const std::string &dir = "")
-    : schema(s), schema_dir(dir)
-  {
-  }
+  explicit SchemaErrorHandler(const json *s = nullptr) : schema(s) {}
 
   void error(const json::json_pointer &ptr, const json &instance,
              const std::string &message) override
@@ -314,7 +298,7 @@ public:
     // Enhance enum errors with valid values.
     else if (schema && message == "instance not found in required enum")
     {
-      json enum_values = FindEnumInSchema(*schema, ptr.to_string(), schema_dir);
+      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
       {
         errors << "; valid values: ";
@@ -336,30 +320,30 @@ public:
   std::string get_errors() const { return errors.str(); }
 };
 
-std::string ValidateConfig(const json &config, const std::string &schema_dir)
+std::string ValidateConfig(const nlohmann::json &config)
 {
-  std::string schema_path = schema_dir + "/config-schema.json";
-  std::ifstream f(schema_path);
-  if (!f.is_open())
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find("config-schema.json");
+  if (it == schema_map.end())
   {
-    return "Failed to open schema file: " + schema_path;
+    return "Root schema not found in embedded schemas";
   }
 
   json schema;
   try
   {
-    schema = json::parse(f);
+    schema = json::parse(it->second);
   }
   catch (json::parse_error &e)
   {
     return std::string("Failed to parse schema: ") + e.what();
   }
 
-  json_validator validator{SchemaLoader(schema_dir)};
+  json_validator validator{EmbeddedSchemaLoader()};
   try
   {
     validator.set_root_schema(schema);
-    SchemaErrorHandler handler(&schema, schema_dir);
+    SchemaErrorHandler handler(&schema);
     validator.validate(config, handler);
     if (handler)
     {
@@ -373,20 +357,19 @@ std::string ValidateConfig(const json &config, const std::string &schema_dir)
   }
 }
 
-std::string ValidateConfig(const json &config, const std::string &schema_dir,
-                           const std::string &schema_key)
+std::string ValidateConfig(const nlohmann::json &config, const std::string &schema_key)
 {
-  std::string schema_path = schema_dir + "/config-schema.json";
-  std::ifstream f(schema_path);
-  if (!f.is_open())
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find("config-schema.json");
+  if (it == schema_map.end())
   {
-    return "Failed to open schema file: " + schema_path;
+    return "Root schema not found in embedded schemas";
   }
 
   json root_schema;
   try
   {
-    root_schema = json::parse(f);
+    root_schema = json::parse(it->second);
   }
   catch (json::parse_error &e)
   {
@@ -394,17 +377,17 @@ std::string ValidateConfig(const json &config, const std::string &schema_dir,
   }
 
   // Find the sub-schema by key.
-  json sub_schema = FindSchemaByKey(root_schema, schema_key, schema_dir);
+  json sub_schema = FindSchemaByKey(root_schema, schema_key);
   if (sub_schema.is_null())
   {
     return "Schema key not found: " + schema_key;
   }
 
-  json_validator validator{SchemaLoader(schema_dir)};
+  json_validator validator{EmbeddedSchemaLoader()};
   try
   {
     validator.set_root_schema(sub_schema);
-    SchemaErrorHandler handler(&sub_schema, schema_dir);
+    SchemaErrorHandler handler(&sub_schema);
     validator.validate(config, handler);
     if (handler)
     {

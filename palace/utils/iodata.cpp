@@ -202,12 +202,10 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   }
 
   // Validate against JSON schema.
-#ifdef PALACE_SCHEMA_DIR
   {
-    std::string err = ValidateConfig(config, PALACE_SCHEMA_DIR);
+    std::string err = ValidateConfig(config);
     MFEM_VERIFY(err.empty(), "Configuration file validation failed!\n  " << err);
   }
-#endif
 
   if (print)
   {
