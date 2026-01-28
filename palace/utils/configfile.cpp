@@ -461,87 +461,29 @@ void DomainData::SetUp(const json &config)
   }
 }
 
-void PecBoundaryData::SetUp(const json &boundaries)
+PecBoundaryData::PecBoundaryData(const json &pec)
 {
-  auto pec = boundaries.find("PEC");
-  auto ground = boundaries.find("Ground");
-  if (pec == boundaries.end() && ground == boundaries.end())
-  {
-    return;
-  }
-  if (pec == boundaries.end())
-  {
-    pec = ground;
-  }
-  else if (ground == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT(
-        "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
-  }
-  MFEM_VERIFY(
-      pec->find("Attributes") != pec->end(),
-      "Missing \"Attributes\" list for \"PEC\" boundary in the configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pec.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void PmcBoundaryData::SetUp(const json &boundaries)
+PmcBoundaryData::PmcBoundaryData(const json &pmc)
 {
-  auto pmc = boundaries.find("PMC");
-  auto zeroq = boundaries.find("ZeroCharge");
-  if (pmc == boundaries.end() && zeroq == boundaries.end())
-  {
-    return;
-  }
-  if (pmc == boundaries.end())
-  {
-    pmc = zeroq;
-  }
-  else if (zeroq == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT("Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
-               "boundaries!");
-  }
-  MFEM_VERIFY(
-      pmc->find("Attributes") != pmc->end(),
-      "Missing \"Attributes\" list for \"PMC\" boundary in the configuration file!");
-  attributes = pmc->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pmc.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void WavePortPecBoundaryData::SetUp(const json &boundaries)
+WavePortPecBoundaryData::WavePortPecBoundaryData(const json &auxpec)
 {
-  auto pec = boundaries.find("WavePortPEC");
-  if (pec == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(pec->find("Attributes") != pec->end(),
-              "Missing \"Attributes\" list for \"WavePortPEC\" boundary in the "
-              "configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = auxpec.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 }
 
-void FarfieldBoundaryData::SetUp(const json &boundaries)
+FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
 {
-  auto absorbing = boundaries.find("Absorbing");
-  if (absorbing == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(
-      absorbing->find("Attributes") != absorbing->end(),
-      "Missing \"Attributes\" list for \"Absorbing\" boundary in the configuration file!");
-  attributes = absorbing->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = absorbing.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
-  order = absorbing->value("Order", order);
+  order = absorbing.value("Order", order);
 }
 
 ConductivityData::ConductivityData(const json &boundary)
@@ -563,72 +505,58 @@ ImpedanceData::ImpedanceData(const json &boundary)
   Cs = boundary.value("Cs", Cs);
 }
 
-int ParsePortExcitation(json::const_iterator port_it, int default_excitation)
+int ParsePortExcitation(const json &port, int index)
 {
-  auto it_excitation = port_it->find("Excitation");
-  if (it_excitation == port_it->end())
+  auto it = port.find("Excitation");
+  if (it == port.end())
   {
-    // Keep default; don't set input flag.
-    return default_excitation;
+    return 0;  // Not excited
   }
-  else if (it_excitation->is_boolean())
+  else if (it->is_boolean())
   {
-    return int(it_excitation->get<bool>());  // 0 false; 1 true
+    return int(it->get<bool>());  // 0 false; 1 true
   }
-  else if (it_excitation->is_number_unsigned())
+  else if (it->is_number_unsigned())
   {
-    return it_excitation->get<int>();
+    return it->get<int>();
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
                            "as a bool or unsigned (non-negative) integer; got {}",
-                           int(port_it->at("Index")), it_excitation->dump(2)));
+                           index, it->dump(2)));
   }
 }
 
-void LumpedPortBoundaryData::SetUp(const json &boundaries)
+LumpedPortData::LumpedPortData(const json &port, int index)
 {
-  auto port = boundaries.find("LumpedPort");
-  if (port == boundaries.end())
-  {
-    return;
-  }
-  for (auto it = port->begin(); it != port->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"LumpedPort\"");
-    auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.R = it->value("R", data.R);
-    data.L = it->value("L", data.L);
-    data.C = it->value("C", data.C);
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
+  R = port.value("R", R);
+  L = port.value("L", L);
+  C = port.value("C", C);
+  Rs = port.value("Rs", Rs);
+  Ls = port.value("Ls", Ls);
+  Cs = port.value("Cs", Cs);
 
-    data.excitation = ParsePortExcitation(it, data.excitation);
-    data.active = it->value("Active", data.active);
-    if (it->find("Attributes") != it->end())
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  if (port.find("Attributes") != port.end())
+  {
+    MFEM_VERIFY(port.find("Elements") == port.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(port, true, elem);
+  }
+  else
+  {
+    auto elems = port.find("Elements");
+    MFEM_VERIFY(elems != port.end(),
+                "Missing top-level \"Attributes\" list or \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    for (const auto &e : *elems)
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"LumpedPort\" in the configuration file!");
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, true, elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(elements != it->end(),
-                  "Missing top-level \"Attributes\" list or \"Elements\" for "
-                  "\"LumpedPort\" in the configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, true, elem);
-      }
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
@@ -694,81 +622,42 @@ void PeriodicBoundaryData::SetUp(const json &boundaries)
   }
 }
 
-void WavePortBoundaryData::SetUp(const json &boundaries)
+WavePortData::WavePortData(const json &port, int index)
 {
-  auto port = boundaries.find("WavePort");
-  if (port == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(port->is_array(),
-              "\"WavePort\" should specify an array in the configuration file!");
-
-  for (auto it = port->begin(); it != port->end(); ++it)
-  {
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"WavePort\" boundary in the configuration file!");
-    auto index = AtIndex(it, "\"WavePort\" boundary");
-    auto ret = mapdata.insert(std::make_pair(index, WavePortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"WavePort\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.mode_idx = it->value("Mode", data.mode_idx);
-    data.d_offset = it->value("Offset", data.d_offset);
-    data.eigen_solver = it->value("SolverType", data.eigen_solver);
-
-    data.excitation = ParsePortExcitation(it, data.excitation);
-    data.active = it->value("Active", data.active);
-    data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
-    data.ksp_tol = it->value("KSPTol", data.ksp_tol);
-    data.eig_tol = it->value("EigenTol", data.eig_tol);
-    data.verbose = it->value("Verbose", data.verbose);
-  }
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  mode_idx = port.value("Mode", mode_idx);
+  d_offset = port.value("Offset", d_offset);
+  eigen_solver = port.value("SolverType", eigen_solver);
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  ksp_max_its = port.value("MaxIts", ksp_max_its);
+  ksp_tol = port.value("KSPTol", ksp_tol);
+  eig_tol = port.value("EigenTol", eig_tol);
+  verbose = port.value("Verbose", verbose);
 }
 
-void SurfaceCurrentBoundaryData::SetUp(const json &boundaries)
+SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
-  auto source = boundaries.find("SurfaceCurrent");
-  if (source == boundaries.end())
+  if (source.find("Attributes") != source.end())
   {
-    return;
+    MFEM_VERIFY(source.find("Elements") == source.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"SurfaceCurrent\" boundary in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(source, true, elem);
   }
-  MFEM_VERIFY(source->is_array(),
-              "\"SurfaceCurrent\" should specify an array in the configuration file!");
-  for (auto it = source->begin(); it != source->end(); ++it)
+  else
   {
-    auto index = AtIndex(it, "\"SurfaceCurrent\" source");
-    auto ret = mapdata.insert(std::make_pair(index, SurfaceCurrentData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    if (it->find("Attributes") != it->end())
+    auto elems = source.find("Elements");
+    MFEM_VERIFY(
+        elems != source.end(),
+        "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
+        "boundary in the configuration file!");
+    for (const auto &e : *elems)
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"SurfaceCurrent\" boundary in the configuration file!");
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, true, elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(
-          elements != it->end(),
-          "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
-          "boundary in the configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        MFEM_VERIFY(
-            elem_it->find("Attributes") != elem_it->end(),
-            "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
-            "configuration file!");
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, true, elem);
-      }
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
@@ -797,19 +686,9 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   tandelta = dielectric.value("LossTan", tandelta);
 }
 
-void FarFieldPostData::SetUp(const json &postpro)
+FarFieldPostData::FarFieldPostData(const json &farfield)
 {
-  auto farfield = postpro.find("FarField");
-  if (farfield == postpro.end())
-  {
-    return;
-  }
-
-  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
-              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
-              "configuration file!");
-
-  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = farfield.at("Attributes").get<std::vector<int>>();
   std::sort(attributes.begin(), attributes.end());
 
   // Generate NSample points with the following properties:
@@ -819,9 +698,9 @@ void FarFieldPostData::SetUp(const json &postpro)
   //   previous condition.
   // - The points are on rings of constant theta.
 
-  auto nsample_json = farfield->find("NSample");
+  auto nsample_json = farfield.find("NSample");
   int nsample = 0;
-  if (nsample_json != farfield->end())
+  if (nsample_json != farfield.end())
   {
     nsample = nsample_json->get<int>();
     if (nsample > 0)
@@ -896,8 +775,8 @@ void FarFieldPostData::SetUp(const json &postpro)
     }
   }
 
-  auto thetaphis_json = farfield->find("ThetaPhis");
-  if (thetaphis_json != farfield->end())
+  auto thetaphis_json = farfield.find("ThetaPhis");
+  if (thetaphis_json != farfield.end())
   {
     MFEM_VERIFY(thetaphis_json->is_array(),
                 "\"ThetaPhis\" should specify an array in the configuration file!");
@@ -978,7 +857,10 @@ void BoundaryPostData::SetUp(const json &boundaries)
                             "boundaries in the configuration file!");
     }
   }
-  farfield.SetUp(*postpro);
+  if (auto it = postpro->find("FarField"); it != postpro->end())
+  {
+    farfield = FarFieldPostData(*it);
+  }
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1003,10 +885,45 @@ void BoundaryData::SetUp(const json &config)
   auto boundaries = config.find("Boundaries");
   MFEM_VERIFY(boundaries != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
-  pec.SetUp(*boundaries);
-  pmc.SetUp(*boundaries);
-  auxpec.SetUp(*boundaries);
-  farfield.SetUp(*boundaries);
+
+  // PEC can be specified as "PEC" or "Ground".
+  auto pec_it = boundaries->find("PEC");
+  auto ground_it = boundaries->find("Ground");
+  MFEM_VERIFY(
+      pec_it == boundaries->end() || ground_it == boundaries->end(),
+      "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
+  if (pec_it != boundaries->end())
+  {
+    pec = PecBoundaryData(*pec_it);
+  }
+  else if (ground_it != boundaries->end())
+  {
+    pec = PecBoundaryData(*ground_it);
+  }
+
+  // PMC can be specified as "PMC" or "ZeroCharge".
+  auto pmc_it = boundaries->find("PMC");
+  auto zeroq_it = boundaries->find("ZeroCharge");
+  MFEM_VERIFY(pmc_it == boundaries->end() || zeroq_it == boundaries->end(),
+              "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
+              "boundaries!");
+  if (pmc_it != boundaries->end())
+  {
+    pmc = PmcBoundaryData(*pmc_it);
+  }
+  else if (zeroq_it != boundaries->end())
+  {
+    pmc = PmcBoundaryData(*zeroq_it);
+  }
+
+  if (auto it = boundaries->find("WavePortPEC"); it != boundaries->end())
+  {
+    auxpec = WavePortPecBoundaryData(*it);
+  }
+  if (auto it = boundaries->find("Absorbing"); it != boundaries->end())
+  {
+    farfield = FarfieldBoundaryData(*it);
+  }
   if (auto it = boundaries->find("Conductivity"); it != boundaries->end())
   {
     for (const auto &b : *it)
@@ -1021,7 +938,16 @@ void BoundaryData::SetUp(const json &config)
       impedance.emplace_back(b);
     }
   }
-  lumpedport.SetUp(*boundaries);
+  if (auto it = boundaries->find("LumpedPort"); it != boundaries->end())
+  {
+    for (auto lp = it->begin(); lp != it->end(); ++lp)
+    {
+      auto index = AtIndex(lp, "\"LumpedPort\"");
+      auto [iter, inserted] = lumpedport.try_emplace(index, *lp, index);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"LumpedPort\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   if (auto it = boundaries->find("Terminal"); it != boundaries->end())
   {
     for (auto t = it->begin(); t != it->end(); ++t)
@@ -1033,8 +959,26 @@ void BoundaryData::SetUp(const json &config)
     }
   }
   periodic.SetUp(*boundaries);
-  waveport.SetUp(*boundaries);
-  current.SetUp(*boundaries);
+  if (auto it = boundaries->find("WavePort"); it != boundaries->end())
+  {
+    for (auto wp = it->begin(); wp != it->end(); ++wp)
+    {
+      auto index = AtIndex(wp, "\"WavePort\"");
+      auto [iter, inserted] = waveport.try_emplace(index, *wp, index);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"WavePort\" "
+                            "boundaries in the configuration file!");
+    }
+  }
+  if (auto it = boundaries->find("SurfaceCurrent"); it != boundaries->end())
+  {
+    for (auto sc = it->begin(); sc != it->end(); ++sc)
+    {
+      auto index = AtIndex(sc, "\"SurfaceCurrent\"");
+      auto [iter, inserted] = current.try_emplace(index, *sc);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   postpro.SetUp(*boundaries);
 
   // Ensure unique indexing of lumpedport, waveport, current.
