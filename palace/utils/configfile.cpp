@@ -680,39 +680,19 @@ void PeriodicBoundaryData::SetUp(const json &boundaries)
   }
 }
 
-void WavePortBoundaryData::SetUp(const json &boundaries)
+WavePortData::WavePortData(const json &port, int index)
 {
-  auto port = boundaries.find("WavePort");
-  if (port == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(port->is_array(),
-              "\"WavePort\" should specify an array in the configuration file!");
-
-  for (auto it = port->begin(); it != port->end(); ++it)
-  {
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"WavePort\" boundary in the configuration file!");
-    auto index = AtIndex(it, "\"WavePort\" boundary");
-    auto ret = mapdata.insert(std::make_pair(index, WavePortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"WavePort\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.mode_idx = it->value("Mode", data.mode_idx);
-    data.d_offset = it->value("Offset", data.d_offset);
-    data.eigen_solver = it->value("SolverType", data.eigen_solver);
-
-    data.excitation = ParsePortExcitation(*it, index);
-    data.active = it->value("Active", data.active);
-    data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
-    data.ksp_tol = it->value("KSPTol", data.ksp_tol);
-    data.eig_tol = it->value("EigenTol", data.eig_tol);
-    data.verbose = it->value("Verbose", data.verbose);
-  }
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  mode_idx = port.value("Mode", mode_idx);
+  d_offset = port.value("Offset", d_offset);
+  eigen_solver = port.value("SolverType", eigen_solver);
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  ksp_max_its = port.value("MaxIts", ksp_max_its);
+  ksp_tol = port.value("KSPTol", ksp_tol);
+  eig_tol = port.value("EigenTol", eig_tol);
+  verbose = port.value("Verbose", verbose);
 }
 
 void SurfaceCurrentBoundaryData::SetUp(const json &boundaries)
@@ -1028,7 +1008,16 @@ void BoundaryData::SetUp(const json &config)
     }
   }
   periodic.SetUp(*boundaries);
-  waveport.SetUp(*boundaries);
+  if (auto it = boundaries->find("WavePort"); it != boundaries->end())
+  {
+    for (auto wp = it->begin(); wp != it->end(); ++wp)
+    {
+      auto index = AtIndex(wp, "\"WavePort\"");
+      auto [iter, inserted] = waveport.try_emplace(index, *wp, index);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"WavePort\" "
+                            "boundaries in the configuration file!");
+    }
+  }
   current.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
 

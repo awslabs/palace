@@ -506,23 +506,9 @@ public:
 
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
-};
 
-struct WavePortBoundaryData
-{
-public:
-  std::map<int, WavePortData> mapdata = {};
-
-  void SetUp(const json &boundaries);
-
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
+  WavePortData() = default;
+  WavePortData(const json &port, int index);
 };
 
 struct SurfaceCurrentData
@@ -643,7 +629,7 @@ public:
   std::vector<ImpedanceData> impedance = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
-  WavePortBoundaryData waveport = {};
+  std::map<int, WavePortData> waveport = {};
   SurfaceCurrentBoundaryData current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
