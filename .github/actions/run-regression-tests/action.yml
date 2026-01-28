@@ -50,11 +50,17 @@ runs:
     - name: Install from cache
       if: inputs.testing-on-build-runner != 'true'
       shell: bash
-      run: spack -e . install --only-concrete --no-check-signature
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . install --only-concrete --no-check-signature
+        end_timer "Install from cache"
 
     - name: Run Integration Tests
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         # Use nproc, but halve to account for hyperthreading.
         LOGICAL_CORES=$(nproc)
         THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
@@ -84,3 +90,11 @@ runs:
         if [[ "$NUM_PROC_TEST" -ge 32 ]]; then
             julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon" --palace-solver ${{ inputs.solver }}
         fi
+
+        end_timer "Run Integration Tests"
+
+    - name: Timing information
+      shell: bash
+      run: |
+        cat /tmp/timing.log
+

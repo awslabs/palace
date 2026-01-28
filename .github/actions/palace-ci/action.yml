@@ -37,6 +37,8 @@ runs:
     - name: Prepare spack.yaml
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
           CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
@@ -152,10 +154,13 @@ runs:
     - name: Configure Compilers
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
           . /opt/intel/oneapi/setvars.sh
         fi
         spack -e . compiler find && spack -e . compiler list
+        end_timer "Configure Compilers"
 
     # Spack and oneAPI-2025.3.1 have some compatibility problems where the
     # version of the fortran compiler is not correctly identified. As a
@@ -222,31 +227,52 @@ runs:
 
     - name: Configure Binary Mirror Keys
       shell: bash
-      run: spack -e . buildcache keys --install --trust
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . buildcache keys --install --trust
+        end_timer "Configure Binary Mirror Keys"
 
     - name: Bootstrap
       shell: bash
-      run: spack -e . bootstrap now
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . bootstrap now
+        end_timer "Bootstrap"
 
     - name: Concretize
       shell: bash
       env:
         PALACE_REF: ${{ github.head_ref || github.ref_name }}
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
         spack -e . concretize -f --test root
+        end_timer "Concretize"
 
     - name: Build Dependencies
       shell: bash
-      run: spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
+        end_timer "Build Dependencies"
 
     - name: Build Palace
       shell: bash
-      run: spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
+        end_timer "Build Palace"
 
     - name: Run Unit Tests
       shell: bash
       run: |
+        source /tmp/timing_functions.sh
+        start_timer
         eval $(spack -e . load --sh palace)
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
@@ -263,6 +289,7 @@ runs:
 
         palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
         mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+        end_timer "Run Unit Tests"
 
     # We upload the spack environment as an artifact so that next runners can
     # pick up the very same environment and have consistent binaries (pulled
@@ -279,7 +306,11 @@ runs:
 
     - name: Push to GHCR cache
       shell: bash
-      run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests
       if: inputs.run-regression-tests == 'true'
@@ -287,4 +318,13 @@ runs:
       with:
         testing-on-build-runner: 'true'
         variant: ${{ inputs.variant }}
+
+    # We print timing if we don't run the regression tests, otherwise, it will
+    # be regression test job that prints the file. (This is for the build-xxx
+    # jobs)
+    - name: Timing information
+      if: inputs.run-regression-tests != 'true'
+      shell: bash
+      run: |
+        cat /tmp/timing.log
 

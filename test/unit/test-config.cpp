@@ -419,3 +419,47 @@ TEST_CASE("FarField", "[config][Serial]")
     }
   }
 }
+
+TEST_CASE("ParseStringAsDirection", "[config][Serial]")
+{
+  SECTION("Cartesian")
+  {
+    auto s = GENERATE("x", "+x", "-x", "y", "+y", "-y", "z", "+z", "-z");
+    REQUIRE_NOTHROW(config::ParseStringAsDirection(s, true));
+
+    auto [dir, cs] = config::ParseStringAsDirection(s, true);
+    CHECK(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2] == 1.0);
+    CHECK(cs == CoordinateSystem::CARTESIAN);
+    auto val = (s[0] == '-' ? -1 : 1);
+    CHECK((dir[0] == val || dir[1] == val || dir[2] == val));
+  }
+
+  SECTION("Cylindrical")
+  {
+    auto s = GENERATE("r", "+r", "-r");
+    REQUIRE_NOTHROW(config::ParseStringAsDirection(s, true));
+
+    auto [dir, cs] = config::ParseStringAsDirection(s, true);
+    CHECK(dir[0] == (s[0] == '-' ? -1 : 1));
+    CHECK(dir[1] == 0);
+    CHECK(dir[2] == 0);
+    CHECK(cs == CoordinateSystem::CYLINDRICAL);
+  }
+
+  SECTION("Invalid")
+  {
+    auto req = GENERATE(true, false);
+    CHECK_THROWS(config::ParseStringAsDirection("a", req));
+    CHECK_THROWS(config::ParseStringAsDirection("+a", req));
+    CHECK_THROWS(config::ParseStringAsDirection("-a", req));
+    CHECK_THROWS(config::ParseStringAsDirection("xx", req));
+    CHECK_THROWS(config::ParseStringAsDirection("~x", req));
+    CHECK_THROWS(config::ParseStringAsDirection("x+", req));
+    CHECK_THROWS(config::ParseStringAsDirection("xy", req));
+    CHECK_THROWS(config::ParseStringAsDirection("xyz", req));
+    CHECK_THROWS(config::ParseStringAsDirection("abc", req));
+  }
+
+  CHECK_THROWS(config::ParseStringAsDirection("", true));
+  CHECK_NOTHROW(config::ParseStringAsDirection("", false));
+}

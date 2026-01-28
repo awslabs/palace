@@ -137,6 +137,8 @@ public:
   // Return a copy of value scaled by given unit.
   template <ValueType unit, typename T>
   auto Dimensionalize(T value) const
+      -> std::enable_if_t<!std::is_same_v<T, Vector> && !std::is_same_v<T, ComplexVector>,
+                          T>
   {
     return value * GetScaleFactor<unit>();
   }

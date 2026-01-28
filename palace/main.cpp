@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -213,6 +214,10 @@ int main(int argc, char *argv[])
     if (Mpi::Root(world_comm))
     {
       IoData iodata(argv[argc - 1], false);
+      if (!std::filesystem::exists(iodata.model.mesh))
+      {
+        MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
+      }
     }
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);

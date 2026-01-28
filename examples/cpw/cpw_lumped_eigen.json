@@ -21,8 +21,7 @@
       {
         "Attributes": [1],  // Air
         "Permeability": 1.0,
-          "Permittivity": 1.0,
-          "Conductivity": 1.0e-6,
+        "Permittivity": 1.0,
         "LossTan": 0.0
       },
       {
