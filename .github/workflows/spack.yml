@@ -144,7 +144,7 @@ jobs:
           - solver: SuperLU
           - solver: STRUMPACK
           - solver: Default
-    runs-on: [self-hosted, x64, 4xlarge]
+    runs-on: [self-hosted, x64-4xlarge]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/run-regression-tests
@@ -163,7 +163,7 @@ jobs:
           - solver: SuperLU
           - solver: STRUMPACK
           - solver: Default
-    runs-on: [self-hosted, gpu, 4xlarge]
+    runs-on: [self-hosted, gpu-4xlarge]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/run-regression-tests
@@ -183,7 +183,7 @@ jobs:
           - solver: SuperLU
           - solver: STRUMPACK
           - solver: Default
-    runs-on: [self-hosted, x64, 4xlarge]
+    runs-on: [self-hosted, x64-4xlarge]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/run-regression-tests
