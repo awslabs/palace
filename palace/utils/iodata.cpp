@@ -149,6 +149,11 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
+IoData::IoData(const Units &units) : units(units), init(false)
+{
+  fem::DefaultIntegrationOrder::p_trial = -1;
+}
+
 IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
