@@ -1,0 +1,311 @@
+Device configuration: cpu
+Memory configuration: host-std
+libCEED backend: /cpu/self/xsmm/blocked
+Filters: [currentdipole] [sphere] [Serial]
+Randomness seeded to: 1370449489
+
+Running current dipole test with 1 MPI ranks
+
+Mesh Characteristics:
+Dimension          : 3
+Space dimension    : 3
+Number of vertices : 5266
+Number of edges    : 34219
+Number of faces    : 56226  --  56226 Triangle(s)
+Number of elements : 27272  --  27272 Tetrahedron(s)
+Number of bdr elem : 3364  --  3364 Triangle(s)
+Euler Number       : 1
+h_min              : 0.243257
+h_max              : 0.913254
+kappa_min          : 1.04877
+kappa_max          : 7.96397
+
+
+Characteristic length and time scales:
+ Lc = 1.000e+00 m, tc = 3.336e+00 ns
+
+Configuring electrical current dipole source terms:
+ Dipole 1: 
+ 	Moment = 1.000e+00 A·m
+ 	Center = (0.000e+00, 0.000e+00, 0.000e+00)
+ 	Direction = (1.000e+00, 0.000e+00, 0.000e+00)
+
+Configuring Robin absorbing BC (order 2) at attributes:
+ 1
+
+Assembling system matrices, number of global unknowns:
+ H1 (p = 1): 5266, ND (p = 1): 34219, RT (p = 1): 56226
+ Operator assembly level: Partial
+ Mesh geometries:
+  Tetrahedron: P = 6, Q = 4 (quadrature order = 2)
+
+Assembling multigrid hierarchy:
+ Level 0 (p = 1): 34219 unknowns
+ Level 0 (auxiliary) (p = 1): 5266 unknowns
+GMRES solver did NOT converge in 1000 iterations (avg. reduction factor: 9.876e-01)
+
+[38;2;255;255;000m--> Warning![0m
+Linear solver did not converge, norm(Ax-b)/norm(b) = 3.859e-06 (norm(b) = 7.653e+01)!
+
+
+Element marking for error computation:
+  Domain bounding box: [-5.99922, 6] x [-5.99915, 5.99832] x [-6, 6]
+  Domain size: 11.9992 x 11.9975 x 12
+  Max distance from origin (sphere radius): 6
+  Inner exclusion fraction: 0.1 -> radius: 0.6
+  Outer exclusion fraction: 0.95 -> radius: 5.7
+  Elements included in error computation: 23515
+  Elements excluded (too close to center): 155
+  Elements excluded (too close to boundary): 3602
+  Total elements: 27272
+
+=== Integration Rule Info ===
+  Polynomial order: 3
+  Quadrature order: 5
+  Using same integration rules for error and norm computation
+
+=== ParaView files written to: ParaView/CurrentDipoleComparison/ ===
+
+Testing frequency: 2e+08 
+
+Mesh scaling factor (Lc/L0): 1
+Test points scaled by: 1
+=== Analytical Field Debug at Key Points ===
+Origin (scaled) r=0m: r_nondim=0m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 144.382
+    Palace Ex: (-37.3388,-70.0369)
+    Palace Ey: (8.38482,105.141)
+    Palace Ez: (9.8713,57.6576)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 0
+    Analytical Ex: (0,0)
+    Analytical Ey: (0,0)
+    Analytical Ez: (0,0)
++0.02 origin on x-axis (scaled) r=0.02m: r_nondim=0.02m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 66.7671
+    Palace Ex: (-19.5765,-52.5397)
+    Palace Ey: (-14.0707,-30.3766)
+    Palace Ez: (1.6038,-13.8166)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 92443.6
+    Analytical Ex: (-18.0795,-92443.6)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,-0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 0.000722247
+-0.1 from origin on x-axis (scaled) r=0.1m: r_nondim=0.1m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 39.4511
+    Palace Ex: (-24.2074,2.64499)
+    Palace Ey: (-6.92428,28.2171)
+    Palace Ez: (-3.79423,-10.2394)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 799.089
+    Analytical Ex: (-17.7763,-798.891)
+    Analytical Ey: (0,0)
+    Analytical Ez: (0,0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 0.0493701
+{-.2, .3, .4} from origin (scaled) r=0.538516m: r_nondim=0.538516m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 16.5038
+    Palace Ex: (-4.84757,11.8289)
+    Palace Ey: (-3.15865,-9.45767)
+    Palace Ez: (1.56466,-2.66135)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 11.1208
+    Analytical Ex: (-4.96767,8.10742)
+    Analytical Ey: (1.30416,3.20532)
+    Analytical Ez: (1.73888,4.27376)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.48405
+0.2 field on y-axis (scaled) r=0.2m: r_nondim=0.2m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 60.7857
+    Palace Ex: (-22.0134,29.4284)
+    Palace Ey: (-5.61161,-46.0214)
+    Palace Ez: (-1.73826,-13.8492)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 40.9686
+    Analytical Ex: (-15.6433,37.8644)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,-0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.48372
+-0.3 field on z-axis (scaled) r=0.3m: r_nondim=0.3m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 47.5054
+    Palace Ex: (-18.2269,-12.8273)
+    Palace Ey: (-1.27055,-16.7147)
+    Palace Ez: (0.289889,38.4567)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 18.9069
+    Analytical Ex: (-12.8365,13.8814)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 2.5126
+0.4 field on x-axis (scaled) r=0.4m: r_nondim=0.4m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 18.7237
+    Palace Ex: (-8.93447,-9.59146)
+    Palace Ey: (-2.10668,13.1816)
+    Palace Ez: (-0.70249,-0.264483)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 22.4802
+    Analytical Ex: (-13.491,-17.982)
+    Analytical Ey: (-0,0)
+    Analytical Ez: (-0,0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 0.8329
++0.45 on y-axis (scaled) r=0.45m: r_nondim=0.45m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 17.8818
+    Palace Ex: (-11.6961,6.93448)
+    Palace Ey: (-10.2251,-3.67502)
+    Palace Ez: (-3.38853,2.30969)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 12.8519
+    Analytical Ex: (-7.46678,10.4603)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,-0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.39138
++0.47 on z-axis (scaled) r=0.47m: r_nondim=0.47m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 20.3985
+    Palace Ex: (-3.30338,13.5131)
+    Palace Ey: (-6.97629,9.81955)
+    Palace Ez: (-0.293686,8.79792)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 12.388
+    Analytical Ex: (-6.70324,10.4177)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,-0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.64664
++0.495 from origin on x-axis (scaled) r=0.495m: r_nondim=0.495m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 22.6654
+    Palace Ex: (-8.18997,-7.20043)
+    Palace Ey: (-5.12052,-1.16242)
+    Palace Ez: (-6.78972,-17.92)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 13.9952
+    Analytical Ex: (-11.4099,-8.10434)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,-0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.61951
+-0.5 from origin on z-axis (scaled) r=0.5m: r_nondim=0.5m:
+  PALACE FEM SOLUTION:
+    Palace |E|: 21.1518
+    Palace Ex: (-10.3714,13.2501)
+    Palace Ey: (-2.07303,8.90177)
+    Palace Ez: (-1.6217,-8.83743)
+  ANALYTICAL SOLUTION:
+    Analytical |E|: 11.7553
+    Analytical Ex: (-5.55681,10.359)
+    Analytical Ey: (0,-0)
+    Analytical Ez: (0,0)
+  COMPARISON:
+    |E| ratio (Palace/Analytical): 1.79935
+============================================
+
+
+=== L2 ERROR ANALYSIS ===Polynomial order 1
+
+
+--- E-FIELD: Selective Elements (0.2-0.8 domain) ---
+Absolute L2 Errors:
+  Real part error: || E_h_Re - E_Re ||_L2 = 74.4345
+  Imag part error: || E_h_Im - E_Im ||_L2 = 78.2722
+  Total error:     || E_h - E ||_L2 = 108.014
+Exact Solution Norms:
+  Real part norm: || E_Re ||_L2 = 30.4995
+  Imag part norm: || E_Im ||_L2 = 30.3403
+  Total norm:     || E ||_L2 = 43.0203
+Relative L2 Errors:
+  Real part: || E_h_Re - E_Re || / ||E_Re|| = 2.44052
+  Imag part: || E_h_Im - E_Im || / ||E_Im|| = 2.57981
+  Total:     || E_h - E || / ||E|| = 2.51077
+
+--- E-FIELD: Full Domain (for comparison) ---
+Absolute L2 Errors:
+  Real part error: || E_h_Re - E_Re ||_L2 = 75.7557
+  Imag part error: || E_h_Im - E_Im ||_L2 = 126.487
+  Total error:     || E_h - E ||_L2 = 147.438
+Exact Solution Norms:
+  Real part norm: || E_Re ||_L2 = 32.4041
+  Imag part norm: || E_Im ||_L2 = 100.043
+  Total norm:     || E ||_L2 = 105.16
+Relative L2 Errors:
+  Real part: || E_h_Re - E_Re || / ||E_Re|| = 2.33784
+  Imag part: || E_h_Im - E_Im || / ||E_Im|| = 1.26432
+  Total:     || E_h - E || / ||E|| = 1.40203
+
+--- E-FIELD: Error Comparison ---
+Selective vs Full Domain Error Ratios:
+  Selective/Full Error Ratio: 0.732608
+  Selective/Full Relative Error Ratio: 1.79081
+
+--- B-FIELD: Selective Elements (0.2-0.8 domain) ---
+Absolute L2 Errors:
+  Real part error: || B_h_Re - B_Re ||_L2 = 77.5875
+  Imag part error: || B_h_Im - B_Im ||_L2 = 74.5074
+  Total error:     || B_h - B ||_L2 = 107.569
+Exact Solution Norms:
+  Real part norm: || B_Re ||_L2 = 30.2467
+  Imag part norm: || B_Im ||_L2 = 30.4839
+  Total norm:     || B ||_L2 = 42.9433
+Relative L2 Errors:
+  Real part: || B_h_Re - B_Re || / ||B_Re|| = 2.56516
+  Imag part: || B_h_Im - B_Im || / ||B_Im|| = 2.44416
+  Total:     || B_h - B || / ||B|| = 2.50491
+
+--- B-FIELD: Full Domain (for comparison) ---
+Absolute L2 Errors:
+  Real part error: || B_h_Re - B_Re ||_L2 = 87.4343
+  Imag part error: || B_h_Im - B_Im ||_L2 = 75.616
+  Total error:     || B_h - B ||_L2 = 115.596
+Exact Solution Norms:
+  Real part norm: || B_Re ||_L2 = 38.8004
+  Imag part norm: || B_Im ||_L2 = 32.4594
+  Total norm:     || B ||_L2 = 50.5874
+Relative L2 Errors:
+  Real part: || B_h_Re - B_Re || / ||B_Re|| = 2.25344
+  Imag part: || B_h_Im - B_Im || / ||B_Im|| = 2.32956
+  Total:     || B_h - B || / ||B|| = 2.28508
+
+--- B-FIELD: Error Comparison ---
+Selective vs Full Domain Error Ratios:
+  Selective/Full Error Ratio: 0.930559
+  Selective/Full Relative Error Ratio: 1.0962
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+palace-unit-tests is a Catch2 v3.8.1 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+Electrical Current Dipole in a Sphere
+-------------------------------------------------------------------------------
+/Users/lgh/projects/palace-layla/test/unit/test-currentdipole.cpp:877
+...............................................................................
+
+/Users/lgh/projects/palace-layla/test/unit/test-currentdipole.cpp:847: FAILED:
+  CHECK_THAT( E_relative_error, WithinAbs(0.0, 0.1) )
+with expansion:
+  2.510768189461968 is within 0.10000000000000001 of 0.0
+
+/Users/lgh/projects/palace-layla/test/unit/test-currentdipole.cpp:848: FAILED:
+  CHECK_THAT( B_relative_error, WithinAbs(0.0, 0.12) )
+with expansion:
+  2.50491386897603663 is within 0.12 of 0.0
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 1 passed | 2 failed
+

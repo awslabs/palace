@@ -878,7 +878,8 @@ TEST_CASE("Electrical Current Dipole in a Sphere", "[currentdipole][sphere][Seri
 {
   double freq_Hz = 2e8;
 
-  // Load the antenna sphere mesh
+  // Load the antenna sphere mesh (n = n_farfield: 5, 7, 10, 13)
+  // Corresponding n_circle values: 6, 8, 12, 15
   std::unique_ptr<mfem::Mesh> serial_mesh =
       std::make_unique<mfem::Mesh>("../examples/antenna/mesh/short_n10.msh");
 
