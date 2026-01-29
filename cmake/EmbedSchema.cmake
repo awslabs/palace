@@ -13,10 +13,14 @@ file(MAKE_DIRECTORY ${SCHEMA_OUTPUT_DIR})
 # Collect all schema files
 file(GLOB_RECURSE SCHEMA_FILES "${SCHEMA_DIR}/*.json")
 
+# Mark schema files as configure dependencies so CMake reconfigures when they change
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SCHEMA_FILES})
+
 # Generate the header file
 set(SCHEMA_HEADER_CONTENT
 "// Auto-generated file - do not edit
 // Generated from scripts/schema/*.json
+// Provides embedded JSON schema strings for runtime config validation without file dependencies.
 
 #ifndef PALACE_EMBEDDED_SCHEMA_HPP
 #define PALACE_EMBEDDED_SCHEMA_HPP

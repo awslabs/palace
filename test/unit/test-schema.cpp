@@ -80,6 +80,32 @@ TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
   }
 }
 
+TEST_CASE("Schema Validation - Config with Comments", "[schema][Serial]")
+{
+  // Test that preprocessing (comment stripping) works with schema validation.
+  auto temp_path = fs::temp_directory_path() / "palace_test_comments.json";
+  {
+    std::ofstream f(temp_path);
+    f << R"({
+      // C++ style comment
+      "Problem": { "Type": "Eigenmode" },
+      /* C style comment */
+      "Model": { "Mesh": "test.msh" },
+      "Domains": { "Materials": [{ "Attributes": [1] }] },
+      "Boundaries": {},
+      "Solver": { "Eigenmode": { "Target": 1.0 } }
+    })";
+  }
+
+  std::stringstream buffer = PreprocessFile(temp_path.c_str());
+  json config;
+  REQUIRE_NOTHROW(config = json::parse(buffer));
+  fs::remove(temp_path);
+
+  std::string err = ValidateConfig(config);
+  CHECK(err.empty());
+}
+
 TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
 {
 
@@ -197,6 +223,15 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
   {
     json data = {{"Index", 1}};
     std::string err = ValidateConfig(data, "NonexistentKey");
+    CHECK(!err.empty());
+    CHECK(err.find("not found") != std::string::npos);
+  }
+
+  SECTION("Ambiguous schema key")
+  {
+    // "Postprocessing" exists in both boundaries.json and domains.json.
+    json data = {{"Index", 1}};
+    std::string err = ValidateConfig(data, "Postprocessing");
     CHECK(!err.empty());
     CHECK(err.find("not found") != std::string::npos);
   }
