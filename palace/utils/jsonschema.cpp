@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <sstream>
 #include <nlohmann/json-schema.hpp>
+#include "communication.hpp"
 #include "embedded_schema.hpp"
 
 namespace palace
@@ -14,6 +15,9 @@ namespace palace
 using json = nlohmann::json;
 using json_validator = nlohmann::json_schema::json_validator;
 using error_handler = nlohmann::json_schema::error_handler;
+
+// Root schema entry point. Schemas use JSON Schema draft-07.
+constexpr const char *root_schema_file = "config-schema.json";
 
 namespace
 {
@@ -46,14 +50,14 @@ public:
   }
 };
 
-// Search for a schema property by key name, checking each level before recursing.
-// Returns the schema for that key (with $defs preserved), or null if not found.
-json FindSchemaByKey(const json &schema, const std::string &key,
-                     const json &root_defs = json())
+// Search for a schema property by key name, collecting all matches.
+// Helper for FindSchemaByKey - populates results vector.
+void FindAllSchemasByKey(const json &schema, const std::string &key, const json &root_defs,
+                         std::vector<json> &results)
 {
   if (!schema.is_object())
   {
-    return json();
+    return;
   }
 
   // Track $defs from this level.
@@ -78,7 +82,7 @@ json FindSchemaByKey(const json &schema, const std::string &key,
     {
       result["$defs"] = defs;
     }
-    return result;
+    results.push_back(result);
   }
 
   // Recurse into properties.
@@ -89,20 +93,26 @@ json FindSchemaByKey(const json &schema, const std::string &key,
       // Handle $ref.
       if (v.contains("$ref"))
       {
-        std::string ref = StripPathPrefix(v["$ref"].get<std::string>());
+        std::string ref_raw = v["$ref"].get<std::string>();
+        // Skip internal $defs references (handled elsewhere).
+        if (ref_raw.find("#/$defs/") == 0)
+        {
+          continue;
+        }
+        std::string ref = StripPathPrefix(ref_raw);
         const auto &schema_map = schema::GetSchemaMap();
         if (auto it = schema_map.find(ref); it != schema_map.end())
         {
-          if (auto result = FindSchemaByKey(json::parse(it->second), key, defs);
-              !result.is_null())
-          {
-            return result;
-          }
+          FindAllSchemasByKey(json::parse(it->second), key, defs, results);
+        }
+        else
+        {
+          Mpi::Warning("Could not resolve schema $ref: {}\n", ref);
         }
       }
-      else if (auto result = FindSchemaByKey(v, key, defs); !result.is_null())
+      else
       {
-        return result;
+        FindAllSchemasByKey(v, key, defs, results);
       }
     }
   }
@@ -110,12 +120,62 @@ json FindSchemaByKey(const json &schema, const std::string &key,
   // Check items for arrays.
   if (auto items_it = schema.find("items"); items_it != schema.end())
   {
-    if (auto result = FindSchemaByKey(*items_it, key, defs); !result.is_null())
+    FindAllSchemasByKey(*items_it, key, defs, results);
+  }
+}
+
+// Search for a schema property by key name, checking each level before recursing.
+// Returns the schema for that key (with $defs preserved), or null if not found.
+// Warns and returns null if the key is ambiguous (found in multiple schema files).
+json FindSchemaByKey(const json &schema, const std::string &key,
+                     const json &root_defs = json())
+{
+  std::vector<json> results;
+  FindAllSchemasByKey(schema, key, root_defs, results);
+
+  if (results.empty())
+  {
+    return json();
+  }
+  if (results.size() > 1)
+  {
+    Mpi::Warning("Ambiguous schema key '{}' found {} times; use a more specific path\n",
+                 key, results.size());
+    return json();
+  }
+  return results[0];
+}
+
+// Find enum values in schema by following a JSON pointer path.
+// Resolve a $ref in a schema node. Returns the resolved schema, or null on failure.
+// The defs parameter provides $defs context for internal references.
+json ResolveRef(const json &node, const json &defs)
+{
+  if (!node.contains("$ref"))
+  {
+    return node;
+  }
+  std::string ref = node["$ref"].get<std::string>();
+  if (ref.empty())
+  {
+    return json();  // Invalid empty $ref.
+  }
+  if (ref[0] == '.')
+  {
+    const auto &schema_map = schema::GetSchemaMap();
+    if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
     {
-      return result;
+      return json::parse(it->second);
     }
   }
-
+  else if (ref.substr(0, 8) == "#/$defs/")
+  {
+    std::string def_name = ref.substr(8);
+    if (defs.contains(def_name))
+    {
+      return defs[def_name];
+    }
+  }
   return json();
 }
 
@@ -147,42 +207,27 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
     pos = next;
   }
 
+  // Get $defs from root schema for resolving internal refs.
+  json defs = schema.value("$defs", json::object());
+
   // Navigate schema following the path.
   json current = schema;
   for (const auto &token : tokens)
   {
-    // Resolve $ref to external files or $defs.
+    // Resolve $ref chain.
     while (current.contains("$ref"))
     {
-      std::string ref = current["$ref"].get<std::string>();
-      if (ref[0] == '.')
-      {
-        const auto &schema_map = schema::GetSchemaMap();
-        if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
-        {
-          current = json::parse(it->second);
-        }
-        else
-        {
-          return json();
-        }
-      }
-      else if (ref.substr(0, 8) == "#/$defs/")
-      {
-        std::string def_name = ref.substr(8);
-        if (current.contains("$defs") && current["$defs"].contains(def_name))
-        {
-          current = current["$defs"][def_name];
-        }
-        else
-        {
-          return json();
-        }
-      }
-      else
+      json resolved = ResolveRef(current, defs);
+      if (resolved.is_null())
       {
         return json();
       }
+      // Pick up $defs from resolved schema.
+      if (resolved.contains("$defs"))
+      {
+        defs = resolved["$defs"];
+      }
+      current = resolved;
     }
 
     // Look in properties.
@@ -204,23 +249,12 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   // Final $ref resolution.
   while (current.contains("$ref"))
   {
-    std::string ref = current["$ref"].get<std::string>();
-    if (ref.substr(0, 8) == "#/$defs/")
-    {
-      std::string def_name = ref.substr(8);
-      if (schema.contains("$defs") && schema["$defs"].contains(def_name))
-      {
-        current = schema["$defs"][def_name];
-      }
-      else
-      {
-        return json();
-      }
-    }
-    else
+    json resolved = ResolveRef(current, defs);
+    if (resolved.is_null())
     {
       break;
     }
+    current = resolved;
   }
 
   // Extract enum values (handle anyOf).
@@ -323,7 +357,7 @@ public:
 std::string ValidateConfig(const nlohmann::json &config)
 {
   const auto &schema_map = schema::GetSchemaMap();
-  auto it = schema_map.find("config-schema.json");
+  auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())
   {
     return "Root schema not found in embedded schemas";
@@ -360,7 +394,7 @@ std::string ValidateConfig(const nlohmann::json &config)
 std::string ValidateConfig(const nlohmann::json &config, const std::string &schema_key)
 {
   const auto &schema_map = schema::GetSchemaMap();
-  auto it = schema_map.find("config-schema.json");
+  auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())
   {
     return "Root schema not found in embedded schemas";
