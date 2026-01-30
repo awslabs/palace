@@ -516,14 +516,19 @@ int ParsePortExcitation(const json &port, int index)
   {
     return int(it->get<bool>());  // 0 false; 1 true
   }
-  else if (it->is_number_unsigned())
+  else if (it->is_number_integer())
   {
-    return it->get<int>();
+    int val = it->get<int>();
+    MFEM_VERIFY(
+        val >= 0,
+        fmt::format("\"Excitation\" on port index {:d} must be non-negative; got {:d}",
+                    index, val));
+    return val;
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
-                           "as a bool or unsigned (non-negative) integer; got {}",
+                           "as a bool or non-negative integer; got {}",
                            index, it->dump(2)));
   }
 }
