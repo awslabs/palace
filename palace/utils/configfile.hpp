@@ -254,8 +254,6 @@ public:
 
   MaterialData() = default;
   MaterialData(const json &domain);
-
-  void SetUp(const json &domain);
 };
 
 struct DomainEnergyData
