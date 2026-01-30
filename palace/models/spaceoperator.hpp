@@ -27,6 +27,18 @@ namespace palace
 class IoData;
 class Mesh;
 
+namespace config
+{
+
+struct BoundaryData;
+struct DomainData;
+struct PecBoundaryData;
+struct SolverData;
+
+}  // namespace config
+
+enum class ProblemType : char;
+
 //
 // A class handling spatial discretization of the governing equations.
 //
@@ -65,7 +77,8 @@ private:
 
   PortExcitations port_excitation_helper;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
+                                           const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
   // Helper functions for building the bilinear forms corresponding to the discretized
@@ -106,6 +119,9 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
 public:
+  SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
+                const config::BoundaryData &boundaries, ProblemType problem_type,
+                const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.

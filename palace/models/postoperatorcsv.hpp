@@ -24,6 +24,15 @@ class InterpolationOperator;
 class SurfaceCurrentOperator;
 class LumpedPortOperator;
 
+namespace config
+{
+
+struct BoundaryData;
+struct ProblemData;
+struct SolverData;
+
+}  // namespace config
+
 // Advance declaration.
 template <ProblemType solver_t>
 class PostOperator;
@@ -326,6 +335,9 @@ public:
   // Set-up all files to be called from post_op.
   void InitializeCSVDataCollection(const PostOperator<solver_t> &post_op);
 
+  PostOperatorCSV(const config::ProblemData &problem, const config::SolverData &solver,
+                  const config::BoundaryData &boundaries, const Units &units,
+                  const fem_op_t<solver_t> &fem_op);
   explicit PostOperatorCSV(const IoData &iodata, const fem_op_t<solver_t> &fem_op);
 };
 
