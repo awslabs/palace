@@ -13,8 +13,8 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/constants.hpp"
-#include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -31,11 +31,13 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   // actual function, not just the units.
 
   Units units(0.496, 1.453);
-  IoData iodata = IoData(units);
-  iodata.model.Lc = 1.0;  // Keep spatial conversions simple.
 
-  auto &material = iodata.domains.materials.emplace_back();
+  config::MaterialData material;
   material.attributes = {1};
+  std::vector<config::MaterialData> materials = {material};
+
+  config::PeriodicBoundaryData periodic;
+  config::DomainPostData postpro;
 
   // Make mesh for a cube [0, sz] x [0, sy] x [0, sz].
   constexpr double sx = 1.1, sy = 2.5, sz = 3.8;
@@ -47,17 +49,15 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
 
-  iodata.NondimensionalizeInputs(*par_mesh);
-  iodata.CheckConfiguration();  // initializes quadrature
   Mesh palace_mesh(std::move(par_mesh));
 
   mfem::ND_FECollection nd_fec(1, dim);
   FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
   mfem::RT_FECollection rt_fec(1, dim);
   FiniteElementSpace rt_fespace(palace_mesh, &rt_fec);
-  MaterialOperator mat_op(iodata, palace_mesh);
+  MaterialOperator mat_op(materials, periodic, ProblemType::ELECTROSTATIC, palace_mesh);
 
-  DomainPostOperator dom_post_op(iodata, mat_op, nd_fespace, rt_fespace);
+  DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, rt_fespace);
 
   // Create uniform electric field E = E0 * z_hat (SI units: V/m).
   constexpr double E0_SI = 1.0e6;  // 1 MV/m

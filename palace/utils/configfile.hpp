@@ -861,6 +861,10 @@ public:
   // (makes the preconditioner matrix SPD).
   int pc_mat_shifted = -1;
 
+  // Matrix symmetry type for sparse direct solvers (computed from problem type and
+  // boundary conditions).
+  MatrixSymmetry pc_mat_sym = MatrixSymmetry::UNSYMMETRIC;
+
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.
   bool complex_coarse_solve = false;

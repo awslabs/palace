@@ -14,6 +14,7 @@ namespace palace
 
 class IoData;
 class SumVectorCoefficient;
+class Units;
 
 namespace config
 {
@@ -47,10 +48,13 @@ private:
   // Mapping from dipole index to data structure containing dipole information.
   std::map<int, CurrentDipoleData> dipoles;
 
-  void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpDipoleProperties(const std::map<int, config::CurrentDipoleData> &current_dipole,
+                             const mfem::ParMesh &mesh, const Units &units);
+  void PrintDipoleInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
+  CurrentDipoleOperator(const std::map<int, config::CurrentDipoleData> &current_dipole,
+                        const Units &units, const mfem::ParMesh &mesh);
   CurrentDipoleOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Access data structures for current dipoles.

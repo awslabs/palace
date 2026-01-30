@@ -446,6 +446,21 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  // Compute matrix symmetry type for sparse direct solvers.
+  if (solver.linear.pc_mat_shifted || problem.type == ProblemType::TRANSIENT ||
+      problem.type == ProblemType::ELECTROSTATIC)
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::SPD;
+  }
+  else if (problem.type == ProblemType::MAGNETOSTATIC ||
+           boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::SYMMETRIC;
+  }
+  else
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::UNSYMMETRIC;
+  }
   if (solver.linear.mg_smooth_aux < 0)
   {
     if (problem.type == ProblemType::ELECTROSTATIC ||
