@@ -1,21 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <fmt/core.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
-#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
-#include <catch2/matchers/catch_matchers_string.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -25,17 +15,33 @@ using namespace palace;
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
-  auto filename =
-      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
-  auto config = json::parse(jsonstream);
-
+  SECTION("Basic passing config with bool excitation")
   {
-    // Basic passing config with bool excitation.
-    auto entry = config.find("boundaries_1_pass")->find("Boundaries");
-    config::BoundaryData boundary_ex_bool(*entry);
+    json boundaries = {{"LumpedPort",
+                        {{{"Attributes", {5}},
+                          {"Index", 1},
+                          {"R", 50.0},
+                          {"Direction", "+Y"},
+                          {"Excitation", true}},
+                         {{"Attributes", {16}},
+                          {"Index", 2},
+                          {"R", 50.0},
+                          {"Direction", "-Y"},
+                          {"Excitation", false}},
+                         {{"Active", false},
+                          {"Index", 3},
+                          {"Elements",
+                           {{{"Attributes", {27}}, {"Direction", "+X"}},
+                            {{"Attributes", {38}}, {"Direction", "-X"}}}},
+                          {"R", 50.0}}}},
+                       {"WavePort",
+                        {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", true}},
+                         {{"Attributes", {17}}, {"Index", 5}, {"Excitation", false}},
+                         {{"Attributes", {18}}, {"Index", 6}, {"Active", false}}}},
+                       {"PEC", {{"Attributes", {3}}}},
+                       {"Absorbing", {{"Attributes", {4}}}}};
+    config::BoundaryData boundary_ex_bool(boundaries);
 
-    // Check simple parsing & defaults:
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
     CHECK(boundary_ex_bool.lumpedport.at(3).active == false);
     CHECK(boundary_ex_bool.lumpedport.at(1).excitation != 0);
@@ -44,230 +50,448 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);
 
     // Equivalent config with int excitation.
-    auto entry_int = config.find("boundaries_1_pass_excitation_int")->find("Boundaries");
-    config::BoundaryData boundary_ex_int(*entry_int);
+    json boundaries_int = {{"LumpedPort",
+                            {{{"Attributes", {5}},
+                              {"Index", 1},
+                              {"R", 50.0},
+                              {"Direction", "+Y"},
+                              {"Excitation", 1}},
+                             {{"Attributes", {16}},
+                              {"Index", 2},
+                              {"R", 50.0},
+                              {"Direction", "-Y"},
+                              {"Excitation", 0}},
+                             {{"Active", false},
+                              {"Index", 3},
+                              {"Elements",
+                               {{{"Attributes", {27}}, {"Direction", "+X"}},
+                                {{"Attributes", {38}}, {"Direction", "-X"}}}},
+                              {"R", 50.0}}}},
+                           {"WavePort",
+                            {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", 1}},
+                             {{"Attributes", {16}}, {"Index", 5}, {"Excitation", 0}},
+                             {{"Attributes", {18}}, {"Index", 6}, {"Active", false}}}},
+                           {"PEC", {{"Attributes", {3}}}},
+                           {"Absorbing", {{"Attributes", {4}}}}};
+    config::BoundaryData boundary_ex_int(boundaries_int);
 
-    // FUTURE: Default equality is C++20.
-    // CHECK(boundary_ex_bool == boundary_ex_int);
-
-    REQUIRE(boundary_ex_bool.lumpedport.size() == boundary_ex_bool.lumpedport.size());
-    auto it_int = boundary_ex_bool.lumpedport.begin();
+    REQUIRE(boundary_ex_bool.lumpedport.size() == boundary_ex_int.lumpedport.size());
+    auto it_int = boundary_ex_int.lumpedport.begin();
     auto it_bool = boundary_ex_bool.lumpedport.begin();
-    for (; it_int != boundary_ex_bool.lumpedport.end(); it_int++, it_bool++)
+    for (; it_int != boundary_ex_int.lumpedport.end(); it_int++, it_bool++)
     {
-      CHECK(it_bool->first == it_int->first);  // Order is same as indices are
+      CHECK(it_bool->first == it_int->first);
       CHECK(it_bool->second.excitation == it_int->second.excitation);
     }
   }
-  // Excitation Specification.
+
+  SECTION("Negative excitation throws")
   {
-    auto entry = config.find("boundaries_negative_excitation_1")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    json boundaries1 = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", -1}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 1}}}}};
+    CHECK_THROWS(config::BoundaryData(boundaries1));
+
+    json boundaries2 = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", 1}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", -1}}}}};
+    CHECK_THROWS(config::BoundaryData(boundaries2));
   }
+
+  SECTION("Repeated index within LumpedPort throws")
   {
-    auto entry = config.find("boundaries_negative_excitation_2")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", true}},
+          {{"Attributes", {16}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "-Y"},
+           {"Excitation", false}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", true}}}}};
+    CHECK_THROWS(config::BoundaryData(boundaries));
   }
-  // Index Specification - within-array duplicates throw, cross-array uses Validate.
+
+  SECTION("Repeated index within WavePort throws")
   {
-    auto entry = config.find("boundaries_repeated_index_lumped")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
+    json boundaries = {{"LumpedPort",
+                        {{{"Attributes", {5}},
+                          {"Index", 1},
+                          {"R", 50},
+                          {"Direction", "+Y"},
+                          {"Excitation", true}}}},
+                       {"WavePort",
+                        {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", true}},
+                         {{"Attributes", {7}}, {"Index", 2}, {"Excitation", true}}}}};
+    CHECK_THROWS(config::BoundaryData(boundaries));
   }
+
+  SECTION("Repeated index cross-array fails validation")
   {
-    auto entry = config.find("boundaries_repeated_index_wave")->find("Boundaries");
-    CHECK_THROWS(config::BoundaryData(*entry));
-  }
-  {
-    auto entry = config.find("boundaries_repeated_index_mixed")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", true}},
+          {{"Attributes", {16}},
+           {"Index", 2},
+           {"R", 50},
+           {"Direction", "-Y"},
+           {"Excitation", false}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 1}, {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(!config::Validate(boundary_data).empty());
   }
+
+  SECTION("Mislabeled excitation index fails validation")
   {
-    auto entry = config.find("boundaries_mislabeled_index_1")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
-    CHECK(!config::Validate(boundary_data).empty());
+    json boundaries1 = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", 2}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 1}}}}};
+    config::BoundaryData bd1(boundaries1);
+    CHECK(!config::Validate(bd1).empty());
+
+    json boundaries2 = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", 2}}}},
+        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 0}}}}};
+    config::BoundaryData bd2(boundaries2);
+    CHECK(!config::Validate(bd2).empty());
   }
+
+  SECTION("Upgrade excitation index 1")
   {
-    auto entry = config.find("boundaries_mislabeled_index_2")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
-    CHECK(!config::Validate(boundary_data).empty());
-  }
-  // Mark single excitation index.
-  {
-    auto entry = config.find("boundaries_upgrade_excitation_idx_1")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}},
+          {{"Attributes", {16}},
+           {"Index", 2},
+           {"R", 50},
+           {"Direction", "-Y"},
+           {"Excitation", true}}}},
+        {"WavePort",
+         {{{"Attributes", {6}}, {"Index", 4}}, {{"Attributes", {17}}, {"Index", 5}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
+
+  SECTION("Upgrade excitation index 2")
   {
-    auto entry = config.find("boundaries_upgrade_excitation_idx_2")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}},
+          {{"Attributes", {16}},
+           {"Index", 2},
+           {"R", 50},
+           {"Direction", "-Y"},
+           {"Excitation", 1}}}},
+        {"WavePort",
+         {{{"Attributes", {6}}, {"Index", 4}}, {{"Attributes", {17}}, {"Index", 5}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
+
+  SECTION("Upgrade excitation index 3")
   {
-    auto entry = config.find("boundaries_upgrade_excitation_idx_3")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}},
+          {{"Attributes", {16}}, {"Index", 2}, {"R", 50}, {"Direction", "-Y"}}}},
+        {"WavePort",
+         {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", true}},
+          {{"Attributes", {17}}, {"Index", 5}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 4);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
+
+  SECTION("Upgrade excitation index 4")
   {
-    auto entry = config.find("boundaries_upgrade_excitation_idx_4")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 1},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", true}},
+          {{"Attributes", {16}}, {"Index", 2}, {"R", 50}, {"Direction", "-Y"}}}},
+        {"WavePort",
+         {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", true}},
+          {{"Attributes", {17}}, {"Index", 5}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 1);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
-  // Multiple ports sharing same excitation (valid - excited together).
+
+  SECTION("Shared excitation valid")
   {
-    auto entry = config.find("boundaries_shared_excitation_valid")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {{"LumpedPort",
+                        {{{"Attributes", {5}},
+                          {"Index", 1},
+                          {"R", 50},
+                          {"Direction", "+Y"},
+                          {"Excitation", 1}},
+                         {{"Attributes", {6}},
+                          {"Index", 2},
+                          {"R", 50},
+                          {"Direction", "-Y"},
+                          {"Excitation", 1}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(config::Validate(boundary_data).empty());
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 1);
   }
-  // Multi-excitation with matching indices (valid).
+
+  SECTION("Multi-excitation valid")
   {
-    auto entry = config.find("boundaries_multi_excitation_valid")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {{"LumpedPort",
+                        {{{"Attributes", {5}},
+                          {"Index", 1},
+                          {"R", 50},
+                          {"Direction", "+Y"},
+                          {"Excitation", 1}},
+                         {{"Attributes", {6}},
+                          {"Index", 2},
+                          {"R", 50},
+                          {"Direction", "-Y"},
+                          {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(config::Validate(boundary_data).empty());
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
   }
-  // Terminal with duplicate index vs LumpedPort (invalid - indices must be unique).
+
+  SECTION("Terminal duplicate index fails validation")
   {
-    auto entry = config.find("boundaries_terminal_duplicate_index")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
+        {"Terminal", {{{"Attributes", {6}}, {"Index", 1}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(!config::Validate(boundary_data).empty());
   }
-  // SurfaceCurrent with duplicate index vs LumpedPort (invalid).
+
+  SECTION("SurfaceCurrent duplicate index fails validation")
   {
-    auto entry =
-        config.find("boundaries_surfacecurrent_duplicate_index")->find("Boundaries");
-    config::BoundaryData boundary_data(*entry);
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
+        {"SurfaceCurrent", {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}}}}};
+    config::BoundaryData boundary_data(boundaries);
     CHECK(!config::Validate(boundary_data).empty());
   }
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/solver_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
-  auto config = json::parse(jsonstream);
-
   using namespace Catch::Matchers;
+  constexpr double delta_eps = 1.0e-9;
 
-  constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
+  SECTION("Base uniform sample")
   {
+    json driven = {{"MinFreq", 0.1},
+                   {"MaxFreq", 1.1},
+                   {"FreqStep", 0.1},
+                   {"SaveStep", 2},
+                   {"Restart", 3}};
+    config::DrivenSolverData driven_solver(driven);
+
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
-    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8, 10};
-    {
-      // Top level configuration
-      auto driven = config.find("driven_base_uniform_sample")->find("Driven");
-      config::DrivenSolverData driven_solver(*driven);
+    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
 
-      for (std::size_t i = 0; i < sample_f.size(); ++i)
-      {
-        CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
-      }
-      CHECK(driven_solver.save_indices == save_indices);
-      CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
-    }
+    for (size_t i = 0; i < sample_f.size(); ++i)
     {
-      // Equivalent to top level from within Samples, deduplicates
-      auto driven = config.find("driven_uniform_freq_step")->find("Driven");
-      config::DrivenSolverData driven_solver(*driven);
-
-      for (std::size_t i = 0; i < sample_f.size(); ++i)
-      {
-        CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
-      }
-      CHECK(driven_solver.save_indices == save_indices);
-      CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
+
+  SECTION("Uniform freq step with Samples")
   {
-    // Specification through number of points rather than step size
-    auto driven = config.find("driven_uniform_nsample")->find("Driven");
-    config::DrivenSolverData driven_solver(*driven);
+    json driven = {
+        {"MinFreq", 0.1},
+        {"MaxFreq", 1.1},
+        {"FreqStep", 0.1},
+        {"SaveStep", 2},
+        {"Samples",
+         {{{"MinFreq", 0.1}, {"MaxFreq", 1.1}, {"FreqStep", 0.1}, {"SaveStep", 2}}}}};
+    config::DrivenSolverData driven_solver(driven);
+
+    auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
+    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
+
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
+    }
+    CHECK(driven_solver.save_indices == save_indices);
+    CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
+  }
+
+  SECTION("Uniform NSample")
+  {
+    json driven = {
+        {"Samples",
+         {{{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 9}, {"SaveStep", 2}}}}};
+    config::DrivenSolverData driven_solver(driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8};
+    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
 
-    for (std::size_t i = 0; i < sample_f.size(); ++i)
+    for (size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
+
+  SECTION("Paired uniform sample")
   {
-    // Combining two different linear sample resolutions
-    auto driven = config.find("driven_paired_uniform_sample")->find("Driven");
-    config::DrivenSolverData driven_solver(*driven);
+    json driven = {
+        {"Samples",
+         {{{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 5}, {"SaveStep", 2}},
+          {{"MinFreq", 0.0}, {"MaxFreq", 10.0}, {"NSample", 5}, {"SaveStep", 1}}}}};
+    config::DrivenSolverData driven_solver(driven);
 
     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
-    auto save_indices = std::vector<std::size_t>{
-        0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
+    auto save_indices = std::vector<size_t>{0, 2, 4, 5, 6, 7, 8};
 
-    for (std::size_t i = 0; i < sample_f.size(); ++i)
+    for (size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
+
+  SECTION("Uniform with point samples")
   {
-    // Combining two different linear sample resolutions
-    auto driven = config.find("driven_uniform_with_point")->find("Driven");
-    config::DrivenSolverData driven_solver(*driven);
+    json driven = {{"Samples",
+                    {{{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 9}, {"SaveStep", 2}},
+                     {{"Freq", {0.15, 0.35, 0.55}}, {"SaveStep", 1}, {"AddToPROM", true}}}},
+                   {"Save", {0.0, 0.35, 1.0}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData driven_solver(driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<std::size_t>{0, 2, 3, 4, 6, 7, 9, 11};
-    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 2, 4, 7};
+    auto save_indices = std::vector<size_t>{0, 2, 3, 4, 6, 7, 9, 11};
+    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 2, 4, 7};
 
-    for (std::size_t i = 0; i < sample_f.size(); ++i)
+    for (size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
   }
+
+  SECTION("Log with point samples")
   {
-    // Combining two different linear sample resolutions
-    auto driven = config.find("driven_log_with_point")->find("Driven");
-    config::DrivenSolverData driven_solver(*driven);
+    json driven = {{"Samples",
+                    {{{"Type", "Log"},
+                      {"MinFreq", 0.1},
+                      {"MaxFreq", 1.0},
+                      {"NSample", 5},
+                      {"SaveStep", 2}},
+                     {{"Freq", {0.15, 0.35, 0.55}}, {"SaveStep", 1}, {"AddToPROM", true}}}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData driven_solver(driven);
 
     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
                                 0.35, 0.55, 0.5623413251903491, 1.0};
-    auto save_indices = std::vector<std::size_t>{0, 1, 3, 4, 5, 7};
-    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 1, 4, 5};
+    auto save_indices = std::vector<size_t>{0, 1, 3, 4, 5, 7};
+    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 1, 4, 5};
 
-    for (std::size_t i = 0; i < sample_f.size(); ++i)
+    for (size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
   }
-  std::vector<std::string> invalid_configs = {"driven_empty",
-                                              "driven_mismatch_type_1",
-                                              "driven_mismatch_type_2",
-                                              "driven_mismatch_type_3",
-                                              "driven_invalid_log_range",
-                                              "driven_uniform_with_point_invalid_save"};
-  for (auto c : invalid_configs)
+
+  SECTION("Invalid configs throw")
   {
-    auto driven = config.find(c)->find("Driven");
-    CHECK_THROWS(config::DrivenSolverData(*driven));
+    // Empty
+    CHECK_THROWS(config::DrivenSolverData(json::object()));
+
+    // Mismatch type - Point with range
+    json mismatch1 = {{"Samples",
+                       {{{"Type", "Point"},
+                         {"MinFreq", 0.0},
+                         {"MaxFreq", 1.0},
+                         {"NSample", 11},
+                         {"SaveStep", 2}}}}};
+    CHECK_THROWS(config::DrivenSolverData(mismatch1));
+
+    // Mismatch type - Log with FreqStep
+    json mismatch2 = {{"Samples",
+                       {{{"Type", "Log"},
+                         {"MinFreq", 0.1},
+                         {"MaxFreq", 1.0},
+                         {"FreqStep", 11},
+                         {"SaveStep", 2}}}}};
+    CHECK_THROWS(config::DrivenSolverData(mismatch2));
+
+    // Mismatch type - Linear with Freq array
+    json mismatch3 = {{"Samples", {{{"Type", "Linear"}, {"Freq", {0.11, 0.22, 0.34}}}}}};
+    CHECK_THROWS(config::DrivenSolverData(mismatch3));
+
+    // Invalid log range (MinFreq = 0)
+    json invalid_log = {{"Samples",
+                         {{{"Type", "Log"},
+                           {"MinFreq", 0.0},
+                           {"MaxFreq", 1.0},
+                           {"NSample", 11},
+                           {"SaveStep", 2}}}}};
+    CHECK_THROWS(config::DrivenSolverData(invalid_log));
+
+    // Invalid save frequency
+    json invalid_save = {
+        {"Samples",
+         {{{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 11}, {"SaveStep", 2}},
+          {{"Freq", {0.15, 0.35, 0.55}}, {"SaveStep", 1}, {"AddToPROM", true}}}},
+        {"Save", {0.05}},
+        {"AdaptiveTol", 1e-3}};
+    CHECK_THROWS(config::DrivenSolverData(invalid_save));
   }
 }
 
@@ -291,7 +515,7 @@ TEST_CASE("Config Linear Solver MaxIts", "[config][Serial]")
 
 TEST_CASE("FarField", "[config][Serial]")
 {
-  constexpr double delta_eps = 1.0e-6;  // Precision in angle comparisons (rad)
+  constexpr double delta_eps = 1.0e-6;
 
   SECTION("Default constructor")
   {
@@ -303,7 +527,6 @@ TEST_CASE("FarField", "[config][Serial]")
 
   SECTION("Basic setup with attributes only")
   {
-    // This should produce a warning because there is no target point.
     json farfield = {{"Attributes", {1, 3, 5}}};
     config::FarFieldPostData data(farfield);
 
@@ -339,25 +562,21 @@ TEST_CASE("FarField", "[config][Serial]")
       json farfield = {{"Attributes", {1}},
                        {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}};
       config::FarFieldPostData data(farfield);
-      CHECK(data.thetaphis.size() == 1);  // All should collapse to one pole.
+      CHECK(data.thetaphis.size() == 1);
     }
 
     // Test phi periodicity: φ and φ+360° are same point.
     {
-      json farfield = {{"Attributes", {1}},
-                       {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}};  // 390° = 30° + 360°
+      json farfield = {{"Attributes", {1}}, {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}};
       config::FarFieldPostData data(farfield);
-      CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
+      CHECK(data.thetaphis.size() == 1);
     }
 
     // Test theta reflection: (θ, φ) ≡ (180°-θ, φ+180°).
     {
-      json farfield = {
-          {"Attributes", {1}},
-          {"ThetaPhis",
-           {{60.0, 45.0}, {120.0, 225.0}}}};  // 120° = 180°-60°, 225° = 45°+180°
+      json farfield = {{"Attributes", {1}}, {"ThetaPhis", {{60.0, 45.0}, {120.0, 225.0}}}};
       config::FarFieldPostData data(farfield);
-      CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
+      CHECK(data.thetaphis.size() == 1);
     }
   }
 
@@ -366,7 +585,7 @@ TEST_CASE("FarField", "[config][Serial]")
     json farfield = {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}};
     config::FarFieldPostData data(farfield);
 
-    CHECK(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis.
+    CHECK(data.thetaphis.size() == 11);
   }
 
   SECTION("NSample sphere sampling")
