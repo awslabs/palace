@@ -355,11 +355,13 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   iodata.CheckConfiguration();  // initializes quadrature
 
   // Setup lumped port boundary data for driven and transient.
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
-  auto config = json::parse(jsonstream);
-  auto entry = config.find("boundaries_lumped_port_X_2")->find("Boundaries");
-  config::BoundaryData boundary_port(*entry);
+  json boundaries = {{"LumpedPort",
+                      {{{"Attributes", {2}},
+                        {"Index", 1},
+                        {"R", 50.0},
+                        {"Direction", "+X"},
+                        {"Excitation", true}}}}};
+  config::BoundaryData boundary_port(boundaries);
 
   // Create serial mesh.
   int resolution = 3;
