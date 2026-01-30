@@ -29,6 +29,7 @@
 #include <mfem/linalg/vector.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
@@ -156,7 +157,7 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 {
   // Test constants.
   constexpr double atol = 1e-4;
-  constexpr double rtol = 5e-6;
+  constexpr double rtol = 1e-5;
 
   constexpr double p0 = 1e-9;  // Dipole moment [C⋅m]
 
@@ -170,6 +171,9 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   iodata.boundaries.postpro.farfield.attributes = attributes;
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.order = 3;      // Match the FE order used below.
+  iodata.CheckConfiguration();  // initializes quadrature
+  REQUIRE(fem::DefaultIntegrationOrder::p_trial == 3);
 
   auto comm = Mpi::World();
 
@@ -341,6 +345,7 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   iodata.boundaries.postpro.farfield.attributes = {1};
   iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
   iodata.problem.type = ProblemType::DRIVEN;
+  iodata.CheckConfiguration();  // initializes quadrature
 
   MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(

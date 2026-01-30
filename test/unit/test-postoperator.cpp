@@ -9,6 +9,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
+#include "fem/integrator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -347,9 +348,11 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   // Create iodata.
   Units units(0.496, 1.453);
   IoData iodata = IoData(units);
+
   iodata.domains.materials.emplace_back().attributes = {1};
   iodata.boundaries.pec.attributes = {1};
   iodata.problem.output_formats.gridfunction = true;
+  iodata.CheckConfiguration();  // initializes quadrature
 
   // Setup lumped port boundary data for driven and transient.
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");

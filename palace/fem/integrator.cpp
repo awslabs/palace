@@ -13,6 +13,9 @@ namespace fem
 
 int DefaultIntegrationOrder::Get(const mfem::IsoparametricTransformation &T)
 {
+  MFEM_VERIFY(
+      p_trial >= 0,
+      "DefaultIntegrationOrder not initialized, call IoData::CheckConfiguration()!");
   return 2 * p_trial + (q_order_jac ? T.OrderW() : 0) +
          (T.GetFE()->Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
                                                         : q_order_extra_qk);
