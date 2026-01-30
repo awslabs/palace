@@ -46,32 +46,36 @@ std::string OutputFolderName(const ProblemType solver_t)
 }  // namespace
 
 template <ProblemType solver_t>
-PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
-  : fem_op(&fem_op_), units(iodata.units), post_dir(iodata.problem.output),
-    post_op_csv(iodata, fem_op_),
+PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
+                                     const config::SolverData &solver,
+                                     const config::DomainData &domains,
+                                     const config::BoundaryData &boundaries,
+                                     const Units &units_, fem_op_t<solver_t> &fem_op_)
+  : fem_op(&fem_op_), units(units_), post_dir(problem.output),
+    post_op_csv(problem, solver, boundaries, units_, fem_op_),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
     dom_post_op(std::move(
-        [&iodata, &fem_op_]()
+        [&domains, &fem_op_]()
         {
           if constexpr (solver_t == ProblemType::ELECTROSTATIC)
           {
-            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
+            return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
                                       fem_op_.GetH1Space());
           }
           else if constexpr (solver_t == ProblemType::MAGNETOSTATIC)
           {
-            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
+            return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
                                       fem_op_.GetNDSpace());
           }
           else
           {
-            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
-                                      fem_op_.GetRTSpace());
+            return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
+                                      fem_op_.GetNDSpace(), fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
-                 fem_op->GetNDSpace()),
-    interp_op(iodata, fem_op->GetNDSpace())
+    surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
+                 fem_op->GetH1Space(), fem_op->GetNDSpace()),
+    interp_op(domains.postpro.probe, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
@@ -107,27 +111,27 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
 
   // Prepare for saving fields
-  enable_paraview_output = iodata.problem.output_formats.paraview;
-  enable_gridfunction_output = iodata.problem.output_formats.gridfunction;
+  enable_paraview_output = problem.output_formats.paraview;
+  enable_gridfunction_output = problem.output_formats.gridfunction;
   if (solver_t == ProblemType::DRIVEN)
   {
-    output_save_indices = iodata.solver.driven.save_indices;
+    output_save_indices = solver.driven.save_indices;
   }
   else if (solver_t == ProblemType::EIGENMODE)
   {
-    output_n_post = iodata.solver.eigenmode.n_post;
+    output_n_post = solver.eigenmode.n_post;
   }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
-    output_n_post = iodata.solver.electrostatic.n_post;
+    output_n_post = solver.electrostatic.n_post;
   }
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
-    output_n_post = iodata.solver.magnetostatic.n_post;
+    output_n_post = solver.magnetostatic.n_post;
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
-    output_delta_post = iodata.solver.transient.delta_post;
+    output_delta_post = solver.transient.delta_post;
   }
 
   gridfunction_output_dir =
@@ -138,6 +142,13 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
 
   // Initialize CSV files for measurements.
   post_op_csv.InitializeCSVDataCollection(*this);
+}
+
+template <ProblemType solver_t>
+PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
+  : PostOperator(iodata.problem, iodata.solver, iodata.domains, iodata.boundaries,
+                 iodata.units, fem_op_)
+{
 }
 
 template <ProblemType solver_t>

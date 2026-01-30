@@ -13,6 +13,16 @@ namespace palace
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Units;
+
+namespace config
+{
+
+struct ConductivityData;
+
+}  // namespace config
+
+enum class ProblemType : char;
 
 //
 // A class handling finite conductivity boundaries.
@@ -32,10 +42,14 @@ private:
   };
   std::vector<ConductivityData> boundaries;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const std::vector<config::ConductivityData> &conductivity,
+                               ProblemType problem_type, const mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
+  SurfaceConductivityOperator(const std::vector<config::ConductivityData> &conductivity,
+                              ProblemType problem_type, const Units &units,
+                              const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
   SurfaceConductivityOperator(const IoData &iodata, const MaterialOperator &mat_op,
                               const mfem::ParMesh &mesh);
 

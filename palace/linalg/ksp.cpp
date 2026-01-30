@@ -13,6 +13,7 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -23,13 +24,13 @@ namespace
 {
 
 template <typename OperType>
-std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &iodata,
-                                                                 MPI_Comm comm)
+std::unique_ptr<IterativeSolver<OperType>>
+ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm)
 {
   // Create the solver.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
-  const auto type = iodata.solver.linear.krylov_solver;
-  const int print = iodata.problem.verbose;
+  const auto type = linear.krylov_solver;
+  const int print = verbose;
   switch (type)
   {
     case KrylovSolver::CG:
@@ -38,14 +39,14 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
     case KrylovSolver::GMRES:
       {
         auto gmres = std::make_unique<GmresSolver<OperType>>(comm, print);
-        gmres->SetRestartDim(iodata.solver.linear.max_size);
+        gmres->SetRestartDim(linear.max_size);
         ksp = std::move(gmres);
       }
       break;
     case KrylovSolver::FGMRES:
       {
         auto fgmres = std::make_unique<FgmresSolver<OperType>>(comm, print);
-        fgmres->SetRestartDim(iodata.solver.linear.max_size);
+        fgmres->SetRestartDim(linear.max_size);
         ksp = std::move(fgmres);
       }
       break;
@@ -55,13 +56,12 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
       MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
       break;
   }
-  ksp->SetInitialGuess(iodata.solver.linear.initial_guess);
-  ksp->SetRelTol(iodata.solver.linear.tol);
-  ksp->SetMaxIter(iodata.solver.linear.max_it);
+  ksp->SetInitialGuess(linear.initial_guess);
+  ksp->SetRelTol(linear.tol);
+  ksp->SetMaxIter(linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
-  if (iodata.solver.linear.pc_side != PreconditionerSide::DEFAULT &&
-      type != KrylovSolver::GMRES)
+  if (linear.pc_side != PreconditionerSide::DEFAULT && type != KrylovSolver::GMRES)
   {
     Mpi::Warning(comm,
                  "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
@@ -71,7 +71,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
     if (type == KrylovSolver::GMRES || type == KrylovSolver::FGMRES)
     {
       auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-      switch (iodata.solver.linear.pc_side)
+      switch (linear.pc_side)
       {
         case PreconditionerSide::LEFT:
           gmres->SetPreconditionerSide(PreconditionerSide::LEFT);
@@ -91,7 +91,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
   {
     // Because FGMRES inherits from GMRES, this is OK.
     auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-    gmres->SetOrthogonalization(iodata.solver.linear.gs_orthog);
+    gmres->SetOrthogonalization(linear.gs_orthog);
   }
 
   // Configure timing for the primary linear solver.
@@ -101,7 +101,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(const IoData &i
 }
 
 template <typename OperType, typename T, typename... U>
-auto MakeWrapperSolver(const IoData &iodata, U &&...args)
+auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 {
   // Sparse direct solver types copy the input matrix, so there is no need to save the
   // parallel assembled operator.
@@ -118,21 +118,21 @@ auto MakeWrapperSolver(const IoData &iodata, U &&...args)
 #endif
                                     false);
   return std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<T>(iodata, std::forward<U>(args)...), save_assembled,
-      iodata.solver.linear.complex_coarse_solve, iodata.solver.linear.drop_small_entries,
-      iodata.solver.linear.reorder_reuse);
+      std::make_unique<T>(std::forward<U>(args)...), save_assembled,
+      linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
 }
 
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
-ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
-                              FiniteElementSpaceHierarchy &fespaces,
+ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbose,
+                              MPI_Comm comm, FiniteElementSpaceHierarchy &fespaces,
                               FiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
-  const auto type = iodata.solver.linear.type;
-  const int print = iodata.problem.verbose - 1;
+  const auto type = linear.type;
+  const int print = verbose - 1;
+  const bool coarse_solver = fespaces.GetNumLevels() > 1;
   switch (type)
   {
     case LinearSolver::AMS:
@@ -141,16 +141,20 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
                                 "and auxiliary spaces for construction!");
       pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
-          iodata, fespaces.GetNumLevels() > 1, fespaces.GetFESpaceAtLevel(0),
-          aux_fespaces->GetFESpaceAtLevel(0), print);
+          linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
+          coarse_solver ? 1 : linear.mg_cycle_it, linear.mg_smooth_it,
+          linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen, print);
       break;
     case LinearSolver::BOOMER_AMG:
-      pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1,
-                                                        print);
+      pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(
+          linear, coarse_solver ? 1 : linear.mg_cycle_it, linear.mg_smooth_it,
+          linear.amg_agg_coarsen, print);
       break;
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc = MakeWrapperSolver<OperType, SuperLUSolver>(iodata, comm, print);
+      pc = MakeWrapperSolver<OperType, SuperLUSolver>(
+          linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
+          print);
 #else
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
@@ -158,7 +162,10 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<OperType, StrumpackSolver>(iodata, comm, print);
+      pc = MakeWrapperSolver<OperType, StrumpackSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -166,7 +173,10 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       break;
     case LinearSolver::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(iodata, comm, print);
+      pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(
+          linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -174,7 +184,12 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = MakeWrapperSolver<OperType, MumpsSolver>(iodata, comm, print);
+      pc = MakeWrapperSolver<OperType, MumpsSolver>(
+          linear, comm, linear.pc_mat_sym, linear.sym_factorization,
+          (linear.strumpack_compression_type == SparseCompression::BLR)
+              ? linear.strumpack_lr_tol
+              : 0.0,
+          linear.reorder_reuse, print);
 #else
       MFEM_ABORT(
           "Solver was not built with MUMPS support, please choose a different solver!");
@@ -197,18 +212,22 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
     // space is a nullptr here.
     auto gmg = [&]()
     {
-      if (iodata.solver.linear.mg_smooth_aux)
+      if (linear.mg_smooth_aux)
       {
         MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
                                   "primary space and auxiliary spaces for construction!");
         const auto G = fespaces.GetDiscreteInterpolators(*aux_fespaces);
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            iodata, comm, std::move(pc), fespaces.GetProlongationOperators(), &G);
+            comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
+            linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
+            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
       }
       else
       {
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            iodata, comm, std::move(pc), fespaces.GetProlongationOperators());
+            comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
+            linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
+            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
@@ -223,15 +242,24 @@ ConfigurePreconditionerSolver(const IoData &iodata, MPI_Comm comm,
 }  // namespace
 
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
-        ConfigureKrylovSolver<OperType>(iodata, fespaces.GetFinestFESpace().GetComm()),
+        ConfigureKrylovSolver<OperType>(linear, verbose,
+                                        fespaces.GetFinestFESpace().GetComm()),
         ConfigurePreconditionerSolver<OperType>(
-            iodata, fespaces.GetFinestFESpace().GetComm(), fespaces, aux_fespaces))
+            linear, verbose, fespaces.GetFinestFESpace().GetComm(), fespaces, aux_fespaces))
 {
   use_timer = true;
+}
+
+template <typename OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       FiniteElementSpaceHierarchy &fespaces,
+                                       FiniteElementSpaceHierarchy *aux_fespaces)
+  : BaseKspSolver(iodata.solver.linear, iodata.problem.verbose, fespaces, aux_fespaces)
+{
 }
 
 template <typename OperType>

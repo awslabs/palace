@@ -15,8 +15,8 @@
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -358,17 +358,16 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 
 TEST_CASE("Default IOData", "[iodata][Serial]")
 {
-  Units units(1.0, 1.0);
-  IoData iodata(units);
+  config::MaterialData material;
+  material.attributes = {1};
 
-  iodata.domains.materials.emplace_back();
-  iodata.domains.materials.back().attributes = {1};
+  config::PeriodicBoundaryData periodic;
 
   // Pull from the mfem externals data folder.
   mfem::Mesh mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
   mfem::ParMesh pmesh(Mpi::World(), mesh);
 
-  MaterialOperator mat_op(iodata, pmesh);
+  MaterialOperator mat_op({material}, periodic, ProblemType::ELECTROSTATIC, pmesh);
 
   REQUIRE(mat_op.HasLossTangent() == false);
 }

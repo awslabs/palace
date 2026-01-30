@@ -20,11 +20,14 @@ class MaterialOperator;
 namespace config
 {
 
+struct BoundaryPostData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
 struct FarFieldPostData;
 
 }  // namespace config
+
+enum class ProblemType : char;
 
 //
 // A class handling boundary surface postprocessing.
@@ -96,6 +99,10 @@ public:
   std::map<int, InterfaceDielectricData> eps_surfs;
   FarFieldData farfield;
 
+  SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
+                      const MaterialOperator &mat_op,
+                      mfem::ParFiniteElementSpace &h1_fespace,
+                      mfem::ParFiniteElementSpace &nd_fespace);
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);

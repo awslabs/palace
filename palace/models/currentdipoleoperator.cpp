@@ -52,22 +52,30 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
 CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
                                              const mfem::ParMesh &mesh)
 {
-  // Set up current dipole source properties.
-  SetUpDipoleProperties(iodata, mesh);
-  PrintDipoleInfo(iodata, mesh);
+  SetUpDipoleProperties(iodata.domains.current_dipole, mesh, iodata.units);
+  PrintDipoleInfo(iodata.units, mesh);
 }
 
-void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata,
-                                                  const mfem::ParMesh &mesh)
+CurrentDipoleOperator::CurrentDipoleOperator(
+    const std::map<int, config::CurrentDipoleData> &current_dipole, const Units &units,
+    const mfem::ParMesh &mesh)
+{
+  SetUpDipoleProperties(current_dipole, mesh, units);
+  PrintDipoleInfo(units, mesh);
+}
+
+void CurrentDipoleOperator::SetUpDipoleProperties(
+    const std::map<int, config::CurrentDipoleData> &current_dipole,
+    const mfem::ParMesh &mesh, const Units &units)
 {
   // Set up current dipole data structures.
-  for (const auto &[idx, data] : iodata.domains.current_dipole)
+  for (const auto &[idx, data] : current_dipole)
   {
-    dipoles.emplace(idx, CurrentDipoleData(data, mesh, iodata.units));
+    dipoles.emplace(idx, CurrentDipoleData(data, mesh, units));
   }
 }
 
-void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void CurrentDipoleOperator::PrintDipoleInfo(const Units &units, const mfem::ParMesh &mesh)
 {
   if (dipoles.empty())
   {
@@ -78,12 +86,11 @@ void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::Pa
   for (const auto &[idx, data] : dipoles)
   {
     // Convert center coordinates back to physical units for display
-    auto physical_center =
-        iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.center);
+    auto physical_center = units.Dimensionalize<Units::ValueType::LENGTH>(data.center);
 
     // Convert moment back to physical units for display
-    double physical_moment = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(
-        iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.moment));
+    double physical_moment = units.Dimensionalize<Units::ValueType::CURRENT>(
+        units.Dimensionalize<Units::ValueType::LENGTH>(data.moment));
 
     Mpi::Print(" Dipole {:d}: \n"
                " \tMoment = {:.3e} A·m\n"

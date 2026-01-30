@@ -335,17 +335,15 @@ TEST_CASE("PostOperator", "[strattonchu][Serial]")
 
 TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu][Serial]")
 {
-  Units units(0.496, 1.453);
-  IoData iodata = IoData(units);
-
-  auto &material = iodata.domains.materials.emplace_back();
+  config::MaterialData material;
   material.attributes = {1};
   material.mu_r.s[0] = 2;  // Make it anisotropic.
 
-  iodata.boundaries.postpro.farfield.attributes = {1};
-  iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
-  iodata.problem.type = ProblemType::DRIVEN;
-  iodata.CheckConfiguration();  // initializes quadrature
+  config::PeriodicBoundaryData periodic;
+
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = {1};
+  postpro.farfield.thetaphis.emplace_back();
 
   MPI_Comm comm = Mpi::World();
   std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
@@ -353,14 +351,14 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
 
-  iodata.NondimensionalizeInputs(*par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
 
   mfem::ND_FECollection nd_fec(1, dim);
   FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
-  MaterialOperator mat_op(iodata, palace_mesh);
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
 
-  CHECK_THROWS(SurfacePostOperator(iodata, mat_op, nd_fespace, nd_fespace));
+  CHECK_THROWS(
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace));
 }
 
 }  // namespace

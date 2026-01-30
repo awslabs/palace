@@ -452,7 +452,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
-  ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+  ksp = std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
+                                           space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
@@ -477,6 +478,10 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
   }
 }
+
+// TODO: Add config-only constructor for unit testing once the new PROM
+// circuit synthesis parameters (adaptive_circuit_synthesis,
+// adaptive_circuit_synthesis_domain_orthog) are factored out of IoData.
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {

@@ -90,18 +90,29 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace internal::mat
 
-MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
+MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
+                                   const config::PeriodicBoundaryData &periodic,
+                                   ProblemType problem_type, const Mesh &mesh)
+  : mesh(mesh)
 {
-  SetUpMaterialProperties(iodata, mesh);
+  SetUpMaterialProperties(materials, periodic, problem_type, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
+  : MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic,
+                     iodata.problem.type, mesh)
+{
+}
+
+void MaterialOperator::SetUpMaterialProperties(
+    const std::vector<config::MaterialData> &materials,
+    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
+    const mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
   // from the mesh so as to not cause problems.
-  MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
+  MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
   {
     int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
     mfem::Array<int> attr_marker(attr_max);
@@ -110,7 +121,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     {
       attr_marker[attr - 1] = 1;
     }
-    for (const auto &data : iodata.domains.materials)
+    for (const auto &data : materials)
     {
       for (auto attr : data.attributes)
       {
@@ -127,12 +138,12 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
   const auto &loc_attr = this->mesh.GetCeedAttributes();
-  mfem::Array<int> mat_marker(iodata.domains.materials.size());
+  mfem::Array<int> mat_marker(materials.size());
   mat_marker = 0;
   int nmats = 0;
-  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  for (std::size_t i = 0; i < materials.size(); i++)
   {
-    const auto &data = iodata.domains.materials[i];
+    const auto &data = materials[i];
     for (auto attr : data.attributes)
     {
       if (loc_attr.find(attr) != loc_attr.end())
@@ -165,17 +176,17 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
 
   // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
-  SetUpFloquetWaveVector(iodata, mesh);
+  SetUpFloquetWaveVector(periodic, problem_type, mesh);
 
   int count = 0;
-  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  for (std::size_t i = 0; i < materials.size(); i++)
   {
     if (!mat_marker[i])
     {
       continue;
     }
-    const auto &data = iodata.domains.materials[i];
-    if (iodata.problem.type == ProblemType::ELECTROSTATIC)
+    const auto &data = materials[i];
+    if (problem_type == ProblemType::ELECTROSTATIC)
     {
       MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permittivity defined!");
@@ -187,7 +198,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
             "electrical conductivity, or London depth!\n");
       }
     }
-    else if (iodata.problem.type == ProblemType::MAGNETOSTATIC)
+    else if (problem_type == ProblemType::MAGNETOSTATIC)
     {
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
                   "Material has no valid permeability defined!");
@@ -205,7 +216,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r) &&
                       internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permeability or no valid permittivity defined!");
-      if (iodata.problem.type == ProblemType::TRANSIENT)
+      if (problem_type == ProblemType::TRANSIENT)
       {
         MFEM_VERIFY(!internal::mat::IsValid(data.tandelta),
                     "Transient problem type does not support material loss tangent, use "
@@ -309,7 +320,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   has_wave_attr = has_attr[3];
 }
 
-void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
+void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
+                                              ProblemType problem_type,
                                               const mfem::ParMesh &mesh)
 {
   const int sdim = mesh.SpaceDimension();
@@ -318,14 +330,14 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   // Get Floquet wave vector.
   mfem::Vector wave_vector(sdim);
   wave_vector = 0.0;
-  const auto &data = iodata.boundaries.periodic;
-  MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
+  MFEM_VERIFY(static_cast<int>(periodic.wave_vector.size()) == sdim,
               "Floquet wave vector size must equal the spatial dimension.");
-  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
+  std::copy(periodic.wave_vector.begin(), periodic.wave_vector.end(),
+            wave_vector.GetData());
   has_wave_attr = (wave_vector.Norml2() > tol);
 
-  MFEM_VERIFY(!has_wave_attr || iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
+  MFEM_VERIFY(!has_wave_attr || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE,
               "Quasi-periodic Floquet boundary conditions are only available for "
               " frequency domain driven or eigenmode simulations!");
   MFEM_VERIFY(!has_wave_attr || sdim == 3,

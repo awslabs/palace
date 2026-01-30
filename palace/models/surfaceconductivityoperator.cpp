@@ -18,20 +18,28 @@ using namespace std::complex_literals;
 SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
                                                          const MaterialOperator &mat_op,
                                                          const mfem::ParMesh &mesh)
-  : mat_op(mat_op)
+  : SurfaceConductivityOperator(iodata.boundaries.conductivity, iodata.problem.type,
+                                iodata.units, mat_op, mesh)
 {
-  // Print out BC info for all finite conductivity boundary attributes.
-  SetUpBoundaryProperties(iodata, mesh);
-  PrintBoundaryInfo(iodata, mesh);
 }
 
-void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                          const mfem::ParMesh &mesh)
+SurfaceConductivityOperator::SurfaceConductivityOperator(
+    const std::vector<config::ConductivityData> &conductivity, ProblemType problem_type,
+    const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
+  : mat_op(mat_op)
+{
+  SetUpBoundaryProperties(conductivity, problem_type, mesh);
+  PrintBoundaryInfo(units, mesh);
+}
+
+void SurfaceConductivityOperator::SetUpBoundaryProperties(
+    const std::vector<config::ConductivityData> &conductivity, ProblemType problem_type,
+    const mfem::ParMesh &mesh)
 {
   // Check that conductivity boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.conductivity.empty())
+  if (!conductivity.empty())
   {
     mfem::Array<int> conductivity_marker(bdr_attr_max);
     bdr_attr_marker.SetSize(bdr_attr_max);
@@ -42,7 +50,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr_attr_marker[attr - 1] = 1;
     }
     std::set<int> bdr_warn_list;
-    for (const auto &data : iodata.boundaries.conductivity)
+    for (const auto &data : conductivity)
     {
       for (auto attr : data.attributes)
       {
@@ -51,11 +59,6 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
                     "attribute "
                         << attr << "!");
         conductivity_marker[attr - 1] = 1;
-        // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-        //             "Conductivity boundary attribute tags must be non-negative and "
-        //             "correspond to attributes in the mesh!");
-        // MFEM_VERIFY(bdr_attr_marker[attr - 1],
-        //             "Unknown conductivity boundary attribute " << attr << "!");
         if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
         {
           bdr_warn_list.insert(attr);
@@ -74,8 +77,8 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Finite conductivity boundaries are defined using the user provided surface conductivity
   // and optionally conductor thickness.
-  boundaries.reserve(iodata.boundaries.conductivity.size());
-  for (const auto &data : iodata.boundaries.conductivity)
+  boundaries.reserve(conductivity.size());
+  for (const auto &data : conductivity)
   {
     MFEM_VERIFY(data.sigma > 0.0 && data.mu_r > 0.0,
                 "Conductivity boundary has no conductivity or no "
@@ -101,13 +104,13 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr.attr_list.Append(attr);
     }
   }
-  MFEM_VERIFY(boundaries.empty() || iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
+  MFEM_VERIFY(boundaries.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE,
               "Finite conductivity boundaries are only available for frequency "
               "domain simulations!");
 }
 
-void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
+void SurfaceConductivityOperator::PrintBoundaryInfo(const Units &units,
                                                     const mfem::ParMesh &mesh)
 {
   if (boundaries.empty())
@@ -120,11 +123,10 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
     for (auto attr : bdr.attr_list)
     {
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
-                 iodata.units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(bdr.sigma));
+                 units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(bdr.sigma));
       if (bdr.h > 0.0)
       {
-        Mpi::Print(", h = {:.3e} m",
-                   iodata.units.Dimensionalize<Units::ValueType::LENGTH>(bdr.h));
+        Mpi::Print(", h = {:.3e} m", units.Dimensionalize<Units::ValueType::LENGTH>(bdr.h));
       }
       Mpi::Print(", n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }

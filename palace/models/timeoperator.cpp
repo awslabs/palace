@@ -47,7 +47,8 @@ public:
   std::function<void(double dt)> ConfigureLinearSolver;
 
 public:
-  TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
+  TimeDependentFirstOrderOperator(const config::LinearSolverData &linear, int verbose,
+                                  SpaceOperator &space_op,
                                   std::function<double(double)> dJ_coef, double t0,
                                   mfem::TimeDependentOperator::Type type)
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
@@ -78,9 +79,9 @@ public:
     {
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(0);
-      pcg->SetRelTol(iodata.solver.linear.tol);
+      pcg->SetRelTol(linear.tol);
       pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-      pcg->SetMaxIter(iodata.solver.linear.max_it);
+      pcg->SetMaxIter(linear.max_it);
       auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
       kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
       kspM->SetOperators(*M, *M);
@@ -89,7 +90,7 @@ public:
       // For explicit schemes, recommended to just use cheaper preconditioners. Otherwise,
       // use AMS or a direct solver. The system matrix is formed as a sequence of matrix
       // vector products, and is only assembled for preconditioning.
-      ConfigureLinearSolver = [this, &iodata, &space_op](double dt)
+      ConfigureLinearSolver = [this, &linear, verbose, &space_op](double dt)
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
@@ -99,7 +100,7 @@ public:
         // Configure the solver.
         if (!kspA)
         {
-          kspA = std::make_unique<KspSolver>(iodata, space_op.GetNDSpaces(),
+          kspA = std::make_unique<KspSolver>(linear, verbose, space_op.GetNDSpaces(),
                                              &space_op.GetH1Spaces());
         }
         kspA->SetOperators(*A, *B);
@@ -281,10 +282,10 @@ public:
 
 }  // namespace
 
-TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
-                           std::function<double(double)> dJ_coef)
-  : rel_tol(iodata.solver.transient.rel_tol), abs_tol(iodata.solver.transient.abs_tol),
-    order(iodata.solver.transient.order)
+TimeOperator::TimeOperator(const config::SolverData &solver, int verbose,
+                           SpaceOperator &space_op, std::function<double(double)> dJ_coef)
+  : rel_tol(solver.transient.rel_tol), abs_tol(solver.transient.abs_tol),
+    order(solver.transient.order)
 {
   auto excitation_helper = space_op.GetPortExcitations();
   // Should have already asserted that time dependant solver only has a single excitation.
@@ -308,9 +309,9 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 
   // Create ODE solver for 1st-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::IMPLICIT;
-  op = std::make_unique<TimeDependentFirstOrderOperator>(iodata, space_op, dJ_coef, 0.0,
-                                                         type);
-  switch (iodata.solver.transient.type)
+  op = std::make_unique<TimeDependentFirstOrderOperator>(solver.linear, verbose, space_op,
+                                                         dJ_coef, 0.0, type);
+  switch (solver.transient.type)
   {
     case TimeSteppingScheme::GEN_ALPHA:
       {
@@ -377,6 +378,12 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
       }
       break;
   }
+}
+
+TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
+                           std::function<double(double)> dJ_coef)
+  : TimeOperator(iodata.solver, iodata.problem.verbose, space_op, dJ_coef)
+{
 }
 
 const KspSolver &TimeOperator::GetLinearSolver() const
