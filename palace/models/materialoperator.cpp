@@ -246,10 +246,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
-    mat_epsilon(count) = internal::mat::ToDenseMatrix(data.epsilon_r);
+    mat_epsilon(count).Set(1.0, internal::mat::ToDenseMatrix(data.epsilon_r));
     Mult(mat_epsilon(count), internal::mat::ToDenseMatrix(data.tandelta), T);
     T *= -1.0;
-    mat_epsilon_imag(count) = T;
+    mat_epsilon_imag(count).Set(1.0, T);
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
     {
       has_losstan_attr = true;
@@ -265,23 +265,23 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
     // √(μ⁻¹ ε)
     Mult(mat_muinv(count), mat_epsilon(count), mat_invz0(count));
-    mat_invz0(count) = linalg::MatrixSqrt(mat_invz0(count));
+    mat_invz0(count).Set(1.0, linalg::MatrixSqrt(mat_invz0(count)));
 
     // √((μ ε)⁻¹)
     Mult(mat_mu, mat_epsilon(count), T);
-    mat_c0(count) = linalg::MatrixPow(T, -0.5);
+    mat_c0(count).Set(1.0, linalg::MatrixPow(T, -0.5));
     mat_c0_min[count] = linalg::SingularValueMin(mat_c0(count));
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
-    mat_sigma(count) = internal::mat::ToDenseMatrix(data.sigma);
+    mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrix(data.sigma));
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
     }
 
     // λ⁻² * μ⁻¹
-    mat_invLondon(count) = mat_muinv(count);
+    mat_invLondon(count).Set(1.0, mat_muinv(count));
     mat_invLondon(count) *=
         std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
     if (mat_invLondon(count).MaxMaxNorm() > 0.0)
@@ -297,7 +297,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     Mult(T, mat_muinvkx(count), mat_kxTmuinvkx(count));
 
     // [k x]
-    mat_kx(count) = wave_vector_cross;
+    mat_kx(count).Set(1.0, wave_vector_cross);
 
     count++;
   }
@@ -595,7 +595,7 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
                         mat_coeff_backup.SizeK() + 1);
       for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
       {
-        mat_coeff(k) = mat_coeff_backup(k);
+        mat_coeff(k).Set(1.0, mat_coeff_backup(k));
       }
       mat_idx = mat_coeff.SizeK() - 1;
     }
@@ -653,9 +653,9 @@ void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &at
                       mat_coeff_backup.SizeK() + 1);
     for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
     {
-      mat_coeff(k) = mat_coeff_backup(k);
+      mat_coeff(k).Set(1.0, mat_coeff_backup(k));
     }
-    mat_coeff(new_mat_idx) = mat_coeff_orig(orig_mat_idx);
+    mat_coeff(new_mat_idx).Set(1.0, mat_coeff_orig(orig_mat_idx));
   }
 }
 
