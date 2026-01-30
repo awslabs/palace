@@ -65,6 +65,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("lapack")
     depends_on("zlib-api")
     depends_on("nlohmann-json")
+    depends_on("nlohmann-json-schema-validator@2.4.0:")
     depends_on("fmt+shared", when="+shared")
     depends_on("fmt~shared", when="~shared")
     depends_on("scnlib+shared", when="+shared@0.14:")
