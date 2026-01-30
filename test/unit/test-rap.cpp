@@ -10,9 +10,9 @@
 #include "fem/bilinearform.hpp"
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
+#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
-#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -24,10 +24,9 @@ namespace fs = std::filesystem;
 TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
 {
   // Verify that BuildParSumOperator can assemble collections of ParOperators.
-  Units units(1.0, 1.0);
-  IoData iodata(units);
-  iodata.domains.materials.emplace_back().attributes = {1};
-  iodata.CheckConfiguration();  // initializes quadrature
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
 
   auto comm = Mpi::World();
 
@@ -42,7 +41,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   mfem::ND_FECollection nd_fec(order, dim, mfem::BasisType::GaussLobatto,
                                mfem::BasisType::GaussLegendre);
   FiniteElementSpace nd_fes(mesh, &nd_fec);
-  MaterialOperator mat_op(iodata, mesh);
+  MaterialOperator mat_op({material}, periodic, ProblemType::ELECTROSTATIC, mesh);
   MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute());
 
   df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), 1.0);

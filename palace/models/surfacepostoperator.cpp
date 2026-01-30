@@ -195,7 +195,8 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
 }
 
-SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
+SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro,
+                                         ProblemType problem_type,
                                          const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace,
                                          mfem::ParFiniteElementSpace &nd_fespace)
@@ -205,9 +206,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.postpro.flux.empty() ||
-      !iodata.boundaries.postpro.dielectric.empty() ||
-      !iodata.boundaries.postpro.farfield.empty())
+  if (!postpro.flux.empty() || !postpro.dielectric.empty() || !postpro.farfield.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -218,13 +217,13 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   }
 
   // Surface flux postprocessing.
-  for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
+  for (const auto &[idx, data] : postpro.flux)
   {
-    MFEM_VERIFY(iodata.problem.type != ProblemType::ELECTROSTATIC ||
+    MFEM_VERIFY(problem_type != ProblemType::ELECTROSTATIC ||
                     data.type == SurfaceFlux::ELECTRIC,
                 "Magnetic field or power surface flux postprocessing are not available "
                 "for electrostatic problems!");
-    MFEM_VERIFY(iodata.problem.type != ProblemType::MAGNETOSTATIC ||
+    MFEM_VERIFY(problem_type != ProblemType::MAGNETOSTATIC ||
                     data.type == SurfaceFlux::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
                 "for magnetostatic problems!");
@@ -232,28 +231,26 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   }
 
   // Interface dielectric postprocessing.
-  MFEM_VERIFY(iodata.boundaries.postpro.dielectric.empty() ||
-                  iodata.problem.type != ProblemType::MAGNETOSTATIC,
+  MFEM_VERIFY(postpro.dielectric.empty() || problem_type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
-  for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
+  for (const auto &[idx, data] : postpro.dielectric)
   {
     eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
   }
 
   // FarField postprocessing.
-  MFEM_VERIFY(iodata.boundaries.postpro.farfield.empty() ||
-                  iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
+  MFEM_VERIFY(postpro.farfield.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE,
               "Far-field extraction is only available for driven and eigenmode problems!");
 
   // Check that we don't have anisotropic materials.
-  if (!iodata.boundaries.postpro.farfield.empty())
+  if (!postpro.farfield.empty())
   {
     const auto &mesh = *nd_fespace.GetParMesh();
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker =
-        mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.postpro.farfield.attributes);
+        mesh::AttrToMarker(bdr_attr_max, postpro.farfield.attributes);
 
     std::set<int> domain_attrs;
 
@@ -278,8 +275,16 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
     }
   }
 
-  farfield = FarFieldData(iodata.boundaries.postpro.farfield, *nd_fespace.GetParMesh(),
-                          bdr_attr_marker);
+  farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
+}
+
+SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
+                                         const MaterialOperator &mat_op,
+                                         mfem::ParFiniteElementSpace &h1_fespace,
+                                         mfem::ParFiniteElementSpace &nd_fespace)
+  : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
+                        nd_fespace)
+{
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,

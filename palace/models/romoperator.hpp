@@ -18,6 +18,13 @@ namespace palace
 class IoData;
 class SpaceOperator;
 
+namespace config
+{
+
+struct LinearSolverData;
+
+}  // namespace config
+
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and for selecting the next frequency sample points in PROM
 // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
@@ -80,6 +87,8 @@ private:
   std::map<int, MinimalRationalInterpolation> mri;
 
 public:
+  RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
+              int max_size_per_excitation);
   RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size_per_excitation);
 
   // Return the HDM linear solver.

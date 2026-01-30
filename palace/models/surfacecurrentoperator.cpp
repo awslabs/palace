@@ -43,16 +43,22 @@ double SurfaceCurrentData::GetExcitationCurrent() const
 SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
                                                const mfem::ParMesh &mesh)
 {
-  // Set up surface current source boundaries.
-  SetUpBoundaryProperties(iodata, mesh);
-  PrintBoundaryInfo(iodata, mesh);
+  SetUpBoundaryProperties(iodata.boundaries.current, mesh);
+  PrintBoundaryInfo(mesh);
 }
 
-void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                     const mfem::ParMesh &mesh)
+SurfaceCurrentOperator::SurfaceCurrentOperator(
+    const std::map<int, config::SurfaceCurrentData> &current, const mfem::ParMesh &mesh)
+{
+  SetUpBoundaryProperties(current, mesh);
+  PrintBoundaryInfo(mesh);
+}
+
+void SurfaceCurrentOperator::SetUpBoundaryProperties(
+    const std::map<int, config::SurfaceCurrentData> &current, const mfem::ParMesh &mesh)
 {
   // Check that surface current boundary attributes have been specified correctly.
-  if (!iodata.boundaries.current.empty())
+  if (!current.empty())
   {
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), source_marker(bdr_attr_max);
@@ -62,7 +68,7 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    for (const auto &[idx, data] : iodata.boundaries.current)
+    for (const auto &[idx, data] : current)
     {
       for (const auto &elem : data.elements)
       {
@@ -83,14 +89,13 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Set up surface current data structures.
-  for (const auto &[idx, data] : iodata.boundaries.current)
+  for (const auto &[idx, data] : current)
   {
     sources.try_emplace(idx, data, mesh);
   }
 }
 
-void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+void SurfaceCurrentOperator::PrintBoundaryInfo(const mfem::ParMesh &mesh)
 {
   if (sources.empty())
   {

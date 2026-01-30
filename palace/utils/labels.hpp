@@ -125,6 +125,14 @@ enum class PreconditionerSide : char
   LEFT
 };
 
+// Matrix symmetry type for sparse direct solvers.
+enum class MatrixSymmetry : char
+{
+  SPD,        // Symmetric positive definite
+  SYMMETRIC,  // Symmetric indefinite
+  UNSYMMETRIC
+};
+
 // Column ordering method in the symbolic factorization for sparse direct solvers.
 enum class SymbolicFactorization : char
 {

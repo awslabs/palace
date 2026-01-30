@@ -5,17 +5,38 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include "utils/iodata.hpp"
+
 namespace palace
+
 {
 
-MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
-                         SymbolicFactorization reorder, double blr_tol, bool reorder_reuse,
-                         int print)
+namespace
+{
+
+mfem::MUMPSSolver::MatType GetMumpsMatType(MatrixSymmetry sym)
+{
+  switch (sym)
+  {
+    case MatrixSymmetry::SPD:
+      return mfem::MUMPSSolver::SYMMETRIC_POSITIVE_DEFINITE;
+    case MatrixSymmetry::SYMMETRIC:
+      return mfem::MUMPSSolver::SYMMETRIC_INDEFINITE;
+    case MatrixSymmetry::UNSYMMETRIC:
+      return mfem::MUMPSSolver::UNSYMMETRIC;
+  }
+  return mfem::MUMPSSolver::UNSYMMETRIC;
+}
+
+}  // namespace
+
+MumpsSolver::MumpsSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorization reorder,
+                         double blr_tol, bool reorder_reuse, int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
   SetPrintLevel(print);
-  SetMatrixSymType(sym);
+  SetMatrixSymType(GetMumpsMatType(sym));
   switch (reorder)
   {
     case SymbolicFactorization::METIS:
@@ -46,6 +67,16 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   {
     SetBLRTol(blr_tol);
   }
+}
+
+MumpsSolver::MumpsSolver(const IoData &iodata, MPI_Comm comm, int print)
+  : MumpsSolver(comm, iodata.solver.linear.pc_mat_sym,
+                iodata.solver.linear.sym_factorization,
+                (iodata.solver.linear.strumpack_compression_type == SparseCompression::BLR)
+                    ? iodata.solver.linear.strumpack_lr_tol
+                    : 0.0,
+                iodata.solver.linear.reorder_reuse, print)
+{
 }
 
 void MumpsSolver::SetReorderReuse(bool reorder_reuse)

@@ -17,7 +17,14 @@ namespace palace
 FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
                                                    const MaterialOperator &mat_op,
                                                    const mfem::ParMesh &mesh)
-  : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(iodata, mesh))
+  : FarfieldBoundaryOperator(iodata.boundaries.farfield, iodata.problem.type, mat_op, mesh)
+{
+}
+
+FarfieldBoundaryOperator::FarfieldBoundaryOperator(
+    const config::FarfieldBoundaryData &farfield, ProblemType problem_type,
+    const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
+  : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(farfield, problem_type, mesh))
 {
   // Print out BC info for all farfield attributes.
   if (farfield_attr.Size())
@@ -28,14 +35,14 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
   }
 }
 
-mfem::Array<int>
-FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                  const mfem::ParMesh &mesh)
+mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
+    const config::FarfieldBoundaryData &farfield, ProblemType problem_type,
+    const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.farfield.empty())
+  if (!farfield.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -44,13 +51,8 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr_attr_marker[attr - 1] = 1;
     }
     std::set<int> bdr_warn_list;
-    for (auto attr : iodata.boundaries.farfield.attributes)
+    for (auto attr : farfield.attributes)
     {
-      // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-      //             "Absorbing boundary attribute tags must be non-negative and correspond
-      //             " "to attributes in the mesh!");
-      // MFEM_VERIFY(bdr_attr_marker[attr - 1],
-      //             "Unknown absorbing boundary attribute " << attr << "!");
       if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
         bdr_warn_list.insert(attr);
@@ -67,12 +69,12 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Set the order of the farfield boundary condition.
-  order = iodata.boundaries.farfield.order;
+  order = farfield.order;
 
   // Mark selected boundary attributes from the mesh as farfield.
   mfem::Array<int> farfield_bcs;
-  farfield_bcs.Reserve(static_cast<int>(iodata.boundaries.farfield.attributes.size()));
-  for (auto attr : iodata.boundaries.farfield.attributes)
+  farfield_bcs.Reserve(static_cast<int>(farfield.attributes.size()));
+  for (auto attr : farfield.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
@@ -81,8 +83,8 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
     farfield_bcs.Append(attr);
   }
   MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
-                  iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
+                  problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE,
               "Second-order farfield boundaries are only available for frequency "
               "domain simulations!");
   return farfield_bcs;

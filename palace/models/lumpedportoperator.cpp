@@ -306,20 +306,26 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   return dot;
 }
 
-LumpedPortOperator::LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       const mfem::ParMesh &mesh)
+LumpedPortOperator::LumpedPortOperator(
+    const std::map<int, config::LumpedPortData> &lumpedport, const Units &units,
+    const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
 {
-  // Set up lumped port boundary conditions.
-  SetUpBoundaryProperties(iodata, mat_op, mesh);
-  PrintBoundaryInfo(iodata, mesh);
+  SetUpBoundaryProperties(lumpedport, mat_op, mesh);
+  PrintBoundaryInfo(units, mesh);
 }
 
-void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                 const MaterialOperator &mat_op,
-                                                 const mfem::ParMesh &mesh)
+LumpedPortOperator::LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                       const mfem::ParMesh &mesh)
+  : LumpedPortOperator(iodata.boundaries.lumpedport, iodata.units, mat_op, mesh)
+{
+}
+
+void LumpedPortOperator::SetUpBoundaryProperties(
+    const std::map<int, config::LumpedPortData> &lumpedport, const MaterialOperator &mat_op,
+    const mfem::ParMesh &mesh)
 {
   // Check that lumped port boundary attributes have been specified correctly.
-  if (!iodata.boundaries.lumpedport.empty())
+  if (!lumpedport.empty())
   {
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
@@ -329,7 +335,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    for (const auto &[idx, data] : lumpedport)
     {
       for (const auto &elem : data.elements)
       {
@@ -349,13 +355,13 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Set up lumped port data structures.
-  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  for (const auto &[idx, data] : lumpedport)
   {
     ports.try_emplace(idx, data, mat_op, mesh);
   }
 }
 
-void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void LumpedPortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh)
 {
   if (ports.empty())
   {
@@ -379,17 +385,17 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
         if (std::abs(data.R) > 0.0)
         {
           double Rs = data.R * data.GetToSquare(*elem);
-          to(buf, " Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(Rs));
+          to(buf, " Rs = {:.3e} Ω/sq,", units.Dimensionalize<VT::IMPEDANCE>(Rs));
         }
         if (std::abs(data.L) > 0.0)
         {
           double Ls = data.L * data.GetToSquare(*elem);
-          to(buf, " Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(Ls));
+          to(buf, " Ls = {:.3e} H/sq,", units.Dimensionalize<VT::INDUCTANCE>(Ls));
         }
         if (std::abs(data.C) > 0.0)
         {
           double Cs = data.C / data.GetToSquare(*elem);
-          to(buf, " Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(Cs));
+          to(buf, " Cs = {:.3e} F/sq,", units.Dimensionalize<VT::CAPACITANCE>(Cs));
         }
         to(buf, " n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
       }
@@ -407,15 +413,15 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
     to(buf_a, " Index = {:d}: ", idx);
     if (std::abs(data.R) > 0.0)
     {
-      to(buf_a, "R = {:.3e} Ω,", iodata.units.Dimensionalize<VT::IMPEDANCE>(data.R));
+      to(buf_a, "R = {:.3e} Ω,", units.Dimensionalize<VT::IMPEDANCE>(data.R));
     }
     if (std::abs(data.L) > 0.0)
     {
-      to(buf_a, "L = {:.3e} H,", iodata.units.Dimensionalize<VT::INDUCTANCE>(data.L));
+      to(buf_a, "L = {:.3e} H,", units.Dimensionalize<VT::INDUCTANCE>(data.L));
     }
     if (std::abs(data.C) > 0.0)
     {
-      to(buf_a, "C = {:.3e} F,", iodata.units.Dimensionalize<VT::CAPACITANCE>(data.C));
+      to(buf_a, "C = {:.3e} F,", units.Dimensionalize<VT::CAPACITANCE>(data.C));
     }
     buf_a.resize(buf_a.size() - 1);  // Remove last ","
     to(buf_a, "\n");

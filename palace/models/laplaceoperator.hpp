@@ -19,6 +19,19 @@ namespace palace
 class IoData;
 class Mesh;
 
+namespace config
+{
+
+struct BoundaryData;
+struct MaterialData;
+struct PecBoundaryData;
+struct SolverData;
+struct TerminalData;
+
+}  // namespace config
+
+enum class ProblemType : char;
+
 //
 // A class handling discretization of Laplace problems for electrostatics.
 //
@@ -48,10 +61,17 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata);
+  mfem::Array<int>
+  SetUpBoundaryProperties(const config::PecBoundaryData &pec,
+                          const std::map<int, config::TerminalData> &terminal,
+                          const mfem::ParMesh &mesh);
+  std::map<int, mfem::Array<int>>
+  ConstructSources(const std::map<int, config::TerminalData> &terminal);
 
 public:
+  LaplaceOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
+                  const std::vector<config::MaterialData> &materials,
+                  ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh);
   LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.

@@ -307,9 +307,9 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
   return vals;
 }
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         int max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
+RomOperator::RomOperator(const config::LinearSolverData &linear, int verbose,
+                         SpaceOperator &space_op, int max_size_per_excitation)
+  : space_op(space_op), orthog_type(linear.gs_orthog)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -328,7 +328,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
-  ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+  ksp = std::make_unique<ComplexKspSolver>(linear, verbose, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
   auto excitation_helper = space_op.GetPortExcitations();
@@ -345,6 +345,13 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
   }
+}
+
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
+                         int max_size_per_excitation)
+  : RomOperator(iodata.solver.linear, iodata.problem.verbose, space_op,
+                max_size_per_excitation)
+{
 }
 
 void RomOperator::SetExcitationIndex(int excitation_idx)

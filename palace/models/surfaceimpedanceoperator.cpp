@@ -13,23 +13,33 @@
 namespace palace
 {
 
+SurfaceImpedanceOperator::SurfaceImpedanceOperator(
+    const std::vector<config::ImpedanceData> &impedance,
+    const std::unordered_set<int> &cracked_attributes, const Units &units,
+    const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
+  : mat_op(mat_op)
+{
+  SetUpBoundaryProperties(impedance, cracked_attributes, mesh);
+  PrintBoundaryInfo(units, mesh);
+}
+
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
                                                    const MaterialOperator &mat_op,
                                                    const mfem::ParMesh &mesh)
-  : mat_op(mat_op)
+  : SurfaceImpedanceOperator(iodata.boundaries.impedance,
+                             iodata.boundaries.cracked_attributes, iodata.units, mat_op,
+                             mesh)
 {
-  // Print out BC info for all impedance boundary attributes.
-  SetUpBoundaryProperties(iodata, mesh);
-  PrintBoundaryInfo(iodata, mesh);
 }
 
-void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                       const mfem::ParMesh &mesh)
+void SurfaceImpedanceOperator::SetUpBoundaryProperties(
+    const std::vector<config::ImpedanceData> &impedance,
+    const std::unordered_set<int> &cracked_attributes, const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.impedance.empty())
+  if (!impedance.empty())
   {
     mfem::Array<int> impedance_marker(bdr_attr_max);
     bdr_attr_marker.SetSize(bdr_attr_max);
@@ -40,7 +50,7 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr_attr_marker[attr - 1] = 1;
     }
     std::set<int> bdr_warn_list;
-    for (const auto &data : iodata.boundaries.impedance)
+    for (const auto &data : impedance)
     {
       for (auto attr : data.attributes)
       {
@@ -49,11 +59,6 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
             "Multiple definitions of impedance boundary properties for boundary attribute "
                 << attr << "!");
         impedance_marker[attr - 1] = 1;
-        // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-        //             "Impedance boundary attribute tags must be non-negative and
-        //             correspond " "to attributes in the mesh!");
-        // MFEM_VERIFY(bdr_attr_marker[attr - 1],
-        //             "Unknown impedance boundary attribute " << attr << "!");
         if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
         {
           bdr_warn_list.insert(attr);
@@ -70,8 +75,8 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Impedance boundaries are defined using the user provided impedance per square.
-  boundaries.reserve(iodata.boundaries.impedance.size());
-  for (const auto &data : iodata.boundaries.impedance)
+  boundaries.reserve(impedance.size());
+  for (const auto &data : impedance)
   {
     MFEM_VERIFY(std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) > 0.0,
                 "Impedance boundary has no Rs, Ls, or Cs defined!");
@@ -88,13 +93,11 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
       }
       bdr.attr_list.Append(attr);
       // Compute a scaling factor to account for increased area when using mesh cracking.
-      if (iodata.boundaries.cracked_attributes.find(attr) !=
-          iodata.boundaries.cracked_attributes.end())
+      if (cracked_attributes.find(attr) != cracked_attributes.end())
       {
         bdr.scaling = 2.0;
       }
-      MFEM_VERIFY((iodata.boundaries.cracked_attributes.find(attr) !=
-                   iodata.boundaries.cracked_attributes.end()) ||
+      MFEM_VERIFY((cracked_attributes.find(attr) != cracked_attributes.end()) ||
                       (bdr.scaling == 1.0),
                   "Impedance boundary has both cracked and uncracked attributes!");
     }
@@ -104,7 +107,7 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
+void SurfaceImpedanceOperator::PrintBoundaryInfo(const Units &units,
                                                  const mfem::ParMesh &mesh)
 {
   if (boundaries.empty())
@@ -126,18 +129,17 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
       to(" {:d}:", attr);
       if (std::abs(bdr.Rs) > 0.0)
       {
-        to(" Rs = {:.3e} Ω/sq,",
-           iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs / bdr.scaling));
+        to(" Rs = {:.3e} Ω/sq,", units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs / bdr.scaling));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
         to(" Ls = {:.3e} H/sq,",
-           iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls / bdr.scaling));
+           units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls / bdr.scaling));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
         to(" Cs = {:.3e} F/sq,",
-           iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs * bdr.scaling));
+           units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs * bdr.scaling));
       }
       to(" n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }
