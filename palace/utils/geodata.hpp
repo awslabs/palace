@@ -14,6 +14,7 @@ namespace palace
 {
 
 class IoData;
+class Units;
 
 namespace mesh
 {
@@ -37,6 +38,7 @@ void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 
 // Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
+void Nondimensionalize(const Units &units, mfem::Mesh &mesh);
 
 // Struct containing flags for the (global) mesh element types.
 struct ElementTypeInfo
