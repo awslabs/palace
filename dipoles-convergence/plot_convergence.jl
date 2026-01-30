@@ -6,12 +6,15 @@ struct ConvergenceData
     p::Int                    # polynomial order
     n::Int                    # mesh refinement level
     nd_unknowns::Int         # Number of ND unknowns
-    e_rel_error::Float64     # E-field relative error (selective domain)
-    b_rel_error::Float64     # B-field relative error (selective domain)
+    e_rel_error::Float64     # E-field relative error
+    b_rel_error::Float64     # B-field relative error
 end
 
-function parse_log_file(filename::String)
-    """Parse a convergence log file and extract relevant data."""
+function parse_log_file(filename::String, domain_type::String="Full Domain")
+    """Parse a convergence log file and extract relevant data.
+
+    domain_type: Either "Full Domain" or "Selective Elements"
+    """
 
     lines = readlines(filename)
 
@@ -25,8 +28,8 @@ function parse_log_file(filename::String)
     e_rel_error = 0.0
     b_rel_error = 0.0
 
-    in_selective_e = false
-    in_selective_b = false
+    in_domain_e = false
+    in_domain_b = false
 
     for (i, line) in enumerate(lines)
         # Extract ND unknowns
@@ -37,27 +40,27 @@ function parse_log_file(filename::String)
             end
         end
 
-        # Find selective E-field section
-        if contains(line, "--- E-FIELD: Selective Elements")
-            in_selective_e = true
-            in_selective_b = false
-        elseif contains(line, "--- B-FIELD: Selective Elements")
-            in_selective_e = false
-            in_selective_b = true
-        elseif contains(line, "---") && (in_selective_e || in_selective_b)
-            in_selective_e = false
-            in_selective_b = false
+        # Find domain E-field section
+        if contains(line, "--- E-FIELD:") && contains(line, domain_type)
+            in_domain_e = true
+            in_domain_b = false
+        elseif contains(line, "--- B-FIELD:") && contains(line, domain_type)
+            in_domain_e = false
+            in_domain_b = true
+        elseif contains(line, "---") && (in_domain_e || in_domain_b)
+            in_domain_e = false
+            in_domain_b = false
         end
 
-        # Extract relative errors from selective domain
-        if in_selective_e && contains(line, "Total:") && contains(line, "||E||")
+        # Extract relative errors from domain
+        if in_domain_e && contains(line, "Total:") && contains(line, "||E||")
             m = match(r"Total:\s+.*=\s+([\d.e+-]+)", line)
             if m !== nothing
                 e_rel_error = parse(Float64, m.captures[1])
             end
         end
 
-        if in_selective_b && contains(line, "Total:") && contains(line, "||B||")
+        if in_domain_b && contains(line, "Total:") && contains(line, "||B||")
             m = match(r"Total:\s+.*=\s+([\d.e+-]+)", line)
             if m !== nothing
                 b_rel_error = parse(Float64, m.captures[1])
@@ -67,6 +70,9 @@ function parse_log_file(filename::String)
 
     return ConvergenceData(p, n, nd_unknowns, e_rel_error, b_rel_error)
 end
+
+# Choose domain type: "Full Domain" or "Selective Elements"
+DOMAIN_TYPE = "Selective Elements"
 
 # Parse all log files
 log_files = [
@@ -88,7 +94,7 @@ log_files = [
 data = ConvergenceData[]
 for file in log_files
     if isfile(file)
-        push!(data, parse_log_file(file))
+        push!(data, parse_log_file(file, DOMAIN_TYPE))
         println("Parsed $file: p=$(data[end].p), n=$(data[end].n), ND=$(data[end].nd_unknowns), E_err=$(data[end].e_rel_error), B_err=$(data[end].b_rel_error)")
     else
         @warn "File not found: $file"
@@ -139,10 +145,10 @@ for p in sort(collect(keys(data_by_p)))
           linewidth=2,
           color=colors[p])
 
-    # Add reference line with slope -p for E-field
-    max_e_idx = argmax(e_errors)
-    x0_e = unknowns[max_e_idx]
-    y0_e = e_errors[max_e_idx]
+    # Add reference line with slope -p for E-field (starting from smallest DoFs)
+    min_e_idx = argmin(unknowns)
+    x0_e = unknowns[min_e_idx]
+    y0_e = e_errors[min_e_idx]
     x_ref_e = range(x0_e, maximum(unknowns), length=100)
     slope = -p
     y_ref_e = y0_e .* (x_ref_e ./ x0_e).^slope
@@ -183,10 +189,10 @@ for p in sort(collect(keys(data_by_p)))
           linewidth=2,
           color=colors[p])
 
-    # Add reference line with slope -p for B-field
-    max_b_idx = argmax(b_errors)
-    x0_b = unknowns[max_b_idx]
-    y0_b = b_errors[max_b_idx]
+    # Add reference line with slope -p for B-field (starting from smallest DoFs)
+    min_b_idx = argmin(unknowns)
+    x0_b = unknowns[min_b_idx]
+    y0_b = b_errors[min_b_idx]
     x_ref_b = range(x0_b, maximum(unknowns), length=100)
     slope = -p
     y_ref_b = y0_b .* (x_ref_b ./ x0_b).^slope
