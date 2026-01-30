@@ -133,7 +133,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "0e61a94b5f78f80d9514fd7d442a3c2e8f9412f9" CACHE STRING
+  "d9d6526cc1749980a2ba1da16e2c1ca1e07d82ec" CACHE STRING
   "Git tag for external MFEM build"
 )
 

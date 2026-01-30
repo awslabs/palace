@@ -149,7 +149,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis+lapack cxxstd=17 commit=0e61a94b5f78f80d9514fd7d442a3c2e8f9412f9",
+            # TODO: update to v4.9 == d9d6526cc1749980a2ba1da16e2c1ca1e07d82ec once spack updated
+            "mfem+mpi+metis+lapack cxxstd=17 commit=d9d6526cc1749980a2ba1da16e2c1ca1e07d82ec",
             patches=[
                 "patch_par_tet_mesh_fix_dev.diff",
                 "patch_gmsh_parser_performance.diff",
