@@ -980,4 +980,32 @@ std::string Validate(const BoundaryData &boundaries);
 
 }  // namespace palace::config
 
+// Forward declare Units for Nondimensionalize functions.
+namespace palace
+{
+class Units;
+}  // namespace palace
+
+namespace palace::config
+{
+
+// Nondimensionalization functions. Each function nondimensionalizes the fields of the
+// given struct using the provided Units.
+void Nondimensionalize(const Units &units, RefinementData &data);
+void Nondimensionalize(const Units &units, MaterialData &data);
+void Nondimensionalize(const Units &units, ProbeData &data);
+void Nondimensionalize(const Units &units, CurrentDipoleData &data);
+void Nondimensionalize(const Units &units, ConductivityData &data);
+void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, LumpedPortData &data);
+void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
+void Nondimensionalize(const Units &units, WavePortData &data);
+void Nondimensionalize(const Units &units, SurfaceFluxData &data);
+void Nondimensionalize(const Units &units, InterfaceDielectricData &data);
+void Nondimensionalize(const Units &units, EigenSolverData &data);
+void Nondimensionalize(const Units &units, DrivenSolverData &data);
+void Nondimensionalize(const Units &units, TransientSolverData &data);
+
+}  // namespace palace::config
+
 #endif  // PALACE_UTILS_CONFIG_FILE_HPP
