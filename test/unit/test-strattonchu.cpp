@@ -33,8 +33,9 @@
 #include "models/materialoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/constants.hpp"
-#include "utils/iodata.hpp"
+#include "utils/geodata.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -163,24 +164,21 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
 
-  IoData iodata = IoData(units);
-  // We need to have at least one material. By default it's vacuum.
-  iodata.domains.materials.emplace_back().attributes = {1};
-  // We also need to have a non-empty farfield and a compatible problem type, or
-  // the constructor for SurfacepostOperator will skip everything.
-  iodata.boundaries.postpro.farfield.attributes = attributes;
-  iodata.boundaries.postpro.farfield.thetaphis.emplace_back();
-  iodata.problem.type = ProblemType::DRIVEN;
-  iodata.solver.order = 3;      // Match the FE order used below.
-  iodata.CheckConfiguration();  // initializes quadrature
-  REQUIRE(fem::DefaultIntegrationOrder::p_trial == 3);
+  config::MaterialData material;
+  material.attributes = {1};
+
+  config::PeriodicBoundaryData periodic;
+
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = attributes;
+  postpro.farfield.thetaphis.emplace_back();
 
   auto comm = Mpi::World();
 
   // Read parallel mesh.
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
+  mesh::Nondimensionalize(units, *par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
 
   // Set up complex fields on Nédélec element space.
@@ -235,8 +233,9 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   B_field.Imag().ProjectCoefficient(Bimag);
 
   // Setup Palace operators for far-field computation.
-  MaterialOperator mat_op(iodata, palace_mesh);
-  SurfacePostOperator surf_post_op(iodata, mat_op, nd_fespace, nd_fespace);
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, nd_fespace,
+                                   nd_fespace);
 
   auto thetaphis = GenerateSphericalTestPoints();
   double omega_rad_per_time =
