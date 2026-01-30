@@ -1392,3 +1392,140 @@ std::string Validate(const BoundaryData &boundaries)
 }
 
 }  // namespace palace::config
+
+#include "units.hpp"
+
+namespace palace::config
+{
+
+namespace
+{
+
+template <std::size_t N>
+constexpr SymmetricMatrixData<N> &operator/=(SymmetricMatrixData<N> &data, double s)
+{
+  for (auto &x : data.s)
+  {
+    x /= s;
+  }
+  return data;
+}
+
+}  // namespace
+
+void Nondimensionalize(const Units &units, RefinementData &data)
+{
+  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
+  { return val / Lc0; };
+  for (auto &box : data.GetBoxes())
+  {
+    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
+                   DivideLengthScale);
+    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),
+                   DivideLengthScale);
+  }
+  for (auto &sphere : data.GetSpheres())
+  {
+    sphere.r /= units.GetMeshLengthRelativeScale();
+    std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
+                   DivideLengthScale);
+  }
+}
+
+void Nondimensionalize(const Units &units, MaterialData &data)
+{
+  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, ProbeData &data)
+{
+  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
+  { return val / Lc0; };
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 DivideLengthScale);
+}
+
+void Nondimensionalize(const Units &units, CurrentDipoleData &data)
+{
+  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
+  { return val / Lc0; };
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 DivideLengthScale);
+}
+
+void Nondimensionalize(const Units &units, ConductivityData &data)
+{
+  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.h /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, ImpedanceData &data)
+{
+  data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, LumpedPortData &data)
+{
+  data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)
+{
+  for (auto &k : data.wave_vector)
+  {
+    k *= units.GetMeshLengthRelativeScale();
+  }
+}
+
+void Nondimensionalize(const Units &units, WavePortData &data)
+{
+  data.d_offset /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, SurfaceFluxData &data)
+{
+  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
+  { return val / Lc0; };
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 DivideLengthScale);
+}
+
+void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
+{
+  data.t /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, EigenSolverData &data)
+{
+  data.target =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
+  data.target_upper =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
+}
+
+void Nondimensionalize(const Units &units, DrivenSolverData &data)
+{
+  for (auto &f : data.sample_f)
+  {
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
+}
+
+void Nondimensionalize(const Units &units, TransientSolverData &data)
+{
+  data.pulse_f =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
+  data.pulse_tau = units.Nondimensionalize<Units::ValueType::TIME>(data.pulse_tau);
+  data.max_t = units.Nondimensionalize<Units::ValueType::TIME>(data.max_t);
+  data.delta_t = units.Nondimensionalize<Units::ValueType::TIME>(data.delta_t);
+}
+
+}  // namespace palace::config

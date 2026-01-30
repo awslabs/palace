@@ -175,4 +175,116 @@ TEST_CASE("Nondimensionalize via IoData", "[nondimensionalize][Serial]")
         Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
 }
 
+// Test that free functions produce identical results to IoData::NondimensionalizeInputs
+TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][Serial]")
+{
+  constexpr double L0 = 1e-3;
+  constexpr double Lc = 2.0;
+  Units units(L0, Lc * L0);
+
+  // Test MaterialData
+  {
+    config::MaterialData data;
+    data.sigma = config::SymmetricMatrixData<3>(1e6);
+    data.lambda_L = 0.1;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.sigma.s[0] ==
+          Approx(1e6 / units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>()));
+    CHECK(data.lambda_L == Approx(0.1 / units.GetMeshLengthRelativeScale()));
+  }
+
+  // Test ConductivityData
+  {
+    config::ConductivityData data;
+    data.sigma = 5e7;
+    data.h = 0.01;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.sigma ==
+          Approx(5e7 / units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>()));
+    CHECK(data.h == Approx(0.01 / units.GetMeshLengthRelativeScale()));
+  }
+
+  // Test ImpedanceData
+  {
+    config::ImpedanceData data;
+    data.Rs = 50.0;
+    data.Ls = 1e-9;
+    data.Cs = 1e-12;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.Rs == Approx(50.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>()));
+    CHECK(data.Ls == Approx(1e-9 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>()));
+    CHECK(data.Cs == Approx(1e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
+  }
+
+  // Test LumpedPortData
+  {
+    config::LumpedPortData data;
+    data.R = 100.0;
+    data.L = 2e-9;
+    data.C = 2e-12;
+    data.Rs = 25.0;
+    data.Ls = 0.5e-9;
+    data.Cs = 0.5e-12;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.R == Approx(100.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>()));
+    CHECK(data.L == Approx(2e-9 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>()));
+    CHECK(data.C == Approx(2e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
+    CHECK(data.Rs == Approx(25.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>()));
+    CHECK(data.Ls == Approx(0.5e-9 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>()));
+    CHECK(data.Cs ==
+          Approx(0.5e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
+  }
+
+  // Test PeriodicBoundaryData
+  {
+    config::PeriodicBoundaryData data;
+    data.wave_vector = {0.1, 0.2, 0.3};
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.wave_vector[0] == Approx(0.1 * units.GetMeshLengthRelativeScale()));
+    CHECK(data.wave_vector[1] == Approx(0.2 * units.GetMeshLengthRelativeScale()));
+    CHECK(data.wave_vector[2] == Approx(0.3 * units.GetMeshLengthRelativeScale()));
+  }
+
+  // Test EigenSolverData
+  {
+    config::EigenSolverData data;
+    data.target = 5.0;
+    data.target_upper = 10.0;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.target ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(5.0)));
+    CHECK(data.target_upper ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
+  }
+
+  // Test TransientSolverData
+  {
+    config::TransientSolverData data;
+    data.pulse_f = 2.5;
+    data.pulse_tau = 1.0;
+    data.max_t = 10.0;
+    data.delta_t = 0.1;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.pulse_f ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.5)));
+    CHECK(data.pulse_tau == Approx(units.Nondimensionalize<Units::ValueType::TIME>(1.0)));
+    CHECK(data.max_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(10.0)));
+    CHECK(data.delta_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
+  }
+}
+
 }  // namespace palace
