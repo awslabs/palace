@@ -1,0 +1,418 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/postoperatorcsv.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - postoperatorcsv.hpp<span style="font-size: 80%;"> (source / <a href="postoperatorcsv.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">7</td>
+            <td class="headerCovTableEntry">7</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_POST_OPERATOR_CSV_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;memory&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;optional&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;fem/errorindicator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;models/curlcurloperator.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;models/laplaceoperator.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;utils/filesystem.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;utils/tablecsv.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;utils/units.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : namespace palace</span>
+<span id="L19"><span class="lineNum">      19</span>              : {</span>
+<span id="L20"><span class="lineNum">      20</span>              : class IoData;</span>
+<span id="L21"><span class="lineNum">      21</span>              : class DomainPostOperator;</span>
+<span id="L22"><span class="lineNum">      22</span>              : class SurfacePostOperator;</span>
+<span id="L23"><span class="lineNum">      23</span>              : class InterpolationOperator;</span>
+<span id="L24"><span class="lineNum">      24</span>              : class SurfaceCurrentOperator;</span>
+<span id="L25"><span class="lineNum">      25</span>              : class LumpedPortOperator;</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : // Advance declaration.</span>
+<span id="L28"><span class="lineNum">      28</span>              : template &lt;ProblemType solver_t&gt;</span>
+<span id="L29"><span class="lineNum">      29</span>              : class PostOperator;</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              : // Statically map solver (ProblemType) to finite element operator.</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              : template &lt;ProblemType solver_t&gt;</span>
+<span id="L34"><span class="lineNum">      34</span>              : struct fem_op_map_type</span>
+<span id="L35"><span class="lineNum">      35</span>              : {</span>
+<span id="L36"><span class="lineNum">      36</span>              :   using type = SpaceOperator;</span>
+<span id="L37"><span class="lineNum">      37</span>              : };</span>
+<span id="L38"><span class="lineNum">      38</span>              : template &lt;&gt;</span>
+<span id="L39"><span class="lineNum">      39</span>              : struct fem_op_map_type&lt;ProblemType::ELECTROSTATIC&gt;</span>
+<span id="L40"><span class="lineNum">      40</span>              : {</span>
+<span id="L41"><span class="lineNum">      41</span>              :   using type = LaplaceOperator;</span>
+<span id="L42"><span class="lineNum">      42</span>              : };</span>
+<span id="L43"><span class="lineNum">      43</span>              : template &lt;&gt;</span>
+<span id="L44"><span class="lineNum">      44</span>              : struct fem_op_map_type&lt;ProblemType::MAGNETOSTATIC&gt;</span>
+<span id="L45"><span class="lineNum">      45</span>              : {</span>
+<span id="L46"><span class="lineNum">      46</span>              :   using type = CurlCurlOperator;</span>
+<span id="L47"><span class="lineNum">      47</span>              : };</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : template &lt;ProblemType solver_t&gt;</span>
+<span id="L50"><span class="lineNum">      50</span>              : using fem_op_t = typename fem_op_map_type&lt;solver_t&gt;::type;</span>
+<span id="L51"><span class="lineNum">      51</span>              : </span>
+<span id="L52"><span class="lineNum">      52</span>              : // Results of measurements on fields. Not all measurements are sensible to define for all</span>
+<span id="L53"><span class="lineNum">      53</span>              : // solvers.</span>
+<span id="L54"><span class="lineNum">      54</span>              : struct Measurement</span>
+<span id="L55"><span class="lineNum">      55</span>              : {</span>
+<span id="L56"><span class="lineNum">      56</span>              :   // Mini storage structs for data measurements.</span>
+<span id="L57"><span class="lineNum">      57</span>              :   struct DomainData</span>
+<span id="L58"><span class="lineNum">      58</span>              :   {</span>
+<span id="L59"><span class="lineNum">      59</span>              :     int idx;</span>
+<span id="L60"><span class="lineNum">      60</span>              :     double energy;</span>
+<span id="L61"><span class="lineNum">      61</span>              :     double participation_ratio;</span>
+<span id="L62"><span class="lineNum">      62</span>              :   };</span>
+<span id="L63"><span class="lineNum">      63</span>              : </span>
+<span id="L64"><span class="lineNum">      64</span>              :   struct FluxData</span>
+<span id="L65"><span class="lineNum">      65</span>              :   {</span>
+<span id="L66"><span class="lineNum">      66</span>              :     int idx;                   // Surface index</span>
+<span id="L67"><span class="lineNum">      67</span>              :     std::complex&lt;double&gt; Phi;  // Integrated flux</span>
+<span id="L68"><span class="lineNum">      68</span>              :     SurfaceFlux type;</span>
+<span id="L69"><span class="lineNum">      69</span>              :   };</span>
+<span id="L70"><span class="lineNum">      70</span>              : </span>
+<span id="L71"><span class="lineNum">      71</span>              :   struct InterfaceData</span>
+<span id="L72"><span class="lineNum">      72</span>              :   {</span>
+<span id="L73"><span class="lineNum">      73</span>              :     int idx;                      // Interface index</span>
+<span id="L74"><span class="lineNum">      74</span>              :     double energy;                // Surface Electric Field Energy</span>
+<span id="L75"><span class="lineNum">      75</span>              :     double tandelta;              // Dissipation tangent tan(δ)</span>
+<span id="L76"><span class="lineNum">      76</span>              :     double energy_participation;  // ratio of interface energy / total_energy</span>
+<span id="L77"><span class="lineNum">      77</span>              :     double quality_factor;        // 1 / (energy_participation * tan δ)</span>
+<span id="L78"><span class="lineNum">      78</span>              :   };</span>
+<span id="L79"><span class="lineNum">      79</span>              : </span>
+<span id="L80"><span class="lineNum">      80</span>              :   struct FarFieldData</span>
+<span id="L81"><span class="lineNum">      81</span>              :   {</span>
+<span id="L82"><span class="lineNum">      82</span>              :     // Theta: polar angle (0 to pi radians).</span>
+<span id="L83"><span class="lineNum">      83</span>              :     // Phi: azimuthal angle (0 to 2pi radians).</span>
+<span id="L84"><span class="lineNum">      84</span>              :     std::vector&lt;std::pair&lt;double, double&gt;&gt; thetaphis;</span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span>              :     // Components of the electric field.</span>
+<span id="L87"><span class="lineNum">      87</span>              :     std::vector&lt;std::array&lt;std::complex&lt;double&gt;, 3&gt;&gt; E_field;</span>
+<span id="L88"><span class="lineNum">      88</span>              :   };</span>
+<span id="L89"><span class="lineNum">      89</span>              : </span>
+<span id="L90"><span class="lineNum">      90</span>              :   // Data for both lumped and wave port.</span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC tlaBgGNC">          34 :   struct PortPostData</span></span>
+<span id="L92"><span class="lineNum">      92</span>              :   {</span>
+<span id="L93"><span class="lineNum">      93</span>              :     std::complex&lt;double&gt; P = 0.0;</span>
+<span id="L94"><span class="lineNum">      94</span>              :     std::complex&lt;double&gt; V = 0.0;</span>
+<span id="L95"><span class="lineNum">      95</span>              :     std::complex&lt;double&gt; I = 0.0;</span>
+<span id="L96"><span class="lineNum">      96</span>              :     // Separate R, L, and C branches for current via Z.</span>
+<span id="L97"><span class="lineNum">      97</span>              :     std::array&lt;std::complex&lt;double&gt;, 3&gt; I_RLC = {0.0, 0.0, 0.0};</span>
+<span id="L98"><span class="lineNum">      98</span>              : </span>
+<span id="L99"><span class="lineNum">      99</span>              :     // S-Parameter.</span>
+<span id="L100"><span class="lineNum">     100</span>              :     std::complex&lt;double&gt; S = 0.0;</span>
+<span id="L101"><span class="lineNum">     101</span>              : </span>
+<span id="L102"><span class="lineNum">     102</span>              :     // Energies (currently only for lumped port).</span>
+<span id="L103"><span class="lineNum">     103</span>              :     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².</span>
+<span id="L104"><span class="lineNum">     104</span>              :     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².</span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span>              :     // Resistive lumped port (only eigenmode).</span>
+<span id="L107"><span class="lineNum">     107</span>              :     double mode_port_kappa = 0.0;</span>
+<span id="L108"><span class="lineNum">     108</span>              :     double quality_factor = mfem::infinity();</span>
+<span id="L109"><span class="lineNum">     109</span>              : </span>
+<span id="L110"><span class="lineNum">     110</span>              :     // Inductive lumped port (only eigenmode).</span>
+<span id="L111"><span class="lineNum">     111</span>              :     double inductive_energy_participation = 0.0;</span>
+<span id="L112"><span class="lineNum">     112</span>              :   };</span>
+<span id="L113"><span class="lineNum">     113</span>              : </span>
+<span id="L114"><span class="lineNum">     114</span>              :   // &quot;Pseudo-measurements&quot;: input required during measurement or data which is stored here</span>
+<span id="L115"><span class="lineNum">     115</span>              :   // in order to pass it along to the printers.</span>
+<span id="L116"><span class="lineNum">     116</span>              : </span>
+<span id="L117"><span class="lineNum">     117</span>              :   int ex_idx = 0;  // driven</span>
+<span id="L118"><span class="lineNum">     118</span>              : </span>
+<span id="L119"><span class="lineNum">     119</span>              :   std::complex&lt;double&gt; freq = {0.0, 0.0};  // driven || eigenvalue.</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span>              :   // Modulation factor for input excitation:</span>
+<span id="L122"><span class="lineNum">     122</span>              :   // - I_inc(t) = J(t) I_in, for transient</span>
+<span id="L123"><span class="lineNum">     123</span>              :   // - I_inc(omega) = I_in, for driven so that Jcoeff_excitation = 1.0</span>
+<span id="L124"><span class="lineNum">     124</span>              :   double Jcoeff_excitation = 1.0;  // transient || driven</span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span>              :   // Eigenmode data including error from solver.</span>
+<span id="L127"><span class="lineNum">     127</span>              :   double eigenmode_Q = 0.0;</span>
+<span id="L128"><span class="lineNum">     128</span>              :   double error_bkwd = 0.0;</span>
+<span id="L129"><span class="lineNum">     129</span>              :   double error_abs = 0.0;</span>
+<span id="L130"><span class="lineNum">     130</span>              : </span>
+<span id="L131"><span class="lineNum">     131</span>              :   // &quot;Actual measurements&quot;.</span>
+<span id="L132"><span class="lineNum">     132</span>              : </span>
+<span id="L133"><span class="lineNum">     133</span>              :   double domain_E_field_energy_all = 0.0;</span>
+<span id="L134"><span class="lineNum">     134</span>              :   double domain_H_field_energy_all = 0.0;</span>
+<span id="L135"><span class="lineNum">     135</span>              : </span>
+<span id="L136"><span class="lineNum">     136</span>              :   std::vector&lt;DomainData&gt; domain_E_field_energy_i;</span>
+<span id="L137"><span class="lineNum">     137</span>              :   std::vector&lt;DomainData&gt; domain_H_field_energy_i;</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              :   double lumped_port_capacitor_energy = 0.0;</span>
+<span id="L140"><span class="lineNum">     140</span>              :   double lumped_port_inductor_energy = 0.0;</span>
+<span id="L141"><span class="lineNum">     141</span>              : </span>
+<span id="L142"><span class="lineNum">     142</span>              :   std::map&lt;int, PortPostData&gt; lumped_port_vi;</span>
+<span id="L143"><span class="lineNum">     143</span>              :   std::map&lt;int, PortPostData&gt; wave_port_vi;</span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span>              :   // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].</span>
+<span id="L146"><span class="lineNum">     146</span>              :   // TODO: Replace with proper matrix: mdspan (C++23) / Eigen.</span>
+<span id="L147"><span class="lineNum">     147</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; probe_E_field;</span>
+<span id="L148"><span class="lineNum">     148</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; probe_B_field;</span>
+<span id="L149"><span class="lineNum">     149</span>              : </span>
+<span id="L150"><span class="lineNum">     150</span>              :   std::vector&lt;FluxData&gt; surface_flux_i;</span>
+<span id="L151"><span class="lineNum">     151</span>              :   std::vector&lt;InterfaceData&gt; interface_eps_i;</span>
+<span id="L152"><span class="lineNum">     152</span>              :   FarFieldData farfield;</span>
+<span id="L153"><span class="lineNum">     153</span>              : </span>
+<span id="L154"><span class="lineNum">     154</span>              :   // Dimensionalize and nondimensionalize a set of measurements</span>
+<span id="L155"><span class="lineNum">     155</span>              :   static Measurement Dimensionalize(const Units &amp;units,</span>
+<span id="L156"><span class="lineNum">     156</span>              :                                     const Measurement &amp;nondim_measurement_cache);</span>
+<span id="L157"><span class="lineNum">     157</span>              :   static Measurement Nondimensionalize(const Units &amp;units,</span>
+<span id="L158"><span class="lineNum">     158</span>              :                                        const Measurement &amp;dim_measurement_cache);</span>
+<span id="L159"><span class="lineNum">     159</span>              :   // Helpers for converting complex variable to magnitude in dB and phase.</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">           5 :   static double Magnitude(std::complex&lt;double&gt; x) { return 20.0 * std::log10(std::abs(x)); }</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">           5 :   static double Phase(std::complex&lt;double&gt; x) { return std::arg(x) * 180.0 / M_PI; }</span></span>
+<span id="L162"><span class="lineNum">     162</span>              : };</span>
+<span id="L163"><span class="lineNum">     163</span>              : </span>
+<span id="L164"><span class="lineNum">     164</span>              : namespace _impl</span>
+<span id="L165"><span class="lineNum">     165</span>              : {</span>
+<span id="L166"><span class="lineNum">     166</span>              : // Filling pattern of rows of column groups — needed to validate reload position of</span>
+<span id="L167"><span class="lineNum">     167</span>              : // previous data. Make it public in an _impl namespace for testing.</span>
+<span id="L168"><span class="lineNum">     168</span>              : std::vector&lt;std::size_t&gt; table_expected_filling(std::size_t m_idx_row, std::size_t ex_idx_i,</span>
+<span id="L169"><span class="lineNum">     169</span>              :                                                 std::size_t nr_rows,</span>
+<span id="L170"><span class="lineNum">     170</span>              :                                                 std::size_t nr_col_blocks);</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              : }  // namespace _impl</span>
+<span id="L173"><span class="lineNum">     173</span>              : </span>
+<span id="L174"><span class="lineNum">     174</span>              : // Helper class to PostOperator to collect csv tables and printers for measurement that will</span>
+<span id="L175"><span class="lineNum">     175</span>              : // be saved to file. This class contains a pointer to the corresponding PostOperator class</span>
+<span id="L176"><span class="lineNum">     176</span>              : // and is a friend to a PostOperator class; this is equivalent to having these members</span>
+<span id="L177"><span class="lineNum">     177</span>              : // and methods in PostOperator. It exists for code clarity.</span>
+<span id="L178"><span class="lineNum">     178</span>              : template &lt;ProblemType solver_t&gt;</span>
+<span id="L179"><span class="lineNum">     179</span>              : class PostOperatorCSV</span>
+<span id="L180"><span class="lineNum">     180</span>              : {</span>
+<span id="L181"><span class="lineNum">     181</span>              : protected:</span>
+<span id="L182"><span class="lineNum">     182</span>              :   // Copy savepath from PostOperator for simpler dependencies.</span>
+<span id="L183"><span class="lineNum">     183</span>              :   fs::path post_dir;</span>
+<span id="L184"><span class="lineNum">     184</span>              :   bool reload_table = false;  // True only for driven simulation with non-default restart</span>
+<span id="L185"><span class="lineNum">     185</span>              : </span>
+<span id="L186"><span class="lineNum">     186</span>              :   // Dimensionalized measurement cache. Converted from the PostOperator member variable.</span>
+<span id="L187"><span class="lineNum">     187</span>              :   Measurement measurement_cache;</span>
+<span id="L188"><span class="lineNum">     188</span>              : </span>
+<span id="L189"><span class="lineNum">     189</span>              :   // Cursor location &amp; cursor value.</span>
+<span id="L190"><span class="lineNum">     190</span>              : </span>
+<span id="L191"><span class="lineNum">     191</span>              :   std::size_t row_i = 0;     // Plain count of current row  (measurement index)</span>
+<span id="L192"><span class="lineNum">     192</span>              :   std::size_t ex_idx_i = 0;  // Plain count of current column group (excitation)</span>
+<span id="L193"><span class="lineNum">     193</span>              : </span>
+<span id="L194"><span class="lineNum">     194</span>              :   double row_idx_v;          // Value of row index (time, freq..); must be dimensionful</span>
+<span id="L195"><span class="lineNum">     195</span>              :   std::size_t m_ex_idx = 0;  // ex_idx_v: Excitation index value (= ex_idx_v_all[ex_idx_i])</span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span>              :   // Required in validation of re-loaded table (driven), otherwise just to reserve space.</span>
+<span id="L198"><span class="lineNum">     198</span>              :   // Transient (adaptive time-stepping) or eigenvalue (converged eigenvalues) solver output</span>
+<span id="L199"><span class="lineNum">     199</span>              :   // may differ from expectation.</span>
+<span id="L200"><span class="lineNum">     200</span>              :   std::size_t nr_expected_measurement_rows = 1;</span>
+<span id="L201"><span class="lineNum">     201</span>              : </span>
+<span id="L202"><span class="lineNum">     202</span>              :   // Stored column groups (excitations). Default single &quot;0&quot; for solvers without excitations.</span>
+<span id="L203"><span class="lineNum">     203</span>              :   std::vector&lt;std::size_t&gt; ex_idx_v_all = {std::size_t(0)};</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">           3 :   bool HasSingleExIdx() const { return ex_idx_v_all.size() == 1; }</span></span>
+<span id="L205"><span class="lineNum">     205</span>              : </span>
+<span id="L206"><span class="lineNum">     206</span>              :   void MoveTableValidateReload(TableWithCSVFile &amp;t_csv_base, Table &amp;&amp;t_ref);</span>
+<span id="L207"><span class="lineNum">     207</span>              : </span>
+<span id="L208"><span class="lineNum">     208</span>              :   // Data tables.</span>
+<span id="L209"><span class="lineNum">     209</span>              :   //</span>
+<span id="L210"><span class="lineNum">     210</span>              :   // These are all std::optional since: (a) should only be instantiated on the root mpi</span>
+<span id="L211"><span class="lineNum">     211</span>              :   // process, (b) they should only be written if the data is non-empty.</span>
+<span id="L212"><span class="lineNum">     212</span>              : </span>
+<span id="L213"><span class="lineNum">     213</span>              :   // Initialize and print methods for various output quantities: The initialize methods</span>
+<span id="L214"><span class="lineNum">     214</span>              :   // prepare the tables for data insertion, whilst the print methods insert data</span>
+<span id="L215"><span class="lineNum">     215</span>              :   // appropriately. Methods are only enabled when valid given the problem type.</span>
+<span id="L216"><span class="lineNum">     216</span>              : </span>
+<span id="L217"><span class="lineNum">     217</span>              :   // Base (all solvers).</span>
+<span id="L218"><span class="lineNum">     218</span>              :   std::optional&lt;TableWithCSVFile&gt; domain_E;</span>
+<span id="L219"><span class="lineNum">     219</span>              :   void InitializeDomainE(const DomainPostOperator &amp;dom_post_op);</span>
+<span id="L220"><span class="lineNum">     220</span>              :   void PrintDomainE();</span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span>              :   std::optional&lt;TableWithCSVFile&gt; surface_F;</span>
+<span id="L223"><span class="lineNum">     223</span>              :   void InitializeSurfaceF(const SurfacePostOperator &amp;surf_post_op);</span>
+<span id="L224"><span class="lineNum">     224</span>              :   void PrintSurfaceF();</span>
+<span id="L225"><span class="lineNum">     225</span>              : </span>
+<span id="L226"><span class="lineNum">     226</span>              :   std::optional&lt;TableWithCSVFile&gt; surface_Q;</span>
+<span id="L227"><span class="lineNum">     227</span>              :   void InitializeSurfaceQ(const SurfacePostOperator &amp;surf_post_op);</span>
+<span id="L228"><span class="lineNum">     228</span>              :   void PrintSurfaceQ();</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              :   std::optional&lt;TableWithCSVFile&gt; probe_E;</span>
+<span id="L231"><span class="lineNum">     231</span>              :   void InitializeProbeE(const InterpolationOperator &amp;interp_op);</span>
+<span id="L232"><span class="lineNum">     232</span>              :   void PrintProbeE(const InterpolationOperator &amp;interp_op);</span>
+<span id="L233"><span class="lineNum">     233</span>              : </span>
+<span id="L234"><span class="lineNum">     234</span>              :   std::optional&lt;TableWithCSVFile&gt; probe_B;</span>
+<span id="L235"><span class="lineNum">     235</span>              :   void InitializeProbeB(const InterpolationOperator &amp;interp_op);</span>
+<span id="L236"><span class="lineNum">     236</span>              :   void PrintProbeB(const InterpolationOperator &amp;interp_op);</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              :   // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can</span>
+<span id="L239"><span class="lineNum">     239</span>              :   // just use `void Function(...) requires (solver_t == Type::A);`.</span>
+<span id="L240"><span class="lineNum">     240</span>              : </span>
+<span id="L241"><span class="lineNum">     241</span>              :   // Driven + Transient.</span>
+<span id="L242"><span class="lineNum">     242</span>              :   std::optional&lt;TableWithCSVFile&gt; surface_I;</span>
+<span id="L243"><span class="lineNum">     243</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L244"><span class="lineNum">     244</span>              :   auto InitializeSurfaceI(const SurfaceCurrentOperator &amp;surf_j_op)</span>
+<span id="L245"><span class="lineNum">     245</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void&gt;;</span>
+<span id="L246"><span class="lineNum">     246</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L247"><span class="lineNum">     247</span>              :   auto PrintSurfaceI(const SurfaceCurrentOperator &amp;surf_j_op, const Units &amp;units)</span>
+<span id="L248"><span class="lineNum">     248</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN || U == ProblemType::TRANSIENT, void&gt;;</span>
+<span id="L249"><span class="lineNum">     249</span>              : </span>
+<span id="L250"><span class="lineNum">     250</span>              :   // Eigenmode + Driven + Transient.</span>
+<span id="L251"><span class="lineNum">     251</span>              :   std::optional&lt;TableWithCSVFile&gt; port_V;</span>
+<span id="L252"><span class="lineNum">     252</span>              :   std::optional&lt;TableWithCSVFile&gt; port_I;</span>
+<span id="L253"><span class="lineNum">     253</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L254"><span class="lineNum">     254</span>              :   auto InitializePortVI(const SpaceOperator &amp;fem_op)</span>
+<span id="L255"><span class="lineNum">     255</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||</span>
+<span id="L256"><span class="lineNum">     256</span>              :                               U == ProblemType::TRANSIENT,</span>
+<span id="L257"><span class="lineNum">     257</span>              :                           void&gt;;</span>
+<span id="L258"><span class="lineNum">     258</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L259"><span class="lineNum">     259</span>              :   auto PrintPortVI(const LumpedPortOperator &amp;lumped_port_op, const Units &amp;units)</span>
+<span id="L260"><span class="lineNum">     260</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||</span>
+<span id="L261"><span class="lineNum">     261</span>              :                               U == ProblemType::TRANSIENT,</span>
+<span id="L262"><span class="lineNum">     262</span>              :                           void&gt;;</span>
+<span id="L263"><span class="lineNum">     263</span>              : </span>
+<span id="L264"><span class="lineNum">     264</span>              :   // Driven.</span>
+<span id="L265"><span class="lineNum">     265</span>              :   std::optional&lt;TableWithCSVFile&gt; port_S;</span>
+<span id="L266"><span class="lineNum">     266</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L267"><span class="lineNum">     267</span>              :   auto InitializePortS(const SpaceOperator &amp;fem_op)</span>
+<span id="L268"><span class="lineNum">     268</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, void&gt;;</span>
+<span id="L269"><span class="lineNum">     269</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L270"><span class="lineNum">     270</span>              :   auto PrintPortS() -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, void&gt;;</span>
+<span id="L271"><span class="lineNum">     271</span>              : </span>
+<span id="L272"><span class="lineNum">     272</span>              :   // Driven + Eigenmode.</span>
+<span id="L273"><span class="lineNum">     273</span>              :   std::optional&lt;TableWithCSVFile&gt; farfield_E;</span>
+<span id="L274"><span class="lineNum">     274</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L275"><span class="lineNum">     275</span>              :   auto InitializeFarFieldE(const SurfacePostOperator &amp;surf_post_op)</span>
+<span id="L276"><span class="lineNum">     276</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L277"><span class="lineNum">     277</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L278"><span class="lineNum">     278</span>              :   auto PrintFarFieldE(const SurfacePostOperator &amp;surf_post_op)</span>
+<span id="L279"><span class="lineNum">     279</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L280"><span class="lineNum">     280</span>              : </span>
+<span id="L281"><span class="lineNum">     281</span>              :   // Eigenmode.</span>
+<span id="L282"><span class="lineNum">     282</span>              :   std::optional&lt;TableWithCSVFile&gt; eig;</span>
+<span id="L283"><span class="lineNum">     283</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L284"><span class="lineNum">     284</span>              :   auto InitializeEig() -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L285"><span class="lineNum">     285</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L286"><span class="lineNum">     286</span>              :   auto PrintEig() -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L287"><span class="lineNum">     287</span>              : </span>
+<span id="L288"><span class="lineNum">     288</span>              :   std::vector&lt;int&gt; ports_with_L;</span>
+<span id="L289"><span class="lineNum">     289</span>              :   std::vector&lt;int&gt; ports_with_R;</span>
+<span id="L290"><span class="lineNum">     290</span>              :   std::optional&lt;TableWithCSVFile&gt; port_EPR;</span>
+<span id="L291"><span class="lineNum">     291</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L292"><span class="lineNum">     292</span>              :   auto InitializeEigPortEPR(const LumpedPortOperator &amp;lumped_port_op)</span>
+<span id="L293"><span class="lineNum">     293</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L294"><span class="lineNum">     294</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L295"><span class="lineNum">     295</span>              :   auto PrintEigPortEPR() -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L296"><span class="lineNum">     296</span>              : </span>
+<span id="L297"><span class="lineNum">     297</span>              :   std::optional&lt;TableWithCSVFile&gt; port_Q;</span>
+<span id="L298"><span class="lineNum">     298</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L299"><span class="lineNum">     299</span>              :   auto InitializeEigPortQ(const LumpedPortOperator &amp;lumped_port_op)</span>
+<span id="L300"><span class="lineNum">     300</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L301"><span class="lineNum">     301</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L302"><span class="lineNum">     302</span>              :   auto PrintEigPortQ() -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, void&gt;;</span>
+<span id="L303"><span class="lineNum">     303</span>              : </span>
+<span id="L304"><span class="lineNum">     304</span>              : public:</span>
+<span id="L305"><span class="lineNum">     305</span>              :   // Print all data from nondim_measurement_cache.</span>
+<span id="L306"><span class="lineNum">     306</span>              :   void PrintAllCSVData(const PostOperator&lt;solver_t&gt; &amp;post_op,</span>
+<span id="L307"><span class="lineNum">     307</span>              :                        const Measurement &amp;nondim_measurement_cache,</span>
+<span id="L308"><span class="lineNum">     308</span>              :                        double idx_value_dimensionful, int step);</span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span>              :   // Driven specific overload for specifying excitation index.</span>
+<span id="L311"><span class="lineNum">     311</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L312"><span class="lineNum">     312</span>              :   auto PrintAllCSVData(const PostOperator&lt;solver_t&gt; &amp;post_op,</span>
+<span id="L313"><span class="lineNum">     313</span>              :                        const Measurement &amp;nondim_measurement_cache,</span>
+<span id="L314"><span class="lineNum">     314</span>              :                        double idx_value_dimensionful, int step, int ex_idx)</span>
+<span id="L315"><span class="lineNum">     315</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, void&gt;</span>
+<span id="L316"><span class="lineNum">     316</span>              :   {</span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">           3 :     m_ex_idx = ex_idx;</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">           3 :     PrintAllCSVData(post_op, nondim_measurement_cache, idx_value_dimensionful, step);</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">           3 :   }</span></span>
+<span id="L320"><span class="lineNum">     320</span>              : </span>
+<span id="L321"><span class="lineNum">     321</span>              :   // Special case of global indicator — init and print all at once.</span>
+<span id="L322"><span class="lineNum">     322</span>              :   void PrintErrorIndicator(bool is_root,</span>
+<span id="L323"><span class="lineNum">     323</span>              :                            const ErrorIndicator::SummaryStatistics &amp;indicator_stats);</span>
+<span id="L324"><span class="lineNum">     324</span>              : </span>
+<span id="L325"><span class="lineNum">     325</span>              :   // &quot;Delayed ctor&quot; so that PostOperator can call it once it is fully constructed.</span>
+<span id="L326"><span class="lineNum">     326</span>              :   // Set-up all files to be called from post_op.</span>
+<span id="L327"><span class="lineNum">     327</span>              :   void InitializeCSVDataCollection(const PostOperator&lt;solver_t&gt; &amp;post_op);</span>
+<span id="L328"><span class="lineNum">     328</span>              : </span>
+<span id="L329"><span class="lineNum">     329</span>              :   explicit PostOperatorCSV(const IoData &amp;iodata, const fem_op_t&lt;solver_t&gt; &amp;fem_op);</span>
+<span id="L330"><span class="lineNum">     330</span>              : };</span>
+<span id="L331"><span class="lineNum">     331</span>              : </span>
+<span id="L332"><span class="lineNum">     332</span>              : }  // namespace palace</span>
+<span id="L333"><span class="lineNum">     333</span>              : </span>
+<span id="L334"><span class="lineNum">     334</span>              : #endif  // PALACE_MODELS_POST_OPERATOR_CSV_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
