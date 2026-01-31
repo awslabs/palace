@@ -70,7 +70,15 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   for (double x_sample : {-2.0, -1.0, 1.0, 2.0})
   {
     auto tan_eval = fn_tan_shift(x_sample) / double(Mpi::Size(comm));
-    std::vector<std::complex<double>> tmp = {x_sample * tan_eval, -tan_eval, 5. * tan_eval,
+
+    // The rational vector function we want to evaluate. The vector has common poles all
+    // determined by tan. The minimal-rational interpolation method finds coefficients using
+    // SVD on the R matrix from a QR decomposition of samples. If the rank of the vector is
+    // small or degenerate, this can have trivial solution and fail.
+    //
+    // Here we pick a 5 component vector where 2 pairs are degenerate (scalar multiples of
+    // each other) which is sufficiently large but challenging a problem.
+    std::vector<std::complex<double>> tmp = {-tan_eval, 5. * tan_eval, x_sample * tan_eval,
                                              10. * x_sample * tan_eval,
                                              2 * x_sample * x_sample * x_sample * tan_eval};
     ComplexVector c_vec(tmp.size());

@@ -578,8 +578,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new =
-      V.size() + static_cast<std::size_t>(has_real) + static_cast<std::size_t>(has_imag);
+  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
@@ -775,7 +774,7 @@ std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
            std::unique_ptr<Eigen::MatrixXcd>>
 RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 {
-  using mat_t = decltype(Kr);
+  using mat_t = Eigen::MatrixXcd;
   std::unique_ptr<mat_t> m_Linv = {};
   std::unique_ptr<mat_t> m_Rinv = {};
   std::unique_ptr<mat_t> m_C = {};
