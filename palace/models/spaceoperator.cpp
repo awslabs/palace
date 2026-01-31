@@ -841,7 +841,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
-bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
                                                            ComplexVector &Et_primary,
                                                            bool zero_metal)
 {
@@ -874,10 +874,9 @@ bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   {
     linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
-  return true;
 }
 
-bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
                                                              ComplexVector &Htcn_primary,
                                                              bool zero_metal)
 {
@@ -910,7 +909,6 @@ bool SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   {
     linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   }
-  return true;
 }
 
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
