@@ -6,6 +6,7 @@
 
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -389,6 +390,41 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.sample_f[2] ==
           Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
   }
+}
+
+TEST_CASE("Nondimensionalize mesh", "[nondimensionalize][Serial]")
+{
+  constexpr double L0 = 1e-3;
+  constexpr double Lc = 2.0;
+  Units units(L0, Lc * L0);
+
+  // Create a simple mesh with known dimensions
+  const double mesh_size = 1.0;  // 1.0 in mesh units
+  auto mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::HEXAHEDRON, mesh_size,
+                                          mesh_size, mesh_size);
+
+  // Get original vertex position
+  double *orig_coords = mesh.GetVertex(0);
+  std::array<double, 3> orig_pos = {orig_coords[0], orig_coords[1], orig_coords[2]};
+
+  // Get a vertex that's not at origin (vertex 7 is at (1,1,1) for unit cube)
+  double *corner_coords = mesh.GetVertex(7);
+  std::array<double, 3> corner_pos = {corner_coords[0], corner_coords[1], corner_coords[2]};
+
+  // Nondimensionalize
+  mesh::Nondimensionalize(units, mesh);
+
+  // Check that vertices are scaled by 1/Lc0
+  const double Lc0 = units.GetMeshLengthRelativeScale();
+  double *new_coords = mesh.GetVertex(0);
+  CHECK(new_coords[0] == Approx(orig_pos[0] / Lc0));
+  CHECK(new_coords[1] == Approx(orig_pos[1] / Lc0));
+  CHECK(new_coords[2] == Approx(orig_pos[2] / Lc0));
+
+  double *new_corner = mesh.GetVertex(7);
+  CHECK(new_corner[0] == Approx(corner_pos[0] / Lc0));
+  CHECK(new_corner[1] == Approx(corner_pos[1] / Lc0));
+  CHECK(new_corner[2] == Approx(corner_pos[2] / Lc0));
 }
 
 }  // namespace palace
