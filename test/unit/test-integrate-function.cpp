@@ -2,23 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //
-// Unit tests for IntegrateFunction and IntegrateFunctionLocal.
+// Unit tests and benchmarks for IntegrateFunction and IntegrateFunctionLocal.
 //
 // These functions replace MFEM's LinearForm + BoundaryLFIntegrator pattern for computing
 // surface integrals. The key advantage is that they take a callback for quadrature order,
 // allowing the caller to specify the order without relying on global state.
 //
-// THREAD SAFETY NOTE:
-// The IntegrateFunctionLocal implementation uses OpenMP parallelism. When using
-// coefficients that have internal state (like BdrGridFunctionCoefficient with its FET, T1,
-// T2 members), the coefficient's Eval method must be thread-safe. The simple coefficients
-// used in these tests are stateless and thus thread-safe. Production code using
-// BdrSurfaceFluxCoefficient or InterfaceDielectricCoefficient should be aware of the
-// thread-safety TODO in palace/fem/coefficient.hpp.
-//
 
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/benchmark/catch_benchmark.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
@@ -213,6 +206,38 @@ TEST_CASE("IntegrateFunction", "[integrate][Serial]")
     // Results should match between the two methods.
     REQUIRE_THAT(result_new, Catch::Matchers::WithinRel(result_mfem, 1e-10));
   }
+}
+
+TEST_CASE("IntegrateFunction Benchmark", "[Benchmark][integrate][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  // Create a larger mesh for meaningful benchmarks.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(10, 10, 10, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
+  auto mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  serial_mesh.reset();
+
+  mfem::H1_FECollection fec(2, mesh->Dimension());
+  mfem::ParFiniteElementSpace fespace(mesh.get(), &fec);
+
+  int bdr_attr_max = mesh->bdr_attributes.Max();
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+
+  LinearCoefficient coeff;
+  int q_order = 4;
+
+  BENCHMARK("IntegrateFunction")
+  {
+    auto GetOrder = [q_order](const mfem::ElementTransformation &) { return q_order; };
+    return fem::IntegrateFunction(*mesh, marker, true, coeff, GetOrder);
+  };
+
+  BENCHMARK("MFEM LinearForm")
+  {
+    return IntegrateWithLinearForm(fespace, marker, coeff, q_order / 2);
+  };
 }
 
 }  // namespace
