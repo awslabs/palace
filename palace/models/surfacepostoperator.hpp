@@ -93,8 +93,7 @@ public:
   FarFieldData farfield;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      const mfem::ParMesh &mesh,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+                      const mfem::ParMesh &mesh, mfem::ParFiniteElementSpace &nd_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
