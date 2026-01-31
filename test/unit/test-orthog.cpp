@@ -18,6 +18,68 @@ using namespace palace;
 using namespace Catch::Matchers;
 using namespace Catch;
 
+class InnerProductRealWeight
+{
+  // Choose generic operator, although can improve by refining for specialized type.
+  std::shared_ptr<Operator> weight_op;
+
+  // Don't have inner product wrapper / implemented in Operator, so need to allocate a
+  // vector as a workspace. (TODO: Optimize this away).
+  mutable Vector v_workspace = {};
+
+  void SetWorkspace(const Vector &blueprint) const
+  {
+    v_workspace.SetSize(blueprint.Size());
+    v_workspace.UseDevice(blueprint.UseDevice());
+  }
+
+public:
+  template <typename OpType>
+  explicit InnerProductRealWeight(const std::shared_ptr<OpType> &weight_op_)
+    : weight_op(weight_op_)
+  {
+  }
+  // Follow same conventions as Dot: yᴴ x or yᵀ x (note y comes second in the arguments).
+  double InnerProduct(const Vector &x, const Vector &y) const
+  {
+    SetWorkspace(x);
+    weight_op->Mult(x, v_workspace);
+    return linalg::LocalDot(v_workspace, y);
+  }
+
+  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
+  {
+    SetWorkspace(x);
+    weight_op->Mult(x, v_workspace);
+    return linalg::Dot(comm, v_workspace, y);
+  }
+
+  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
+  {
+    using namespace std::complex_literals;
+    SetWorkspace(x.Real());
+
+    // weight_op is real.
+    weight_op->Mult(x.Real(), v_workspace);
+    std::complex<double> dot = {+linalg::LocalDot(v_workspace, y.Real()),
+                                -linalg::LocalDot(v_workspace, y.Imag())};
+
+    weight_op->Mult(x.Imag(), v_workspace);
+    dot += std::complex<double>{linalg::LocalDot(v_workspace, y.Imag()),
+                                linalg::LocalDot(v_workspace, y.Real())};
+
+    return dot;
+  }
+
+  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
+                                    const ComplexVector &y) const
+  {
+    auto dot = InnerProduct(x, y);
+    Mpi::GlobalSum(1, &dot, comm);
+    return dot;
+  }
+};
+
 // Wapper class to make iteration over orthogonalization methods easy.
 class orthogonalize_wrapper
 {
@@ -250,7 +312,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
 
   std::vector<double> H(2, 0.0);
 
-  linalg::InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   // Check orthogonality with respect to weight matrix
@@ -299,7 +361,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
 
   std::vector<std::complex<double>> H(2, 0.0);
 
-  linalg::InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   auto W_wrap = ComplexWrapperOperator(&W, nullptr);

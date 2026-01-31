@@ -31,84 +31,16 @@ namespace palace::linalg
 class InnerProductStandard
 {
 public:
-  double InnerProduct(const Vector &x, const Vector &y) const { return LocalDot(x, y); }
-
-  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
-  {
-    return Dot(comm, x, y);
-  }
-
-  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
+  template <typename VecType>
+  static auto InnerProduct(const VecType &x, const VecType &y)
   {
     return LocalDot(x, y);
   }
 
-  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
-                                    const ComplexVector &y) const
+  template <typename VecType>
+  static auto InnerProduct(MPI_Comm comm, const VecType &x, const VecType &y)
   {
     return Dot(comm, x, y);
-  }
-};
-
-class InnerProductRealWeight
-{
-  // Choose generic operator, although can improve by refining for specialized type.
-  std::shared_ptr<Operator> weight_op;
-
-  // Don't have inner product wrapper / implemented in Operator, so need to allocate a
-  // vector as a workspace. (TODO: Optimize this away).
-  mutable Vector v_workspace = {};
-
-  void SetWorkspace(const Vector &blueprint) const
-  {
-    v_workspace.SetSize(blueprint.Size());
-    v_workspace.UseDevice(blueprint.UseDevice());
-  }
-
-public:
-  template <typename OpType>
-  explicit InnerProductRealWeight(const std::shared_ptr<OpType> &weight_op_)
-    : weight_op(weight_op_)
-  {
-  }
-  // Follow same conventions as Dot: yᴴ x or yᵀ x (note y comes second in the arguments).
-  double InnerProduct(const Vector &x, const Vector &y) const
-  {
-    SetWorkspace(x);
-    weight_op->Mult(x, v_workspace);
-    return LocalDot(v_workspace, y);
-  }
-
-  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
-  {
-    SetWorkspace(x);
-    weight_op->Mult(x, v_workspace);
-    return Dot(comm, v_workspace, y);
-  }
-
-  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
-  {
-    using namespace std::complex_literals;
-    SetWorkspace(x.Real());
-
-    // weight_op is real.
-    weight_op->Mult(x.Real(), v_workspace);
-    std::complex<double> dot = {+LocalDot(v_workspace, y.Real()),
-                                -LocalDot(v_workspace, y.Imag())};
-
-    weight_op->Mult(x.Imag(), v_workspace);
-    dot += std::complex<double>{LocalDot(v_workspace, y.Imag()),
-                                LocalDot(v_workspace, y.Real())};
-
-    return dot;
-  }
-
-  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
-                                    const ComplexVector &y) const
-  {
-    auto dot = InnerProduct(x, y);
-    Mpi::GlobalSum(1, &dot, comm);
-    return dot;
   }
 };
 
