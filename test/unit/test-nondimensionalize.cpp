@@ -285,6 +285,110 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.max_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(10.0)));
     CHECK(data.delta_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
   }
+
+  // Test RefinementData
+  {
+    config::RefinementData data;
+    config::BoxRefinementData box;
+    box.bbmin = {1.0, 2.0, 3.0};
+    box.bbmax = {4.0, 5.0, 6.0};
+    box.ref_levels = 1;
+    data.GetBoxes().push_back(box);
+
+    config::SphereRefinementData sphere;
+    sphere.center = {7.0, 8.0, 9.0};
+    sphere.r = 0.5;
+    sphere.ref_levels = 2;
+    data.GetSpheres().push_back(sphere);
+
+    config::Nondimensionalize(units, data);
+
+    const double Lc0 = units.GetMeshLengthRelativeScale();
+    CHECK(data.GetBoxes()[0].bbmin[0] == Approx(1.0 / Lc0));
+    CHECK(data.GetBoxes()[0].bbmin[1] == Approx(2.0 / Lc0));
+    CHECK(data.GetBoxes()[0].bbmin[2] == Approx(3.0 / Lc0));
+    CHECK(data.GetBoxes()[0].bbmax[0] == Approx(4.0 / Lc0));
+    CHECK(data.GetBoxes()[0].bbmax[1] == Approx(5.0 / Lc0));
+    CHECK(data.GetBoxes()[0].bbmax[2] == Approx(6.0 / Lc0));
+    CHECK(data.GetSpheres()[0].center[0] == Approx(7.0 / Lc0));
+    CHECK(data.GetSpheres()[0].center[1] == Approx(8.0 / Lc0));
+    CHECK(data.GetSpheres()[0].center[2] == Approx(9.0 / Lc0));
+    CHECK(data.GetSpheres()[0].r == Approx(0.5 / Lc0));
+  }
+
+  // Test ProbeData
+  {
+    config::ProbeData data;
+    data.center = {1.0, 2.0, 3.0};
+
+    config::Nondimensionalize(units, data);
+
+    const double Lc0 = units.GetMeshLengthRelativeScale();
+    CHECK(data.center[0] == Approx(1.0 / Lc0));
+    CHECK(data.center[1] == Approx(2.0 / Lc0));
+    CHECK(data.center[2] == Approx(3.0 / Lc0));
+  }
+
+  // Test CurrentDipoleData
+  {
+    config::CurrentDipoleData data;
+    data.center = {4.0, 5.0, 6.0};
+
+    config::Nondimensionalize(units, data);
+
+    const double Lc0 = units.GetMeshLengthRelativeScale();
+    CHECK(data.center[0] == Approx(4.0 / Lc0));
+    CHECK(data.center[1] == Approx(5.0 / Lc0));
+    CHECK(data.center[2] == Approx(6.0 / Lc0));
+  }
+
+  // Test WavePortData
+  {
+    config::WavePortData data;
+    data.d_offset = 0.5;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.d_offset == Approx(0.5 / units.GetMeshLengthRelativeScale()));
+  }
+
+  // Test SurfaceFluxData
+  {
+    config::SurfaceFluxData data;
+    data.center = {7.0, 8.0, 9.0};
+
+    config::Nondimensionalize(units, data);
+
+    const double Lc0 = units.GetMeshLengthRelativeScale();
+    CHECK(data.center[0] == Approx(7.0 / Lc0));
+    CHECK(data.center[1] == Approx(8.0 / Lc0));
+    CHECK(data.center[2] == Approx(9.0 / Lc0));
+  }
+
+  // Test InterfaceDielectricData
+  {
+    config::InterfaceDielectricData data;
+    data.t = 0.001;
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.t == Approx(0.001 / units.GetMeshLengthRelativeScale()));
+  }
+
+  // Test DrivenSolverData
+  {
+    config::DrivenSolverData data;
+    data.sample_f = {1.0, 2.0, 3.0};
+
+    config::Nondimensionalize(units, data);
+
+    CHECK(data.sample_f[0] ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0)));
+    CHECK(data.sample_f[1] ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.0)));
+    CHECK(data.sample_f[2] ==
+          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
+  }
 }
 
 }  // namespace palace
