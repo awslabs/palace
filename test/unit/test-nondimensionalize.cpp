@@ -176,14 +176,13 @@ TEST_CASE("Nondimensionalize via IoData", "[nondimensionalize][Serial]")
         Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
 }
 
-// Test that free functions produce identical results to IoData::NondimensionalizeInputs
-TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][Serial]")
+TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
 {
   constexpr double L0 = 1e-3;
   constexpr double Lc = 2.0;
   Units units(L0, Lc * L0);
 
-  // Test MaterialData
+  SECTION("MaterialData")
   {
     config::MaterialData data;
     data.sigma = config::SymmetricMatrixData<3>(1e6);
@@ -196,7 +195,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.lambda_L == Approx(0.1 / units.GetMeshLengthRelativeScale()));
   }
 
-  // Test ConductivityData
+  SECTION("ConductivityData")
   {
     config::ConductivityData data;
     data.sigma = 5e7;
@@ -209,7 +208,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.h == Approx(0.01 / units.GetMeshLengthRelativeScale()));
   }
 
-  // Test ImpedanceData
+  SECTION("ImpedanceData")
   {
     config::ImpedanceData data;
     data.Rs = 50.0;
@@ -223,7 +222,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.Cs == Approx(1e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
   }
 
-  // Test LumpedPortData
+  SECTION("LumpedPortData")
   {
     config::LumpedPortData data;
     data.R = 100.0;
@@ -244,7 +243,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
           Approx(0.5e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
   }
 
-  // Test PeriodicBoundaryData
+  SECTION("PeriodicBoundaryData")
   {
     config::PeriodicBoundaryData data;
     data.wave_vector = {0.1, 0.2, 0.3};
@@ -256,7 +255,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.wave_vector[2] == Approx(0.3 * units.GetMeshLengthRelativeScale()));
   }
 
-  // Test EigenSolverData
+  SECTION("EigenSolverData")
   {
     config::EigenSolverData data;
     data.target = 5.0;
@@ -270,7 +269,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
           Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
   }
 
-  // Test TransientSolverData
+  SECTION("TransientSolverData")
   {
     config::TransientSolverData data;
     data.pulse_f = 2.5;
@@ -287,7 +286,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.delta_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
   }
 
-  // Test RefinementData
+  SECTION("RefinementData")
   {
     config::RefinementData data;
     config::BoxRefinementData box;
@@ -317,7 +316,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.GetSpheres()[0].r == Approx(0.5 / Lc0));
   }
 
-  // Test ProbeData
+  SECTION("ProbeData")
   {
     config::ProbeData data;
     data.center = {1.0, 2.0, 3.0};
@@ -330,7 +329,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.center[2] == Approx(3.0 / Lc0));
   }
 
-  // Test CurrentDipoleData
+  SECTION("CurrentDipoleData")
   {
     config::CurrentDipoleData data;
     data.center = {4.0, 5.0, 6.0};
@@ -343,7 +342,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.center[2] == Approx(6.0 / Lc0));
   }
 
-  // Test WavePortData
+  SECTION("WavePortData")
   {
     config::WavePortData data;
     data.d_offset = 0.5;
@@ -353,7 +352,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.d_offset == Approx(0.5 / units.GetMeshLengthRelativeScale()));
   }
 
-  // Test SurfaceFluxData
+  SECTION("SurfaceFluxData")
   {
     config::SurfaceFluxData data;
     data.center = {7.0, 8.0, 9.0};
@@ -366,7 +365,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.center[2] == Approx(9.0 / Lc0));
   }
 
-  // Test InterfaceDielectricData
+  SECTION("InterfaceDielectricData")
   {
     config::InterfaceDielectricData data;
     data.t = 0.001;
@@ -376,7 +375,7 @@ TEST_CASE("Nondimensionalize free functions match IoData", "[nondimensionalize][
     CHECK(data.t == Approx(0.001 / units.GetMeshLengthRelativeScale()));
   }
 
-  // Test DrivenSolverData
+  SECTION("DrivenSolverData")
   {
     config::DrivenSolverData data;
     data.sample_f = {1.0, 2.0, 3.0};
