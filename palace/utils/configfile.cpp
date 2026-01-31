@@ -1416,24 +1416,28 @@ constexpr SymmetricMatrixData<N> &operator/=(SymmetricMatrixData<N> &data, doubl
   return data;
 }
 
+// Helper to create a lambda that divides by the mesh length scale
+inline auto LengthScaler(const Units &units)
+{
+  return [Lc0 = units.GetMeshLengthRelativeScale()](double val) { return val / Lc0; };
+}
+
 }  // namespace
 
 void Nondimensionalize(const Units &units, RefinementData &data)
 {
-  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
-  { return val / Lc0; };
   for (auto &box : data.GetBoxes())
   {
     std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
-                   DivideLengthScale);
+                   LengthScaler(units));
     std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),
-                   DivideLengthScale);
+                   LengthScaler(units));
   }
   for (auto &sphere : data.GetSpheres())
   {
     sphere.r /= units.GetMeshLengthRelativeScale();
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   DivideLengthScale);
+                   LengthScaler(units));
   }
 }
 
@@ -1445,18 +1449,14 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 
 void Nondimensionalize(const Units &units, ProbeData &data)
 {
-  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
-  { return val / Lc0; };
   std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 DivideLengthScale);
+                 LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, CurrentDipoleData &data)
 {
-  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
-  { return val / Lc0; };
   std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 DivideLengthScale);
+                 LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, ConductivityData &data)
@@ -1497,10 +1497,8 @@ void Nondimensionalize(const Units &units, WavePortData &data)
 
 void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 {
-  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
-  { return val / Lc0; };
   std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                 DivideLengthScale);
+                 LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
