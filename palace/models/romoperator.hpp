@@ -80,7 +80,6 @@ struct InnerProductHybridBulkBoundary
   {
     v_workspace.SetSize(x.Size());
     v_workspace.UseDevice(x.UseDevice());
-    //
     Mult(x, v_workspace);
     return linalg::LocalDot(y, v_workspace);
   }
