@@ -1326,7 +1326,7 @@ std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::s
   }
 }
 
-std::string Validate(const BoundaryData &boundaries)
+std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
@@ -1393,7 +1393,12 @@ std::string Validate(const BoundaryData &boundaries)
     }
   }
 
-  return errors.str();
+  auto result = errors.str();
+  if (result.empty())
+  {
+    return std::nullopt;
+  }
+  return result;
 }
 
 }  // namespace palace::config
@@ -1426,18 +1431,17 @@ inline auto LengthScaler(const Units &units)
 
 void Nondimensionalize(const Units &units, RefinementData &data)
 {
+  auto scale = LengthScaler(units);
   for (auto &box : data.GetBoxes())
   {
-    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
-                   LengthScaler(units));
-    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),
-                   LengthScaler(units));
+    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), scale);
+    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), scale);
   }
   for (auto &sphere : data.GetSpheres())
   {
     sphere.r /= units.GetMeshLengthRelativeScale();
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   LengthScaler(units));
+                   scale);
   }
 }
 

@@ -976,7 +976,7 @@ ParseStringAsDirection(std::string str, bool required = true);
 
 // Validation functions for cross-field checks. Return empty string if valid, otherwise
 // return all error messages concatenated.
-std::string Validate(const BoundaryData &boundaries);
+std::optional<std::string> Validate(const BoundaryData &boundaries);
 
 }  // namespace palace::config
 
