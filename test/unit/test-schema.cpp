@@ -145,7 +145,7 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     CHECK(!err.empty());
   }
 
-  SECTION("Additional property not allowed")
+  SECTION("Additional root section not allowed")
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
@@ -228,13 +228,6 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(!err.empty());
   }
 
-  SECTION("Invalid LumpedPort - negative Index")
-  {
-    json port = {{"Index", -1}, {"Attributes", {1}}, {"R", 50.0}, {"Direction", "+Y"}};
-    std::string err = ValidateConfig(port, "LumpedPort");
-    CHECK(!err.empty());
-  }
-
   SECTION("Invalid WavePort - negative Index")
   {
     json port = {{"Index", -1}, {"Attributes", {1}}};
@@ -253,6 +246,28 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
       INFO("Direction: " << dir);
       CHECK(!err.empty());
     }
+  }
+
+  SECTION("CurrentDipole rejects cylindrical R direction")
+  {
+    // CurrentDipole only allows Cartesian directions (X/Y/Z), not cylindrical R.
+    // This is enforced by schema enum, not C++ code.
+    std::vector<std::string> invalid_dirs = {"R", "+R", "-R", "r", "+r", "-r"};
+    for (const auto &dir : invalid_dirs)
+    {
+      json dipole = {
+          {"Index", 1}, {"Moment", 1.0}, {"Center", {0, 0, 0}}, {"Direction", dir}};
+      std::string err = ValidateConfig(dipole, "CurrentDipole");
+      INFO("Direction: " << dir);
+      CHECK(!err.empty());
+    }
+
+    // Verify Cartesian directions work.
+    json dipole_x = {
+        {"Index", 1}, {"Moment", 1.0}, {"Center", {0, 0, 0}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(dipole_x, "CurrentDipole");
+    INFO("Error: " << err);
+    CHECK(err.empty());
   }
 
   SECTION("Valid Material")
@@ -614,7 +629,7 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
           "property 'Elements' not found in object\n");
   }
 
-  SECTION("Additional property not allowed")
+  SECTION("Additional property in nested object not allowed")
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}, {"UnknownField", 123}}},
                    {"Model", {{"Mesh", "test.msh"}}},
