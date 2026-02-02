@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Note that each spack version needs its own registry
-  SPACK_VERSION: develop
-  REGISTRY: ghcr.io/awslabs/palace
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
