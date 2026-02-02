@@ -27,6 +27,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.CheckConfiguration();  // initializes quadrature
 
   auto comm = Mpi::World();
 
