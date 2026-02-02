@@ -159,7 +159,7 @@ void HypreAmsSolver::InitializeSolver()
                             // 18 = l1-Jacobi, 16 = Chebyshev
   int interp_type = 6;      // 6 = Extended+i, 0 = Classical, 13 = FF1
   int Pmax = 4;             // Interpolation width
-  int relax_type = 2;       // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
+  int relax_type = 2;  // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
   double weight = 1.0;
   double omega = 1.0;
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
