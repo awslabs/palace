@@ -2365,6 +2365,7 @@ void LinearSolverData::SetUp(json &solver)
   ams_vector_interp = linear->value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear->value("AMSSingularOperator", ams_singular_op);
   amg_agg_coarsen = linear->value("AMGAggressiveCoarsening", amg_agg_coarsen);
+  ams_max_it = linear->value("AMSMaxIts", ams_max_it);
 
   // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
@@ -2408,6 +2409,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("AMSVectorInterpolation");
   linear->erase("AMSSingularOperator");
   linear->erase("AMGAggressiveCoarsening");
+  linear->erase("AMSMaxIts");
 
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");

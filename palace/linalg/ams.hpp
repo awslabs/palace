@@ -54,7 +54,7 @@ public:
   HypreAmsSolver(const IoData &iodata, bool coarse_solver, FiniteElementSpace &nd_fespace,
                  FiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
-          nd_fespace, h1_fespace, coarse_solver ? 1 : iodata.solver.linear.mg_cycle_it,
+          nd_fespace, h1_fespace, coarse_solver ? iodata.solver.linear.ams_max_it : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector_interp,
           iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen, print)
   {
