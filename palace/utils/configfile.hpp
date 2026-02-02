@@ -440,7 +440,7 @@ public:
   std::vector<internal::ElementData> elements = {};
 
   LumpedPortData() = default;
-  LumpedPortData(const json &port, int index);
+  LumpedPortData(const json &port);
 };
 
 struct TerminalData
@@ -516,7 +516,7 @@ public:
   int verbose = 0;
 
   WavePortData() = default;
-  WavePortData(const json &port, int index);
+  WavePortData(const json &port);
 };
 
 struct SurfaceCurrentData

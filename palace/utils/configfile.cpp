@@ -243,6 +243,52 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 
 }  // namespace
 
+// Parse optional JSON field into type T, returns default-constructed T if missing.
+template <typename T>
+T ParseOptional(const json &j, const std::string &key)
+{
+  if (auto it = j.find(key); it != j.end())
+  {
+    return T(*it);
+  }
+  return T{};
+}
+
+// Parse optional JSON array field into std::vector<T>, returns empty vector if missing.
+template <typename T>
+std::vector<T> ParseOptionalVector(const json &j, const std::string &key)
+{
+  std::vector<T> result;
+  if (auto it = j.find(key); it != j.end())
+  {
+    for (const auto &elem : *it)
+    {
+      result.emplace_back(elem);
+    }
+  }
+  return result;
+}
+
+// Parse optional JSON array into std::map<int, T> keyed by "Index", checking for
+// duplicates.
+template <typename T>
+std::map<int, T> ParseOptionalMap(const json &j, const std::string &key,
+                                  const std::string &type_name)
+{
+  std::map<int, T> result;
+  if (auto it = j.find(key); it != j.end())
+  {
+    for (auto elem = it->begin(); elem != it->end(); ++elem)
+    {
+      auto index = AtIndex(elem, type_name);
+      auto [iter, inserted] = result.try_emplace(index, *elem);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing "
+                                << type_name << " in the configuration file!");
+    }
+  }
+  return result;
+}
+
 ProblemData::ProblemData(const json &problem)
 {
   type = problem.at("Type");  // Required
@@ -319,10 +365,7 @@ ModelData::ModelData(const json &model)
   export_prerefined_mesh = model.value("ExportPrerefinedMesh", export_prerefined_mesh);
   reorient_tet_mesh = model.value("ReorientTetMesh", reorient_tet_mesh);
   partitioning = model.value("Partitioning", partitioning);
-  if (auto it = model.find("Refinement"); it != model.end())
-  {
-    refinement = RefinementData(*it);
-  }
+  refinement = ParseOptional<RefinementData>(model, "Refinement");
 }
 
 MaterialData::MaterialData(const json &domain)
@@ -349,26 +392,8 @@ ProbeData::ProbeData(const json &probe)
 
 DomainPostData::DomainPostData(const json &postpro)
 {
-  if (auto it = postpro.find("Energy"); it != postpro.end())
-  {
-    for (auto e = it->begin(); e != it->end(); ++e)
-    {
-      auto index = AtIndex(e, "\"Energy\" domain");
-      auto [iter, inserted] = energy.try_emplace(index, *e);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Energy\" domains "
-                            "in the configuration file!");
-    }
-  }
-  if (auto it = postpro.find("Probe"); it != postpro.end())
-  {
-    for (auto p = it->begin(); p != it->end(); ++p)
-    {
-      auto index = AtIndex(p, "\"Probe\" point");
-      auto [iter, inserted] = probe.try_emplace(index, *p);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Probe\" points "
-                            "in the configuration file!");
-    }
-  }
+  energy = ParseOptionalMap<DomainEnergyData>(postpro, "Energy", "\"Energy\" domain");
+  probe = ParseOptionalMap<ProbeData>(postpro, "Probe", "\"Probe\" point");
 
   // Store all unique postprocessing domain attributes.
   for (const auto &[idx, data] : energy)
@@ -410,20 +435,9 @@ DomainData::DomainData(const json &domains)
   {
     materials.emplace_back(d);
   }
-  if (auto it = domains.find("CurrentDipole"); it != domains.end())
-  {
-    for (auto cd = it->begin(); cd != it->end(); ++cd)
-    {
-      auto index = AtIndex(cd, "\"CurrentDipole\" source");
-      auto [iter, inserted] = current_dipole.try_emplace(index, *cd);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"CurrentDipole\" "
-                            "sources in the configuration file!");
-    }
-  }
-  if (auto it = domains.find("Postprocessing"); it != domains.end())
-  {
-    postpro = DomainPostData(*it);
-  }
+  current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
+                                                       "\"CurrentDipole\" source");
+  postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
 
   // Store all unique domain attributes.
   for (const auto &data : materials)
@@ -444,25 +458,25 @@ DomainData::DomainData(const json &domains)
 
 PecBoundaryData::PecBoundaryData(const json &pec)
 {
-  attributes = pec.at("Attributes").get<std::vector<int>>();
+  attributes = pec.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 }
 
 PmcBoundaryData::PmcBoundaryData(const json &pmc)
 {
-  attributes = pmc.at("Attributes").get<std::vector<int>>();
+  attributes = pmc.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 }
 
 WavePortPecBoundaryData::WavePortPecBoundaryData(const json &auxpec)
 {
-  attributes = auxpec.at("Attributes").get<std::vector<int>>();
+  attributes = auxpec.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 }
 
 FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
 {
-  attributes = absorbing.at("Attributes").get<std::vector<int>>();
+  attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   order = absorbing.value("Order", order);
 }
@@ -509,8 +523,9 @@ int ParsePortExcitation(const json &port, int index)
   }
 }
 
-LumpedPortData::LumpedPortData(const json &port, int index)
+LumpedPortData::LumpedPortData(const json &port)
 {
+  int index = port.at("Index");  // Required
   R = port.value("R", R);
   L = port.value("L", L);
   C = port.value("C", C);
@@ -544,7 +559,7 @@ LumpedPortData::LumpedPortData(const json &port, int index)
 
 TerminalData::TerminalData(const json &terminal)
 {
-  attributes = terminal.at("Attributes").get<std::vector<int>>();
+  attributes = terminal.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 }
 
@@ -598,8 +613,9 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   }
 }
 
-WavePortData::WavePortData(const json &port, int index)
+WavePortData::WavePortData(const json &port)
 {
+  int index = port.at("Index");                                // Required
   attributes = port.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   mode_idx = port.value("Mode", mode_idx);
@@ -664,7 +680,7 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
 
 FarFieldPostData::FarFieldPostData(const json &farfield)
 {
-  attributes = farfield.at("Attributes").get<std::vector<int>>();
+  attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 
   // Generate NSample points with the following properties:
@@ -808,30 +824,11 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 BoundaryPostData::BoundaryPostData(const json &postpro)
 {
-  if (auto it = postpro.find("SurfaceFlux"); it != postpro.end())
-  {
-    for (auto f = it->begin(); f != it->end(); ++f)
-    {
-      auto index = AtIndex(f, "\"SurfaceFlux\" boundary");
-      auto [iter, inserted] = flux.try_emplace(index, *f);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"SurfaceFlux\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = postpro.find("Dielectric"); it != postpro.end())
-  {
-    for (auto d = it->begin(); d != it->end(); ++d)
-    {
-      auto index = AtIndex(d, "\"Dielectric\" boundary");
-      auto [iter, inserted] = dielectric.try_emplace(index, *d);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Dielectric\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = postpro.find("FarField"); it != postpro.end())
-  {
-    farfield = FarFieldPostData(*it);
-  }
+  flux =
+      ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
+  dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
+                                                         "\"Dielectric\" boundary");
+  farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -883,76 +880,17 @@ BoundaryData::BoundaryData(const json &boundaries)
     pmc = PmcBoundaryData(*zeroq_it);
   }
 
-  if (auto it = boundaries.find("WavePortPEC"); it != boundaries.end())
-  {
-    auxpec = WavePortPecBoundaryData(*it);
-  }
-  if (auto it = boundaries.find("Absorbing"); it != boundaries.end())
-  {
-    farfield = FarfieldBoundaryData(*it);
-  }
-  if (auto it = boundaries.find("Conductivity"); it != boundaries.end())
-  {
-    for (const auto &b : *it)
-    {
-      conductivity.emplace_back(b);
-    }
-  }
-  if (auto it = boundaries.find("Impedance"); it != boundaries.end())
-  {
-    for (const auto &b : *it)
-    {
-      impedance.emplace_back(b);
-    }
-  }
-  if (auto it = boundaries.find("LumpedPort"); it != boundaries.end())
-  {
-    for (auto lp = it->begin(); lp != it->end(); ++lp)
-    {
-      auto index = AtIndex(lp, "\"LumpedPort\"");
-      auto [iter, inserted] = lumpedport.try_emplace(index, *lp, index);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"LumpedPort\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = boundaries.find("Terminal"); it != boundaries.end())
-  {
-    for (auto t = it->begin(); t != it->end(); ++t)
-    {
-      auto index = AtIndex(t, "\"Terminal\"");
-      auto [iter, inserted] = terminal.try_emplace(index, *t);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"Terminal\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = boundaries.find("Periodic"); it != boundaries.end())
-  {
-    periodic = PeriodicBoundaryData(*it);
-  }
-  if (auto it = boundaries.find("WavePort"); it != boundaries.end())
-  {
-    for (auto wp = it->begin(); wp != it->end(); ++wp)
-    {
-      auto index = AtIndex(wp, "\"WavePort\"");
-      auto [iter, inserted] = waveport.try_emplace(index, *wp, index);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"WavePort\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = boundaries.find("SurfaceCurrent"); it != boundaries.end())
-  {
-    for (auto sc = it->begin(); sc != it->end(); ++sc)
-    {
-      auto index = AtIndex(sc, "\"SurfaceCurrent\"");
-      auto [iter, inserted] = current.try_emplace(index, *sc);
-      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
-                            "boundaries in the configuration file!");
-    }
-  }
-  if (auto it = boundaries.find("Postprocessing"); it != boundaries.end())
-  {
-    postpro = BoundaryPostData(*it);
-  }
+  auxpec = ParseOptional<WavePortPecBoundaryData>(boundaries, "WavePortPEC");
+  farfield = ParseOptional<FarfieldBoundaryData>(boundaries, "Absorbing");
+  conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
+  impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
+  lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
+  terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
+  periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
+  waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
+  current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
+                                                 "\"SurfaceCurrent\"");
+  postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
   // Ensure unique indexing of lumpedport, waveport, current.
   {
@@ -1383,33 +1321,12 @@ SolverData::SolverData(const json &solver)
   device = solver.value("Device", device);
   ceed_backend = solver.value("Backend", ceed_backend);
 
-  if (auto it = solver.find("Driven"); it != solver.end())
-  {
-    driven = DrivenSolverData(*it);
-  }
-  if (auto it = solver.find("Eigenmode"); it != solver.end())
-  {
-    // Target is required unless Driven section exists.
-    MFEM_VERIFY(it->find("Target") != it->end() || solver.find("Driven") != solver.end(),
-                "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
-    eigenmode = EigenSolverData(*it);
-  }
-  if (auto it = solver.find("Electrostatic"); it != solver.end())
-  {
-    electrostatic = ElectrostaticSolverData(*it);
-  }
-  if (auto it = solver.find("Magnetostatic"); it != solver.end())
-  {
-    magnetostatic = MagnetostaticSolverData(*it);
-  }
-  if (auto it = solver.find("Transient"); it != solver.end())
-  {
-    transient = TransientSolverData(*it);
-  }
-  if (auto it = solver.find("Linear"); it != solver.end())
-  {
-    linear = LinearSolverData(*it);
-  }
+  driven = ParseOptional<DrivenSolverData>(solver, "Driven");
+  eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
+  electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
+  transient = ParseOptional<TransientSolverData>(solver, "Transient");
+  linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
 int GetNumSteps(double start, double end, double delta)
