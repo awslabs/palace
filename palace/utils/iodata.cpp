@@ -422,6 +422,28 @@ void IoData::CheckConfiguration()
     // subsequent preconditioners with complex coefficients.
     solver.linear.reorder_reuse = false;
   }
+  if (solver.linear.mg_cycle_it < 0)
+  {
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) && solver.linear.type == LinearSolver::AMS) // what about magneto?
+    {
+      solver.linear.mg_cycle_it = 2;
+    }
+    else
+    {
+      solver.linear.mg_cycle_it = 1;
+    }
+  }
+  if (solver.linear.mg_smooth_it < 0)
+  {
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) && solver.linear.type == LinearSolver::AMS) // what about magneto?
+    {
+      solver.linear.mg_smooth_it = 2;
+    }
+    else
+    {
+      solver.linear.mg_smooth_it = 1;
+    }
+  }
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;

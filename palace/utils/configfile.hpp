@@ -853,14 +853,14 @@ public:
 
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
-  int mg_cycle_it = 1;
+  int mg_cycle_it = -1;
 
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;
 
   // Number of pre-/post-smoothing iterations at each geometric or algebraic multigrid
   // level.
-  int mg_smooth_it = 1;
+  int mg_smooth_it = -1;
 
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = -1;
@@ -949,7 +949,7 @@ public:
   int ilu_fill_level = 1;
 
   // Additional AMS params?
-  int ams_max_it = 1;
+  int ams_max_it = 2; // 2 seems like a good default for driven/eigen AND magnetostatic
   int ams_cycle_type = 14;
   int ams_smooth_it = 1;
 

@@ -47,6 +47,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetPrintFactorStatistics(print > 1);
   this->SetPrintSolveStatistics(print > 1);
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
+  //this->SetKrylovSolver(strumpack::KrylovSolver::PREC_GMRES);  // test
+  //this->SetKrylovSolver(strumpack::KrylovSolver::REFINE);  // test
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
   switch (reorder)
@@ -104,6 +106,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     case SparseCompression::NONE:
       break;
   }
+  //this->solver_->options().set_compression_min_sep_size(100);
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {
   //   this->EnableGPU();  // XX TODO: GPU support disabled for now
