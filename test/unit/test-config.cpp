@@ -154,7 +154,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
            {"Excitation", false}}}},
         {"WavePort", {{{"Attributes", {6}}, {"Index", 1}, {"Excitation", true}}}}};
     config::BoundaryData boundary_data(boundaries);
-    CHECK(!config::Validate(boundary_data).empty());
+    CHECK(config::Validate(boundary_data).has_value());
   }
 
   SECTION("Mislabeled excitation index fails validation")
@@ -168,7 +168,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
            {"Excitation", 2}}}},
         {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 1}}}}};
     config::BoundaryData bd1(boundaries1);
-    CHECK(!config::Validate(bd1).empty());
+    CHECK(config::Validate(bd1).has_value());
 
     json boundaries2 = {
         {"LumpedPort",
@@ -179,7 +179,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
            {"Excitation", 2}}}},
         {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 0}}}}};
     config::BoundaryData bd2(boundaries2);
-    CHECK(!config::Validate(bd2).empty());
+    CHECK(config::Validate(bd2).has_value());
   }
 
   SECTION("Upgrade excitation index 1")
@@ -270,7 +270,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                           {"Direction", "-Y"},
                           {"Excitation", 1}}}}};
     config::BoundaryData boundary_data(boundaries);
-    CHECK(config::Validate(boundary_data).empty());
+    CHECK(!config::Validate(boundary_data).has_value());
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 1);
   }
@@ -289,7 +289,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                           {"Direction", "-Y"},
                           {"Excitation", 2}}}}};
     config::BoundaryData boundary_data(boundaries);
-    CHECK(config::Validate(boundary_data).empty());
+    CHECK(!config::Validate(boundary_data).has_value());
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
   }
@@ -301,7 +301,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
          {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
         {"Terminal", {{{"Attributes", {6}}, {"Index", 1}}}}};
     config::BoundaryData boundary_data(boundaries);
-    CHECK(!config::Validate(boundary_data).empty());
+    CHECK(config::Validate(boundary_data).has_value());
   }
 
   SECTION("SurfaceCurrent duplicate index fails validation")
@@ -311,7 +311,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
          {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
         {"SurfaceCurrent", {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}}}}};
     config::BoundaryData boundary_data(boundaries);
-    CHECK(!config::Validate(boundary_data).empty());
+    CHECK(config::Validate(boundary_data).has_value());
   }
 }
 
