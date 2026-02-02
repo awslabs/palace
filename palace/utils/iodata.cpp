@@ -447,9 +447,11 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.mg_cycle_it < 0)
   {
-    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) && solver.linear.type == LinearSolver::AMS)
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
+        solver.linear.type == LinearSolver::AMS)
     {
-      // For frequency-domain problems with AMS, 2 multigrid cycles usually leads to fewer iterations and comparable or faster runtimes.
+      // For frequency-domain problems with AMS, 2 multigrid cycles usually leads to fewer
+      // iterations and comparable or faster runtimes.
       solver.linear.mg_cycle_it = 2;
     }
     else
@@ -459,9 +461,11 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.mg_smooth_it < 0)
   {
-    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) && solver.linear.type == LinearSolver::AMS)
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
+        solver.linear.type == LinearSolver::AMS)
     {
-      // For frequency-domain problems with AMS, 2 smoothing iterations usually leads to fewer iterations and comparable or faster runtimes.
+      // For frequency-domain problems with AMS, 2 smoothing iterations usually leads to
+      // fewer iterations and comparable or faster runtimes.
       solver.linear.mg_smooth_it = 2;
     }
     else
