@@ -179,6 +179,7 @@
         "AMSVectorInterpolation": { "type": "boolean" },
         "AMSSingularOperator": { "type": "boolean" },
         "AMGAggressiveCoarsening": { "type": "boolean" },
+        "ASMMaxIts": { "type": "integer", "minimum": 0 },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
         "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorTol": { "type": "number", "minimum": 0.0 },

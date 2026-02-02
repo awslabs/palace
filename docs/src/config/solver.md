@@ -564,3 +564,4 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"AMSVectorInterpolation" [false]`
   - `"AMSSingularOperator" [false]`
   - `"AMGAggressiveCoarsening" [false]`
+  - `"AMSMaxIts" [2]`
