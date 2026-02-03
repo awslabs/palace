@@ -17,6 +17,11 @@ If you are a user, we recommend you install [*Palace* with
 Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
 source](#Build-from-source) instead.
 
+!!! note "Installation issues/questions?"
+    
+    If the steps described in the sections below do not work as expected, consult the
+    [Frequently Asked Questions](faq.md#Installation) page.
+
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To
@@ -28,7 +33,18 @@ certain systems (such as Ubuntu for Windows Subsystem for Linux). Consult the
 page](https://spack.readthedocs.io/en/latest/installing_prerequisites.html) to
 ensure all required utilities are installed.
 
-Once you have installed Spack, run:
+Once you have installed Spack, check that the version of *Palace* you want to
+install is available
+
+```bash
+spack versions palace
+```
+
+If you do not see the latest version, your Spack package repository might be
+outdated. Consult the [Frequently Asked Questions](@ref "Spack does not have the
+most recent version of Palace") page.
+
+Once you confirmed that the desired version of *Palace* is available, run:
 
 ```bash
 spack install palace
