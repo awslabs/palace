@@ -19,6 +19,10 @@ inputs:
     description: 'Run regression tests after build'
     required: false
     default: 'true'
+  use-develop-deps:
+    description: 'Use develop versions of key dependencies'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -118,6 +122,19 @@ runs:
             mumps:
               require: fflags=-nofor-main
         INTELEOF
+        fi
+
+        if [[ "${{ inputs.use-develop-deps }}" == "true" ]]; then
+          cat << DEVEOF >> spack.yaml
+            hypre:
+              require: "@develop"
+            mfem:
+              require: "@develop"
+        DEVEOF
+          # Remove pinned MFEM commit from package.py to allow @develop.
+          # TODO: Remove this hack after we track the released version of MFEM
+          # Requires: https://github.com/spack/spack-packages/pull/3040
+          sed -i 's/mfem+mpi+metis+lapack cxxstd=17 commit=[^"]*"/mfem+mpi+metis+lapack cxxstd=17"/g' spack_repo/local/packages/palace/package.py
         fi
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
