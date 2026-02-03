@@ -40,11 +40,11 @@ class BdrGridFunctionCoefficient
 protected:
   const mfem::ParMesh &mesh;
   // Thread-indexed storage for element transformations to avoid race conditions.
-  mutable std::vector<mfem::FaceElementTransformations> FETs;
-  mutable std::vector<mfem::IsoparametricTransformation> T1s, T2s;
+  std::vector<mfem::FaceElementTransformations> FETs;
+  std::vector<mfem::IsoparametricTransformation> T1s, T2s;
   const double scaling;  // scaling factor used for unit conversions
 
-  bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip) const
+  bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip)
   {
     // Get the element transformations neighboring the element, and optionally set the
     // integration point too.
@@ -53,7 +53,7 @@ protected:
                                                 &ip);
   }
 
-  mfem::FaceElementTransformations &FET() const { return FETs[utils::GetThreadNum()]; }
+  mfem::FaceElementTransformations &FET() { return FETs[utils::GetThreadNum()]; }
 
 public:
   BdrGridFunctionCoefficient(const mfem::ParMesh &mesh, double scaling = 1.0)
