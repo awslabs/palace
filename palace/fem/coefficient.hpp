@@ -720,6 +720,31 @@ public:
   }
 };
 
+// Thread-safe inner product coefficient. Unlike mfem::InnerProductCoefficient, this uses
+// stack-allocated temporary vectors instead of mutable member variables, making it safe
+// for concurrent evaluation from multiple OpenMP threads.
+class InnerProductCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::VectorCoefficient &a;
+  mfem::VectorCoefficient &b;
+
+public:
+  InnerProductCoefficient(mfem::VectorCoefficient &A, mfem::VectorCoefficient &B)
+    : mfem::Coefficient(), a(A), b(B)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    // Use stack-allocated vectors instead of mutable members for thread safety
+    StaticVector<3> va, vb;
+    a.Eval(va, T, ip);
+    b.Eval(vb, T, ip);
+    return va * vb;
+  }
+};
+
 //
 // More helpful coefficient types. Wrapper coefficients allow additions of scalar and vector
 // or matrix coefficients. Restricted coefficients only compute the coefficient if for the
