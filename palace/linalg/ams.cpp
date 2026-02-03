@@ -22,8 +22,8 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
     // scalar Pi-space corrections.
     cycle_type(vector_interp ? 1 : 14), space_dim(nd_fespace.SpaceDimension()),
-    // When used as the coarse solver of geometric multigrid, always do only a single
-    // V-cycle.
+    // When used as the coarse solver of geometric multigrid, control the number of AMS
+    // V-cycles with AMSMaxIts.
     ams_it(cycle_it), ams_smooth_it(smooth_it),
     // If we know the operator is singular (no mass matrix, for magnetostatic problems),
     // internally the AMS solver will avoid G-space corrections.
