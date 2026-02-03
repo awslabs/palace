@@ -121,23 +121,20 @@ public:
 
     // For interior faces, compute Jₛ = n x H = n x μ⁻¹ (B1 - B2), where B1 (B2) is B in
     // element 1 (element 2) and n points into element 1.
-    double W_data[3], VU_data[3];
-    mfem::Vector W(W_data, vdim), VU(VU_data, vdim);
+    StaticVector<3> W, VU;
     B.GetVectorValue(*FET().Elem1, FET().Elem1->GetIntPoint(), W);
     mat_op.GetInvPermeability(FET().Elem1->Attribute).Mult(W, VU);
     if (FET().Elem2)
     {
       // Double-sided, not a true boundary. Add result with opposite normal.
-      double VL_data[3];
-      mfem::Vector VL(VL_data, vdim);
+      StaticVector<3> VL;
       B.GetVectorValue(*FET().Elem2, FET().Elem2->GetIntPoint(), W);
       mat_op.GetInvPermeability(FET().Elem2->Attribute).Mult(W, VL);
       VU -= VL;
     }
 
     // Orient with normal pointing into element 1.
-    double normal_data[3];
-    mfem::Vector normal(normal_data, vdim);
+    StaticVector<3> normal;
     GetNormal(T, normal, ori);
     V.SetSize(vdim);
     linalg::Cross3(normal, VU, V);
@@ -183,15 +180,12 @@ public:
 
     // For interior faces, compute either F ⋅ n as the average or by adding the
     // contributions from opposite sides with opposite normals.
-    const int vdim = T.GetSpaceDim();
-    double VU_data[3];
-    mfem::Vector VU(VU_data, vdim);
+    StaticVector<3> VU;
     GetLocalFlux(*FET().Elem1, VU);
     if (FET().Elem2)
     {
       // Double-sided, not a true boundary.
-      double VL_data[3];
-      mfem::Vector VL(VL_data, vdim);
+      StaticVector<3> VL;
       GetLocalFlux(*FET().Elem2, VL);
       if (two_sided)
       {
@@ -209,8 +203,7 @@ public:
 
     // Dot with normal direction and assign appropriate sign. The normal is oriented to
     // point into element 1.
-    double normal_data[3];
-    mfem::Vector normal(normal_data, vdim);
+    StaticVector<3> normal;
     GetNormal(T, normal, ori);
     double flux = VU * normal;
     if (two_sided)
@@ -220,8 +213,7 @@ public:
     else
     {
       // Orient outward from the surface with the given center.
-      double x_data[3];
-      mfem::Vector x(x_data, vdim);
+      StaticVector<3> x;
       T.Transform(ip, x);
       x -= x0;
       return (x * normal < 0.0) ? -flux : flux;
@@ -234,8 +226,7 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
   // Flux D.
-  double W_data[3];
-  mfem::Vector W(W_data, T.GetSpaceDim());
+  StaticVector<3> W;
   E->GetVectorValue(T, T.GetIntPoint(), W);
   mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
   V *= scaling;
@@ -256,8 +247,7 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
                                                             mfem::Vector &V) const
 {
   // Flux E x H = E x μ⁻¹ B.
-  double W1_data[3], W2_data[3];
-  mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
+  StaticVector<3> W1, W2;
   B->GetVectorValue(T, T.GetIntPoint(), W1);
   mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
   E->GetVectorValue(T, T.GetIntPoint(), W1);
@@ -300,8 +290,7 @@ private:
       if (use_elem2)
       {
         // Double-sided, not a true boundary. Just average the solution from both sides.
-        double W_data[3];
-        mfem::Vector W(W_data, V.Size());
+        StaticVector<3> W;
         U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
         add(0.5, V, W, V);
       }
@@ -345,14 +334,12 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval
     if (FET().Elem2)
     {
       // Double-sided, not a true boundary. Just average the field solution from both sides.
-      double W_data[3];
-      mfem::Vector W(W_data, V.Size());
+      StaticVector<3> W;
       U.GetVectorValue(*FET().Elem2, FET().Elem2->GetIntPoint(), W);
       add(0.5, V, W, V);
     }
   };
-  double V_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim());
+  StaticVector<3> V;
   GetLocalVectorValueDefault(E.Real(), V);
   double V2 = V * V;
   if (E.HasImag())
@@ -375,8 +362,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
   bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
   // Get single-sided solution on air (vacuum) side and neighboring element attribute.
-  double V_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  StaticVector<3> V, normal;
   GetNormal(T, normal, ori);
   int attr = GetLocalVectorValue(FET(), E.Real(), V, true);
   if (attr <= 0)
@@ -406,9 +392,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
   bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
   // Get single-sided solution on substrate side and neighboring element attribute.
-  double V_data[3], W_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
-      normal(normal_data, T.GetSpaceDim());
+  StaticVector<3> V, W, normal;
   GetNormal(T, normal, ori);
   int attr = GetLocalVectorValue(FET(), E.Real(), V, false);
   if (attr <= 0)
@@ -440,8 +424,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
   bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
   // Get single-sided solution on air side and neighboring element attribute.
-  double V_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  StaticVector<3> V, normal;
   GetNormal(T, normal, ori);
   int attr = GetLocalVectorValue(FET(), E.Real(), V, true);
   if (attr <= 0)
@@ -525,8 +508,7 @@ inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>::GetLocalEne
 {
   // Only the real part of the permittivity contributes to the energy (imaginary part
   // cancels out in the inner product due to symmetry).
-  double V_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim());
+  StaticVector<3> V;
   U.Real().GetVectorValue(T, T.GetIntPoint(), V);
   double dot = mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
   if (U.HasImag())
@@ -541,8 +523,7 @@ template <>
 inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEnergyDensity(
     mfem::ElementTransformation &T) const
 {
-  double V_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim());
+  StaticVector<3> V;
   U.Real().GetVectorValue(T, T.GetIntPoint(), V);
   double dot = mat_op.GetInvPermeability(T.Attribute).InnerProduct(V, V);
   if (U.HasImag())
@@ -564,8 +545,7 @@ private:
 
   void GetLocalPower(mfem::ElementTransformation &T, mfem::Vector &V) const
   {
-    double W1_data[3], W2_data[3];
-    mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
+    StaticVector<3> W1, W2;
     B.Real().GetVectorValue(T, T.GetIntPoint(), W1);
     mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
     E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
@@ -608,8 +588,7 @@ public:
       GetLocalPower(*FET().Elem1, V);
       if (FET().Elem2)
       {
-        double W_data[3];
-        mfem::Vector W(W_data, V.Size());
+        StaticVector<3> W;
         GetLocalPower(*FET().Elem2, W);
         add(0.5, V, W, V);
       }
@@ -647,8 +626,7 @@ public:
     U.GetVectorValue(*FET().Elem1, FET().Elem1->GetIntPoint(), V);
     if (FET().Elem2)
     {
-      double W_data[3];
-      mfem::Vector W(W_data, V.Size());
+      StaticVector<3> W;
       U.GetVectorValue(*FET().Elem2, FET().Elem2->GetIntPoint(), W);
       add(0.5, V, W, V);
     }
@@ -715,8 +693,7 @@ public:
     GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
     // Always evaluate in element 1, assuming the inner product is continuous.
-    double V_data[3], Q_data[3];
-    mfem::Vector V(V_data, T.GetSpaceDim()), Q(Q_data, T.GetSpaceDim());
+    StaticVector<3> V, Q;
     U.GetVectorValue(*FET().Elem1, FET().Elem1->GetIntPoint(), V);
     coeff.Eval(Q, T, ip);
     return V * Q;
@@ -924,8 +901,7 @@ public:
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    double U_data[3];
-    mfem::Vector U(U_data, vdim);
+    StaticVector<3> U;
     V.SetSize(vdim);
     V = 0.0;
     for (auto &[coeff, a] : c)
