@@ -385,8 +385,7 @@ public:
 
     // Compute Eₜ + n ⋅ Eₙ . The normal returned by GetNormal points out of the
     // computational domain, so we reverse it (direction of propagation is into the domain).
-    double normal_data[3];
-    mfem::Vector normal(normal_data, vdim);
+    StaticVector<3> normal;
     BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
     if constexpr (Type == ValueType::REAL)
     {
@@ -496,15 +495,13 @@ public:
     }();
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
-    double U_data[3];
-    mfem::Vector U(U_data, vdim);
+    StaticVector<3> U;
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
+      StaticVector<3> dU;
       En.Imag().GetGradient(*T_submesh, dU);
       U -= dU;
     }
@@ -513,8 +510,7 @@ public:
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      double dU_data[3];
-      mfem::Vector dU(dU_data, vdim);
+      StaticVector<3> dU;
       En.Real().GetGradient(*T_submesh, dU);
       U += dU;
     }
