@@ -23,6 +23,10 @@ The format of this changelog is based on
 
   - Fixed a bug in the computation of the waveport maximum propagation constant in parallel simulations
     [PR 580](https://github.com/awslabs/palace/pull/580).
+  - Fixed a bug where `BdrFieldCoefficient::Eval` used a comma operator instead of addition
+    when computing the average of field values on interior boundaries, causing incorrect
+    results for interior trace postprocessing.
+    [PR 621](https://github.com/awslabs/palace/pull/621).
 
 ## [0.15.0] - 2025-12-2
 
