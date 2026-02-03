@@ -22,6 +22,9 @@
 namespace palace
 {
 
+// Alias for MFEM's constant coefficient (thread-safe).
+using ConstantCoefficient = mfem::ConstantCoefficient;
+
 //
 // Derived coefficients which compute single values on internal boundaries where a possibly
 // discontinuous function is given as an input grid function. These are all cheap to

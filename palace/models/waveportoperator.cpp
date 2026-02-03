@@ -296,10 +296,9 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
   attr_marker = 1;
   mfem::VectorGridFunctionCoefficient S0t_func(&S0t.Real()), E0tr_func(&E0t.Real()),
       E0ti_func(&E0t.Imag());
-  InnerProductCoefficient sr(S0t_func, port_nxH0r_func),
-      si(S0t_func, port_nxH0i_func), prr(E0tr_func, port_nxH0r_func),
-      pir(E0ti_func, port_nxH0r_func), pri(E0tr_func, port_nxH0i_func),
-      pii(E0ti_func, port_nxH0i_func);
+  InnerProductCoefficient sr(S0t_func, port_nxH0r_func), si(S0t_func, port_nxH0i_func),
+      prr(E0tr_func, port_nxH0r_func), pir(E0ti_func, port_nxH0r_func),
+      pri(E0tr_func, port_nxH0i_func), pii(E0ti_func, port_nxH0i_func);
   mfem::SumCoefficient pr(prr, pii), pi(pir, pri, 1.0, -1.0);
   std::complex<double> dot[2] = {
       fem::IntegrateFunctionLocal(mesh, attr_marker, false, sr) +
@@ -1020,9 +1019,8 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
       *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
   mfem::VectorGridFunctionCoefficient Er_func(&port_E->Real()), Ei_func(&port_E->Imag());
-  InnerProductCoefficient srr(Er_func, port_nxH0r_func),
-      sir(Ei_func, port_nxH0r_func), sri(Er_func, port_nxH0i_func),
-      sii(Ei_func, port_nxH0i_func);
+  InnerProductCoefficient srr(Er_func, port_nxH0r_func), sir(Ei_func, port_nxH0r_func),
+      sri(Er_func, port_nxH0i_func), sii(Ei_func, port_nxH0i_func);
   mfem::SumCoefficient sr(srr, sii), si(sir, sri, 1.0, -1.0);
   std::complex<double> dot = {
       -fem::IntegrateFunctionLocal(port_submesh, attr_marker, false, sr),

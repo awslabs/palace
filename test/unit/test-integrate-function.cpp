@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 
@@ -20,21 +21,6 @@ namespace palace
 {
 namespace
 {
-
-// Simple constant coefficient for testing.
-// This is thread-safe as it has no mutable state.
-class ConstantCoefficient : public mfem::Coefficient
-{
-private:
-  double value;
-
-public:
-  ConstantCoefficient(double v) : value(v) {}
-  double Eval(mfem::ElementTransformation &, const mfem::IntegrationPoint &) override
-  {
-    return value;
-  }
-};
 
 // Coordinate-dependent coefficient for testing: f(x,y,z) = x + 2y + 3z.
 // This is thread-safe as it has no mutable state.
@@ -205,6 +191,81 @@ TEST_CASE("IntegrateFunction", "[integrate][Serial]")
 
     // Results should match between the two methods.
     REQUIRE_THAT(result_new, Catch::Matchers::WithinRel(result_mfem, 1e-10));
+  }
+}
+
+TEST_CASE("InnerProductCoefficient", "[coefficient][Serial]")
+{
+  SECTION("Computes dot product correctly")
+  {
+    // Create two constant vector coefficients: a = (1, 2, 3), b = (4, 5, 6).
+    // Expected: a · b = 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32.
+    mfem::Vector a_vec(3), b_vec(3);
+    a_vec[0] = 1.0;
+    a_vec[1] = 2.0;
+    a_vec[2] = 3.0;
+    b_vec[0] = 4.0;
+    b_vec[1] = 5.0;
+    b_vec[2] = 6.0;
+
+    mfem::VectorConstantCoefficient a_coeff(a_vec), b_coeff(b_vec);
+    InnerProductCoefficient ip_coeff(a_coeff, b_coeff);
+
+    // Evaluate at a dummy transformation (the constant coefficients ignore it).
+    mfem::IsoparametricTransformation T;
+    mfem::IntegrationPoint ip;
+    ip.Set3(0.5, 0.5, 0.5);
+
+    double result = ip_coeff.Eval(T, ip);
+    REQUIRE_THAT(result, Catch::Matchers::WithinRel(32.0, 1e-14));
+  }
+}
+
+TEST_CASE("BdrInnerProductCoefficient", "[coefficient][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  SECTION("Computes boundary inner product correctly")
+  {
+    // Create a simple 3D mesh.
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
+    auto mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    serial_mesh.reset();
+
+    // Create Nedelec space and grid function.
+    mfem::ND_FECollection fec(1, mesh->Dimension());
+    mfem::ParFiniteElementSpace fespace(mesh.get(), &fec);
+    mfem::ParGridFunction gf(&fespace);
+
+    // Set grid function to a constant vector field (1, 0, 0).
+    mfem::Vector const_vec(3);
+    const_vec[0] = 1.0;
+    const_vec[1] = 0.0;
+    const_vec[2] = 0.0;
+    mfem::VectorConstantCoefficient const_coeff(const_vec);
+    gf.ProjectCoefficient(const_coeff);
+
+    // Create a coefficient that returns (2, 3, 4).
+    mfem::Vector coeff_vec(3);
+    coeff_vec[0] = 2.0;
+    coeff_vec[1] = 3.0;
+    coeff_vec[2] = 4.0;
+    mfem::VectorConstantCoefficient vec_coeff(coeff_vec);
+
+    // BdrInnerProductCoefficient should compute gf · vec_coeff = (1,0,0) · (2,3,4) = 2.
+    BdrInnerProductCoefficient bdr_ip(gf, vec_coeff);
+
+    // Mark all boundary elements.
+    int bdr_attr_max = mesh->bdr_attributes.Max();
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+
+    // Integrate over boundary - should be 2 * surface_area = 2 * 6 = 12.
+    auto GetOrder = [](const mfem::ElementTransformation &) { return 2; };
+    double result = fem::IntegrateFunction(*mesh, marker, true, bdr_ip, GetOrder);
+
+    REQUIRE_THAT(result, Catch::Matchers::WithinRel(12.0, 1e-10));
   }
 }
 
