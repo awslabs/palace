@@ -659,7 +659,7 @@ public:
     // For interior faces, compute the average.
     if (FET.Elem2)
     {
-      return 0.5 * (U.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint()),
+      return 0.5 * (U.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint()) +
                     U.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint()));
     }
     else
