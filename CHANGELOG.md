@@ -16,6 +16,10 @@ The format of this changelog is based on
   - Added JSON schema validation for configuration files at runtime, with embedded schemas
     and detailed error messages including valid enum options
     [PR 613](https://github.com/awslabs/palace/pull/613).
+  - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
+    (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
+    Many runtime checks are now caught earlier at configuration parsing time with clearer
+    error messages [PR XXX](https://github.com/awslabs/palace/pull/XXX).
   - Added support for electric current dipole source excitations. Current dipoles can be
     configured as an array in `config["Domains"]["CurrentDipole"]` with specifications for
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
@@ -30,6 +34,8 @@ The format of this changelog is based on
     when computing the average of field values on interior boundaries, causing incorrect
     results for interior trace postprocessing.
     [PR 621](https://github.com/awslabs/palace/pull/621).
+  - Fixed port excitation parsing to correctly handle signed integer values
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 
