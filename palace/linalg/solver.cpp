@@ -6,8 +6,102 @@
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 
+#include <fstream> // for matrix export?
+
 namespace palace
 {
+
+void ExportHypreParMatrixToMM(const mfem::HypreParMatrix &A, const std::string &filename)
+{
+  MPI_Comm comm = A.GetComm();
+  int rank, size;
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
+
+  // Get local CSR data
+  hypre_ParCSRMatrix *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
+  hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(parcsr);
+  hypre_CSRMatrix *offd = hypre_ParCSRMatrixOffd(parcsr);
+
+  HYPRE_BigInt *col_map = hypre_ParCSRMatrixColMapOffd(parcsr);
+  HYPRE_BigInt first_row = hypre_ParCSRMatrixFirstRowIndex(parcsr);
+  HYPRE_BigInt glob_rows = hypre_ParCSRMatrixGlobalNumRows(parcsr);
+  HYPRE_BigInt glob_cols = hypre_ParCSRMatrixGlobalNumCols(parcsr);
+
+  // Merge diag and offd for this rank
+  hypre_CSRMatrix *merged = hypre_MergeDiagAndOffd(parcsr);
+  hypre_CSRMatrixMigrate(merged, HYPRE_MEMORY_HOST);
+
+  HYPRE_Int n_loc = hypre_CSRMatrixNumRows(merged);
+  HYPRE_Int *I = hypre_CSRMatrixI(merged);
+  HYPRE_BigInt *J = hypre_CSRMatrixBigJ(merged);
+  double *data = hypre_CSRMatrixData(merged);
+  HYPRE_Int nnz_loc = I[n_loc];
+
+  // Gather global NNZ
+  HYPRE_BigInt nnz_glob;
+  HYPRE_BigInt nnz_loc_big = nnz_loc;
+  MPI_Allreduce(&nnz_loc_big, &nnz_glob, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+
+  // Write sequentially (rank 0 writes header, then each rank appends)
+  for (int r = 0; r < size; r++)
+  {
+    MPI_Barrier(comm);
+    if (r == rank)
+    {
+      std::ofstream file(filename, r == 0 ? std::ios::out : std::ios::app);
+      if (r == 0)
+      {
+        file << "%%MatrixMarket matrix coordinate real general\n";
+        file << glob_rows << " " << glob_cols << " " << nnz_glob << "\n";
+      }
+      for (HYPRE_Int i = 0; i < n_loc; i++)
+      {
+        for (HYPRE_Int j = I[i]; j < I[i + 1]; j++)
+        {
+          // Matrix Market is 1-indexed
+          file << (first_row + i + 1) << " " << (J[j] + 1) << " " << data[j] << "\n";
+        }
+      }
+    }
+  }
+
+  hypre_CSRMatrixDestroy(merged);
+}
+
+void ExportVectorToBinary(const mfem::Vector &v, const std::string &filename, MPI_Comm comm)
+{
+  int rank, size;
+  rank = Mpi::Rank(comm);
+  size = Mpi::Size(comm);
+
+  // Gather all data to rank 0
+  int local_size = v.Size();
+  std::vector<int> sizes(size), displs(size);
+  MPI_Gather(&local_size, 1, MPI_INT, sizes.data(), 1, MPI_INT, 0, comm);
+
+  int global_size = 0;
+  if (rank == 0)
+  {
+    for (int i = 0; i < size; i++)
+    {
+      displs[i] = global_size;
+      global_size += sizes[i];
+    }
+  }
+
+  std::vector<double> global_data(rank == 0 ? global_size : 0);
+  const double *local_data = v.HostRead();
+  MPI_Gatherv(local_data, local_size, MPI_DOUBLE,
+              global_data.data(), sizes.data(), displs.data(), MPI_DOUBLE, 0, comm);
+
+  if (rank == 0)
+  {
+    std::ofstream file(filename, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(&global_size), sizeof(int));
+    file.write(reinterpret_cast<const char*>(global_data.data()), global_size * sizeof(double));
+  }
+}
 
 template <>
 void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
@@ -74,6 +168,8 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       // A = Ar + Ai.
       A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+      ExportHypreParMatrixToMM(*A, "matrix.mtx");
+      Mpi::Print("Exported matrix to matrix.mtx\n");
     }
     if (PtAPr)
     {
@@ -147,6 +243,20 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
 {
   if (pc->Height() == x.Size())
   {
+    static bool exported_static = false;
+    if (!exported_static)
+    {
+      // Check if RHS is non-zero
+      double norm = 0.0;
+      const double *data = x.Real().HostRead();
+      for (int i = 0; i < x.Real().Size(); i++) norm += data[i] * data[i];
+      if (norm > 1e-30)
+      {
+        ExportVectorToBinary(x.Real(), "rhs.bin", MPI_COMM_WORLD);
+        Mpi::Print("Exported RHS to rhs.bin\n");
+        exported_static = true;
+      }
+    }
     mfem::Array<const Vector *> X(2);
     mfem::Array<Vector *> Y(2);
     X[0] = &x.Real();
