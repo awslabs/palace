@@ -12,6 +12,7 @@
 #include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
+#include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
@@ -29,6 +30,10 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   //
   // TODO: This test can be expanded/improved to be a more robust test for the
   // actual function, not just the units.
+
+  // Initialize quadrature order for tests using granular constructors.
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
 
   Units units(0.496, 1.453);
 
