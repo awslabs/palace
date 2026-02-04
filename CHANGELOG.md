@@ -34,6 +34,16 @@ The format of this changelog is based on
     results for interior trace postprocessing.
     [PR 621](https://github.com/awslabs/palace/pull/621).
 
+#### Interface Changes
+
+  - `config["Boundaries"]["Terminal"]` must now be used for electrostatic and magnetostatic
+    simulations to compute capacitance and inductance matrices. Previously, terminals could
+    also be specified under `"LumpedPort"`.
+    [PR 624](https://github.com/awslabs/palace/pull/624).
+  - `config["Solver"]["Eigenmode"]["Target"]` is now always required for eigenmode
+    simulations. Previously, it could be omitted if a `"Driven"` section was also present.
+    [PR 624](https://github.com/awslabs/palace/pull/624).
+
 ## [0.15.0] - 2025-12-2
 
 #### New Features
