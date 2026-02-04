@@ -174,6 +174,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem+exceptions", type="test")
 
         depends_on("mfem+libunwind", when="build_type=Debug")
+        depends_on("eigen@3.5:")
 
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22

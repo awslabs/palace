@@ -115,12 +115,8 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
   // by the right singular vector of R corresponding to the minimum singular value.
   const auto S = R.rows();
   MFEM_ASSERT(S > 0 && R.cols() == S, "Invalid dimension mismatch when computing MRI!");
-  // For Eigen = v3.4.0 (latest tagged release as of 10/2023)
-  Eigen::JacobiSVD<Eigen::MatrixXcd> svd;
-  svd.compute(R, Eigen::ComputeFullV);
-  // For Eigen > v3.4.0 (GitLab repo is at v3.4.90 as of 10/2023)
-  // Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd;
-  // svd.compute(R);
+  Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd;
+  svd.compute(R);
   const auto &sigma = svd.singularValues();
   auto m = S - 1;
   while (m > 0 && sigma[m] < ORTHOG_TOL * sigma[0])
