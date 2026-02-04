@@ -6,10 +6,15 @@
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 
-#include <fstream> // for matrix export?
+#include <fstream>
+#include <iomanip>
 
 namespace palace
 {
+
+// Global variable to store first_row for vector export (set during matrix export)
+static HYPRE_BigInt g_first_row = 0;
+static bool g_first_row_set = false;
 
 void ExportHypreParMatrixToMM(const mfem::HypreParMatrix &A, const std::string &filename)
 {
@@ -27,6 +32,10 @@ void ExportHypreParMatrixToMM(const mfem::HypreParMatrix &A, const std::string &
   HYPRE_BigInt first_row = hypre_ParCSRMatrixFirstRowIndex(parcsr);
   HYPRE_BigInt glob_rows = hypre_ParCSRMatrixGlobalNumRows(parcsr);
   HYPRE_BigInt glob_cols = hypre_ParCSRMatrixGlobalNumCols(parcsr);
+
+  // Store first_row for vector export
+  g_first_row = first_row;
+  g_first_row_set = true;
 
   // Merge diag and offd for this rank
   hypre_CSRMatrix *merged = hypre_MergeDiagAndOffd(parcsr);
@@ -50,6 +59,7 @@ void ExportHypreParMatrixToMM(const mfem::HypreParMatrix &A, const std::string &
     if (r == rank)
     {
       std::ofstream file(filename, r == 0 ? std::ios::out : std::ios::app);
+      file << std::setprecision(17);  // Full double precision
       if (r == 0)
       {
         file << "%%MatrixMarket matrix coordinate real general\n";
@@ -69,37 +79,36 @@ void ExportHypreParMatrixToMM(const mfem::HypreParMatrix &A, const std::string &
   hypre_CSRMatrixDestroy(merged);
 }
 
-void ExportVectorToBinary(const mfem::Vector &v, const std::string &filename, MPI_Comm comm)
+void ExportVectorBinary(const mfem::Vector &v, const std::string &filename, 
+                        HYPRE_BigInt first_row, MPI_Comm comm)
 {
   int rank, size;
-  rank = Mpi::Rank(comm);
-  size = Mpi::Size(comm);
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
 
-  // Gather all data to rank 0
   int local_size = v.Size();
-  std::vector<int> sizes(size), displs(size);
-  MPI_Gather(&local_size, 1, MPI_INT, sizes.data(), 1, MPI_INT, 0, comm);
-
-  int global_size = 0;
-  if (rank == 0)
-  {
-    for (int i = 0; i < size; i++)
-    {
-      displs[i] = global_size;
-      global_size += sizes[i];
-    }
-  }
-
-  std::vector<double> global_data(rank == 0 ? global_size : 0);
   const double *local_data = v.HostRead();
-  MPI_Gatherv(local_data, local_size, MPI_DOUBLE,
-              global_data.data(), sizes.data(), displs.data(), MPI_DOUBLE, 0, comm);
 
-  if (rank == 0)
+  // Write sequentially
+  for (int r = 0; r < size; r++)
   {
-    std::ofstream file(filename, std::ios::binary);
-    file.write(reinterpret_cast<const char*>(&global_size), sizeof(int));
-    file.write(reinterpret_cast<const char*>(global_data.data()), global_size * sizeof(double));
+    MPI_Barrier(comm);
+    if (r == rank)
+    {
+      std::ofstream file(filename, r == 0 ? std::ios::binary : (std::ios::binary | std::ios::app));
+      if (r == 0)
+      {
+        int global_size;
+        MPI_Allreduce(&local_size, &global_size, 1, MPI_INT, MPI_SUM, comm);
+        file.write(reinterpret_cast<const char*>(&global_size), sizeof(int));
+      }
+      file.write(reinterpret_cast<const char*>(local_data), local_size * sizeof(double));
+    }
+    else if (r == 0)
+    {
+      int global_size;
+      MPI_Allreduce(&local_size, &global_size, 1, MPI_INT, MPI_SUM, comm);
+    }
   }
 }
 
@@ -168,8 +177,6 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       // A = Ar + Ai.
       A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
-      ExportHypreParMatrixToMM(*A, "matrix.mtx");
-      Mpi::Print("Exported matrix to matrix.mtx\n");
     }
     if (PtAPr)
     {
@@ -184,9 +191,14 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       DropSmallEntries();
     }
     pc->SetOperator(*A);
-    if (!save_assembled)
+    
+    // Export matrix after SetOperator
+    static bool matrix_exported = false;
+    if (!matrix_exported)
     {
-      A.reset();
+      ExportHypreParMatrixToMM(*A, "matrix.mtx");
+      Mpi::Print("Exported matrix to matrix.mtx\n");
+      matrix_exported = true;
     }
   }
   else if (hAr)
@@ -243,20 +255,6 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
 {
   if (pc->Height() == x.Size())
   {
-    static bool exported_static = false;
-    if (!exported_static)
-    {
-      // Check if RHS is non-zero
-      double norm = 0.0;
-      const double *data = x.Real().HostRead();
-      for (int i = 0; i < x.Real().Size(); i++) norm += data[i] * data[i];
-      if (norm > 1e-30)
-      {
-        ExportVectorToBinary(x.Real(), "rhs.bin", MPI_COMM_WORLD);
-        Mpi::Print("Exported RHS to rhs.bin\n");
-        exported_static = true;
-      }
-    }
     mfem::Array<const Vector *> X(2);
     mfem::Array<Vector *> Y(2);
     X[0] = &x.Real();
@@ -264,6 +262,17 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
     Y[0] = &y.Real();
     Y[1] = &y.Imag();
     pc->ArrayMult(X, Y);
+    
+    // Export RHS and solution vectors (once)
+    static bool exported = false;
+    if (!exported && g_first_row_set)
+    {
+      ExportVectorBinary(x.Real(), "rhs.bin", g_first_row, MPI_COMM_WORLD);
+      Mpi::Print("Exported RHS to rhs.bin\n");
+      ExportVectorBinary(y.Real(), "sol.bin", g_first_row, MPI_COMM_WORLD);
+      Mpi::Print("Exported SOL to sol.bin\n");
+      exported = true;
+    }
   }
   else
   {
