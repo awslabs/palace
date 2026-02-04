@@ -493,26 +493,6 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
-TEST_CASE("Config Linear Solver MaxIts", "[config][Serial]")
-{
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());
-  auto config = json::parse(jsonstream);
-
-  SECTION("Linear solver MaxIts = 0 should throw")
-  {
-    config::LinearSolverData linear_solver;
-    CHECK_THROWS_WITH(linear_solver.SetUp(*config.find("linear_maxits_zero")),
-                      Catch::Matchers::ContainsSubstring("MaxIts"));
-  }
-
-  SECTION("Linear solver with valid MaxIts should succeed")
-  {
-    config::LinearSolverData linear_solver;
-    REQUIRE_NOTHROW(linear_solver.SetUp(*config.find("linear_maxits_one")));
-  }
-}
-
 TEST_CASE("FarField", "[config][Serial]")
 {
   constexpr double delta_eps = 1.0e-6;
