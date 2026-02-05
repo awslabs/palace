@@ -22,7 +22,10 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SCHEMA_FILES})
 
 # Generate the header file
 set(SCHEMA_HEADER_CONTENT
-"// Auto-generated file - do not edit
+"// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Auto-generated file - do not edit
 // Generated from scripts/schema/*.json
 // Provides embedded JSON schema strings for runtime config validation without file dependencies.
 
@@ -61,7 +64,8 @@ endforeach()
 
 # Add a map for looking up schemas by path
 string(APPEND SCHEMA_HEADER_CONTENT
-"inline const std::unordered_map<std::string, const char*>& GetSchemaMap()
+"// Look up embedded schema strings by their relative path (e.g. \"config-schema.json\").
+inline const std::unordered_map<std::string, const char*>& GetSchemaMap()
 {
   static const std::unordered_map<std::string, const char*> schema_map = {
 ")

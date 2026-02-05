@@ -61,11 +61,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   }
 
   // Track $defs from this level.
-  json defs = root_defs;
-  if (schema.contains("$defs"))
-  {
-    defs = schema["$defs"];
-  }
+  const json &defs = schema.contains("$defs") ? schema["$defs"] : root_defs;
 
   // Check properties at this level.
   auto props_it = schema.find("properties");
@@ -146,7 +142,6 @@ json FindSchemaByKey(const json &schema, const std::string &key,
   return results[0];
 }
 
-// Find enum values in schema by following a JSON pointer path.
 // Resolve a $ref in a schema node. Returns the resolved schema, or null on failure.
 // The defs parameter provides $defs context for internal references.
 json ResolveRef(const json &node, const json &defs)
@@ -324,7 +319,8 @@ public:
              const std::string &message) override
   {
     errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
-    // Enhance type mismatch errors with actual type.
+    // Enhance type mismatch errors with actual type. These message strings are
+    // implementation details of json-schema-validator 2.4.0; update if upgrading.
     if (message == "unexpected instance type")
     {
       errors << " (got " << instance.type_name() << ")";
@@ -350,7 +346,7 @@ public:
     has_error = true;
   }
 
-  operator bool() const { return has_error; }
+  explicit operator bool() const { return has_error; }
   std::string get_errors() const { return errors.str(); }
 };
 

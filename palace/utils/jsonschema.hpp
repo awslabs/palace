@@ -5,7 +5,7 @@
 #define PALACE_UTILS_JSONSCHEMA_HPP
 
 #include <string>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace palace
 {

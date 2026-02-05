@@ -204,7 +204,11 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   // Validate against JSON schema.
   {
     std::string err = ValidateConfig(config);
-    MFEM_VERIFY(err.empty(), "Configuration file validation failed!\n  " << err);
+    if (!err.empty())
+    {
+      Mpi::Warning("Configuration file validation failed!\n{}", err);
+      Mpi::Abort(EXIT_FAILURE);
+    }
   }
 
   if (print)

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Configuration File Schema",
-  "description": "This is the description",
+  "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
   "additionalProperties": false,
   "required": ["Problem", "Model", "Domains", "Boundaries", "Solver"],

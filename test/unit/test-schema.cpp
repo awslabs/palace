@@ -26,15 +26,15 @@ TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial
     {
       std::string full_path = schema_dir + "/" + path;
       std::ifstream f(full_path);
-      if (f.is_open())
+      if (!f.is_open())
       {
-        // Parse both to compare (ignores whitespace differences).
-        json embedded = json::parse(embedded_content);
-        json source = json::parse(f);
-        INFO("Schema file: " << full_path);
-        CHECK(embedded == source);
+        SKIP("Schema source not found (installed build?): " << full_path);
       }
-      // If file doesn't exist, skip (might be running from install location).
+      // Parse both to compare (ignores whitespace differences).
+      json embedded = json::parse(embedded_content);
+      json source = json::parse(f);
+      INFO("Schema file: " << full_path);
+      CHECK(embedded == source);
     }
   }
 }
