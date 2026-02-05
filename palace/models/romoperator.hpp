@@ -98,7 +98,7 @@ struct InnerProductHybridBulkBoundary
 class MinimalRationalInterpolation
 {
 private:
-  // (Complex-valued) upper-trianglar matrix R from orthogonalization of the HDM samples.
+  // (Complex-valued) upper-triangular matrix R from orthogonalization of the HDM samples.
   // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and
   // support points z is used as an error indicator.
   std::vector<ComplexVector> Q;
