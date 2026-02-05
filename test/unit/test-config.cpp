@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -236,21 +237,19 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
 TEST_CASE("Config Linear Solver MaxIts", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());
-  auto config = json::parse(jsonstream);
-
-  SECTION("Linear solver MaxIts = 0 should throw")
+  SECTION("Linear solver MaxIts = 0 should fail schema validation")
   {
-    config::LinearSolverData linear_solver;
-    CHECK_THROWS_WITH(linear_solver.SetUp(*config.find("linear_maxits_zero")),
-                      Catch::Matchers::ContainsSubstring("MaxIts"));
+    json linear = {{"MaxIts", 0}};
+    std::string err = ValidateConfig(linear, "Linear");
+    CHECK(!err.empty());
+    CHECK(err.find("MaxIts") != std::string::npos);
   }
 
-  SECTION("Linear solver with valid MaxIts should succeed")
+  SECTION("Linear solver with valid MaxIts should pass schema validation")
   {
-    config::LinearSolverData linear_solver;
-    REQUIRE_NOTHROW(linear_solver.SetUp(*config.find("linear_maxits_one")));
+    json linear = {{"MaxIts", 1}};
+    std::string err = ValidateConfig(linear, "Linear");
+    CHECK(err.empty());
   }
 }
 
