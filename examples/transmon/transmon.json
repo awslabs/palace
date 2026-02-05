@@ -49,7 +49,8 @@
   },
   "Model": {
     "Refinement": {
-      "MaxIts": 0
+      "MaxIts": 0,
+      "UniformLevels": 0,
     },
     "Mesh": "mesh/transmon.msh2",
     "L0": 1.0e-6
