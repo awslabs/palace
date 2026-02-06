@@ -228,11 +228,11 @@ public:
   void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary,
                                               bool zero_metal);
 
-  // Fill vector corresponding to the tangential electric field H_t x n on a lumped port,
-  // with overall normalization such that the reference impedance \vert Z_R \vert = 1 in
-  // internal units. This is locally in the same direction as E_t, but because of lumped
-  // ports can have multiple attributes ports with different surface impedances, they are
-  // not just proportional to each other.
+  // Fill vector corresponding to the tangential field H_t x n on a lumped port, with
+  // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
+  // units. This is locally in the same direction as E_t, but because of lumped ports can
+  // have multiple attributes ports with different surface impedances, they are not just
+  // proportional to each other.
   void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
                                                 bool zero_metal);
 
