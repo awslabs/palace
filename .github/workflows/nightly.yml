@@ -18,6 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  packages: read
   statuses: write
   contents: read
   pull-requests: read
