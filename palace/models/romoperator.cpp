@@ -337,14 +337,8 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
+  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
 {
-  // Always use refined CGS with adaptive synthesis for higher accuracy on print-out.
-  if (iodata.solver.driven.adaptive_circuit_synthesis)
-  {
-    orthog_type = Orthogonalization::CGS2;
-  }
-
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogeneous, no special elimination is required on
