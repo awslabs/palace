@@ -26,9 +26,12 @@ julia --project -e 'using Pkg; Pkg.instantiate()'
 
 From this directory, run:
 ```bash
-julia --project -e 'include("transmon.jl"); generate_transmon()'
+julia --project -e 'include("transmon.jl"); generate_transmon(config_file="transmon_coarse.json")'
 ```
-This generates the mesh and configuration files used in the example.
+For the AMR example:
+```bash
+julia --project -e 'include("transmon.jl"); generate_transmon(config_file="transmon_amr.json", amr_iterations=2)'
+```
 
 To customize the device geometry, pass parameters to the function:
 ```bash
@@ -59,6 +62,7 @@ include(joinpath(ST_PATH, "SingleTransmon.jl"))
         mesh_filename::AbstractString = "transmon.msh2",
         config_filename::AbstractString = "transmon.json",
         solver_order = 2,
+        amr_iterations = 0,
         kwargs...
     )
 
@@ -75,6 +79,7 @@ This function creates a complete simulation setup by:
   - `config_filename`: Name of the output configuration file (default: "transmon.json")
   - `solver_order`: Finite element order (1 or 2). Higher order gives better accuracy
     but increases computational cost significantly (default: 2)
+  - `amr_iterations`: Number of iterations of Adaptive Mesh Refinement
 
 # Keyword Arguments
 
@@ -102,6 +107,7 @@ function generate_transmon(;
     mesh_filename::AbstractString="transmon.msh2",
     config_filename::AbstractString="transmon.json",
     solver_order=2,
+    amr_iterations=0,
     kwargs...
 )
     # Generate the solid model and mesh using DeviceLayout.jl.
@@ -119,6 +125,9 @@ function generate_transmon(;
     # Update paths for local directory structure.
     config["Model"]["Mesh"] = joinpath("mesh", mesh_filename)
     config["Problem"]["Output"] = "postpro"
+
+    # AMR.
+    config["Model"]["Refinement"]["MaxIts"] = amr_iterations
 
     # Set tight tolerances for reproducible results (important for CI/testing).
     config["Solver"]["Eigenmode"]["Tol"] = 1e-8
