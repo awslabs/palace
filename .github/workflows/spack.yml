@@ -87,6 +87,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
+          additional-test-cases: transmon/coarse
 
   build-test-x64-intel:
     needs: filter
@@ -97,6 +98,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: intel-oneapi
+          additional-test-cases: transmon/coarse
 
   build-test-arm64-gcc:
     needs: filter
@@ -107,6 +109,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
+          additional-test-cases: transmon/coarse
 
   build-test-arm64-llvm:
     needs: filter
@@ -117,6 +120,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
+          additional-test-cases: transmon/coarse
 
   build-test-arm64-gcc-armpl:
     needs: filter
@@ -128,6 +132,7 @@ jobs:
         with:
           toolchain: gcc
           math-libs: armpl-gcc
+          additional-test-cases: transmon/coarse
 
   # Test jobs
   test-x64-gcc:

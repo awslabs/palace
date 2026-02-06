@@ -87,7 +87,7 @@ jobs:
   nightly:
     needs: get-prs
     if: needs.get-prs.outputs.prs != '[]'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, x64]
     strategy:
       matrix:
         pr: ${{ fromJson(needs.get-prs.outputs.prs) }}
@@ -97,9 +97,10 @@ jobs:
         with:
           ref: refs/pull/${{ matrix.pr }}/merge
 
-      - name: Run nightly tests
-        run: |
-          echo "Running nightly tests for PR \#${{ matrix.pr }}"
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          test-cases: nightly
 
       - name: Set success status
         if: success()
