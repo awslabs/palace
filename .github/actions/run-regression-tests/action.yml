@@ -88,7 +88,7 @@ runs:
         julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ inputs.solver }}
 
         if [[ "$NUM_PROC_TEST" -ge 32 ]]; then
-            julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon/coarse" --palace-solver ${{ inputs.solver }}
+            julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon/amr" --palace-solver ${{ inputs.solver }}
         fi
 
         end_timer "Run Integration Tests"
