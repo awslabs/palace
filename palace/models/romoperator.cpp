@@ -47,7 +47,7 @@ namespace
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = linalg::InnerProductStandard>
+          typename InnerProductW = linalg::IdentityInnerProduct>
 inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
                                 std::size_t j, const InnerProductW &dot_op = {})
@@ -589,10 +589,11 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     auto &v = V.emplace_back(vector);
     if (weight_op_W.has_value())
     {
-      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
-                          dim_V, *weight_op_W);
-
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      OrthogonalizeColumn(
+          orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
+          [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
+          { return W.InnerProduct(x, y, r.Real()); });
+      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
       orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
     }
     else
@@ -661,9 +662,11 @@ void RomOperator::ReorthogonalizePROM()
     auto &v = V.at(i);
     if (weight_op_W.has_value())
     {
-      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(),
-                          i, *weight_op_W);
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v);
+      OrthogonalizeColumn(
+          orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(), i,
+          [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
+          { return W.InnerProduct(x, y, r.Real()); });
+      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
       orth_R_new(i, i) = std::sqrt(std::abs(norm_sq));
     }
     else
