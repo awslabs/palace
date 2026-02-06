@@ -22,6 +22,10 @@ permissions:
   contents: read
   pull-requests: read
 
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   # Determine which PRs need nightly testing based on filtering criteria
   get-prs:
