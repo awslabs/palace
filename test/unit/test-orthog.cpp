@@ -18,7 +18,7 @@ using namespace palace;
 using namespace Catch::Matchers;
 using namespace Catch;
 
-class InnerProductRealWeight
+class RealWeightedInnerProduct
 {
   // Choose generic operator, although can improve by refining for specialized type.
   std::shared_ptr<Operator> weight_op;
@@ -35,26 +35,22 @@ class InnerProductRealWeight
 
 public:
   template <typename OpType>
-  explicit InnerProductRealWeight(const std::shared_ptr<OpType> &weight_op_)
+  explicit RealWeightedInnerProduct(const std::shared_ptr<OpType> &weight_op_)
     : weight_op(weight_op_)
   {
+    MFEM_VERIFY(weight_op->Height() == weight_op->Width(),
+                "Real weight operator must be square! (" << weight_op->Height()
+                                                         << " != " << weight_op->Width());
   }
-  // Follow same conventions as Dot: yᴴ x or yᵀ x (note y comes second in the arguments).
-  double InnerProduct(const Vector &x, const Vector &y) const
+  // Follow same conventions as Dot:  yᴴ x or yᵀ x (note y comes second in the arguments).
+  double operator()(const Vector &x, const Vector &y) const
   {
     SetWorkspace(x);
     weight_op->Mult(x, v_workspace);
     return linalg::LocalDot(v_workspace, y);
   }
 
-  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
-  {
-    SetWorkspace(x);
-    weight_op->Mult(x, v_workspace);
-    return linalg::Dot(comm, v_workspace, y);
-  }
-
-  std::complex<double> InnerProduct(const ComplexVector &x, const ComplexVector &y) const
+  std::complex<double> operator()(const ComplexVector &x, const ComplexVector &y) const
   {
     using namespace std::complex_literals;
     SetWorkspace(x.Real());
@@ -70,14 +66,6 @@ public:
 
     return dot;
   }
-
-  std::complex<double> InnerProduct(MPI_Comm comm, const ComplexVector &x,
-                                    const ComplexVector &y) const
-  {
-    auto dot = InnerProduct(x, y);
-    Mpi::GlobalSum(1, &dot, comm);
-    return dot;
-  }
 };
 
 // Wapper class to make iteration over orthogonalization methods easy.
@@ -89,7 +77,7 @@ public:
   orthogonalize_wrapper(Orthogonalization orthgo_type_) : orthgo_type(orthgo_type_) {}
 
   template <typename VecType, typename ScalarType,
-            typename InnerProductW = linalg::InnerProductStandard>
+            typename InnerProductW = linalg::IdentityInnerProduct>
   void operator()(MPI_Comm comm, const std::vector<VecType> &V, VecType &w, ScalarType *H,
                   std::size_t m, const InnerProductW &dot_op = {}) const
   {
@@ -312,7 +300,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
 
   std::vector<double> H(2, 0.0);
 
-  InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   // Check orthogonality with respect to weight matrix
@@ -361,7 +349,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
 
   std::vector<std::complex<double>> H(2, 0.0);
 
-  InnerProductRealWeight weight_op{std::make_shared<mfem::DenseMatrix>(W)};
+  RealWeightedInnerProduct weight_op{std::make_shared<mfem::DenseMatrix>(W)};
   orthogonalize_fn(Mpi::World(), V, w, H.data(), 2, weight_op);
 
   auto W_wrap = ComplexWrapperOperator(&W, nullptr);

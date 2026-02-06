@@ -37,7 +37,7 @@ class SpaceOperator;
 //
 // The ParSumOperator defined in linalg/rap.hpp can only have a single diag policy so we
 // can't use that approach here.
-struct InnerProductHybridBulkBoundary
+struct HybridBulkBoundaryOperator
 {
   // Need this since SetEssentialTrueDofs makes pointer to these values, even though it
   // looks like it is passing by references.
@@ -46,12 +46,9 @@ struct InnerProductHybridBulkBoundary
   std::unique_ptr<ParOperator> W_inner_product_weight_bulk = {};
   std::unique_ptr<ParOperator> W_inner_product_weight_port = {};
 
-  mutable Vector v_workspace = {};
-
-  InnerProductHybridBulkBoundary(
-      mfem::Array<int> &&port_tdof_list_,
-      std::unique_ptr<ParOperator> &&W_inner_product_weight_bulk_,
-      std::unique_ptr<ParOperator> &&W_inner_product_weight_port_)
+  HybridBulkBoundaryOperator(mfem::Array<int> &&port_tdof_list_,
+                             std::unique_ptr<ParOperator> &&W_inner_product_weight_bulk_,
+                             std::unique_ptr<ParOperator> &&W_inner_product_weight_port_)
     : port_tdof_list{std::move(port_tdof_list_)},
       W_inner_product_weight_bulk{std::move(W_inner_product_weight_bulk_)},
       W_inner_product_weight_port{std::move(W_inner_product_weight_port_)}
@@ -66,17 +63,17 @@ struct InnerProductHybridBulkBoundary
                 "Mismatch sizes of inner product matrices!")
   }
 
-  inline auto NumCols() const { return W_inner_product_weight_bulk->NumCols(); }
+  auto NumCols() const { return W_inner_product_weight_bulk->NumCols(); }
 
-  inline auto NumRows() const { return W_inner_product_weight_bulk->NumRows(); }
+  auto NumRows() const { return W_inner_product_weight_bulk->NumRows(); }
 
-  inline void Mult(const Vector &x, Vector &y) const
+  void Mult(const Vector &x, Vector &y) const
   {
     W_inner_product_weight_bulk->Mult(x, y);
     W_inner_product_weight_port->AddMult(x, y);
   }
 
-  inline double InnerProduct(const Vector &x, const Vector &y) const
+  double InnerProduct(const Vector &x, const Vector &y, Vector &v_workspace) const
   {
     v_workspace.SetSize(x.Size());
     v_workspace.UseDevice(x.UseDevice());
@@ -84,9 +81,10 @@ struct InnerProductHybridBulkBoundary
     return linalg::LocalDot(y, v_workspace);
   }
 
-  inline double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y) const
+  double InnerProduct(MPI_Comm comm, const Vector &x, const Vector &y,
+                      Vector &v_workspace) const
   {
-    auto dot = InnerProduct(x, y);
+    auto dot = InnerProduct(x, y, v_workspace);
     Mpi::GlobalSum(1, &dot, comm);
     return dot;
   }
@@ -164,7 +162,7 @@ protected:
   // Weight operator for PROM basis if doing synthesis, in order to have correct
   // orthogonality to port vectors and converge with mesh / order. Default empty, which
   // means the identity weight in the finite element basis.
-  std::optional<InnerProductHybridBulkBoundary> weight_op_W = {};
+  std::optional<HybridBulkBoundaryOperator> weight_op_W = {};
 
   // Label to distinguish port modes from solution projection and to print PROM matrices.
   std::vector<std::string> v_node_label;
