@@ -135,7 +135,8 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parall
   {
     v.UseDevice(true);
     v.SetSize(mpi_size + 1);
-    v = 0.0;
+    auto d_v = v.Write();
+    mfem::forall(v.Size(), [=] MFEM_HOST_DEVICE(int i) { d_v[i] = 0.0; });
   }
 
   // Rank-wise orthogonal basis vectors
@@ -176,7 +177,8 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parall
   {
     v.UseDevice(true);
     v.SetSize(4);
-    v = 0.0;
+    auto d_v = v.Write();
+    mfem::forall(v.Size(), [=] MFEM_HOST_DEVICE(int i) { d_v[i] = 0.0; });
   }
 
   // Vector 1:
