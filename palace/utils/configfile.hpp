@@ -661,6 +661,10 @@ public:
   // Memory required for adaptive sampling convergence.
   std::size_t adaptive_memory = 2;
 
+  // Gram-Schmidt orthogonalization used in PROM construction, separate from linear solver
+  // orthogonalization option. Default to CGS2 for higher quality.
+  Orthogonalization adaptive_solver_gs_orthog_type = Orthogonalization::CGS2;
+
   // Return circuit matrices from port with port excitation vectors
   bool adaptive_circuit_synthesis = false;
 
