@@ -23,6 +23,14 @@ inputs:
     description: 'Use develop versions of key dependencies'
     required: false
     default: 'false'
+  test-cases:
+    description: 'Test cases: "default", "nightly", or space-separated list'
+    required: false
+    default: 'default'
+  additional-test-cases:
+    description: 'Additional test cases to run after default tests (space-separated list)'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -315,7 +323,7 @@ runs:
         path: |
           spack.yaml
           spack.lock
-        retention-days: 1
+        retention-days: 7
 
     - name: Push to GHCR cache
       shell: bash
@@ -331,6 +339,8 @@ runs:
       with:
         testing-on-build-runner: 'true'
         variant: ${{ inputs.variant }}
+        test-cases: ${{ inputs.test-cases }}
+        additional-test-cases: ${{ inputs.additional-test-cases }}
 
     # We print timing if we don't run the regression tests, otherwise, it will
     # be regression test job that prints the file. (This is for the build-xxx

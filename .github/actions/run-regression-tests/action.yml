@@ -25,6 +25,14 @@ inputs:
     description: 'Solver to test'
     required: false
     default: 'Default'
+  test-cases:
+    description: 'Test cases: "default", "nightly", or space-separated list'
+    required: false
+    default: 'default'
+  additional-test-cases:
+    description: 'Additional test cases to run after test-cases (space-separataed list)'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -84,11 +92,23 @@ runs:
           export PALACE_DEVICE=GPU
           export NUM_PROC_TEST=1
         fi
-        
-        julia --project=test/examples --color=yes test/examples/runtests.jl --palace-solver ${{ inputs.solver }}
 
-        if [[ "$NUM_PROC_TEST" -ge 32 ]]; then
-            julia --project=test/examples --color=yes test/examples/runtests.jl --test-cases "transmon/amr" --palace-solver ${{ inputs.solver }}
+        TEST_CASES="${{ inputs.test-cases }}"
+        if [[ "$TEST_CASES" == "nightly" ]]; then
+          TEST_CASES="transmon/amr"
+        elif [[ "$TEST_CASES" == "default" ]]; then
+          TEST_CASES=""
+        fi
+
+        julia --project=test/examples --color=yes test/examples/runtests.jl \
+          --palace-solver ${{ inputs.solver }} \
+          ${TEST_CASES:+--test-cases "$TEST_CASES"}
+
+        ADDITIONAL="${{ inputs.additional-test-cases }}"
+        if [[ -n "$ADDITIONAL" ]]; then
+          julia --project=test/examples --color=yes test/examples/runtests.jl \
+            --palace-solver ${{ inputs.solver }} \
+            --test-cases "$ADDITIONAL"
         fi
 
         end_timer "Run Integration Tests"

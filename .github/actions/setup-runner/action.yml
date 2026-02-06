@@ -110,6 +110,14 @@ runs:
 
         end_timer "Setup repositories"
 
+    - name: Setup gh
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo apt-get install -y gh
+        end_timer "Setup gh"
+
     - name: Setup Intel OneAPI
       if: inputs.setup-intel == 'true'
       shell: bash
