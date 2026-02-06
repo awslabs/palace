@@ -26,6 +26,9 @@ The format of this changelog is based on
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
     [documentation](https://awslabs.github.io/palace/dev/examples/antenna/#alternative-short-dipole-using-the-electric-current-dipole-operator)
     for additional information. [PR 556](https://github.com/awslabs/palace/pull/556).
+  - Added an option to specify the number of AMS iterations in `config["Solver"]["Linear"]["AMSMaxIts"]`,
+    with the default value changed from 1 to the solution order, and changed some of the AMS options.
+    [PR 625](https://github.com/awslabs/palace/pull/625).
 
 #### Bug Fixes
 
