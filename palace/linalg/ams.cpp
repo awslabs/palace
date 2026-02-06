@@ -176,7 +176,7 @@ void HypreAmsSolver::InitializeSolver()
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                              interp_type, Pmax);
 
-  int coarse_relax_type = 8;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
