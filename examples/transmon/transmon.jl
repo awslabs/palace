@@ -30,7 +30,7 @@ julia --project -e 'include("transmon.jl"); generate_transmon(config_file="trans
 ```
 For the AMR example:
 ```bash
-julia --project -e 'include("transmon.jl"); generate_transmon(config_file="transmon_amr.json", amr_iterations=2)'
+julia --project -e 'include("transmon.jl"); generate_transmon(config_file="transmon_amr.json", amr_iterations=2, solver_order=3)'
 ```
 
 To customize the device geometry, pass parameters to the function:
