@@ -1052,6 +1052,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_tol = driven.value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven.value("AdaptiveMaxSamples", adaptive_max_size);
   adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
+  adaptive_solver_gs_orthog_type =
+      driven.value("AdaptiveGSOrthogonalization", adaptive_solver_gs_orthog_type);
   adaptive_circuit_synthesis =
       driven.value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
 
