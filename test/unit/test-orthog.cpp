@@ -159,7 +159,10 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parall
   }
 }
 
-TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parallel][GPU]")
+
+// TODO: This test could be GPU enabled, but the code below is not correct for that due to
+// incorrect host syncing in set-up.
+TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parallel]")
 {
   auto orthogonalize_fn = GENERATE(orthogonalize_wrapper(Orthogonalization::MGS),
                                    orthogonalize_wrapper(Orthogonalization::CGS),
