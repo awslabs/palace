@@ -1,7 +1,7 @@
 {
   "Problem": {
     "Verbose": 2,
-    "Output": "postpro",
+    "Output": "postpro/transmon_coarse",
     "OutputFormats": {
       "GridFunction": true
     },

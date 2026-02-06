@@ -124,7 +124,8 @@ function generate_transmon(;
 
     # Update paths for local directory structure.
     config["Model"]["Mesh"] = joinpath("mesh", mesh_filename)
-    config["Problem"]["Output"] = "postpro"
+    config_name = splitext(basename(config_filename))[1]
+    config["Problem"]["Output"] = joinpath("postpro", config_name)
 
     # AMR.
     config["Model"]["Refinement"]["MaxIts"] = amr_iterations
