@@ -778,9 +778,9 @@ std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
 RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 {
   using mat_t = Eigen::MatrixXcd;
-  std::unique_ptr<mat_t> m_Linv = {};
-  std::unique_ptr<mat_t> m_Rinv = {};
-  std::unique_ptr<mat_t> m_C = {};
+  std::unique_ptr<mat_t> inductance_L_inv = {};
+  std::unique_ptr<mat_t> resistance_R_inv = {};
+  std::unique_ptr<mat_t> capacitance_C = {};
 
   Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
 
@@ -796,20 +796,21 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   auto v_d = v_conc.asDiagonal();
 
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  m_Linv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
+  inductance_L_inv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  m_C = std::make_unique<mat_t>(((unit_farad * v_d) * Mr * v_d).eval());
+  capacitance_C = std::make_unique<mat_t>(((unit_farad * v_d) * Mr * v_d).eval());
 
   // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
   // since we need dissipative ports for a driven response, but this may change.
   if (C)
   {
     auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    m_Rinv = std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr * v_d).eval());
+    resistance_R_inv = std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr * v_d).eval());
   }
 
-  return std::make_tuple(std::move(m_Linv), std::move(m_Rinv), std::move(m_C));
+  return std::make_tuple(std::move(inductance_L_inv), std::move(resistance_R_inv),
+                         std::move(capacitance_C));
 }
 
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
@@ -841,27 +842,28 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     out.WriteFullTableTrunc();
   };
 
-  const auto [m_Linv, m_Rinv, m_C] = CalculateNormalizedPROMMatrices(units);
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      CalculateNormalizedPROMMatrices(units);
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is
   // a nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
 
   if (K->Real())
   {
-    print_table(m_Linv->real(), "rom-Linv-re.csv");
+    print_table(inductance_L_inv->real(), "rom-Linv-re.csv");
   }
   if (K->Imag())
   {
-    print_table(m_Linv->imag(), "rom-Linv-im.csv");
+    print_table(inductance_L_inv->imag(), "rom-Linv-im.csv");
   }
 
   if (M->Real())
   {
-    print_table(m_C->real(), "rom-C-re.csv");
+    print_table(capacitance_C->real(), "rom-C-re.csv");
   }
   if (M->Imag())
   {
-    print_table(m_C->imag(), "rom-C-im.csv");
+    print_table(capacitance_C->imag(), "rom-C-im.csv");
   }
 
   // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
@@ -870,11 +872,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   {
     if (C->Real())
     {
-      print_table(m_Rinv->real(), "rom-Rinv-re.csv");
+      print_table(resistance_R_inv->real(), "rom-Rinv-re.csv");
     }
     if (C->Imag())
     {
-      print_table(m_Rinv->imag(), "rom-Rinv-im.csv");
+      print_table(resistance_R_inv->imag(), "rom-Rinv-im.csv");
     }
   }
 

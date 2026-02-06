@@ -321,25 +321,26 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   // Test actually adding port primary vectors to PROM.
   prom_op.AddLumpedPortModesForSynthesis();
   CHECK(prom_op.GetReducedDimension() == 1);
-  const auto [m_Linv, m_Rinv, m_C] = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
   const auto orth_R = prom_op.GetOrthR();
 
-  CHECK(((m_Linv->rows() == 1) && (m_Linv->cols() == 1)));
-  CHECK(((m_Rinv->rows() == 1) && (m_Rinv->cols() == 1)));
-  CHECK(((m_C->rows() == 1) && (m_Rinv->cols() == 1)));
+  CHECK(((inductance_L_inv->rows() == 1) && (inductance_L_inv->cols() == 1)));
+  CHECK(((resistance_R_inv->rows() == 1) && (resistance_R_inv->cols() == 1)));
+  CHECK(((capacitance_C->rows() == 1) && (resistance_R_inv->cols() == 1)));
   CHECK(((orth_R.rows() == 1) && (orth_R.cols() == 1)));
 
   // This should be the same as norm of primary port vector ht_cn with Z_R = 1.0.
   // For single square port this is 1.0
   CHECK_THAT(orth_R(0, 0), WithinRel(1.0));
-  CHECK_THAT((*m_Rinv)(0, 0).real(), WithinRel(1.0 / port_ref_R));
+  CHECK_THAT((*resistance_R_inv)(0, 0).real(), WithinRel(1.0 / port_ref_R));
   // L, C have some component on port 1 from the bulk. So only check they exist.
-  CHECK((*m_Linv)(0, 0).real() != 0.0);
-  CHECK((*m_C)(0, 0).real() != 0.0);
+  CHECK((*inductance_L_inv)(0, 0).real() != 0.0);
+  CHECK((*capacitance_C)(0, 0).real() != 0.0);
 
-  CHECK_THAT((*m_Linv)(0, 0).imag(), WithinAbs(0.0, 1e-14));
-  CHECK_THAT((*m_Rinv)(0, 0).imag(), WithinAbs(0.0, 1e-14));
-  CHECK_THAT((*m_C)(0, 0).imag(), WithinAbs(0.0, 1e-14));
+  CHECK_THAT((*inductance_L_inv)(0, 0).imag(), WithinAbs(0.0, 1e-14));
+  CHECK_THAT((*resistance_R_inv)(0, 0).imag(), WithinAbs(0.0, 1e-14));
+  CHECK_THAT((*capacitance_C)(0, 0).imag(), WithinAbs(0.0, 1e-14));
 }
 
 // Basic ROM port construction on a more complex mesh including a composite port and and L,C
@@ -525,27 +526,28 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   prom_op.AddLumpedPortModesForSynthesis();
   auto rom_dim = prom_op.GetReducedDimension();
   REQUIRE(rom_dim == 2);
-  const auto [m_Linv, m_Rinv, m_C] = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
   const auto orth_R = prom_op.GetOrthR();
 
-  CHECK(((m_Linv->rows() == rom_dim) && (m_Linv->cols() == rom_dim)));
-  CHECK(((m_Rinv->rows() == rom_dim) && (m_Rinv->cols() == rom_dim)));
-  CHECK(((m_C->rows() == rom_dim) && (m_Rinv->cols() == rom_dim)));
+  CHECK(((inductance_L_inv->rows() == rom_dim) && (inductance_L_inv->cols() == rom_dim)));
+  CHECK(((resistance_R_inv->rows() == rom_dim) && (resistance_R_inv->cols() == rom_dim)));
+  CHECK(((capacitance_C->rows() == rom_dim) && (resistance_R_inv->cols() == rom_dim)));
   CHECK(((orth_R.rows() == rom_dim) && (orth_R.cols() == rom_dim)));
 
   Eigen::MatrixXd orth_R_ref = Eigen::MatrixXd::Identity(rom_dim, rom_dim);
   orth_R_ref(0, 0) = std::sqrt(et_norm_expected_port1);
 
-  Eigen::MatrixXd m_Linv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
-  m_Linv_ref(0, 0) = 1.0 / port1_ref_L;
+  Eigen::MatrixXd inductance_L_inv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  inductance_L_inv_ref(0, 0) = 1.0 / port1_ref_L;
 
-  Eigen::MatrixXd m_Rinv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
-  m_Rinv_ref(0, 0) = 1.0 / port1_ref_R;
-  m_Rinv_ref(1, 1) = 1.0 / port2_ref_R;
-  // m_Rinv_ref(2, 2) = 1.0 / port3_ref_R;
+  Eigen::MatrixXd resistance_R_inv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  resistance_R_inv_ref(0, 0) = 1.0 / port1_ref_R;
+  resistance_R_inv_ref(1, 1) = 1.0 / port2_ref_R;
+  // resistance_R_inv_ref(2, 2) = 1.0 / port3_ref_R;
 
-  Eigen::MatrixXd m_C_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
-  m_C_ref(0, 0) = port1_ref_C;
+  Eigen::MatrixXd capacitance_C_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
+  capacitance_C_ref(0, 0) = port1_ref_C;
 
   auto check_mat_zero_pattern =
       [dim = prom_op.GetReducedDimension()](auto &mat, bool skip_real = false)
@@ -564,20 +566,22 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   };
 
   check_mat_zero_pattern(orth_R);
-  check_mat_zero_pattern(*m_Rinv);
-  check_mat_zero_pattern(*m_C);
-  check_mat_zero_pattern(*m_Linv, true);  // skip: could extras overlap crowded mesh
+  check_mat_zero_pattern(*resistance_R_inv);
+  check_mat_zero_pattern(*capacitance_C);
+  check_mat_zero_pattern(*inductance_L_inv,
+                         true);  // skip: could extras overlap crowded mesh
 
   CHECK_THAT(std::real(orth_R(0, 0)), WithinRel(orth_R(0, 0)));
   CHECK_THAT(std::real(orth_R(1, 1)), WithinRel(orth_R(1, 1)));
 
-  CHECK_THAT(std::real((*m_Rinv)(0, 0)), WithinRel(m_Rinv_ref(0, 0)));
-  CHECK_THAT(std::real((*m_Rinv)(1, 1)), WithinRel(m_Rinv_ref(1, 1)));
+  CHECK_THAT(std::real((*resistance_R_inv)(0, 0)), WithinRel(resistance_R_inv_ref(0, 0)));
+  CHECK_THAT(std::real((*resistance_R_inv)(1, 1)), WithinRel(resistance_R_inv_ref(1, 1)));
 
   // Don't check 11 of due to presence of bulk values.
   // For 00, bulk values are small as compared to port values, put tolerance of ~1e-6.
-  CHECK_THAT(std::real((*m_Linv)(0, 0)), WithinRel(m_Linv_ref(0, 0), 1e-6));
-  CHECK_THAT(std::real((*m_C)(0, 0)), WithinRel(m_C_ref(0, 0), 1e-6));
+  CHECK_THAT(std::real((*inductance_L_inv)(0, 0)),
+             WithinRel(inductance_L_inv_ref(0, 0), 1e-6));
+  CHECK_THAT(std::real((*capacitance_C)(0, 0)), WithinRel(capacitance_C_ref(0, 0), 1e-6));
 
   // Add some random vectors to mimic solution of system.
   ComplexVector vector_temp;
