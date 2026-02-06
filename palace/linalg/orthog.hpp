@@ -27,25 +27,17 @@ namespace palace::linalg
 // acting on local degrees of freedom. Also add MPI reduction.
 
 // Simplest case is canonical inner product on R & C.
-
-class InnerProductStandard
+struct IdentityInnerProduct
 {
-public:
   template <typename VecType>
-  static auto InnerProduct(const VecType &x, const VecType &y)
+  auto operator()(const VecType &x, const VecType &y) const
   {
     return LocalDot(x, y);
-  }
-
-  template <typename VecType>
-  static auto InnerProduct(MPI_Comm comm, const VecType &x, const VecType &y)
-  {
-    return Dot(comm, x, y);
   }
 };
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = InnerProductStandard>
+          typename InnerProductW = IdentityInnerProduct>
 inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, std::size_t m,
                                    const InnerProductW &dot_op = {})
@@ -54,13 +46,14 @@ inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V,
   for (std::size_t j = 0; j < m; j++)
   {
     // Global inner product: Note order is important for complex vectors.
-    H[j] = dot_op.InnerProduct(comm, w, V[j]);
+    H[j] = dot_op(w, V[j]);
+    Mpi::GlobalSum(1, &H[j], comm);
     w.Add(-H[j], V[j]);
   }
 }
 
 template <typename VecType, typename ScalarType,
-          typename InnerProductW = InnerProductStandard>
+          typename InnerProductW = IdentityInnerProduct>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, std::size_t m, bool refine = false,
                                    const InnerProductW &dot_op = {})
@@ -72,7 +65,7 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
   }
   for (std::size_t j = 0; j < m; j++)
   {
-    H[j] = dot_op.InnerProduct(w, V[j]);  // Local inner product
+    H[j] = dot_op(w, V[j]);  // Local inner product
   }
   Mpi::GlobalSum(m, H, comm);
   for (std::size_t j = 0; j < m; j++)
@@ -84,7 +77,7 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
     std::vector<ScalarType> dH(m);
     for (int j = 0; j < m; j++)
     {
-      dH[j] = dot_op.InnerProduct(w, V[j]);  // Local inner product
+      dH[j] = dot_op(w, V[j]);  // Local inner product
     }
     Mpi::GlobalSum(m, dH.data(), comm);
     for (std::size_t j = 0; j < m; j++)
