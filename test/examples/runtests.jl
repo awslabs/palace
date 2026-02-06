@@ -73,7 +73,8 @@ arg_configs = [
         default=[
             "spheres",
             "rings",
-            # "transmon", # not included by default because of its cost
+            # "transmon/coarse", # not included by default because of its cost
+            # "transmon/amr", # not included by default because of its cost
             "antenna/antenna_halfwave_dipole",
             "antenna/antenna_short_dipole",
             "cylinder/cavity_pec",
@@ -152,12 +153,46 @@ end
 
 reltol = 1.0e-2
 
-if "transmon" in cases
-    @info "Testing single transmon..."
+if "transmon/coarse" in cases
+    @info "Testing single transmon coarse..."
     @time testcase(
         "transmon",
-        "transmon.json",
-        "";
+        "transmon_coarse.json",
+        "transmon_coarse";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Re{V[1]} (V)",
+            "Im{V[1]} (V)",
+            "Re{V[2]} (V)",
+            "Im{V[2]} (V)",
+            "Re{V[3]} (V)",
+            "Im{V[3]} (V)",
+            "Re{I[1]} (A)",
+            "Im{I[1]} (A)",
+            "Re{I[2]} (A)",
+            "Im{I[2]} (A)",
+            "Re{I[3]} (A)",
+            "Im{I[3]} (A)"
+        ],
+        skip_rowcount=true,
+        gridfunction_fields=true
+    )
+end
+
+if "transmon/amr" in cases
+    @info "Testing single transmon arm..."
+    @time testcase(
+        "transmon",
+        "transmon_amr.json",
+        "transmon_amr";
         palace=palace,
         np=numprocs,
         rtol=reltol,

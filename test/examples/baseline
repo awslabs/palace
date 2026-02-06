@@ -100,7 +100,8 @@ spheres
 rings
 antenna/antenna_halfwave_dipole
 antenna/antenna_short_dipole
-transmon
+transmon/coarse
+transmon/amr
 cylinder/cavity_pec
 cylinder/cavity_impedance
 cylinder/waveguide
