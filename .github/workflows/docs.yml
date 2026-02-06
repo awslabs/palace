@@ -24,12 +24,35 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'docs/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'spack_repo/**'
+              - '.github/workflows/docs.yml'
+
   build-docs:
+    needs: filter
     runs-on: palace_ubuntu-latest_16-core
     steps:
       - uses: actions/checkout@v6
+        if: needs.filter.outputs.test == 'true'
 
       - name: Setup Spack
+        if: needs.filter.outputs.test == 'true'
         uses: spack/setup-spack@v2
         with:
           ref: develop
@@ -38,6 +61,7 @@ jobs:
 
           
       - name: Patch Spack package.pys for known problems
+        if: needs.filter.outputs.test == 'true'
         shell: bash
         run: |
           PALACE_DIR=$PWD
@@ -58,6 +82,7 @@ jobs:
           ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
   
       - name: Setup Environment
+        if: needs.filter.outputs.test == 'true'
         run: |
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
@@ -93,6 +118,7 @@ jobs:
           EOF
 
       - name: Configure External Packages
+        if: needs.filter.outputs.test == 'true'
         run: |
           # These cause build issues if built as externals
           #   - python : often distributed python isn't feature complete / not all dependencies get detected
@@ -108,15 +134,19 @@ jobs:
             --exclude curl
 
       - name: Configure Compilers for Spack
+        if: needs.filter.outputs.test == 'true'
         run: spack -e . compiler find && spack -e . compiler list
 
       - name: Configure Binary Mirror Keys for Spack
+        if: needs.filter.outputs.test == 'true'
         run: spack -e . buildcache keys --install --trust
 
       - name: Bootstrap Spack
+        if: needs.filter.outputs.test == 'true'
         run: spack  -e . bootstrap now
 
       - name: Concretize Spack
+        if: needs.filter.outputs.test == 'true'
         env:
           PALACE_REF: ${{ github.head_ref || github.ref_name }}
         run: |
@@ -126,11 +156,13 @@ jobs:
 
         # Relies on cache-hit(s)
       - name: Build Dependencies
+        if: needs.filter.outputs.test == 'true'
         run: |
           spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
 
         # Explicitly not using cache to get latest develop
       - name: Build Palace
+        if: needs.filter.outputs.test == 'true'
         run: |
           spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
         # If you want to use the branch-local source instead (should we always do this?)
@@ -145,6 +177,7 @@ jobs:
         if: needs.filter.outputs.test == 'true'
 
       - name: Build and deploy
+        if: needs.filter.outputs.test == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -153,6 +186,7 @@ jobs:
           julia --project=docs --color=yes docs/make.jl
 
       - uses: actions/upload-artifact@v4
+        if: needs.filter.outputs.test == 'true'
         with:
           name: docs
           path: docs/build/
@@ -162,6 +196,7 @@ jobs:
       # NOTE: This might fail as external fork PRs can't push to GHCR.
       - name: Push to GHCR cache
         if: |
+          needs.filter.outputs.test == 'true' &&
           !cancelled() &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
