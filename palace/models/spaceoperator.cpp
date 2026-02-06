@@ -841,6 +841,76 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
+                                                           ComplexVector &Et_primary,
+                                                           bool zero_metal)
+{
+  const auto &data = GetLumpedPortOp().GetPort(port_idx);
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  mfem::Array<int> attr_list;
+  mfem::Array<int> attr_marker;
+  for (const auto &elem : data.elems)
+  {
+    attr_list.Append(elem->GetAttrList());
+    const double Rs = 1.0 * data.GetToSquare(*elem);
+    const double Einc = std::sqrt(
+        Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
+    fb.AddCoefficient(elem->GetModeCoefficient(Einc));
+  }
+  const auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  Et_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Et_primary.UseDevice(true);
+  Et_primary = 0.0;
+
+  GridFunction rhs(GetNDSpace());
+  rhs = 0.0;
+  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Et_primary.Real());
+  if (zero_metal)
+  {
+    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  }
+}
+
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
+                                                             ComplexVector &Htcn_primary,
+                                                             bool zero_metal)
+{
+  const auto &data = lumped_port_op.GetPort(port_idx);
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  mfem::Array<int> attr_list;
+  mfem::Array<int> attr_marker;
+  for (const auto &elem : data.elems)
+  {
+    attr_list.Append(elem->GetAttrList());
+    const double Rs = 1.0 * data.GetToSquare(*elem);
+    const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                        elem->GetGeometryLength() * data.elems.size());
+    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+  }
+  auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  Htcn_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Htcn_primary.UseDevice(true);
+  Htcn_primary = 0.0;
+
+  GridFunction rhs(GetNDSpace());
+  rhs = 0.0;
+  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+  GetNDSpace().GetRestrictionMatrix()->MultTranspose(rhs.Real(), Htcn_primary.Real());
+  if (zero_metal)
+  {
+    linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  }
+}
+
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
@@ -912,8 +982,8 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
 bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omega,
                                                  ComplexVector &RHS2)
 {
-  // Assemble the contribution of wave ports to the frequency domain excitation term at the
-  // specified frequency.
+  // Assemble the contribution of wave ports to the frequency domain excitation term at
+  // the specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());

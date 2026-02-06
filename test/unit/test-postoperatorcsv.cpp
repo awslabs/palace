@@ -1,13 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <complex>
-#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "fem/mesh.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
@@ -16,7 +11,6 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/meshio.hpp"
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-do-while)
 
@@ -91,7 +85,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -111,7 +105,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -137,7 +131,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -180,7 +174,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
@@ -195,7 +189,7 @@ public:
         CHECK(post_op_csv.row_i == 5);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -220,7 +214,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
 
@@ -304,7 +298,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -354,7 +348,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         // No throw since 1 restart just overwrite existing table.
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -370,7 +364,7 @@ public:
         CHECK(post_op_csv.row_i == 1);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -396,7 +390,7 @@ public:
         CHECK(post_op_csv.row_i == 4);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 

@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <iterator>
-#include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
@@ -95,11 +92,11 @@ TEST_CASE("TableCSV", "[tablecsv][Serial]")
     col_3 << 6.0;
   }
 
-  std::vector<size_t> cols_n_row;
+  std::vector<std::size_t> cols_n_row;
   std::transform(table.cbegin(), table.cend(), std::back_inserter(cols_n_row),
                  [](auto &c) { return c.n_rows(); });
 
-  CHECK(cols_n_row == std::vector<size_t>{0, 1, 2});
+  CHECK(cols_n_row == std::vector<std::size_t>{0, 1, 2});
 
   CHECK(table.n_cols() == 3);
   CHECK(table.n_rows() == 2);
