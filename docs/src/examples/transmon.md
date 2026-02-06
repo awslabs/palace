@@ -130,7 +130,7 @@ The primary results are the eigenfrequencies and quality factors, stored in the
 `eig.csv` file:
 
 ```@example include_example
-include_example_file("transmon", "eig.csv") #hide
+include_example_file("transmon/transmon_coarse", "eig.csv") #hide
 ```
 
 The columns represent the mode number, real and imaginary parts of the
@@ -235,7 +235,7 @@ estimation](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
 For a second-order solution:
 
 ```@example include_example
-include_example_file("transmon", "error-indicators.csv") #hide
+include_example_file("transmon/transmon_coarse", "error-indicators.csv") #hide
 ```
 
 These error indicators provide metrics for estimating numerical accuracy across

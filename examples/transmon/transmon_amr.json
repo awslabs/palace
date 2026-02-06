@@ -119,7 +119,7 @@
       "Tol": 1.0e-8,
       "Target": 4
     },
-    "Order": 2,
+    "Order": 3,
     "Linear": {
       "Type": "Default",
       "Tol": 1.0e-12,
