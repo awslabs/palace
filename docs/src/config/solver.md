@@ -176,6 +176,7 @@ number of eigenmodes of the problem. The available options are:
     "AdaptiveTol": <float>,
     "AdaptiveMaxSamples": <int>,
     "AdaptiveConvergenceMemory": <int>,
+    "AdaptiveGSOrthogonalization": <string>,
     "AdaptiveCircuitSynthesis": <bool>
 }
 ```
@@ -227,6 +228,13 @@ per excitation.
 sampling algorithm for constructing the reduced-order model for adaptive fast frequency
 sweep. For example, a memory of "2" requires two consecutive samples which satisfy the
 error tolerance.
+
+`"AdaptiveGSOrthogonalization" ["CGS2"]` :  Gram-Schmidt variant used to
+orthogonalize vectors of the reduced order model in the adaptive driven solver. Uses same options as [`solver["Linear"]["GSOrthogonalization"]`](solver.md#solver%5B%22Linear%22%5D).
+
+  - `"MGS"` :  Modified Gram-Schmidt
+  - `"CGS"` :  Classical Gram-Schmidt
+  - `"CGS2"` :  Two-step classical Gram-Schmidt with reorthogonalization
 
 `"AdaptiveCircuitSynthesis" [False]` : Usese adaptive reduced order model to print circuit-like
 matrices (inverse inductance ``L^{-1}``, inverse resistance ``R^{-1}``, capacitance ``C`` and basis
