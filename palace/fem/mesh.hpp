@@ -87,27 +87,6 @@ public:
   const auto &Get() const { return *mesh; }
   auto &Get() { return *mesh; }
 
-  [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator const mfem::ParMesh &() const
-  {
-    return Get();
-  }
-  [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator mfem::ParMesh &()
-  {
-    return Get();
-  }
-
-  [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator const std::unique_ptr<mfem::ParMesh> &() const
-  {
-    return mesh;
-  }
-  [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator std::unique_ptr<mfem::ParMesh> &()
-  {
-    return mesh;
-  }
 
   auto Dimension() const { return Get().Dimension(); }
   auto SpaceDimension() const { return Get().SpaceDimension(); }

@@ -87,16 +87,6 @@ public:
   const auto &GetMesh() const { return mesh; }
   auto &GetMesh() { return mesh; }
 
-  [[deprecated("Use GetMesh() with palace::Mesh wrappers instead")]]
-  const auto &GetParMesh() const
-  {
-    return mesh.Get();
-  }
-  [[deprecated("Use GetMesh() with palace::Mesh wrappers instead")]]
-  auto &GetParMesh()
-  {
-    return mesh.Get();
-  }
 
   auto GetVDim() const { return Get().GetVDim(); }
   auto GetVSize() const { return Get().GetVSize(); }
