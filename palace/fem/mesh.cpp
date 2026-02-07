@@ -342,6 +342,27 @@ void Mesh::ResetCeedObjects()
   }
 }
 
+const mfem::Table &Mesh::GetDerefinementTable() const
+{
+  MFEM_VERIFY(mesh->pncmesh, "GetDerefinementTable requires a nonconforming mesh!");
+  return mesh->pncmesh->GetDerefinementTable();
+}
+
+void Mesh::SynchronizeDerefinementData(mfem::Array<double> &elem_error,
+                                       const mfem::Table &deref_table) const
+{
+  MFEM_VERIFY(mesh->pncmesh, "SynchronizeDerefinementData requires a nonconforming mesh!");
+  mesh->pncmesh->SynchronizeDerefinementData(elem_error, deref_table);
+}
+
+void Mesh::Reset(std::unique_ptr<mfem::ParMesh> new_mesh)
+{
+  ResetCeedObjects();
+  mesh = std::move(new_mesh);
+  mesh->EnsureNodes();
+  Update();
+}
+
 void Mesh::Update()
 {
   // Attribute mappings, etc. are always constructed for the parent mesh (use boundary

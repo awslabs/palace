@@ -41,8 +41,12 @@ struct CeedGeomFactorData
 //
 // Wrapper for MFEM's ParMesh class, with extensions for Palace.
 //
+class FiniteElementSpace;
+
 class Mesh
 {
+  friend class FiniteElementSpace;
+
 private:
   // Underlying MFEM object (can also point to a derived class of mfem::ParMesh, such as
   // mfem::ParSubMesh).
@@ -93,6 +97,80 @@ public:
   auto SpaceDimension() const { return Get().SpaceDimension(); }
   auto GetNE() const { return Get().GetNE(); }
   auto GetNBE() const { return Get().GetNBE(); }
+
+  // Attribute queries.
+  auto GetAttribute(int i) const { return Get().GetAttribute(i); }
+  auto GetBdrAttribute(int i) const { return Get().GetBdrAttribute(i); }
+  int MaxAttribute() const
+  {
+    return Get().attributes.Size() ? Get().attributes.Max() : 0;
+  }
+  int MaxBdrAttribute() const
+  {
+    return Get().bdr_attributes.Size() ? Get().bdr_attributes.Max() : 0;
+  }
+  auto NumAttributes() const { return Get().attributes.Size(); }
+  auto NumBdrAttributes() const { return Get().bdr_attributes.Size(); }
+  const auto &Attributes() const { return Get().attributes; }
+  const auto &BdrAttributes() const { return Get().bdr_attributes; }
+
+  // Geometry queries.
+  auto GetGlobalNE() const { return Get().GetGlobalNE(); }
+  auto GetElementGeometry(int i) const { return Get().GetElementGeometry(i); }
+  auto GetBdrElementGeometry(int i) const { return Get().GetBdrElementGeometry(i); }
+  auto Nonconforming() const { return Get().Nonconforming(); }
+  auto Conforming() const { return Get().Conforming(); }
+  auto GetNV() const { return Get().GetNV(); }
+
+  // Topology queries.
+  auto GetNumFaces() const { return Get().GetNumFaces(); }
+  void GetFaceElements(int f, int *e1, int *e2) const { Get().GetFaceElements(f, e1, e2); }
+
+  // High-order nodes.
+  auto *GetNodes() const { return Get().GetNodes(); }
+  auto *GetNodes() { return Get().GetNodes(); }
+
+  // Element transformations.
+  auto *GetElementTransformation(int i) { return Get().GetElementTransformation(i); }
+  void GetElementTransformation(int i, mfem::IsoparametricTransformation *T)
+  {
+    Get().GetElementTransformation(i, T);
+  }
+  auto *GetBdrElementTransformation(int i) { return Get().GetBdrElementTransformation(i); }
+  void GetBdrElementTransformation(int i, mfem::IsoparametricTransformation *T)
+  {
+    Get().GetBdrElementTransformation(i, T);
+  }
+  void GetFaceElementTransformations(int f, mfem::FaceElementTransformations &FET,
+                                     mfem::IsoparametricTransformation &T1,
+                                     mfem::IsoparametricTransformation &T2)
+  {
+    Get().GetFaceElementTransformations(f, FET, T1, T2);
+  }
+  void GetSharedFaceTransformations(int i, mfem::FaceElementTransformations &FET,
+                                    mfem::IsoparametricTransformation &T1,
+                                    mfem::IsoparametricTransformation &T2)
+  {
+    Get().GetSharedFaceTransformations(i, FET, T1, T2);
+  }
+
+  // Parallel queries.
+  auto GetNSharedFaces() const { return Get().GetNSharedFaces(); }
+  void ExchangeFaceNbrData() { Get().ExchangeFaceNbrData(); }
+
+  // Refinement.
+  void GeneralRefinement(const mfem::Array<int> &m, int nonconf = -1, int nc_limit = 0)
+  {
+    Get().GeneralRefinement(m, nonconf, nc_limit);
+  }
+
+  // Derefinement (encapsulates pncmesh access).
+  const mfem::Table &GetDerefinementTable() const;
+  void SynchronizeDerefinementData(mfem::Array<double> &elem_error,
+                                   const mfem::Table &deref_table) const;
+
+  // Mesh replacement (for rebalance).
+  void Reset(std::unique_ptr<mfem::ParMesh> new_mesh);
 
   const auto &GetCeedAttributes() const { return loc_attr; }
   const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }
