@@ -14,6 +14,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 
 namespace mesh
 {
@@ -24,13 +25,13 @@ namespace mesh
 
 // Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
 // object, which should be destroyed by the user.
-std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
+std::unique_ptr<Mesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
 // Refine the provided mesh according to the data in the input file. If levels of refinement
 // are requested, the refined meshes are stored in order of increased refinement. Ownership
 // of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.
 // The fine mesh hierarchy is owned by the user.
-void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<Mesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
 void DimensionalizeMesh(mfem::Mesh &mesh, double L);
@@ -80,22 +81,22 @@ inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,
 
 // Helper function to construct the axis-aligned bounding box for all elements with the
 // given attribute.
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                               bool bdr, mfem::Vector &min, mfem::Vector &max);
+void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                               mfem::Vector &min, mfem::Vector &max);
 
-inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
+inline void GetAxisAlignedBoundingBox(const Mesh &mesh, int attr, bool bdr,
                                       mfem::Vector &min, mfem::Vector &max)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
-inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
+inline void GetAxisAlignedBoundingBox(const Mesh &mesh, mfem::Vector &min,
                                       mfem::Vector &max)
 {
-  mfem::Array<int> marker(mesh.attributes.Max());
+  mfem::Array<int> marker(mesh.MaxAttribute());
   marker = 1;
   GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
 }
@@ -135,12 +136,11 @@ struct BoundingBox
 // points whose convex hull exactly forms a rectangle or rectangular prism, implementing a
 // vastly simplified version of QuickHull for this case. For other shapes, the result is
 // less predictable, and may not even form a bounding box of the sampled point cloud.
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr);
+BoundingBox GetBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr);
 
-inline BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
+inline BoundingBox GetBoundingBox(const Mesh &mesh, int attr, bool bdr)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetBoundingBox(mesh, marker, bdr);
@@ -150,25 +150,24 @@ inline BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
 // this case the normals of the bounding box object are arbitrary, and the Area and Volume
 // members should not be used, but the Lengths function returns the ball diameter. This
 // function implements Welzl's algorithm.
-BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr);
+BoundingBox GetBoundingBall(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr);
 
-inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr)
+inline BoundingBox GetBoundingBall(const Mesh &mesh, int attr, bool bdr)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetBoundingBall(mesh, marker, bdr);
 }
 
 // Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir);
+double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                          const std::array<double, 3> &dir);
 
-inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
+inline double GetProjectedLength(const Mesh &mesh, int attr, bool bdr,
                                  const std::array<double, 3> &dir)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetProjectedLength(mesh, marker, bdr, dir);
@@ -177,14 +176,13 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
 // Helper function for computing the closest distance of a marked group to a given point,
 // by brute force searching over the entire point set. Optionally compute the furthest
 // distance instead of the closest.
-double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin,
-                            bool max = false);
+double GetDistanceFromPoint(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                            const std::array<double, 3> &origin, bool max = false);
 
-inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
+inline double GetDistanceFromPoint(const Mesh &mesh, int attr, bool bdr,
                                    const std::array<double, 3> &dir, bool max = false)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetDistanceFromPoint(mesh, marker, bdr, dir, max);
@@ -192,43 +190,42 @@ inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr
 
 // Helper function to compute the average surface normal for all elements with the given
 // attributes.
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+mfem::Vector GetSurfaceNormal(const Mesh &mesh, const mfem::Array<int> &marker,
                               bool average = true);
 
-inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr,
-                                     bool average = true)
+inline mfem::Vector GetSurfaceNormal(const Mesh &mesh, int attr, bool average = true)
 {
   const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  mfem::Array<int> marker(bdr ? mesh.MaxBdrAttribute() : mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetSurfaceNormal(mesh, marker, average);
 }
 
-inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true)
+inline mfem::Vector GetSurfaceNormal(const Mesh &mesh, bool average = true)
 {
   const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
-  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
+  const auto &attributes = bdr ? mesh.BdrAttributes() : mesh.Attributes();
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
 // Helper functions to compute the volume or area for all domain or boundary elements with
 // the given attributes.
-double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+double GetSurfaceArea(const Mesh &mesh, const mfem::Array<int> &marker);
 
-inline double GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
+inline double GetSurfaceArea(const Mesh &mesh, int attr)
 {
-  mfem::Array<int> marker(mesh.bdr_attributes.Max());
+  mfem::Array<int> marker(mesh.MaxBdrAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetSurfaceArea(mesh, marker);
 }
 
-double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+double GetVolume(const Mesh &mesh, const mfem::Array<int> &marker);
 
-inline double GetVolume(const mfem::ParMesh &mesh, int attr)
+inline double GetVolume(const Mesh &mesh, int attr)
 {
-  mfem::Array<int> marker(mesh.attributes.Max());
+  mfem::Array<int> marker(mesh.MaxAttribute());
   marker = 0;
   marker[attr - 1] = 1;
   return GetVolume(mesh, marker);
@@ -236,7 +233,7 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
+double RebalanceMesh(const IoData &iodata, Mesh &mesh);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);

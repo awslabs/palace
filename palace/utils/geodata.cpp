@@ -19,6 +19,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
@@ -82,7 +83,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
+std::unique_ptr<Mesh> ReadMesh(IoData &iodata, MPI_Comm comm)
 {
   // If possible on root, read the serial mesh (converting format if necessary), and do all
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
@@ -348,10 +349,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     }
   }
 
-  return pmesh;
+  return std::make_unique<Mesh>(std::move(pmesh));
 }
 
-void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<Mesh>> &mesh)
 {
   // Prepare for uniform and region-based refinement.
   MFEM_VERIFY(mesh.size() == 1,
@@ -387,7 +388,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   {
     PalacePragmaDiagnosticPush
     PalacePragmaDiagnosticDisableDeprecated
-    mesh[0]->ReorientTetMesh();
+    mesh[0]->Get().ReorientTetMesh();
     PalacePragmaDiagnosticPop
   }
 
@@ -397,14 +398,15 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   {
     if (mesh.capacity() > 1)
     {
-      mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
+      mesh.emplace_back(
+          std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh.back()->Get())));
     }
-    mesh.back()->UniformRefinement();
+    mesh.back()->Get().UniformRefinement();
   }
 
   // Simplex meshes need to be re-finalized in order to use local refinement (see
   // the docstring for mfem::Mesh::UniformRefinement).
-  const auto element_types = mesh::CheckElements(*mesh.back());
+  const auto element_types = mesh::CheckElements(mesh.back()->Get());
   if (element_types.has_simplices && uniform_ref_levels > 0 &&
       (max_region_ref_levels > 0 || iodata.model.refinement.max_it > 0))
   {
@@ -412,7 +414,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
                "final uniformly-refined mesh\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
-    mesh.back()->Finalize(refine, fix_orientation);
+    mesh.back()->Get().Finalize(refine, fix_orientation);
   }
 
   // Proceed with region-based refinement, level-by-level for all regions. Currently support
@@ -446,12 +448,12 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       }
       else
       {
-        const int *verts = mesh.back()->GetElement(i)->GetVertices();
-        const int nv = mesh.back()->GetElement(i)->GetNVertices();
+        const int *verts = mesh.back()->Get().GetElement(i)->GetVertices();
+        const int nv = mesh.back()->Get().GetElement(i)->GetNVertices();
         pointmat.SetSize(dim, nv);
         for (int j = 0; j < nv; j++)
         {
-          const double *coord = mesh.back()->GetVertex(verts[j]);
+          const double *coord = mesh.back()->Get().GetVertex(verts[j]);
           for (int d = 0; d < dim; d++)
           {
             pointmat(d, j) = coord[d];
@@ -525,14 +527,15 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     // (adds hanging nodes).
     if (mesh.capacity() > 1)
     {
-      mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
+      mesh.emplace_back(
+          std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh.back()->Get())));
     }
     mesh.back()->GeneralRefinement(refinements, -1);
     region_ref_level++;
   }
   if (max_region_ref_levels > 0 && mesh.capacity() == 1)
   {
-    RebalanceMesh(iodata, mesh[0]);
+    RebalanceMesh(iodata, *mesh[0]);
   }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
@@ -544,7 +547,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   {
     PalacePragmaDiagnosticPush
     PalacePragmaDiagnosticDisableDeprecated
-    mesh[0]->ReorientTetMesh();
+    mesh[0]->Get().ReorientTetMesh();
     PalacePragmaDiagnosticPop
   }
 
@@ -572,11 +575,11 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
                bbmin[0] * Lc, bbmin[1] * Lc, bbmax[0] * Lc, bbmax[1] * Lc);
   }
   Mpi::Print(mesh[0]->GetComm(), "\n{}", (mesh.size() > 1) ? "Coarse " : "");
-  mesh[0]->PrintInfo();
+  mesh[0]->Get().PrintInfo();
   if (mesh.size() > 1)
   {
     Mpi::Print(mesh[0]->GetComm(), "\nRefined ");
-    mesh.back()->PrintInfo();
+    mesh.back()->Get().PrintInfo();
   }
 }
 
@@ -966,7 +969,7 @@ void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
   }
 }
 
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
@@ -984,7 +987,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
     {
       for (int j = 0; j < nv; j++)
       {
-        const double *coord = mesh.GetVertex(v[j]);
+        const double *coord = mesh.Get().GetVertex(v[j]);
         for (int d = 0; d < dim; d++)
         {
           if (coord[d] < min(d))
@@ -1015,8 +1018,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
           {
             continue;
           }
-          const int *verts = mesh.GetBdrElement(i)->GetVertices();
-          BBUpdate(verts, mesh.GetBdrElement(i)->GetNVertices(), loc_min, loc_max);
+          const int *verts = mesh.Get().GetBdrElement(i)->GetVertices();
+          BBUpdate(verts, mesh.Get().GetBdrElement(i)->GetNVertices(), loc_min, loc_max);
         }
       }
       else
@@ -1028,8 +1031,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
           {
             continue;
           }
-          const int *verts = mesh.GetElement(i)->GetVertices();
-          BBUpdate(verts, mesh.GetElement(i)->GetNVertices(), loc_min, loc_max);
+          const int *verts = mesh.Get().GetElement(i)->GetVertices();
+          BBUpdate(verts, mesh.Get().GetElement(i)->GetNVertices(), loc_min, loc_max);
         }
       }
       PalacePragmaOmp(critical(BBUpdate))
@@ -1158,27 +1161,27 @@ std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direc
   return deviation_deg;
 }
 
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+BoundingBox GetBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
                            bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+BoundingBox GetBoundingBall(const Mesh &mesh, const mfem::Array<int> &marker,
                             bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker,
                           bool bdr, const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   double length;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
@@ -1193,11 +1196,11 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
   return length;
 }
 
-double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+double GetDistanceFromPoint(const Mesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, const std::array<double, 3> &origin, bool max)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   double dist;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
@@ -1217,7 +1220,7 @@ double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &m
 
 // Given a mesh and boundary attribute marker array, compute a normal for the surface. If
 // not averaging, use the first entry.
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+mfem::Vector GetSurfaceNormal(const Mesh &mesh, const mfem::Array<int> &marker,
                               bool average)
 {
   int dim = mesh.SpaceDimension();
@@ -1295,26 +1298,26 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   return normal;
 }
 
-double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+double GetSurfaceArea(const Mesh &mesh, const mfem::Array<int> &marker)
 {
   ConstantCoefficient one(1.0);
-  return fem::IntegrateFunction(mesh, marker, true, one,
+  return fem::IntegrateFunction(mesh.Get(), marker, true, one,
                                 [](const mfem::ElementTransformation &T)
                                 { return T.OrderJ(); });
 }
 
-double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+double GetVolume(const Mesh &mesh, const mfem::Array<int> &marker)
 {
   ConstantCoefficient one(1.0);
-  return fem::IntegrateFunction(mesh, marker, false, one,
+  return fem::IntegrateFunction(mesh.Get(), marker, false, one,
                                 [](const mfem::ElementTransformation &T)
                                 { return T.OrderJ(); });
 }
 
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
+double RebalanceMesh(const IoData &iodata, Mesh &mesh)
 {
   BlockTimer bt0(Timer::REBALANCE);
-  MPI_Comm comm = mesh->GetComm();
+  MPI_Comm comm = mesh.GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
     // Create a separate serial mesh to write to disk.
@@ -1337,17 +1340,17 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
       Mpi::Barrier(comm);
     };
 
-    if (mesh->Nonconforming())
+    if (mesh.Nonconforming())
     {
-      mfem::ParMesh smesh(*mesh);
-      mfem::Array<int> serial_partition(mesh->GetNE());
+      mfem::ParMesh smesh(mesh.Get());
+      mfem::Array<int> serial_partition(mesh.GetNE());
       serial_partition = 0;
       smesh.Rebalance(serial_partition);
       PrintSerial(smesh);
     }
     else
     {
-      mfem::Mesh smesh = mesh->GetSerialMesh(0);
+      mfem::Mesh smesh = mesh.Get().GetSerialMesh(0);
       PrintSerial(smesh);
     }
   }
@@ -1358,7 +1361,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
     return 1.0;
   }
   int min_elem, max_elem;
-  min_elem = max_elem = mesh->GetNE();
+  min_elem = max_elem = mesh.GetNE();
   Mpi::GlobalMin(1, &min_elem, comm);
   Mpi::GlobalMax(1, &max_elem, comm);
   const double ratio = double(max_elem) / min_elem;
@@ -1371,15 +1374,16 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
   }
   if (ratio > tol)
   {
-    if (mesh->Nonconforming())
+    if (mesh.Nonconforming())
     {
-      mesh->Rebalance();
+      mesh.Get().Rebalance();
     }
     else
     {
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
-      RebalanceConformalMesh(mesh);
+      std::unique_ptr<mfem::ParMesh> &pmesh = mesh;
+      RebalanceConformalMesh(pmesh);
     }
   }
   return ratio;
