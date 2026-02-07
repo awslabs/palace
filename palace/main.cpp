@@ -278,16 +278,9 @@ int main(int argc, char *argv[])
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
   std::vector<std::unique_ptr<Mesh>> mesh;
-  {
-    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
-    mesh::RefineMesh(iodata, mfem_mesh);
-    for (auto &m : mfem_mesh)
-    {
-      mesh.push_back(std::make_unique<Mesh>(std::move(m)));
-    }
-  }
+  mesh.push_back(mesh::ReadMesh(iodata, world_comm));
+  iodata.NondimensionalizeInputs(*mesh[0]);
+  mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
   solver->SolveEstimateMarkRefine(mesh);

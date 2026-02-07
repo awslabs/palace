@@ -198,7 +198,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     {
-      mfem::ParMesh &fine_mesh = *mesh.back();
+      auto &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
       const auto final_elem_count = fine_mesh.GetGlobalNE();
@@ -242,7 +242,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
   const auto &fespace = fespaces.GetFinestFESpace();
-  HYPRE_BigInt ne = fespace.GetParMesh().GetNE();
+  HYPRE_BigInt ne = fespace.GetMesh().GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
   std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
