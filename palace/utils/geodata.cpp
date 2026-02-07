@@ -16,6 +16,8 @@
 #include <utility>
 #include <Eigen/Dense>
 #include <fmt/ranges.h>
+#include "fem/coefficient.hpp"
+#include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
@@ -1295,56 +1297,18 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
 
 double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {
-  double area = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : area))
-  {
-    mfem::IsoparametricTransformation T;
-    PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < mesh.GetNBE(); i++)
-    {
-      if (!marker[mesh.GetBdrAttribute(i) - 1])
-      {
-        continue;
-      }
-      mesh.GetBdrElementTransformation(i, &T);
-      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
-        T.SetIntPoint(&ip);
-        area += ip.weight * T.Weight();
-      }
-    }
-  }
-  Mpi::GlobalSum(1, &area, mesh.GetComm());
-  return area;
+  ConstantCoefficient one(1.0);
+  return fem::IntegrateFunction(mesh, marker, true, one,
+                                [](const mfem::ElementTransformation &T)
+                                { return T.OrderJ(); });
 }
 
 double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {
-  double volume = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : volume))
-  {
-    mfem::IsoparametricTransformation T;
-    PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < mesh.GetNE(); i++)
-    {
-      if (!marker[mesh.GetAttribute(i) - 1])
-      {
-        continue;
-      }
-      mesh.GetElementTransformation(i, &T);
-      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
-        T.SetIntPoint(&ip);
-        volume += ip.weight * T.Weight();
-      }
-    }
-  }
-  Mpi::GlobalSum(1, &volume, mesh.GetComm());
-  return volume;
+  ConstantCoefficient one(1.0);
+  return fem::IntegrateFunction(mesh, marker, false, one,
+                                [](const mfem::ElementTransformation &T)
+                                { return T.OrderJ(); });
 }
 
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)

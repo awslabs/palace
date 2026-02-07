@@ -69,8 +69,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                       fem_op_.GetRTSpace());
           }
         }())),
-    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
-                 fem_op->GetNDSpace()),
+    surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetMesh(), fem_op->GetNDSpace()),
     interp_op(iodata, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -343,7 +342,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 
   // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
-  // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
+  // energy 1/2 Hᴴ B. Also Poynting vector S = Re{E x H⋆}.
   if (U_e)
   {
     paraview->RegisterCoeffField("U_e", U_e.get());
