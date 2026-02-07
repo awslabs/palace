@@ -206,8 +206,10 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
     std::string err = ValidateConfig(config);
     if (!err.empty())
     {
-      Mpi::Warning("Configuration file validation failed!\n{}", err);
-      Mpi::Abort(EXIT_FAILURE);
+      Mpi::Warning("{}", err);
+      std::cout << std::flush;  // Flush before abort to avoid clipping the error message
+      Mpi::Barrier();
+      MFEM_ABORT("Configuration file validation failed!");
     }
   }
 
