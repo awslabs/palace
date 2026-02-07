@@ -22,9 +22,9 @@ constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 InterpolationOperator::InterpolationOperator(const IoData &iodata,
                                              FiniteElementSpace &nd_space)
 #if defined(MFEM_USE_GSLIB)
-  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
+  : op(nd_space.GetMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
 {
-  auto &mesh = nd_space.GetParMesh();
+  auto &mesh = nd_space.GetMesh();
   // Set up probes interpolation. All processes search for all points.
   if (iodata.domains.postpro.probe.empty())
   {

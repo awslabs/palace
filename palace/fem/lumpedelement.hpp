@@ -10,6 +10,8 @@
 namespace palace
 {
 
+class Mesh;
+
 //
 // Base class handling geometry of lumped elements for uniform and coaxial lumped port and
 // surface current source boundaries.
@@ -44,7 +46,7 @@ private:
 
 public:
   UniformElementData(const std::array<double, 3> &input_dir,
-                     const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
+                     const mfem::Array<int> &attr_list, const Mesh &mesh);
 
   double GetGeometryLength() const override { return l; }
   double GetGeometryWidth() const override { return w; }
@@ -67,7 +69,7 @@ private:
 
 public:
   CoaxialElementData(const std::array<double, 3> &input_dir,
-                     const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
+                     const mfem::Array<int> &attr_list, const Mesh &mesh);
 
   double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
   double GetGeometryWidth() const override { return 2.0 * M_PI; }

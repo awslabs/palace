@@ -5,6 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -14,10 +15,10 @@ namespace palace
 
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       const mfem::ParMesh &mesh)
+                                       const Mesh &mesh)
   : LumpedElementData(attr_list)
 {
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
 
@@ -81,10 +82,10 @@ UniformElementData::GetModeCoefficient(double coeff) const
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       const mfem::ParMesh &mesh)
+                                       const Mesh &mesh)
   : LumpedElementData(attr_list)
 {
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
   MFEM_VERIFY(bounding_ball.planar,

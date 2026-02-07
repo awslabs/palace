@@ -92,9 +92,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   mfem::Array<int> dbc_marker;
   if (dbc_attr && dbc_tdof_lists)
   {
-    int bdr_attr_max = mesh[coarse_mesh_l]->Get().bdr_attributes.Size()
-                           ? mesh[coarse_mesh_l]->Get().bdr_attributes.Max()
-                           : 0;
+    int bdr_attr_max = mesh[coarse_mesh_l]->MaxBdrAttribute();
     dbc_marker = mesh::AttrToMarker(bdr_attr_max, *dbc_attr);
     fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(dbc_marker,
                                                            dbc_tdof_lists->emplace_back());
