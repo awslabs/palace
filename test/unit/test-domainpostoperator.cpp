@@ -46,10 +46,10 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
           resolution, resolution, resolution, mfem::Element::TETRAHEDRON, sx, sy, sz));
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-
-  iodata.NondimensionalizeInputs(*par_mesh);
-  iodata.CheckConfiguration();  // initializes quadrature
   Mesh palace_mesh(std::move(par_mesh));
+
+  iodata.NondimensionalizeInputs(palace_mesh);
+  iodata.CheckConfiguration();  // initializes quadrature
 
   mfem::ND_FECollection nd_fec(1, dim);
   FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
