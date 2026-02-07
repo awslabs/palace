@@ -134,14 +134,15 @@ public:
   auto *GetNodes() const { return Get().GetNodes(); }
   auto *GetNodes() { return Get().GetNodes(); }
 
-  // Element transformations.
+  // Element transformations. The overloads writing into a caller-provided T are const
+  // because they don't modify the mesh itself.
   auto *GetElementTransformation(int i) { return Get().GetElementTransformation(i); }
-  void GetElementTransformation(int i, mfem::IsoparametricTransformation *T)
+  void GetElementTransformation(int i, mfem::IsoparametricTransformation *T) const
   {
     Get().GetElementTransformation(i, T);
   }
   auto *GetBdrElementTransformation(int i) { return Get().GetBdrElementTransformation(i); }
-  void GetBdrElementTransformation(int i, mfem::IsoparametricTransformation *T)
+  void GetBdrElementTransformation(int i, mfem::IsoparametricTransformation *T) const
   {
     Get().GetBdrElementTransformation(i, T);
   }
