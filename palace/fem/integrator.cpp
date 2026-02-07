@@ -4,6 +4,7 @@
 #include "integrator.hpp"
 
 #include "fem/libceed/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/omp.hpp"
 
@@ -45,7 +46,7 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 }
 
 double IntegrateFunction(
-    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
     mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
 {
@@ -55,7 +56,7 @@ double IntegrateFunction(
 }
 
 double IntegrateFunctionLocal(
-    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
     mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
 {

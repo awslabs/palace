@@ -12,6 +12,7 @@ namespace palace
 {
 
 class MaterialPropertyCoefficient;
+class Mesh;
 
 //
 // Classes which implement or extend bilinear and linear form integrators. In doc strings u
@@ -35,13 +36,13 @@ struct DefaultIntegrationOrder
 };
 
 double IntegrateFunction(
-    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
     mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
         [](const mfem::ElementTransformation &T)
     { return DefaultIntegrationOrder::Get(T); });
 double IntegrateFunctionLocal(
-    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
     mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
         [](const mfem::ElementTransformation &T)

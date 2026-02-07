@@ -87,7 +87,9 @@ public:
   const auto &GetMesh() const { return mesh; }
   auto &GetMesh() { return mesh; }
 
+  [[deprecated("Use GetMesh() with palace::Mesh wrappers instead")]]
   const auto &GetParMesh() const { return mesh.Get(); }
+  [[deprecated("Use GetMesh() with palace::Mesh wrappers instead")]]
   auto &GetParMesh() { return mesh.Get(); }
 
   auto GetVDim() const { return Get().GetVDim(); }
@@ -95,8 +97,8 @@ public:
   auto GlobalVSize() const { return Get().GlobalVSize(); }
   auto GetTrueVSize() const { return Get().GetTrueVSize(); }
   auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
-  auto Dimension() const { return mesh.Get().Dimension(); }
-  auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
+  auto Dimension() const { return mesh.Dimension(); }
+  auto SpaceDimension() const { return mesh.SpaceDimension(); }
   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
   const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }

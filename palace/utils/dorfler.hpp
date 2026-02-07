@@ -8,14 +8,12 @@
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
-namespace mfem
+namespace palace
 {
 
-class ParMesh;
+class Mesh;
 
-}  // namespace mfem
-
-namespace palace::utils
+namespace utils
 {
 
 // Given a vector of estimates, e, and a fraction, compute a partition value E, such that
@@ -33,9 +31,11 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
 // specified fraction of the total coarsening opportunities. This is analogous to
 // ComputeDorflerThreshold, but operates only the list of available derefinement
 // opportunities within the mesh.
-std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
-                                                        const Vector &e, double fraction);
+std::array<double, 2> ComputeDorflerCoarseningThreshold(const Mesh &mesh, const Vector &e,
+                                                        double fraction);
 
-}  // namespace palace::utils
+}  // namespace utils
+
+}  // namespace palace
 
 #endif  // PALACE_UTILS_DORFLER_HPP

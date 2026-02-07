@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 
@@ -451,7 +452,7 @@ constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData
 
 }  // namespace
 
-void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
+void IoData::NondimensionalizeInputs(Mesh &mesh)
 {
   // Nondimensionalization of the equations is based on a given length Lc in [m], typically
   // the largest domain dimension. Configuration file lengths and the mesh coordinates are
@@ -585,7 +586,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
       units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.delta_t);
 
   // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
+  mesh::NondimensionalizeMesh(mesh.Get(), units.GetMeshLengthRelativeScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),

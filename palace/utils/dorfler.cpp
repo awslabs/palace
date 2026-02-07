@@ -7,6 +7,7 @@
 #include <limits>
 #include <numeric>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 
 namespace palace::utils
 {
@@ -170,17 +171,17 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   return {error_threshold, error_marked / error.total};
 }
 
-std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
-                                                        const Vector &e, double fraction)
+std::array<double, 2> ComputeDorflerCoarseningThreshold(const Mesh &mesh, const Vector &e,
+                                                        double fraction)
 {
   MFEM_VERIFY(mesh.Nonconforming(), "Can only perform coarsening on a Nonconforming mesh!");
-  const auto &derefinement_table = mesh.pncmesh->GetDerefinementTable();
+  const auto &derefinement_table = mesh.GetDerefinementTable();
   mfem::Array<double> elem_error(e.Size());
   for (int i = 0; i < e.Size(); i++)
   {
     elem_error[i] = e[i];
   }
-  mesh.pncmesh->SynchronizeDerefinementData(elem_error, derefinement_table);
+  mesh.SynchronizeDerefinementData(elem_error, derefinement_table);
   Vector coarse_error(derefinement_table.Size());
   mfem::Array<int> row;
   for (int i = 0; i < derefinement_table.Size(); i++)

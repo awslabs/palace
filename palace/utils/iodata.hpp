@@ -7,15 +7,10 @@
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
-namespace mfem
-{
-
-class ParMesh;
-
-}  // namespace mfem
-
 namespace palace
 {
+
+class Mesh;
 
 std::stringstream PreprocessFile(const char *filename);
 
@@ -49,7 +44,7 @@ public:
   IoData(const char *filename, bool print);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
-  void NondimensionalizeInputs(mfem::ParMesh &mesh);
+  void NondimensionalizeInputs(Mesh &mesh);
 };
 
 }  // namespace palace
