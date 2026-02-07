@@ -346,8 +346,8 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
-  config::BoundaryData boundary_torus;
-  REQUIRE_NOTHROW(boundary_torus.SetUp(*config.find("boundaries_periodic_torus")));
+  auto entry = config.find("boundaries_periodic_torus")->find("Boundaries");
+  config::BoundaryData boundary_torus(*entry);
   for (const auto &data : boundary_torus.periodic.boundary_pairs)
   {
     auto periodic_mapping = mesh::DeterminePeriodicVertexMapping(mesh, data);
