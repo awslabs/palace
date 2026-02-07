@@ -46,16 +46,9 @@ std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &ioda
 
   // Load Mesh — copy from main.cpp
   std::vector<std::unique_ptr<Mesh>> mesh_;
-  {
-    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata_, world_comm_));
-    iodata_.NondimensionalizeInputs(*mfem_mesh[0]);
-    mesh::RefineMesh(iodata_, mfem_mesh);
-    for (auto &m : mfem_mesh)
-    {
-      mesh_.push_back(std::make_unique<Mesh>(std::move(m)));
-    }
-  }
+  mesh_.push_back(mesh::ReadMesh(iodata_, world_comm_));
+  iodata_.NondimensionalizeInputs(*mesh_[0]);
+  mesh::RefineMesh(iodata_, mesh_);
   return mesh_;
 }
 

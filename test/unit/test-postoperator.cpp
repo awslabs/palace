@@ -371,9 +371,9 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   auto comm = Mpi::World();
   int size = Mpi::Size(comm);
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  iodata.NondimensionalizeInputs(*mesh[0]);
 
   auto check_files = [&](const std::string &subdir, int step, int pad_digits,
                          const std::vector<std::string> &fields)
@@ -529,8 +529,8 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   auto comm = Mpi::World();
   int size = Mpi::Size(comm);
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   Mesh mesh(std::move(par_mesh));
+  iodata.NondimensionalizeInputs(mesh);
 
   // Create gridfunctions.
   int order = 1;

@@ -180,8 +180,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   // Read parallel mesh.
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
+  iodata.NondimensionalizeInputs(palace_mesh);
 
   // Set up complex fields on Nédélec element space.
   mfem::ND_FECollection nd_fec(3, dim);  // Third order elements
@@ -353,8 +353,8 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   const int dim = serial_mesh->Dimension();
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
 
-  iodata.NondimensionalizeInputs(*par_mesh);
   Mesh palace_mesh(std::move(par_mesh));
+  iodata.NondimensionalizeInputs(palace_mesh);
 
   mfem::ND_FECollection nd_fec(1, dim);
   FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
