@@ -18,6 +18,7 @@
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/jsonschema.hpp"
 
 namespace palace
 {
@@ -199,6 +200,19 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   {
     MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
   }
+
+  // Validate against JSON schema.
+  {
+    std::string err = ValidateConfig(config);
+    if (!err.empty())
+    {
+      Mpi::Warning("{}", err);
+      std::cout << std::flush;  // Flush before abort to avoid clipping the error message
+      Mpi::Barrier();
+      MFEM_ABORT("Configuration file validation failed!");
+    }
+  }
+
   if (print)
   {
     Mpi::Print("\n{}\n", config.dump(2));
