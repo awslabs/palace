@@ -9,12 +9,12 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 
 namespace palace
 {
 
 class IoData;
-class Mesh;
 
 namespace mesh
 {
