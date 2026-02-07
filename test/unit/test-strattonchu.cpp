@@ -236,7 +236,7 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 
   // Setup Palace operators for far-field computation.
   MaterialOperator mat_op(iodata, palace_mesh);
-  SurfacePostOperator surf_post_op(iodata, mat_op, nd_fespace.GetParMesh(), nd_fespace);
+  SurfacePostOperator surf_post_op(iodata, mat_op, nd_fespace.GetMesh(), nd_fespace);
 
   auto thetaphis = GenerateSphericalTestPoints();
   double omega_rad_per_time =
@@ -360,7 +360,7 @@ TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu
   FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
   MaterialOperator mat_op(iodata, palace_mesh);
 
-  CHECK_THROWS(SurfacePostOperator(iodata, mat_op, nd_fespace.GetParMesh(), nd_fespace));
+  CHECK_THROWS(SurfacePostOperator(iodata, mat_op, nd_fespace.GetMesh(), nd_fespace));
 }
 
 }  // namespace

@@ -267,8 +267,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_dir_b /= sub_folder_name;
   }
   // Set up postprocessing for output to disk.
-  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
+  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetMesh().Get()};
+  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetMesh().Get()};
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)

@@ -650,7 +650,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   std::vector<mfem::ParGridFunction> gf_before = copy_gridfunctions();
 
   // Dimensionalize.
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::DimensionalizeMesh(mesh.Get(), mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(true);
@@ -658,7 +658,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   CompareGridFunctions(gf_before, gf_dim, expected_scaling, rtol);
 
   // Nondimensionalize.
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::NondimensionalizeMesh(mesh.Get(), mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(false);

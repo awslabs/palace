@@ -150,7 +150,7 @@ auto BuildCoefficient(const Mesh &mesh, bool bdr_integ, CoeffType coeff_type)
   }
   mfem::Array<int> attr_mat;
   mfem::DenseTensor mat_coeff;
-  BuildCoefficientHelper(mesh, bdr_integ, coeff_type, attr_mat, mat_coeff);
+  BuildCoefficientHelper(mesh.Get(), bdr_integ, coeff_type, attr_mat, mat_coeff);
 
   // Convert attribute to material mapping from global MFEM attributes to local libCEED
   // ones.
@@ -176,7 +176,7 @@ auto BuildCoefficientRef(const Mesh &mesh, bool bdr_integ, CoeffType coeff_type)
   }
   mfem::Array<int> attr_mat;
   mfem::DenseTensor mat_coeff;
-  BuildCoefficientHelper(mesh, bdr_integ, coeff_type, attr_mat, mat_coeff);
+  BuildCoefficientHelper(mesh.Get(), bdr_integ, coeff_type, attr_mat, mat_coeff);
 
   mfem::DenseTensor C(mat_coeff.SizeI(), mat_coeff.SizeJ(), attr_mat.Size());
   for (int i = 0; i < attr_mat.Size(); i++)
@@ -459,7 +459,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   }
 
   // Memory estimate (only for non-mixed meshes).
-  mfem::ParMesh &mesh = fespace.GetParMesh();
+  mfem::ParMesh &mesh = fespace.GetMesh().Get();
   if (mesh.GetNumGeometries(mesh.Dimension()) == 1)
   {
     // Integration rule gives the complete non-tensor number of points.
@@ -588,7 +588,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   }
 
   // Memory estimate (only for non-mixed meshes).
-  mfem::ParMesh &mesh = trial_fespace.GetParMesh();
+  mfem::ParMesh &mesh = trial_fespace.GetMesh().Get();
   if (mesh.GetNumGeometries(mesh.Dimension()) == 1)
   {
     const mfem::FiniteElement &trial_fe = *trial_fespace.Get().GetFE(0);

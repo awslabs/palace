@@ -47,7 +47,7 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
     }
     op_idx[i++] = idx;
   }
-  op.Setup(mesh, GSLIB_BB_TOL, GSLIB_NEWTON_TOL, npts);
+  op.Setup(mesh.Get(), GSLIB_BB_TOL, GSLIB_NEWTON_TOL, npts);
   op.FindPoints(xyz, mfem::Ordering::byNODES);
   op.SetDefaultInterpolationValue(0.0);
   i = 0;

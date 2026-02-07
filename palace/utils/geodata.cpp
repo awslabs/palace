@@ -76,7 +76,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Me
 
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
+std::unique_ptr<mfem::ParMesh> RebalanceConformalMesh(const mfem::ParMesh &);
 
 }  // namespace
 
@@ -1380,8 +1380,7 @@ double RebalanceMesh(const IoData &iodata, Mesh &mesh)
     {
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
-      std::unique_ptr<mfem::ParMesh> &pmesh = mesh;
-      RebalanceConformalMesh(pmesh);
+      mesh.Reset(RebalanceConformalMesh(mesh.Get()));
     }
   }
   return ratio;
@@ -2706,11 +2705,11 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   return pmesh;
 }
 
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
+std::unique_ptr<mfem::ParMesh> RebalanceConformalMesh(const mfem::ParMesh &pmesh)
 {
   // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
   // using METIS.
-  MPI_Comm comm = pmesh->GetComm();
+  MPI_Comm comm = pmesh.GetComm();
   constexpr bool generate_edges = false, generate_bdr = false, refine = true,
                  fix_orientation = false;
   std::unique_ptr<mfem::Mesh> smesh;
@@ -2721,7 +2720,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
     // fo << std::fixed;
     fo << std::scientific;
     fo.precision(MSH_FLT_PRECISION);
-    pmesh->PrintAsSerial(fo);
+    const_cast<mfem::ParMesh &>(pmesh).PrintAsSerial(fo);
     if (Mpi::Root(comm))
     {
       smesh = std::make_unique<mfem::Mesh>(fo, generate_edges, refine, fix_orientation);
@@ -2730,7 +2729,8 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   else
   {
     // Directly ingest the generated Mesh and release the no longer needed memory.
-    smesh = std::make_unique<mfem::Mesh>(pmesh->GetSerialMesh(0));
+    smesh =
+        std::make_unique<mfem::Mesh>(const_cast<mfem::ParMesh &>(pmesh).GetSerialMesh(0));
     if (Mpi::Root(comm))
     {
       smesh->FinalizeTopology(generate_bdr);
@@ -2748,7 +2748,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   {
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
   }
-  pmesh = DistributeMesh(comm, smesh, partitioning.get());
+  return DistributeMesh(comm, smesh, partitioning.get());
 }
 
 }  // namespace
