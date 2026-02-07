@@ -168,6 +168,11 @@ public:
   {
     Get().GeneralRefinement(m, nonconf, nc_limit);
   }
+  void GeneralRefinement(const mfem::Array<mfem::Refinement> &m, int nonconf = -1,
+                         int nc_limit = 0)
+  {
+    Get().GeneralRefinement(m, nonconf, nc_limit);
+  }
 
   // Derefinement (encapsulates pncmesh access).
   const mfem::Table &GetDerefinementTable() const;
