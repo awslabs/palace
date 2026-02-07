@@ -18,6 +18,7 @@ class GridFunction;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Mesh;
 class SumVectorCoefficient;
 
 namespace config
@@ -47,7 +48,7 @@ public:
 
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
-                 const mfem::ParMesh &mesh);
+                 const Mesh &mesh);
 
   double GetToSquare(const LumpedElementData &elem) const
   {
@@ -86,12 +87,12 @@ private:
   std::map<int, LumpedPortData> ports;
 
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+                               const Mesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh);
 
 public:
   LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     const mfem::ParMesh &mesh);
+                     const Mesh &mesh);
 
   // Access data structures for the lumped port with the given index.
   const LumpedPortData &GetPort(int idx) const;

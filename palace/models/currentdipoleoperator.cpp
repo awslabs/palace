@@ -4,6 +4,7 @@
 #include "currentdipoleoperator.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -13,7 +14,7 @@ namespace palace
 {
 
 CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
-                                     const mfem::ParMesh &mesh, const Units &units)
+                                     const Mesh &mesh, const Units &units)
   : coef(mesh.SpaceDimension())
 {
   // Set up normalized direction
@@ -50,7 +51,7 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
 }
 
 CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
-                                             const mfem::ParMesh &mesh)
+                                             const Mesh &mesh)
 {
   // Set up current dipole source properties.
   SetUpDipoleProperties(iodata, mesh);
@@ -58,7 +59,7 @@ CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
 }
 
 void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata,
-                                                  const mfem::ParMesh &mesh)
+                                                  const Mesh &mesh)
 {
   // Set up current dipole data structures.
   for (const auto &[idx, data] : iodata.domains.current_dipole)
@@ -67,7 +68,7 @@ void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata,
   }
 }
 
-void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void CurrentDipoleOperator::PrintDipoleInfo(const IoData &iodata, const Mesh &mesh)
 {
   if (dipoles.empty())
   {

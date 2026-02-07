@@ -4,6 +4,7 @@
 #include "surfaceconductivityoperator.hpp"
 
 #include <set>
+#include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -17,7 +18,7 @@ using namespace std::complex_literals;
 
 SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
                                                          const MaterialOperator &mat_op,
-                                                         const mfem::ParMesh &mesh)
+                                                         const Mesh &mesh)
   : mat_op(mat_op)
 {
   // Print out BC info for all finite conductivity boundary attributes.
@@ -26,10 +27,10 @@ SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
 }
 
 void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                          const mfem::ParMesh &mesh)
+                                                          const Mesh &mesh)
 {
   // Check that conductivity boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.conductivity.empty())
   {
@@ -37,7 +38,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     conductivity_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -108,7 +109,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 }
 
 void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
-                                                    const mfem::ParMesh &mesh)
+                                                    const Mesh &mesh)
 {
   if (boundaries.empty())
   {

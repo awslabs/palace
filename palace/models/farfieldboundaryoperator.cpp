@@ -4,6 +4,7 @@
 #include "farfieldboundaryoperator.hpp"
 
 #include <set>
+#include "fem/mesh.hpp"
 #include "linalg/densematrix.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -16,7 +17,7 @@ namespace palace
 
 FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
                                                    const MaterialOperator &mat_op,
-                                                   const mfem::ParMesh &mesh)
+                                                   const Mesh &mesh)
   : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(iodata, mesh))
 {
   // Print out BC info for all farfield attributes.
@@ -30,16 +31,16 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
 
 mfem::Array<int>
 FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                  const mfem::ParMesh &mesh)
+                                                  const Mesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.farfield.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }

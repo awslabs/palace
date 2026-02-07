@@ -65,7 +65,7 @@ private:
 
   PortExcitations port_excitation_helper;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh);
   void CheckBoundaryProperties();
 
   // Helper functions for building the bilinear forms corresponding to the discretized

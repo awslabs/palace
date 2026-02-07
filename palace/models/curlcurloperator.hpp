@@ -47,7 +47,7 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh);
   void CheckBoundaryProperties();
 
 public:

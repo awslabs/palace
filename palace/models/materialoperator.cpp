@@ -96,18 +96,17 @@ MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mes
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, const Mesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
   // from the mesh so as to not cause problems.
   MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
   {
-    int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+    int attr_max = mesh.MaxAttribute();
     mfem::Array<int> attr_marker(attr_max);
     attr_marker = 0;
-    for (auto attr : mesh.attributes)
+    for (auto attr : mesh.Attributes())
     {
       attr_marker[attr - 1] = 1;
     }
@@ -310,8 +309,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   has_wave_attr = has_attr[3];
 }
 
-void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
-                                              const mfem::ParMesh &mesh)
+void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata, const Mesh &mesh)
 {
   const int sdim = mesh.SpaceDimension();
   const double tol = std::numeric_limits<double>::epsilon();

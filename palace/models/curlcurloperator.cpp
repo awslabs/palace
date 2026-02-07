@@ -49,16 +49,16 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
 }
 
 mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                           const mfem::ParMesh &mesh)
+                                                           const Mesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.pec.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -101,8 +101,8 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
 void CurlCurlOperator::CheckBoundaryProperties()
 {
   // A final check that no boundary attribute is assigned multiple boundary conditions.
-  const mfem::ParMesh &mesh = GetMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const Mesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   const auto surf_j_marker = mesh::AttrToMarker(bdr_attr_max, surf_j_op.GetAttrList());
   for (int i = 0; i < dbc_marker.Size(); i++)

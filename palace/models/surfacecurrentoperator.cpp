@@ -4,6 +4,7 @@
 #include "surfacecurrentoperator.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -12,7 +13,7 @@ namespace palace
 {
 
 SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
-                                       const mfem::ParMesh &mesh)
+                                       const Mesh &mesh)
 {
   // Construct the source elements allowing for a possible multielement surface current
   // sources.
@@ -41,7 +42,7 @@ double SurfaceCurrentData::GetExcitationCurrent() const
 }
 
 SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+                                               const Mesh &mesh)
 {
   // Set up surface current source boundaries.
   SetUpBoundaryProperties(iodata, mesh);
@@ -49,16 +50,16 @@ SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
 }
 
 void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                     const mfem::ParMesh &mesh)
+                                                     const Mesh &mesh)
 {
   // Check that surface current boundary attributes have been specified correctly.
   if (!iodata.boundaries.current.empty())
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    int bdr_attr_max = mesh.MaxBdrAttribute();
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), source_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     source_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -90,7 +91,7 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
 }
 
 void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+                                               const Mesh &mesh)
 {
   if (sources.empty())
   {

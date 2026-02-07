@@ -13,6 +13,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 class SumVectorCoefficient;
 
 namespace config
@@ -34,7 +35,7 @@ public:
   // Coefficient stored with data given unique status of delta coefficient.
   mfem::VectorDeltaCoefficient coef;  // Vector coefficient for dipole source
 public:
-  CurrentDipoleData(const config::CurrentDipoleData &data, const mfem::ParMesh &mesh,
+  CurrentDipoleData(const config::CurrentDipoleData &data, const Mesh &mesh,
                     const class Units &units);
 };
 
@@ -47,11 +48,11 @@ private:
   // Mapping from dipole index to data structure containing dipole information.
   std::map<int, CurrentDipoleData> dipoles;
 
-  void SetUpDipoleProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintDipoleInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpDipoleProperties(const IoData &iodata, const Mesh &mesh);
+  void PrintDipoleInfo(const IoData &iodata, const Mesh &mesh);
 
 public:
-  CurrentDipoleOperator(const IoData &iodata, const mfem::ParMesh &mesh);
+  CurrentDipoleOperator(const IoData &iodata, const Mesh &mesh);
 
   // Access data structures for current dipoles.
   auto begin() const { return dipoles.begin(); }

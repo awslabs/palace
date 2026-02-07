@@ -85,16 +85,16 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 }
 
 mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                        const mfem::ParMesh &mesh)
+                                                        const Mesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.pec.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -138,8 +138,8 @@ void SpaceOperator::CheckBoundaryProperties()
 {
   // Mark selected boundary attributes from the mesh as having some Dirichlet, Neumann, or
   // mixed BC applied.
-  const mfem::ParMesh &mesh = GetMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const Mesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   const auto farfield_marker = mesh::AttrToMarker(bdr_attr_max, farfield_op.GetAttrList());
   const auto surf_sigma_marker =

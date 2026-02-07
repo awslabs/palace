@@ -14,6 +14,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 class SumVectorCoefficient;
 
 namespace config
@@ -35,7 +36,7 @@ public:
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
 public:
-  SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
+  SurfaceCurrentData(const config::SurfaceCurrentData &data, const Mesh &mesh);
 
   double GetExcitationCurrent() const;
 };
@@ -50,11 +51,11 @@ private:
   // information.
   std::map<int, SurfaceCurrentData> sources;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh);
 
 public:
-  SurfaceCurrentOperator(const IoData &iodata, const mfem::ParMesh &mesh);
+  SurfaceCurrentOperator(const IoData &iodata, const Mesh &mesh);
 
   // Access data structures for the surface current source with the given index.
   const SurfaceCurrentData &GetSource(int idx) const;

@@ -48,16 +48,16 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
 }
 
 mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                          const mfem::ParMesh &mesh)
+                                                          const Mesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.pec.empty() || !iodata.boundaries.lumpedport.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -235,8 +235,8 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.
-  const mfem::ParMesh &mesh = GetMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const Mesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
   ConstantCoefficient one(1.0);
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master

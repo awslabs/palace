@@ -16,6 +16,7 @@ namespace palace
 class GridFunction;
 class IoData;
 class MaterialOperator;
+class Mesh;
 
 namespace config
 {
@@ -46,7 +47,7 @@ private:
     bool two_sided;
     mfem::Vector center;
 
-    SurfaceFluxData(const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
+    SurfaceFluxData(const config::SurfaceFluxData &data, const Mesh &mesh,
                     const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
@@ -59,7 +60,7 @@ private:
     double t, epsilon, tandelta;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            const mfem::ParMesh &mesh,
+                            const Mesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
@@ -70,7 +71,7 @@ private:
     std::vector<std::pair<double, double>> thetaphis;
 
     FarFieldData() = default;
-    FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
+    FarFieldData(const config::FarFieldPostData &data, const Mesh &mesh,
                  const mfem::Array<int> &bdr_attr_marker);
 
     size_t size() const { return thetaphis.size(); }
@@ -80,7 +81,7 @@ private:
   const MaterialOperator &mat_op;
 
   // Reference to mesh (not owned).
-  const mfem::ParMesh &mesh;
+  const Mesh &mesh;
 
   // Reference to vector finite element space used for computing far-field integrals (not
   // owned).
@@ -93,7 +94,7 @@ public:
   FarFieldData farfield;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      const mfem::ParMesh &mesh, mfem::ParFiniteElementSpace &nd_fespace);
+                      const Mesh &mesh, mfem::ParFiniteElementSpace &nd_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,

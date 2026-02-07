@@ -12,6 +12,7 @@ namespace palace
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Mesh;
 
 //
 // A class handling farfield, or absorbing, boundaries.
@@ -28,11 +29,11 @@ private:
   // First- or second-order absorbing boundary condition.
   int order;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh);
 
 public:
   FarfieldBoundaryOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                           const mfem::ParMesh &mesh);
+                           const Mesh &mesh);
 
   // Returns array of farfield BC attributes.
   const auto &GetAttrList() const { return farfield_attr; }

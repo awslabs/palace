@@ -6,6 +6,7 @@
 #include <complex>
 #include <set>
 #include "fem/gridfunction.hpp"
+#include "fem/mesh.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -59,7 +60,7 @@ mfem::Array<int> SetUpBoundaryProperties(const T &data,
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
-    const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
+    const config::SurfaceFluxData &data, const Mesh &mesh,
     const mfem::Array<int> &bdr_attr_marker)
 {
   // Store boundary attributes for this postprocessing boundary.
@@ -125,7 +126,7 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 }
 
 SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
-    const config::InterfaceDielectricData &data, const mfem::ParMesh &mesh,
+    const config::InterfaceDielectricData &data, const Mesh &mesh,
     const mfem::Array<int> &bdr_attr_marker)
 {
   // Store boundary attributes for this postprocessing boundary.
@@ -180,7 +181,7 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 }
 
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
-                                                const mfem::ParMesh &mesh,
+                                                const Mesh &mesh,
                                                 const mfem::Array<int> &bdr_attr_marker)
   : thetaphis(data.thetaphis)
 {
@@ -190,12 +191,12 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op,
-                                         const mfem::ParMesh &mesh,
+                                         const Mesh &mesh,
                                          mfem::ParFiniteElementSpace &nd_fespace)
   : mat_op(mat_op), mesh(mesh), nd_fespace(nd_fespace)
 {
   // Check that boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.postpro.flux.empty() ||
       !iodata.boundaries.postpro.dielectric.empty() ||
@@ -203,7 +204,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -270,8 +271,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
     }
   }
 
-  farfield = FarFieldData(iodata.boundaries.postpro.farfield, *nd_fespace.GetParMesh(),
-                          bdr_attr_marker);
+  farfield = FarFieldData(iodata.boundaries.postpro.farfield, mesh, bdr_attr_marker);
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
@@ -350,7 +350,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
         std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)});
   }
 
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
   // Integrate. Each MPI process computes its contribution and we will reduce
@@ -365,7 +365,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
       continue;
 
-    auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(i);
+    auto *T = const_cast<Mesh &>(mesh).GetBdrElementTransformation(i);
     const auto *fe = nd_fespace.GetBE(i);
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));

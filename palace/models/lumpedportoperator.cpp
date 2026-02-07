@@ -7,6 +7,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -18,7 +19,7 @@ namespace palace
 using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
-                               const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
+                               const MaterialOperator &mat_op, const Mesh &mesh)
   : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
@@ -267,7 +268,7 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 }
 
 LumpedPortOperator::LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       const mfem::ParMesh &mesh)
+                                       const Mesh &mesh)
 {
   // Set up lumped port boundary conditions.
   SetUpBoundaryProperties(iodata, mat_op, mesh);
@@ -276,16 +277,16 @@ LumpedPortOperator::LumpedPortOperator(const IoData &iodata, const MaterialOpera
 
 void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                  const MaterialOperator &mat_op,
-                                                 const mfem::ParMesh &mesh)
+                                                 const Mesh &mesh)
 {
   // Check that lumped port boundary attributes have been specified correctly.
   if (!iodata.boundaries.lumpedport.empty())
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    int bdr_attr_max = mesh.MaxBdrAttribute();
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     port_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -315,7 +316,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh)
 {
   if (ports.empty())
   {

@@ -48,7 +48,7 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh);
   std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata);
 
 public:
