@@ -41,16 +41,14 @@ double SurfaceCurrentData::GetExcitationCurrent() const
   return 1.0;
 }
 
-SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
-                                               const Mesh &mesh)
+SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata, const Mesh &mesh)
 {
   // Set up surface current source boundaries.
   SetUpBoundaryProperties(iodata, mesh);
   PrintBoundaryInfo(iodata, mesh);
 }
 
-void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                     const Mesh &mesh)
+void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata, const Mesh &mesh)
 {
   // Check that surface current boundary attributes have been specified correctly.
   if (!iodata.boundaries.current.empty())
@@ -90,8 +88,7 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
-                                               const Mesh &mesh)
+void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh)
 {
   if (sources.empty())
   {

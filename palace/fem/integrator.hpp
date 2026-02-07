@@ -36,14 +36,12 @@ struct DefaultIntegrationOrder
 };
 
 double IntegrateFunction(
-    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
-    mfem::Coefficient &Q,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr, mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
         [](const mfem::ElementTransformation &T)
     { return DefaultIntegrationOrder::Get(T); });
 double IntegrateFunctionLocal(
-    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
-    mfem::Coefficient &Q,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr, mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
         [](const mfem::ElementTransformation &T)
     { return DefaultIntegrationOrder::Get(T); });

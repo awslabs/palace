@@ -88,14 +88,26 @@ public:
   auto &Get() { return *mesh; }
 
   [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator const mfem::ParMesh &() const { return Get(); }
+  operator const mfem::ParMesh &() const
+  {
+    return Get();
+  }
   [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator mfem::ParMesh &() { return Get(); }
+  operator mfem::ParMesh &()
+  {
+    return Get();
+  }
 
   [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator const std::unique_ptr<mfem::ParMesh> &() const { return mesh; }
+  operator const std::unique_ptr<mfem::ParMesh> &() const
+  {
+    return mesh;
+  }
   [[deprecated("Use Get() or Mesh wrappers instead of implicit conversion")]]
-  operator std::unique_ptr<mfem::ParMesh> &() { return mesh; }
+  operator std::unique_ptr<mfem::ParMesh> &()
+  {
+    return mesh;
+  }
 
   auto Dimension() const { return Get().Dimension(); }
   auto SpaceDimension() const { return Get().SpaceDimension(); }
@@ -105,10 +117,7 @@ public:
   // Attribute queries.
   auto GetAttribute(int i) const { return Get().GetAttribute(i); }
   auto GetBdrAttribute(int i) const { return Get().GetBdrAttribute(i); }
-  int MaxAttribute() const
-  {
-    return Get().attributes.Size() ? Get().attributes.Max() : 0;
-  }
+  int MaxAttribute() const { return Get().attributes.Size() ? Get().attributes.Max() : 0; }
   int MaxBdrAttribute() const
   {
     return Get().bdr_attributes.Size() ? Get().bdr_attributes.Max() : 0;

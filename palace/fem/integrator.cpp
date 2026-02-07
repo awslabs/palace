@@ -46,8 +46,7 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 }
 
 double IntegrateFunction(
-    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
-    mfem::Coefficient &Q,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr, mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
 {
   double sum = IntegrateFunctionLocal(mesh, marker, bdr, Q, GetQuadratureOrder);
@@ -56,8 +55,7 @@ double IntegrateFunction(
 }
 
 double IntegrateFunctionLocal(
-    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
-    mfem::Coefficient &Q,
+    const Mesh &mesh, const mfem::Array<int> &marker, bool bdr, mfem::Coefficient &Q,
     std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
 {
   auto ElementIntegral = [&Q, &GetQuadratureOrder](mfem::ElementTransformation &T)

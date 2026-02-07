@@ -14,8 +14,7 @@ namespace palace
 {
 
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
-                                       const mfem::Array<int> &attr_list,
-                                       const Mesh &mesh)
+                                       const mfem::Array<int> &attr_list, const Mesh &mesh)
   : LumpedElementData(attr_list)
 {
   int bdr_attr_max = mesh.MaxBdrAttribute();
@@ -81,8 +80,7 @@ UniformElementData::GetModeCoefficient(double coeff) const
 }
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
-                                       const mfem::Array<int> &attr_list,
-                                       const Mesh &mesh)
+                                       const mfem::Array<int> &attr_list, const Mesh &mesh)
   : LumpedElementData(attr_list)
 {
   int bdr_attr_max = mesh.MaxBdrAttribute();

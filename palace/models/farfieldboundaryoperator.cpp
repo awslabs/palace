@@ -29,9 +29,8 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
   }
 }
 
-mfem::Array<int>
-FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                  const Mesh &mesh)
+mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                                                   const Mesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.MaxBdrAttribute();

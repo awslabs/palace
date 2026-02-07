@@ -50,16 +50,14 @@ CurrentDipoleData::CurrentDipoleData(const config::CurrentDipoleData &data,
   coef.SetScale(-moment);
 }
 
-CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata,
-                                             const Mesh &mesh)
+CurrentDipoleOperator::CurrentDipoleOperator(const IoData &iodata, const Mesh &mesh)
 {
   // Set up current dipole source properties.
   SetUpDipoleProperties(iodata, mesh);
   PrintDipoleInfo(iodata, mesh);
 }
 
-void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata,
-                                                  const Mesh &mesh)
+void CurrentDipoleOperator::SetUpDipoleProperties(const IoData &iodata, const Mesh &mesh)
 {
   // Set up current dipole data structures.
   for (const auto &[idx, data] : iodata.domains.current_dipole)

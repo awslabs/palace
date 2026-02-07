@@ -969,8 +969,8 @@ void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
   }
 }
 
-void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
-                               bool bdr, mfem::Vector &min, mfem::Vector &max)
+void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                               mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
   min.SetSize(dim);
@@ -1161,24 +1161,22 @@ std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direc
   return deviation_deg;
 }
 
-BoundingBox GetBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr)
+BoundingBox GetBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-BoundingBox GetBoundingBall(const Mesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr)
+BoundingBox GetBoundingBall(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir)
+double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                          const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
@@ -1196,8 +1194,8 @@ double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker,
   return length;
 }
 
-double GetDistanceFromPoint(const Mesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin, bool max)
+double GetDistanceFromPoint(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                            const std::array<double, 3> &origin, bool max)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);

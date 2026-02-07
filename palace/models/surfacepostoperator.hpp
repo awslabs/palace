@@ -59,8 +59,7 @@ private:
     InterfaceDielectric type;
     double t, epsilon, tandelta;
 
-    InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            const Mesh &mesh,
+    InterfaceDielectricData(const config::InterfaceDielectricData &data, const Mesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,

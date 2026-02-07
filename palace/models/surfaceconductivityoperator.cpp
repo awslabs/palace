@@ -108,8 +108,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
               "domain simulations!");
 }
 
-void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
-                                                    const Mesh &mesh)
+void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh)
 {
   if (boundaries.empty())
   {

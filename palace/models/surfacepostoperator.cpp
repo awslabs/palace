@@ -6,8 +6,8 @@
 #include <complex>
 #include <set>
 #include "fem/gridfunction.hpp"
-#include "fem/mesh.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/strattonchu.hpp"
@@ -190,8 +190,7 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
 }
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
-                                         const MaterialOperator &mat_op,
-                                         const Mesh &mesh,
+                                         const MaterialOperator &mat_op, const Mesh &mesh,
                                          mfem::ParFiniteElementSpace &nd_fespace)
   : mat_op(mat_op), mesh(mesh), nd_fespace(nd_fespace)
 {
