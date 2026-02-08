@@ -87,7 +87,6 @@ public:
   const auto &GetMesh() const { return mesh; }
   auto &GetMesh() { return mesh; }
 
-
   auto GetVDim() const { return Get().GetVDim(); }
   auto GetVSize() const { return Get().GetVSize(); }
   auto GlobalVSize() const { return Get().GlobalVSize(); }

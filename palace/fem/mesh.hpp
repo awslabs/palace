@@ -87,7 +87,6 @@ public:
   const auto &Get() const { return *mesh; }
   auto &Get() { return *mesh; }
 
-
   auto Dimension() const { return Get().Dimension(); }
   auto SpaceDimension() const { return Get().SpaceDimension(); }
   auto GetNE() const { return Get().GetNE(); }
