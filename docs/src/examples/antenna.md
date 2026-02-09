@@ -16,7 +16,7 @@ end
 # Dipole Antenna and Radiation Fields
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/antenna/`](https://github.com/awslabs/palace/blob/main/examples/antenna)
     directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 64800.
@@ -110,7 +110,7 @@ the uniform distribution, the resolution changes as one moves towards the
 poles).
 
 !!! tip "ComplexCoarseSolve solver optimization"
-    
+
     This simulation benefits from the `"ComplexCoarseSolve"` option. This
     setting uses a complex preconditioner of the form `P = [Ar, -Ai; Ai, Ar]` rather than
     the default `P = Ar + Ai`, where `A` is the true system matrix with
@@ -154,7 +154,7 @@ figure-eight pattern of a dipole antenna, with maximum radiation perpendicular
 to the antenna axis and nulls approximately along the antenna axis.
 
 !!! note "Do your results look different?"
-    
+
     If you are trying to reproduce this plot, but find that your plots are not as nice
     as the one above, you might have a missed a note at the top of this page: the example
     was run with 64800 sampling points instead of the 100 that the JSON file specifies.
@@ -175,16 +175,16 @@ again, we see the expected donut shape, with maximal electric field strength on
 the equator, and minimum along the z axis.
 
 !!! note "Running the Julia script"
-    
+
     The `plot_radiation_pattern.jl` requires a number of Julia packages (including
     the plotting library). The simplest way to ensure that you have all the required
     packages is to use the `Project.toml` included with the examples. To install this
     environment, navigate to the `examples` folder and run
-    
+
     ```bash
     julia --project -e 'using Pkg; Pkg.instantiate();'
     ```
-    
+
     All the subsequent times, just make sure to start Julia with `--project` from the `examples`
     folder or one of its subfolders.
 
@@ -246,7 +246,7 @@ The key parameters are:
 where the material attributes `5` and `6` represent the volume of the cylindrical arms while the PEC boundary condition on the surface of these arms and the lumped port in the half-wave dipole example is removed. The outer spherical boundary with `"Absorbing"` conditions and the far-field postprocessing setup remain the same.
 
 !!! note "Changing dipole orientation"
-    
+
     One of the key advantages of using the current dipole operator is the ease of changing the antenna orientation. By modifying the `"Direction"` parameter, you can align the dipole along any axis without needing to regenerate a mesh. For example, `"Direction": [1, 0, 0]` creates an x-oriented dipole, while `"Direction": [0, 1, 0]` creates a y-oriented dipole.
 
 The following plots show the spatial distribution of the real part of the electric field in the yz-plane (left) and xy-plane (right), illustrating the near-field behavior of the short dipole antenna.
@@ -279,7 +279,7 @@ The polar plots show the theoretical radiation pattern for a short dipole: the E
 ```
 
 !!! note "Do your results look different?"
-    
+
     In order to generate smooth, high-resolution plots as shown above and just like the half-wave dipole example, we used `NSample=64800` in the JSON file and `n_farfield=10` in `mesh.jl` to create the mesh.
 
 ## References

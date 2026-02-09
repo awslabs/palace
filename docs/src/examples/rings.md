@@ -14,7 +14,7 @@ end
 # Inductance Matrix for a Pair of Concentric Rings
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/rings/`](https://github.com/awslabs/palace/blob/main/examples/rings)
     directory of the *Palace* source code.

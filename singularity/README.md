@@ -2,6 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 --->
+
 # Apptainer/Singularity Container
 
 This directory contains a [definition file](singularity.def) for building *Palace*

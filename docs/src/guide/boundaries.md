@@ -92,16 +92,16 @@ for implementation details.
     A lumped port applies a similar boundary condition to a
     [surface impedance](#Impedance-boundary) boundary, but takes on a special meaning for
     each simulation type.
-    
+
     For frequency domain driven simulations, ports are used to provide a lumped port
     excitation and postprocess voltages, currents, and scattering parameters. Likewise, for
     transient simulations, they perform a similar purpose but for time domain computed
     quantities.
-    
+
     For eigenmode simulations where there is no excitation, lumped ports are used to specify
     properties and postprocess energy-participation ratios (EPRs) corresponding to
     linearized circuit elements.
-    
+
     Note that a single lumped port (given by a single integer `"Index"`) can be made up of
     multiple boundary attributes in the mesh in order to model, for example, a multielement
     lumped port. To use this functionality, use the `"Elements"` object under
@@ -113,7 +113,7 @@ for implementation details.
     shape which is computed by solving a 2D boundary mode eigenproblem on each wave port
     boundary. This allows for more accurate scattering parameter calculations when modeling
     waveguides or transmission lines with arbitrary cross sections.
-    
+
     The 2D wave port eigenproblem only supports PEC and PMC boundary conditions. Boundaries
     that are specified as `"PEC"` or `"Conductivity"` in the full 3D model and intersect the wave port
     boundary will be considered as PEC in the 2D boundary mode analysis, as well as any additional
@@ -125,7 +125,7 @@ for implementation details.
     wave port not labeled with a `"PEC"`, `"Conductivity"`, `"WavePortPEC"`, or `"WavePort"` condition
     have the natural boundary condition of zero tangential magnetic field (PMC) prescribed for the purpose
     of port mode calculation.
-    
+
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
@@ -157,7 +157,7 @@ index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitatio
 port can only be part of one excitation.
 
 !!! warning "Indexing"
-    
+
     Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
     [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
     [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or

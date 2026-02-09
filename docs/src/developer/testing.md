@@ -112,19 +112,19 @@ supports CPU and GPU implementation at the same time). For example,
 `[Serial][Parallel][GPU]` indicates a test that should run in every case.
 
 !!! warning
-    
+
     Tests without any of our special tags will never execute. Make sure to add at
     least one.
 
 !!! note "Tests should use tags for which the test is meaningful"
-    
+
     Consider testing this code:
-    
+
     ```cpp
     int a = 1, b = 2;
     Assert(a + b == 3);
     ```
-    
+
     This test will pass if run with MPI, but this is uninteresting since
     every MPI process executes the same code that the `Serial` test would
     run (same with GPUs). Therefore, this test should only be marked as
@@ -164,16 +164,16 @@ proceeding, ensure `lcov` is installed on your system. If not, you can obtain it
 from your package manager.
 
 !!! warning "Before continuing"
-    
+
     Make sure you have `lcov` installed. To check that it works, run
-    
+
     ```sh
     lcov --version
     ```
-    
+
     Also make sure that *Palace* was build with `PALACE_BUILD_WITH_COVERAGE`.
     If not, compile it with
-    
+
     ```sh
     cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_COVERAGE=yes ..
     ```
@@ -260,7 +260,7 @@ llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
 ```
 
 !!! note "Why two different coverage systems?"
-    
+
     LLVM's source-based coverage provides more accurate instrumentation than the
     gcov-compatible mode, which attempts to emulate gcov behavior but has known
     reliability issues. The source-based approach offers better precision

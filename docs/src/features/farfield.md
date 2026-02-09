@@ -34,10 +34,10 @@ this output, you can immediately compute various quantities of interest. For
 instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
 
 !!! warning "Limitations"
-    
+
     *Palace* only supports propagation of fields to infinity when the integration
     surface
-    
+
      1. is an external boundary
      2. does not cross anisotropic materials
 
