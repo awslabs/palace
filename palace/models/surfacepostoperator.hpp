@@ -9,6 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 
 namespace palace
 {
@@ -50,7 +51,8 @@ private:
     SurfaceFluxData(const config::SurfaceFluxData &data, const Mesh &mesh,
                     const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
+    std::unique_ptr<mfem::Coefficient> GetCoefficient(const Mesh &mesh,
+                                                      const mfem::ParGridFunction *E,
                                                       const mfem::ParGridFunction *B,
                                                       const MaterialOperator &mat_op) const;
   };
@@ -62,7 +64,8 @@ private:
     InterfaceDielectricData(const config::InterfaceDielectricData &data, const Mesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
+    std::unique_ptr<mfem::Coefficient> GetCoefficient(const Mesh &mesh,
+                                                      const GridFunction &E,
                                                       const MaterialOperator &mat_op) const;
   };
   struct FarFieldData : public SurfaceData
@@ -84,7 +87,7 @@ private:
 
   // Reference to vector finite element space used for computing far-field integrals (not
   // owned).
-  mfem::ParFiniteElementSpace &nd_fespace;
+  FiniteElementSpace &nd_fespace;
 
 public:
   // Data structures for postprocessing the surface with the given type.
@@ -93,7 +96,7 @@ public:
   FarFieldData farfield;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      const Mesh &mesh, mfem::ParFiniteElementSpace &nd_fespace);
+                      const Mesh &mesh, FiniteElementSpace &nd_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,

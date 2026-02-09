@@ -169,7 +169,7 @@ void SpaceOperator::CheckBoundaryProperties()
   //                      // As tested, this does not eliminate all DC modes!
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    GetH1Spaces().GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(
+    GetH1Spaces().GetFESpaceAtLevel(l).GetEssentialTrueDofs(
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
@@ -191,9 +191,8 @@ void SpaceOperator::CheckBoundaryProperties()
 namespace
 {
 
-void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
-                 const mfem::ParFiniteElementSpace &nd_fespace,
-                 const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
+void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
+                 const FiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
@@ -207,12 +206,12 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    ? "Partial"
                    : "Full");
 
-    const auto &mesh = *nd_fespace.GetParMesh();
+    const auto &mesh = nd_fespace.GetMesh();
     const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : geom_types)
     {
-      const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
+      const auto *fe = nd_fespace.GetFEColl().FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
       const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);

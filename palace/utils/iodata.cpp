@@ -586,7 +586,7 @@ void IoData::NondimensionalizeInputs(Mesh &mesh)
       units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.delta_t);
 
   // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh.Get(), units.GetMeshLengthRelativeScale());
+  mesh.NondimensionalizeMesh(units.GetMeshLengthRelativeScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),

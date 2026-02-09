@@ -987,7 +987,7 @@ void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
     {
       for (int j = 0; j < nv; j++)
       {
-        const double *coord = mesh.Get().GetVertex(v[j]);
+        const double *coord = mesh.GetVertex(v[j]);
         for (int d = 0; d < dim; d++)
         {
           if (coord[d] < min(d))
@@ -1018,8 +1018,8 @@ void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
           {
             continue;
           }
-          const int *verts = mesh.Get().GetBdrElement(i)->GetVertices();
-          BBUpdate(verts, mesh.Get().GetBdrElement(i)->GetNVertices(), loc_min, loc_max);
+          const int *verts = mesh.GetBdrElement(i)->GetVertices();
+          BBUpdate(verts, mesh.GetBdrElement(i)->GetNVertices(), loc_min, loc_max);
         }
       }
       else
@@ -1031,8 +1031,8 @@ void GetAxisAlignedBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker,
           {
             continue;
           }
-          const int *verts = mesh.Get().GetElement(i)->GetVertices();
-          BBUpdate(verts, mesh.Get().GetElement(i)->GetNVertices(), loc_min, loc_max);
+          const int *verts = mesh.GetElement(i)->GetVertices();
+          BBUpdate(verts, mesh.GetElement(i)->GetNVertices(), loc_min, loc_max);
         }
       }
       PalacePragmaOmp(critical(BBUpdate))
@@ -1164,14 +1164,14 @@ std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direc
 BoundingBox GetBoundingBox(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
 BoundingBox GetBoundingBall(const Mesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
@@ -1179,7 +1179,7 @@ double GetProjectedLength(const Mesh &mesh, const mfem::Array<int> &marker, bool
                           const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   double length;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
@@ -1198,7 +1198,7 @@ double GetDistanceFromPoint(const Mesh &mesh, const mfem::Array<int> &marker, bo
                             const std::array<double, 3> &origin, bool max)
 {
   std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   double dist;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
@@ -1299,7 +1299,7 @@ mfem::Vector GetSurfaceNormal(const Mesh &mesh, const mfem::Array<int> &marker,
 double GetSurfaceArea(const Mesh &mesh, const mfem::Array<int> &marker)
 {
   ConstantCoefficient one(1.0);
-  return fem::IntegrateFunction(mesh.Get(), marker, true, one,
+  return fem::IntegrateFunction(mesh, marker, true, one,
                                 [](const mfem::ElementTransformation &T)
                                 { return T.OrderJ(); });
 }
@@ -1307,7 +1307,7 @@ double GetSurfaceArea(const Mesh &mesh, const mfem::Array<int> &marker)
 double GetVolume(const Mesh &mesh, const mfem::Array<int> &marker)
 {
   ConstantCoefficient one(1.0);
-  return fem::IntegrateFunction(mesh.Get(), marker, false, one,
+  return fem::IntegrateFunction(mesh, marker, false, one,
                                 [](const mfem::ElementTransformation &T)
                                 { return T.OrderJ(); });
 }
@@ -1374,7 +1374,7 @@ double RebalanceMesh(const IoData &iodata, Mesh &mesh)
   {
     if (mesh.Nonconforming())
     {
-      mesh.Get().Rebalance();
+      mesh.Rebalance();
     }
     else
     {

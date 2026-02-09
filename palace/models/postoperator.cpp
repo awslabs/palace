@@ -7,6 +7,7 @@
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/mesh.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -167,12 +168,12 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
   {
-    V_s = std::make_unique<BdrFieldCoefficient>(V->Real());
+    V_s = std::make_unique<BdrFieldCoefficient>(V->GetMesh(), V->Real());
   }
 
   if constexpr (HasAGridFunction<solver_t>())
   {
-    A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real());
+    A_s = std::make_unique<BdrFieldVectorCoefficient>(A->GetMesh(), A->Real());
   }
 
   if constexpr (HasEGridFunction<solver_t>())
@@ -189,19 +190,21 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // Electric Energy Density.
     // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
-        *E, fem_op->GetMaterialOp(), scaling);
+        E->GetMesh(), *E, fem_op->GetMaterialOp(), scaling);
 
     // Electric Boundary Field & Surface Charge.
-    E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->GetMesh(), E->Real());
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+        E->GetMesh(), &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(),
+        scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
+      E_si = std::make_unique<BdrFieldVectorCoefficient>(E->GetMesh(), E->Imag());
       Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+          E->GetMesh(), &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(),
+          scaling);
     }
   }
 
@@ -219,19 +222,19 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // Magnetic Energy Density.
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
-        *B, fem_op->GetMaterialOp(), scaling);
+        B->GetMesh(), *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
-    B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+    B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->GetMesh(), B->Real());
     // J_s = n x H = n x μ⁻¹ B.
     J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-        B->Real(), fem_op->GetMaterialOp(), scaling);
+        B->GetMesh(), B->Real(), fem_op->GetMaterialOp(), scaling);
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
+      B_si = std::make_unique<BdrFieldVectorCoefficient>(B->GetMesh(), B->Imag());
       J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-          B->Imag(), fem_op->GetMaterialOp(), scaling);
+          B->GetMesh(), B->Imag(), fem_op->GetMaterialOp(), scaling);
     }
   }
 
@@ -245,8 +248,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // E and B have been dimensionalized.
     const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
-                                                    scaling);
+    S = std::make_unique<PoyntingVectorCoefficient>(E->GetMesh(), *E, *B,
+                                                    fem_op->GetMaterialOp(), scaling);
   }
 }
 
@@ -277,9 +280,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   const int compress = 0;
 #endif
   const bool use_ho = true;
-  const int refine_ho = HasEGridFunction<solver_t>()
-                            ? E->ParFESpace()->GetMaxElementOrder()
-                            : B->ParFESpace()->GetMaxElementOrder();
+  const int refine_ho =
+      HasEGridFunction<solver_t>() ? E->GetMaxElementOrder() : B->GetMaxElementOrder();
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
@@ -493,8 +495,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
-  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  auto &mesh = E ? E->GetMesh() : B->GetMesh();
+  mesh.DimensionalizeMesh(mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
   paraview->SetCycle(step);
@@ -503,7 +505,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview_bdr->SetTime(time);
   paraview->Save();
   paraview_bdr->Save();
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  mesh.NondimensionalizeMesh(mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
@@ -520,8 +522,8 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // need for these to be parallel objects, since the data is local to each process and
   // there isn't a need to ever access the element neighbors. We set the time to some
   // non-used value to make the step identifiable within the data collection.
-  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  auto &mesh = E ? E->GetMesh() : B->GetMesh();
+  mesh.DimensionalizeMesh(mesh_Lc0);
   paraview->SetCycle(paraview->GetCycle() + 1);
   if (paraview->GetTime() < 1.0)
   {
@@ -549,11 +551,11 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
     paraview->DeregisterVCoeffField(name);
   }
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+  mfem::FiniteElementSpace pwconst_fespace(&mesh.Get(), &pwconst_fec);
   std::unique_ptr<mfem::GridFunction> rank, eta;
   {
     rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-    *rank = mesh.GetMyRank() + 1;
+    *rank = Mpi::Rank(mesh.GetComm()) + 1;
     paraview->RegisterField("Rank", rank.get());
   }
   if (indicator)
@@ -585,7 +587,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->RegisterVCoeffField(name, gf);
   }
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  mesh.NondimensionalizeMesh(mesh_Lc0);
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -604,8 +606,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
-  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  auto &mesh = E ? E->GetMesh() : B->GetMesh();
+  mesh.DimensionalizeMesh(mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
   // Create grid function for vector coefficients.
@@ -614,10 +616,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   // Create grid function for scalar coefficients.
   mfem::H1_FECollection h1_fec(fespace.GetMaxElementOrder(), mesh.Dimension());
-  mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec);
+  mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
   mfem::ParGridFunction gridfunc_scalar(&h1_fespace);
 
-  const int local_rank = mesh.GetMyRank();
+  const int local_rank = Mpi::Rank(mesh.GetComm());
 
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
@@ -703,7 +705,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     write_grid_function(gridfunc_vector, "S");
   }
 
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  mesh.NondimensionalizeMesh(mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
   Mpi::Barrier(fem_op->GetComm());
@@ -718,8 +720,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 
   // Write the mesh partitioning and (optionally) error indicators at the final step.
   // Write the mesh coordinates in the same units as originally input.
-  mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  auto &mesh = E ? E->GetMesh() : B->GetMesh();
+  mesh.DimensionalizeMesh(mesh_Lc0);
 
   // Create output directory if it doesn't exist.
   if (Mpi::Root(fem_op->GetComm()))
@@ -729,9 +731,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 
   // Create piecewise constant finite element space for rank and error indicator.
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+  mfem::FiniteElementSpace pwconst_fespace(&mesh.Get(), &pwconst_fec);
 
-  const int local_rank = mesh.GetMyRank();
+  const int local_rank = Mpi::Rank(mesh.GetComm());
 
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
@@ -762,7 +764,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
   fs::path mesh_filename = fs::path(gridfunction_output_dir) / "mesh";
   mesh.Save(mesh_filename);
 
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  mesh.NondimensionalizeMesh(mesh_Lc0);
   Mpi::Barrier(fem_op->GetComm());
 }
 

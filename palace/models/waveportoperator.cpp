@@ -34,7 +34,7 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
                           mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
                           mfem::ParTransferMap &port_nd_transfer,
                           mfem::ParTransferMap &port_h1_transfer,
-                          const mfem::Array<int> &dbc_attr,
+                          const mfem::Array<int> &dbc_attr, const Mesh &mesh,
                           mfem::Array<int> &port_nd_dbc_tdof_list,
                           mfem::Array<int> &port_h1_dbc_tdof_list)
 {
@@ -42,11 +42,9 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   auto &h1_fespace = *E0n.ParFESpace();
   auto &port_nd_fespace = *port_E0t.ParFESpace();
   auto &port_h1_fespace = *port_E0n.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
 
   mfem::Array<int> dbc_marker, nd_dbc_tdof_list, h1_dbc_tdof_list;
-  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, dbc_attr,
-                     dbc_marker);
+  mesh::AttrToMarker(mesh.MaxBdrAttribute(), dbc_attr, dbc_marker);
   nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
   h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
 
@@ -291,8 +289,8 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
   // coefficients are updated implicitly as the only store references to the Et, En grid
   // functions. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
-  const auto &mesh = *S0t.ParFESpace()->GetParMesh();
-  mfem::Array<int> attr_marker(mesh.attributes.Max());
+  const auto &mesh = S0t.GetMesh();
+  mfem::Array<int> attr_marker(mesh.MaxAttribute());
   attr_marker = 1;
   mfem::VectorGridFunctionCoefficient S0t_func(&S0t.Real()), E0tr_func(&E0t.Real()),
       E0ti_func(&E0t.Imag());
@@ -526,8 +524,7 @@ public:
 
 WavePortData::WavePortData(const config::WavePortData &data,
                            const config::SolverData &solver, const MaterialOperator &mat_op,
-                           mfem::ParFiniteElementSpace &nd_fespace,
-                           mfem::ParFiniteElementSpace &h1_fespace,
+                           FiniteElementSpace &nd_fespace, FiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
   : mat_op(mat_op), excitation(data.excitation), active(data.active)
 {
@@ -538,10 +535,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
   // Construct the SubMesh.
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
-  const auto &mesh = *nd_fespace.GetParMesh();
+  const auto &mesh = nd_fespace.GetMesh();
   attr_list.Append(data.attributes.data(), data.attributes.size());
   port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
+      mfem::ParSubMesh::CreateFromBoundary(mesh.Get(), attr_list)));
   port_normal = mesh::GetSurfaceNormal(*port_mesh);
 
   port_nd_fec = std::make_unique<mfem::ND_FECollection>(nd_fespace.GetMaxElementOrder(),
@@ -576,7 +573,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   {
     mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
     GetEssentialTrueDofs(E0t.Real(), E0n.Real(), port_E0t->Real(), port_E0n->Real(),
-                         *port_nd_transfer, *port_h1_transfer, dbc_attr,
+                         *port_nd_transfer, *port_h1_transfer, dbc_attr, mesh,
                          port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
     int nd_tdof_offset = port_nd_fespace->GetTrueVSize();
     port_dbc_tdof_list.Reserve(port_nd_dbc_tdof_list.Size() + port_h1_dbc_tdof_list.Size());
@@ -591,7 +588,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   }
 
   // Create vector for initial space for eigenvalue solves and eigenmode solution.
-  GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, v0);
+  GetInitialSpace(port_nd_fespace->Get(), port_h1_fespace->Get(), port_dbc_tdof_list, v0);
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
@@ -984,13 +981,13 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
-  const auto &mesh = *E.ParFESpace()->GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto &mesh = E.GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op),
-      nxHi_func(B.Imag(), mat_op);
-  BdrInnerProductCoefficient prr(E.Real(), nxHr_func), pir(E.Imag(), nxHr_func),
-      pri(E.Real(), nxHi_func), pii(E.Imag(), nxHi_func);
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(mesh, B.Real(), mat_op),
+      nxHi_func(mesh, B.Imag(), mat_op);
+  BdrInnerProductCoefficient prr(mesh, E.Real(), nxHr_func), pir(mesh, E.Imag(), nxHr_func),
+      pri(mesh, E.Real(), nxHi_func), pii(mesh, E.Imag(), nxHi_func);
   mfem::SumCoefficient pr(prr, pii), pi(pir, pri, 1.0, -1.0);
   std::complex<double> dot = {-fem::IntegrateFunctionLocal(mesh, attr_marker, true, pr),
                               -fem::IntegrateFunctionLocal(mesh, attr_marker, true, pi)};
@@ -1026,33 +1023,33 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
 }
 
 WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                   mfem::ParFiniteElementSpace &nd_fespace,
-                                   mfem::ParFiniteElementSpace &h1_fespace)
+                                   FiniteElementSpace &nd_fespace,
+                                   FiniteElementSpace &h1_fespace)
   : suppress_output(false),
     fc(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
     kc(1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
 {
   // Set up wave port boundary conditions.
-  MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
+  MFEM_VERIFY(&nd_fespace.GetMesh() == &h1_fespace.GetMesh(),
               "Mesh mismatch in WavePortOperator FE spaces!");
   SetUpBoundaryProperties(iodata, mat_op, nd_fespace, h1_fespace);
-  PrintBoundaryInfo(iodata, *nd_fespace.GetParMesh());
+  PrintBoundaryInfo(iodata, nd_fespace.GetMesh());
 }
 
 void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                const MaterialOperator &mat_op,
-                                               mfem::ParFiniteElementSpace &nd_fespace,
-                                               mfem::ParFiniteElementSpace &h1_fespace)
+                                               FiniteElementSpace &nd_fespace,
+                                               FiniteElementSpace &h1_fespace)
 {
   // Check that wave port boundary attributes have been specified correctly.
-  const auto &mesh = *nd_fespace.GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto &mesh = nd_fespace.GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   if (!iodata.boundaries.waveport.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     port_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
+    for (auto attr : mesh.BdrAttributes())
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -1144,7 +1141,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
       "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 
-void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh)
 {
   if (ports.empty())
   {

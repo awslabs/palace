@@ -274,70 +274,42 @@ protected:
   auto SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
-    E->Real().SetFromTrueDofs(e.Real());  // Parallel distribute
-    E->Imag().SetFromTrueDofs(e.Imag());
-    if (exchange_face_nbr_data)
-    {
-      E->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-      E->Imag().ExchangeFaceNbrData();
-    }
+    E->SetFromTrueDofs(e, exchange_face_nbr_data);
   }
 
   template <ProblemType U = solver_t>
   auto SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
-    E->Real().SetFromTrueDofs(e);
-    if (exchange_face_nbr_data)
-    {
-      E->Real().ExchangeFaceNbrData();
-    }
+    E->SetFromTrueDofs(e, exchange_face_nbr_data);
   }
 
   template <ProblemType U = solver_t>
   auto SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
-    B->Real().SetFromTrueDofs(b.Real());  // Parallel distribute
-    B->Imag().SetFromTrueDofs(b.Imag());
-    if (exchange_face_nbr_data)
-    {
-      B->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-      B->Imag().ExchangeFaceNbrData();
-    }
+    B->SetFromTrueDofs(b, exchange_face_nbr_data);
   }
 
   template <ProblemType U = solver_t>
   auto SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
-    B->Real().SetFromTrueDofs(b);
-    if (exchange_face_nbr_data)
-    {
-      B->Real().ExchangeFaceNbrData();
-    }
+    B->SetFromTrueDofs(b, exchange_face_nbr_data);
   }
 
   template <ProblemType U = solver_t>
   auto SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasVGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
-    V->Real().SetFromTrueDofs(v);
-    if (exchange_face_nbr_data)
-    {
-      V->Real().ExchangeFaceNbrData();
-    }
+    V->SetFromTrueDofs(v, exchange_face_nbr_data);
   }
 
   template <ProblemType U = solver_t>
   auto SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasAGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
-    A->Real().SetFromTrueDofs(a);
-    if (exchange_face_nbr_data)
-    {
-      A->Real().ExchangeFaceNbrData();
-    }
+    A->SetFromTrueDofs(a, exchange_face_nbr_data);
   }
 
 public:

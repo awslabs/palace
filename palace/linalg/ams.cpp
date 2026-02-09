@@ -78,14 +78,14 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
     PalacePragmaOmp(parallel for schedule(static))
     for (int i = 0; i < mesh.GetNV(); i++)
     {
-      x_coord(i) = mesh.Get().GetVertex(i)[0];
+      x_coord(i) = mesh.GetVertex(i)[0];
       if (space_dim > 1)
       {
-        y_coord(i) = mesh.Get().GetVertex(i)[1];
+        y_coord(i) = mesh.GetVertex(i)[1];
       }
       if (space_dim > 2)
       {
-        z_coord(i) = mesh.Get().GetVertex(i)[2];
+        z_coord(i) = mesh.GetVertex(i)[2];
       }
     }
     x.reset(x_coord.ParallelProject());

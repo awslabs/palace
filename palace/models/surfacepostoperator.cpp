@@ -105,22 +105,21 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   }
 }
 
-std::unique_ptr<mfem::Coefficient>
-SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction *E,
-                                                     const mfem::ParGridFunction *B,
-                                                     const MaterialOperator &mat_op) const
+std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
+    const Mesh &mesh, const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+    const MaterialOperator &mat_op) const
 {
   switch (type)
   {
     case SurfaceFlux::ELECTRIC:
       return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          E, nullptr, mat_op, two_sided, center);
+          mesh, E, nullptr, mat_op, two_sided, center);
     case SurfaceFlux::MAGNETIC:
       return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>(
-          nullptr, B, mat_op, two_sided, center);
+          mesh, nullptr, B, mat_op, two_sided, center);
     case SurfaceFlux::POWER:
       return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>(
-          E, B, mat_op, two_sided, center);
+          mesh, E, B, mat_op, two_sided, center);
   }
   return {};
 }
@@ -160,22 +159,22 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
-    const GridFunction &E, const MaterialOperator &mat_op) const
+    const Mesh &mesh, const GridFunction &E, const MaterialOperator &mat_op) const
 {
   switch (type)
   {
     case InterfaceDielectric::DEFAULT:
       return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
-          E, mat_op, t, epsilon);
+          mesh, E, mat_op, t, epsilon);
     case InterfaceDielectric::MA:
       return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
-          E, mat_op, t, epsilon);
+          mesh, E, mat_op, t, epsilon);
     case InterfaceDielectric::MS:
       return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>(
-          E, mat_op, t, epsilon);
+          mesh, E, mat_op, t, epsilon);
     case InterfaceDielectric::SA:
       return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>(
-          E, mat_op, t, epsilon);
+          mesh, E, mat_op, t, epsilon);
   }
   return {};  // For compiler warning
 }
@@ -191,7 +190,7 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op, const Mesh &mesh,
-                                         mfem::ParFiniteElementSpace &nd_fespace)
+                                         FiniteElementSpace &nd_fespace)
   : mat_op(mat_op), mesh(mesh), nd_fespace(nd_fespace)
 {
   // Check that boundary attributes have been specified correctly.
@@ -242,8 +241,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   // Check that we don't have anisotropic materials.
   if (!iodata.boundaries.postpro.farfield.empty())
   {
-    const auto &mesh = *nd_fespace.GetParMesh();
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    int bdr_attr_max = mesh.MaxBdrAttribute();
     mfem::Array<int> bdr_attr_marker =
         mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.postpro.farfield.attributes);
 
@@ -283,15 +281,15 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
-  const auto &mesh = (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto &mesh = (E) ? E->GetMesh() : B->GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
-  auto f =
-      it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
+  auto f = it->second.GetCoefficient(mesh, E ? &E->Real() : nullptr,
+                                     B ? &B->Real() : nullptr, mat_op);
   std::complex<double> dot(fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f), 0.0);
   if (has_imag)
   {
-    f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
+    f = it->second.GetCoefficient(mesh, E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
                                   mat_op);
     double doti = fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f);
     if (it->second.type == SurfaceFlux::POWER)
@@ -321,10 +319,10 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
               "Unknown interface dielectric postprocessing index requested!");
-  const auto &mesh = *E.ParFESpace()->GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto &mesh = E.GetMesh();
+  int bdr_attr_max = mesh.MaxBdrAttribute();
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
-  auto f = it->second.GetCoefficient(E, mat_op);
+  auto f = it->second.GetCoefficient(mesh, E, mat_op);
   double dot = fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f);
   Mpi::GlobalSum(1, &dot, mesh.GetComm());
   return dot;

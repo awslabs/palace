@@ -83,8 +83,8 @@ private:
 
 public:
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,
-               const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
+               const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+               FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
@@ -140,17 +140,16 @@ private:
   double fc, kc;
 
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               mfem::ParFiniteElementSpace &nd_fespace,
-                               mfem::ParFiniteElementSpace &h1_fespace);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+                               FiniteElementSpace &nd_fespace,
+                               FiniteElementSpace &h1_fespace);
+  void PrintBoundaryInfo(const IoData &iodata, const Mesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
   void Initialize(double omega);
 
 public:
   WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                   mfem::ParFiniteElementSpace &nd_fespace,
-                   mfem::ParFiniteElementSpace &h1_fespace);
+                   FiniteElementSpace &nd_fespace, FiniteElementSpace &h1_fespace);
 
   // Access data structures for the wave port with the given index.
   const WavePortData &GetPort(int idx) const;

@@ -4,6 +4,7 @@
 #include "strattonchu.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/mesh.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
@@ -69,7 +70,7 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
   StaticVector<3> n_cross_Er, n_cross_ZHr;
   StaticVector<3> n_cross_Ei, n_cross_ZHi;
 
-  const mfem::ParMesh *mesh = E.Real().ParFESpace()->GetParMesh();
+  const auto &mesh = E.GetMesh();
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
 
@@ -82,7 +83,7 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
                 "Unexpected element type in BdrSurfaceFluxCoefficient!");
 
     bool invert = BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-        T.ElementNo, *mesh, FET, T1, T2, &ip);  // NOTE: this updates FET.
+        T.ElementNo, mesh, FET, T1, T2, &ip);  // NOTE: this updates FET.
     MFEM_VERIFY(!FET.Elem2,
                 "FarField computations are only supported on external boundaries.")
 
