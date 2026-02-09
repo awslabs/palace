@@ -9,7 +9,7 @@ namespace palace
 {
 
 GridFunction::GridFunction(mfem::ParFiniteElementSpace &fespace, bool complex)
-  : gfr(&fespace)
+  : gfr(&fespace), fespace(nullptr), mesh(nullptr)
 {
   if (complex)
   {
@@ -18,8 +18,12 @@ GridFunction::GridFunction(mfem::ParFiniteElementSpace &fespace, bool complex)
 }
 
 GridFunction::GridFunction(FiniteElementSpace &fespace, bool complex)
-  : GridFunction(fespace.Get(), complex)
+  : gfr(&fespace.Get()), fespace(&fespace), mesh(&fespace.GetMesh())
 {
+  if (complex)
+  {
+    gfi.SetSpace(&fespace.Get());
+  }
 }
 
 GridFunction &GridFunction::operator=(std::complex<double> s)

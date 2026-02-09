@@ -78,9 +78,6 @@ public:
   const auto &Get() const { return fespace; }
   auto &Get() { return fespace; }
 
-  operator const mfem::ParFiniteElementSpace &() const { return Get(); }
-  operator mfem::ParFiniteElementSpace &() { return Get(); }
-
   const auto &GetFEColl() const { return *Get().FEColl(); }
   auto &GetFEColl() { return *Get().FEColl(); }
 
@@ -184,6 +181,26 @@ public:
     {
       return ly.Real();
     }
+  }
+
+  // Essential (Dirichlet) DOF extraction.
+  void GetEssentialTrueDofs(const mfem::Array<int> &bdr_attr_marker,
+                            mfem::Array<int> &ess_tdof_list) const
+  {
+    Get().GetEssentialTrueDofs(bdr_attr_marker, ess_tdof_list);
+  }
+
+  // Boundary element access.
+  const mfem::FiniteElement *GetBE(int i) const { return Get().GetBE(i); }
+
+  // DOF offset arrays (for Hypre matrix construction).
+  HYPRE_BigInt *GetDofOffsets() const { return Get().GetDofOffsets(); }
+  HYPRE_BigInt *GetTrueDofOffsets() const { return Get().GetTrueDofOffsets(); }
+
+  // DOF-to-TrueDOF restriction matrix.
+  const mfem::HypreParMatrix *GetDofTrueDofMatrix() const
+  {
+    return Get().Dof_TrueDof_Matrix();
   }
 
   // Get the associated MPI communicator.

@@ -22,7 +22,7 @@ CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom)
   {
     return basis_it->second;
   }
-  return basis_map.emplace(geom, BuildCeedBasis(*this, ceed, geom)).first->second;
+  return basis_map.emplace(geom, BuildCeedBasis(Get(), ceed, geom)).first->second;
 }
 
 CeedElemRestriction
@@ -37,7 +37,7 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
   {
     return restr_it->second;
   }
-  return restr_map.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+  return restr_map.emplace(geom, BuildCeedElemRestriction(Get(), ceed, geom, indices))
       .first->second;
 }
 
@@ -60,7 +60,7 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
     return restr_it->second;
   }
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, false))
+      .emplace(geom, BuildCeedElemRestriction(Get(), ceed, geom, indices, true, false))
       .first->second;
 }
 
@@ -83,7 +83,7 @@ FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry:
     return restr_it->second;
   }
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, true))
+      .emplace(geom, BuildCeedElemRestriction(Get(), ceed, geom, indices, true, true))
       .first->second;
 }
 
@@ -230,9 +230,9 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
               "space in the hierarchy!");
   if (&fespaces[l]->GetMesh() != &fespaces[l + 1]->GetMesh())
   {
-    P[l] = std::make_unique<ParOperator>(
-        std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]),
-        *fespaces[l], *fespaces[l + 1], true);
+    P[l] = std::make_unique<ParOperator>(std::make_unique<mfem::TransferOperator>(
+                                             fespaces[l]->Get(), fespaces[l + 1]->Get()),
+                                         *fespaces[l], *fespaces[l + 1], true);
   }
   else
   {

@@ -9,6 +9,7 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -39,6 +40,11 @@ struct BoundingBall
 // certain floating point precision.
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices);
+inline int CollectPointCloudOnRoot(const Mesh &mesh, const mfem::Array<int> &marker,
+                                   bool bdr, std::vector<Eigen::Vector3d> &vertices)
+{
+  return CollectPointCloudOnRoot(mesh.Get(), marker, bdr, vertices);
+}
 
 // Calculates a bounding box from a point cloud, result is broadcast across all processes.
 BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,

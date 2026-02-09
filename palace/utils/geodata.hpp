@@ -51,6 +51,10 @@ struct ElementTypeInfo
 
 // Simplified helper for describing the element types in a (Par)Mesh.
 ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
+inline ElementTypeInfo CheckElements(const Mesh &mesh)
+{
+  return CheckElements(mesh.Get());
+}
 
 // Check if a tetrahedral (Par)Mesh is ready for local refinement.
 bool CheckRefinementFlags(const mfem::Mesh &mesh);

@@ -7,12 +7,12 @@
 #include <functional>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 
 namespace palace
 {
 
 class MaterialPropertyCoefficient;
-class Mesh;
 
 //
 // Classes which implement or extend bilinear and linear form integrators. In doc strings u
@@ -33,6 +33,10 @@ struct DefaultIntegrationOrder
   static int Get(const mfem::IsoparametricTransformation &T);
   static int Get(const mfem::ElementTransformation &T);
   static int Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom);
+  static int Get(const Mesh &mesh, mfem::Geometry::Type geom)
+  {
+    return Get(mesh.Get(), geom);
+  }
 };
 
 double IntegrateFunction(

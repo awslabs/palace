@@ -3,9 +3,9 @@
 
 #include "mesh.hpp"
 
-#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -37,8 +37,22 @@ auto GetBdrNeighborAttribute(int i, const mfem::ParMesh &mesh,
                              mfem::IsoparametricTransformation &T2)
 {
   // For internal boundaries, use the element which corresponds to the domain with lower
-  // attribute number (ensures all boundary elements are aligned).
-  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
+  // attribute number (ensures all boundary elements are aligned). This mirrors the logic in
+  // BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations but operates directly
+  // on the raw ParMesh to avoid requiring a palace::Mesh wrapper.
+  int f, o;
+  int iel1, iel2, info1, info2;
+  mesh.GetBdrElementFace(i, &f, &o);
+  mesh.GetFaceElements(f, &iel1, &iel2);
+  mesh.GetFaceInfos(f, &info1, &info2);
+  if (info2 >= 0 && iel2 < 0)
+  {
+    mesh.GetSharedFaceTransformationsByLocalIndex(f, FET, T1, T2);
+  }
+  else
+  {
+    mesh.GetFaceElementTransformations(f, FET, T1, T2);
+  }
   return (FET.Elem2 && FET.Elem2->Attribute < FET.Elem1->Attribute) ? FET.Elem2->Attribute
                                                                     : FET.Elem1->Attribute;
 }
@@ -374,6 +388,15 @@ void Mesh::Update()
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
   ResetCeedObjects();
+}
+
+void Mesh::DimensionalizeMesh(double L)
+{
+  mesh::DimensionalizeMesh(Get(), L);
+}
+void Mesh::NondimensionalizeMesh(double L)
+{
+  mesh::NondimensionalizeMesh(Get(), L);
 }
 
 }  // namespace palace

@@ -5,6 +5,7 @@
 #define PALACE_FEM_MESH_HPP
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -117,6 +118,26 @@ public:
   auto GetNumFaces() const { return Get().GetNumFaces(); }
   void GetFaceElements(int f, int *e1, int *e2) const { Get().GetFaceElements(f, e1, e2); }
 
+  // Vertex access.
+  const double *GetVertex(int i) const { return Get().GetVertex(i); }
+
+  // Element access (returns MFEM element pointer).
+  const mfem::Element *GetElement(int i) const { return Get().GetElement(i); }
+  const mfem::Element *GetBdrElement(int i) const { return Get().GetBdrElement(i); }
+
+  // Adjacent element query.
+  void GetBdrElementAdjacentElement(int i, int &elem_id, int &face_info) const
+  {
+    Get().GetBdrElementAdjacentElement(i, elem_id, face_info);
+  }
+
+  // Mesh I/O.
+  void Save(const std::string &path) const { Get().Save(path); }
+
+  // Vertex scaling for (non)dimensionalization.
+  void DimensionalizeMesh(double L);
+  void NondimensionalizeMesh(double L);
+
   // High-order nodes.
   auto *GetNodes() const { return Get().GetNodes(); }
   auto *GetNodes() { return Get().GetNodes(); }
@@ -160,6 +181,9 @@ public:
   {
     Get().GeneralRefinement(m, nonconf, nc_limit);
   }
+
+  // Rebalance (for nonconforming meshes).
+  void Rebalance() { Get().Rebalance(); }
 
   // Derefinement (encapsulates pncmesh access).
   const mfem::Table &GetDerefinementTable() const;
