@@ -33,6 +33,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-integrate-function.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-meshtopology.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
@@ -94,6 +95,7 @@ set_property(
          ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
          ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
          ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
+         ${CMAKE_CURRENT_SOURCE_DIR}/test-meshtopology.cpp
          ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_TEST_MESH_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/mesh\""
 )
