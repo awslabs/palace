@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include "fem/mesh.hpp"
 #include "fem/meshtopology.hpp"
 
 namespace fs = std::filesystem;
@@ -451,6 +452,67 @@ TEST_CASE("MeshTopology Distributed AMR Marking", "[meshtopology][Serial][Parall
   auto *A = a.ParallelAssemble();
   CHECK(A != nullptr);
   CHECK(A->NNZ() > 0);
+  delete A;
+}
+
+TEST_CASE("Mesh::ConformalRefinement Integration", "[meshtopology][Serial][Parallel]")
+{
+  // Test the full palace::Mesh integration: ConformalRefinement() uses MeshTopology
+  // internally for partition-independent conformal refinement.
+  MPI_Comm comm = MPI_COMM_WORLD;
+
+  auto mesh_path = GetMeshPath("fichera-tet.mesh");
+  mfem::Mesh serial_mesh(mesh_path);
+  double orig_vol = MeshVolume(serial_mesh);
+
+  // Create a palace::Mesh (parallel distributed) and initialize topology.
+  palace::Mesh mesh(std::make_unique<mfem::ParMesh>(comm, serial_mesh));
+  mesh.InitializeTopology(serial_mesh);
+  CHECK(mesh.GetGlobalNE() == serial_mesh.GetNE());
+
+  // Mark every other local element for refinement.
+  mfem::Array<int> marks;
+  for (int i = 0; i < mesh.GetNE(); i += 2)
+  {
+    marks.Append(i);
+  }
+
+  // Refine using the partition-independent path.
+  bool refined = mesh.ConformalRefinement(marks);
+  CHECK(refined);
+
+  // The mesh should have more elements now.
+  CHECK(mesh.GetNE() > 0);
+  HYPRE_BigInt new_ne = mesh.GetGlobalNE();
+  CHECK(new_ne > serial_mesh.GetNE());
+
+  // Verify each element has positive volume.
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    REQUIRE(mesh.Get().GetElementVolume(i) > 0.0);
+  }
+
+  // Build parallel FE space and verify FE assembly.
+  mfem::H1_FECollection fec(1, mesh.Dimension());
+  mfem::ParFiniteElementSpace fespace(&mesh.Get(), &fec);
+  mfem::ParBilinearForm a(&fespace);
+  mfem::ConstantCoefficient one(1.0);
+  a.AddDomainIntegrator(new mfem::MassIntegrator(one));
+  a.Assemble();
+  a.Finalize();
+  auto *A = a.ParallelAssemble();
+  CHECK(A != nullptr);
+
+  // Volume conservation: check via element volumes.
+  double local_vol = 0.0;
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    local_vol += mesh.Get().GetElementVolume(i);
+  }
+  double par_vol = 0.0;
+  MPI_Allreduce(&local_vol, &par_vol, 1, MPI_DOUBLE, MPI_SUM, comm);
+  CHECK(std::abs(par_vol - orig_vol) / orig_vol < 1e-10);
+
   delete A;
 }
 

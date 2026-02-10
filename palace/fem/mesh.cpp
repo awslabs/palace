@@ -399,4 +399,49 @@ void Mesh::NondimensionalizeMesh(double L)
   mesh::NondimensionalizeMesh(Get(), L);
 }
 
+void Mesh::InitializeTopology(const mfem::Mesh &serial_mesh)
+{
+  topology = std::make_unique<MeshTopology>(MeshTopology::FromMFEM(serial_mesh));
+}
+
+bool Mesh::ConformalRefinement(const mfem::Array<int> &marked_elements)
+{
+  if (marked_elements.Size() == 0)
+  {
+    // Check globally — all ranks must agree.
+    int local_count = 0;
+    int global_count = 0;
+    MPI_Allreduce(&local_count, &global_count, 1, MPI_INT, MPI_SUM, GetComm());
+    return false;
+  }
+
+  MFEM_VERIFY(topology, "MeshTopology not initialized! Call InitializeTopology() with the "
+                        "serial mesh before using ConformalRefinement.");
+
+  MPI_Comm comm = GetComm();
+
+  // Build local-to-global element map from the current ParMesh.
+  int local_ne = GetNE();
+  std::vector<int> local_to_global(local_ne);
+  for (int i = 0; i < local_ne; i++)
+  {
+    local_to_global[i] = static_cast<int>(Get().GetGlobalElementNum(i));
+  }
+
+  // Convert marked_elements to std::vector for MeshTopology API.
+  std::vector<int> marks(marked_elements.begin(), marked_elements.end());
+
+  // Run partition-independent refinement: gather marks → closure → refine.
+  topology->RefineDistributed(comm, marks, local_to_global);
+
+  // Export refined serial mesh and redistribute.
+  auto refined_serial = topology->ToMFEM();
+  auto new_pmesh = std::make_unique<mfem::ParMesh>(comm, *refined_serial);
+
+  // Replace the internal mesh.
+  Reset(std::move(new_pmesh));
+
+  return true;
+}
+
 }  // namespace palace

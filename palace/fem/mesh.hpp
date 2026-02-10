@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "fem/meshtopology.hpp"
 
 namespace palace
 {
@@ -71,6 +72,10 @@ private:
   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+
+  // Optional global mesh topology for partition-independent conformal refinement.
+  // Initialized lazily on first use. Stores the full serial mesh topology on every rank.
+  std::unique_ptr<MeshTopology> topology;
 
 public:
   template <typename... T>
@@ -184,6 +189,20 @@ public:
 
   // Rebalance (for nonconforming meshes).
   void Rebalance() { Get().Rebalance(); }
+
+  // Partition-independent conformal refinement for simplex meshes. Uses MeshTopology
+  // internally: marks are gathered globally, closure runs on the serial topology, and
+  // the mesh is redistributed. The result depends only on the mesh topology and the
+  // marked elements, not on the partition.
+  //
+  // marked_elements: LOCAL element indices (on this rank) to refine.
+  // Returns true if the mesh was actually refined (elements were marked).
+  bool ConformalRefinement(const mfem::Array<int> &marked_elements);
+
+  // Initialize the MeshTopology from a serial mesh. Should be called at startup
+  // before distribution, when the serial mesh is still available. The topology is
+  // then replicated on all ranks for partition-independent refinement.
+  void InitializeTopology(const mfem::Mesh &serial_mesh);
 
   // Derefinement (encapsulates pncmesh access).
   const mfem::Table &GetDerefinementTable() const;
