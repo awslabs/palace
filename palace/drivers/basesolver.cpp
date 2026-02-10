@@ -22,6 +22,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -162,8 +163,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   {
     // Print timing summary.
     Mpi::Print("\nCumulative timing statistics:\n");
+    auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
+    memory_reporting::PrintMemoryUsage(comm, peak_mem);
     BlockTimer::Print(comm);
     SaveMetadata(BlockTimer::GlobalTimer());
+    SaveMetadata(peak_mem);
 
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
@@ -283,6 +287,20 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
     }
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const
+{
+  if (root)
+  {
+    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
+    json meta = LoadMetadata(post_dir);
+    meta["PeakMemoryMegabytes"]["Min"] = peak_memory.min * to_mb;
+    meta["PeakMemoryMegabytes"]["Max"] = peak_memory.max * to_mb;
+    meta["PeakMemoryMegabytes"]["Average"] = peak_memory.avg * to_mb;
+    meta["PeakMemoryMegabytes"]["Total"] = peak_memory.sum * to_mb;
     WriteMetadata(post_dir, meta);
   }
 }
