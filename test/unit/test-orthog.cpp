@@ -159,7 +159,6 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Real 1", "[orthog][Serial][Parall
   }
 }
 
-
 // TODO: This test could be GPU enabled, but the code below is not correct for that due to
 // incorrect host syncing in set-up.
 TEST_CASE("OrthogonalizeColumn Parameterized - Real 2", "[orthog][Serial][Parallel]")

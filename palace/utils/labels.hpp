@@ -160,6 +160,14 @@ enum class Orthogonalization : char
   CGS2
 };
 
+// Domain orthogonalization type for adaptive circuit synthesis.
+enum class DomainOrthogonalizationWeight : char
+{
+  ENERGY,
+  FE_BASIS_IDENTITY,
+  SPACE_OVERLAP
+};
+
 // Device used to configure MFEM.
 enum class Device : char
 {

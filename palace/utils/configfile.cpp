@@ -156,6 +156,12 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
                                                {Orthogonalization::CGS, "CGS"},
                                                {Orthogonalization::CGS2, "CGS2"}})
 
+PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight,
+                           {{DomainOrthogonalizationWeight::ENERGY, "Energy"},
+                            {DomainOrthogonalizationWeight::FE_BASIS_IDENTITY,
+                             "FEBasisIdentity"},
+                            {DomainOrthogonalizationWeight::SPACE_OVERLAP, "SpaceOverlap"}})
+
 // Helpers for converting string keys to enum for Device.
 PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
                                     {Device::GPU, "GPU"},
@@ -1056,6 +1062,9 @@ DrivenSolverData::DrivenSolverData(const json &driven)
       driven.value("AdaptiveGSOrthogonalization", adaptive_solver_gs_orthog_type);
   adaptive_circuit_synthesis =
       driven.value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
+  adaptive_circuit_synthesis_domain_orthog =
+      driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
+                   adaptive_circuit_synthesis_domain_orthog);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");

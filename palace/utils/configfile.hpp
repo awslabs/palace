@@ -665,8 +665,12 @@ public:
   // orthogonalization option. Default to CGS2 for higher quality.
   Orthogonalization adaptive_solver_gs_orthog_type = Orthogonalization::CGS2;
 
-  // Return circuit matrices from port with port excitation vectors
+  // Return circuit matrices from port with port excitation vectors.
   bool adaptive_circuit_synthesis = false;
+
+  // Domain orthogonalization type for circuit synthesis weight matrix.
+  DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
+      DomainOrthogonalizationWeight::ENERGY;
 
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
