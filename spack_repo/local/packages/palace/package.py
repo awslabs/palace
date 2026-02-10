@@ -131,7 +131,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
-    depends_on("hypre@3:")
+    depends_on("hypre@3:", when="@0.16.0:")
     depends_on("hypre~complex")
     depends_on("hypre~unified-memory")
     depends_on("hypre+shared", when="+shared")
@@ -150,11 +150,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            # TODO: update to v4.9 == d9d6526cc1749980a2ba1da16e2c1ca1e07d82ec once spack updated
-            "mfem+mpi+metis+lapack cxxstd=17 commit=d9d6526cc1749980a2ba1da16e2c1ca1e07d82ec",
+            "mfem+mpi+metis+lapack@4.9: cxxstd=17",
             patches=[
                 "patch_par_tet_mesh_fix_dev.diff",
-                "patch_gmsh_parser_performance.diff",
+                "patch_gmsh_parser_performance.diff"
             ],
         )
         depends_on("mfem+shared", when="+shared")

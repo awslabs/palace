@@ -131,10 +131,6 @@ runs:
             mfem:
               require: "@develop"
         DEVEOF
-          # Remove pinned MFEM commit from package.py to allow @develop.
-          # TODO: Remove this hack after we track the released version of MFEM
-          # Requires: https://github.com/spack/spack-packages/pull/3040
-          sed -i 's/mfem+mpi+metis+lapack cxxstd=17 commit=[^"]*"/mfem+mpi+metis+lapack cxxstd=17"/g' spack_repo/local/packages/palace/package.py
         fi
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then

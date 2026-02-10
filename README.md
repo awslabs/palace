@@ -1,5 +1,8 @@
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
+
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
 [![CI (Linux)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml)

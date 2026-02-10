@@ -1,5 +1,8 @@
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
+
 # Changelog
 
 > Note: *Palace* is under active initial development, pre-v1.0. Functionality and interfaces

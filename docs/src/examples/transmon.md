@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 ```@setup include_example
@@ -14,7 +16,7 @@ end
 # Single transmon with read-out resonator from [`DeviceLayout.jl`](https://aws-cqc.github.io/DeviceLayout.jl/)
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/transmon/`](https://github.com/awslabs/palace/blob/main/examples/transmon)
     directory of the *Palace* source code. The configuration and mesh files
@@ -145,15 +147,15 @@ looking at how `DeviceLayout` refines certain regions of interest (e.g., the
 claw).
 
 !!! tip "Quick Start to GLVis"
-    
+
     [GLVis](https://glvis.org) provides fast visualization of Palace output when
     [`config["Problem"]["Output"]["OutputFormats"]["GridFunction"]`](../config/problem.md#problem%5B%OutputFormats%22%5D) is enabled.
     While less quantitative than [ParaView](https://www.paraview.org/download/), GLVis excels at rapid solution inspection and is particularly well-suited
     for interactive exploration. The interface is primarily keyboard-driven with extensive
     [keybindings](https://github.com/glvis/glvis/blob/v4.4/README.md).
-    
+
     Essential commands include:
-    
+
       - `i` cut through the solution
       - `x/X`, `y/Y` rotate the cutting plane
       - `z/Z` translate the cutting plane

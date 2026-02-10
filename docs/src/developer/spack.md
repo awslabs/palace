@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Working with Spack
@@ -65,7 +67,7 @@ then use these instead of building them from scratch, which can save hours on
 the first build.
 
 !!! note "Risks of using externals"
-    
+
     While using external packages can save hours of compilation time, Spack
     does not always handle them correctly, and incompatibilities are possible.
     If you find issues, you can try removing the external packages and letting

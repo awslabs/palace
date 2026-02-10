@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Frequently Asked Questions
@@ -76,12 +78,12 @@ compatibility:
  3. Download example files from the GitHub repository at the tag or commit corresponding to your version
 
 !!! note "Following GitHub links from the released documentation"
-    
+
     Currently, the documentation links always point to the GitHub pages for the
     `main` branch. If you follow these links directly, you might get versions of the
     examples that are inconsistent with your Palace installation. To get the correct
     examples:
-    
+
      1. Go to the [Palace GitHub repository](https://github.com/awslabs/palace)
      2. Use the branch/tag selector to switch to the tag corresponding to your version (e.g., `v0.14.0`)
      3. Download the examples from that specific version
