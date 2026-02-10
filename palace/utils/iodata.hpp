@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <sstream>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
