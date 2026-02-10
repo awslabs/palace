@@ -220,7 +220,7 @@ participation ratios for inductive lumped elements (the Josephson junction). The
 the sapphire substrate, enabling comprehensive analysis of loss mechanisms
 throughout the device.
 
-#### Balancing Speed and Accuracy: Solver Order Considerations
+#### Balancing Speed and Accuracy: Solver Order Considerations and
 
 While this simulation provides accurate results, computational time can be
 significantly reduced by adjusting the finite element order. Changing from
@@ -245,3 +245,78 @@ error norm increases by a factor of two, and the computed eigenfrequencies
 deviate noticeably from the converged values. While first-order simulations are
 valuable for rapid prototyping and debugging, second order (or higher) is
 generally recommended for accurate results.
+
+#### Adaptive Mesh Refinement
+
+Adaptive Mesh Refinement (AMR) automatically refines the computational mesh in
+regions where the solution error is large, providing an efficient way to improve
+accuracy without uniformly refining the entire domain. Palace uses a
+flux-recovery [error
+estimator](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
+to identify elements that contribute most to the global error.
+
+AMR works by:
+
+ 1. Solving the problem on the current mesh
+ 2. Computing element-wise error indicators
+ 3. Marking elements with large errors for refinement
+ 4. Refining the mesh
+ 5. Repeating
+
+AMR is particularly effective for problems with localized features where uniform
+refinement would be wasteful.
+
+In *Palace*, AMR continues until one or more configurable conditions are met:
+
+  - `Tol`: Error norm drops below tolerance (the `Norm` column in `error-indicators.csv`)
+  - `MaxIts`: Maximum number of refinement iterations (default: `0`, disabled)
+  - `MaxSize`: Maximum degrees of freedom (default: `0`, unlimited)
+
+See
+[`config["Model"]["Refinement"]`](../config/model.md#config%5B%22Model%22%5D)
+for the various AMR parameters.
+
+For a more realistic simulation of a transmon, we enable AMR with:
+
+```@example
+import JSON #hide
+json_amr = JSON.parsefile(  #hide
+    joinpath(@__DIR__, "..", "..", "..", "examples", "transmon", "transmon_amr.json")  #hide
+) #hide
+println(  #hide
+    "config[\"Model\"][\"Refinement\"][\"MaxIts\"] = $(json_amr["Model"]["Refinement"]["MaxIts"])"  #hide
+)  #hide
+println("config[\"Solver\"][\"Order\"] = $(json_amr["Solver"]["Order"])") #hide
+```
+
+After running the simulation, the `postpro` folder contains an `iterationN`
+subfolder for each AMR cycle. The convergence history shows the error decreasing
+with each refinement:
+
+```@example
+import JSON #hide
+# Path to AMR simulation results #hide
+amr_dir = joinpath(@__DIR__, "..", "..", "..", "examples", "transmon", "postpro", "amr") #hide
+# Find all iteration folders and sort them #hide
+iter_folders = filter(x -> startswith(x, "iteration"), readdir(amr_dir)) #hide
+iter_numbers = [parse(Int, replace(f, "iteration" => "")) for f in iter_folders] #hide
+sorted_indices = sortperm(iter_numbers) #hide
+iter_folders = iter_folders[sorted_indices] #hide
+# Collect data for each iteration #hide
+all_dofs = Int[] #hide
+all_errors = Float64[] #hide
+for iter_name in [iter_folders; ""] #hide
+    iter_dir = isempty(iter_name) ? amr_dir : joinpath(amr_dir, iter_name) #hide
+    palace_json = JSON.parsefile(joinpath(iter_dir, "palace.json")) #hide
+    push!(all_dofs, palace_json["Problem"]["DegreesOfFreedom"]) #hide
+    error_file = joinpath(iter_dir, "error-indicators.csv") #hide
+    lines = readlines(error_file) #hide
+    push!(all_errors, parse(Float64, strip(split(lines[2], ',')[1]))) #hide
+end #hide
+# Print convergence table #hide
+for idx = 1:length(all_dofs) #hide
+    println(  #hide
+        "iteration = $(idx-1), DOFs = $(all_dofs[idx]), error = $(round(all_errors[idx], sigdigits=4))"  #hide
+    ) #hide
+end #hide
+```
