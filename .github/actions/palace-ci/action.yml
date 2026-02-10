@@ -289,7 +289,10 @@ runs:
         spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
         end_timer "Build Palace"
 
+    # We don't want to run unit tests as part of the nightly run. They are
+    # already run elsewhere.
     - name: Run Unit Tests
+      if: inputs.test-cases != 'nightly'
       shell: bash
       run: |
         source /tmp/timing_functions.sh

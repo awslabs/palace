@@ -295,28 +295,23 @@ with each refinement:
 
 ```@example
 import JSON #hide
-# Path to AMR simulation results #hide
-amr_dir = joinpath(@__DIR__, "..", "..", "..", "examples", "transmon", "postpro", "amr") #hide
+# Path to AMR reference results #hide
+amr_dir = joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", "transmon", "transmon_amr") #hide
 # Find all iteration folders and sort them #hide
 iter_folders = filter(x -> startswith(x, "iteration"), readdir(amr_dir)) #hide
 iter_numbers = [parse(Int, replace(f, "iteration" => "")) for f in iter_folders] #hide
 sorted_indices = sortperm(iter_numbers) #hide
 iter_folders = iter_folders[sorted_indices] #hide
-# Collect data for each iteration #hide
-all_dofs = Int[] #hide
+# Collect error data for each iteration #hide
 all_errors = Float64[] #hide
 for iter_name in [iter_folders; ""] #hide
     iter_dir = isempty(iter_name) ? amr_dir : joinpath(amr_dir, iter_name) #hide
-    palace_json = JSON.parsefile(joinpath(iter_dir, "palace.json")) #hide
-    push!(all_dofs, palace_json["Problem"]["DegreesOfFreedom"]) #hide
     error_file = joinpath(iter_dir, "error-indicators.csv") #hide
     lines = readlines(error_file) #hide
     push!(all_errors, parse(Float64, strip(split(lines[2], ',')[1]))) #hide
 end #hide
 # Print convergence table #hide
-for idx = 1:length(all_dofs) #hide
-    println(  #hide
-        "iteration = $(idx-1), DOFs = $(all_dofs[idx]), error = $(round(all_errors[idx], sigdigits=4))"  #hide
-    ) #hide
+for idx = 1:length(all_errors) #hide
+    println("iteration = $(idx-1), error = $(round(all_errors[idx], sigdigits=4))") #hide
 end #hide
 ```
