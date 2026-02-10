@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  packages: write
+  packages: read
   statuses: write
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
