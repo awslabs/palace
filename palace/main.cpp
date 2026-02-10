@@ -286,6 +286,8 @@ int main(int argc, char *argv[])
     mesh::RefineMesh(iodata, mfem_mesh);
     memory_reporting::PrintMemoryUsage(world_comm,
                                        memory_reporting::GetCurrentMemoryStats(world_comm));
+    memory_reporting::PrintMemoryUsage(
+        world_comm, memory_reporting::GetCurrentNodeMemoryStats(world_comm));
     for (auto &m : mfem_mesh)
     {
       mesh.push_back(std::make_unique<Mesh>(std::move(m)));
@@ -297,10 +299,13 @@ int main(int argc, char *argv[])
 
   // Print timing summary.
   auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
+  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(world_comm);
   memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
+  memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
   solver->SaveMetadata(peak_mem);
+  solver->SaveMetadata(peak_node_mem);
   Mpi::Print(world_comm, "\n");
 
   // Finalize libCEED.

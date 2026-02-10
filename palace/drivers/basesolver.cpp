@@ -164,10 +164,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Print timing summary.
     Mpi::Print("\nCumulative timing statistics:\n");
     auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
+    auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
     memory_reporting::PrintMemoryUsage(comm, peak_mem);
+    memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
     BlockTimer::Print(comm);
     SaveMetadata(BlockTimer::GlobalTimer());
     SaveMetadata(peak_mem);
+    SaveMetadata(peak_node_mem);
 
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
@@ -297,10 +300,16 @@ void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) 
   {
     constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
     json meta = LoadMetadata(post_dir);
-    meta["PeakMemoryMegabytes"]["Min"] = peak_memory.min * to_mb;
-    meta["PeakMemoryMegabytes"]["Max"] = peak_memory.max * to_mb;
-    meta["PeakMemoryMegabytes"]["Average"] = peak_memory.avg * to_mb;
-    meta["PeakMemoryMegabytes"]["Total"] = peak_memory.sum * to_mb;
+
+    // Determine key name based on whether this is per-node or per-rank stats
+    std::string key = (peak_memory.label.find("per-node") != std::string::npos)
+                          ? "PeakNodeMemoryMegabytes"
+                          : "PeakMemoryMegabytes";
+
+    meta[key]["Min"] = peak_memory.min * to_mb;
+    meta[key]["Max"] = peak_memory.max * to_mb;
+    meta[key]["Average"] = peak_memory.avg * to_mb;
+    meta[key]["Total"] = peak_memory.sum * to_mb;
     WriteMetadata(post_dir, meta);
   }
 }

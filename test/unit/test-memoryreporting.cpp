@@ -59,3 +59,34 @@ TEST_CASE("Memory Stats Multi Process", "[memoryreporting][Parallel]")
   CHECK(peak_stats.sum >= peak_stats.min * np);
   CHECK(peak_stats.sum <= peak_stats.max * np);
 }
+
+TEST_CASE("Node Memory Stats Single Process", "[memoryreporting][Serial]")
+{
+  auto stats = GetCurrentNodeMemoryStats(MPI_COMM_WORLD);
+
+  CHECK(stats.label.find("per-node") != std::string::npos);
+  CHECK(stats.min > 0);
+  CHECK(stats.min == stats.max);
+  CHECK(stats.sum == stats.min);
+  CHECK(stats.avg == static_cast<double>(stats.min));
+}
+
+TEST_CASE("Node Memory Stats Multi Process", "[memoryreporting][Parallel]")
+{
+  auto comm = MPI_COMM_WORLD;
+
+  auto current_stats = GetCurrentNodeMemoryStats(comm);
+  CHECK(current_stats.label.find("per-node") != std::string::npos);
+  CHECK(current_stats.min > 0);
+  CHECK(current_stats.min <= current_stats.max);
+  // For node stats, total across nodes should be >= min and <= max * num_nodes
+  CHECK(current_stats.sum >= current_stats.min);
+  CHECK(current_stats.avg >= static_cast<double>(current_stats.min));
+  CHECK(current_stats.avg <= static_cast<double>(current_stats.max));
+
+  auto peak_stats = GetPeakNodeMemoryStats(comm);
+  CHECK(peak_stats.label.find("per-node") != std::string::npos);
+  CHECK(peak_stats.min > 0);
+  CHECK(peak_stats.min <= peak_stats.max);
+  CHECK(peak_stats.sum >= peak_stats.min);
+}

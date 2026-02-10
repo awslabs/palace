@@ -116,23 +116,84 @@ MemoryStats ComputeStats(std::string label, long local_value, MPI_Comm comm)
   return {label, val_min, val_max, val_sum, static_cast<double>(val_sum) / Mpi::Size(comm)};
 }
 
+MemoryStats ComputeNodeStats(std::string label, long local_value, MPI_Comm comm)
+{
+  // Split communicator into shared memory groups (processes on same node).
+  MPI_Comm node_comm;
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &node_comm);
+
+  // Get rank within the node.
+  int node_rank = Mpi::Rank(node_comm);
+
+  // Sum memory usage across all processes on this node.
+  // Assumes shared memory is negligible.
+  long node_total_memory = local_value;
+  MPI_Reduce(&local_value, &node_total_memory, 1, MPI_LONG, MPI_SUM, 0, node_comm);
+
+  // Create a communicator of node leaders (rank 0 on each node).
+  MPI_Comm leaders_comm;
+  int color = (node_rank == 0) ? 0 : MPI_UNDEFINED;
+  MPI_Comm_split(comm, color, 0, &leaders_comm);
+
+  // Compute statistics across node leaders.
+  MemoryStats stats;
+  stats.label = label;
+  if (node_rank == 0 && leaders_comm != MPI_COMM_NULL)
+  {
+    stats.min = node_total_memory;
+    stats.max = node_total_memory;
+    stats.sum = node_total_memory;
+    Mpi::GlobalMin(1, &stats.min, leaders_comm);
+    Mpi::GlobalMax(1, &stats.max, leaders_comm);
+    Mpi::GlobalSum(1, &stats.sum, leaders_comm);
+    stats.avg = static_cast<double>(stats.sum) / Mpi::Size(leaders_comm);
+  }
+
+  // Broadcast results from node leaders to all ranks.
+  Mpi::Broadcast(1, &stats.min, 0, node_comm);
+  Mpi::Broadcast(1, &stats.max, 0, node_comm);
+  Mpi::Broadcast(1, &stats.sum, 0, node_comm);
+  Mpi::Broadcast(1, &stats.avg, 0, node_comm);
+
+  // Clean up communicators.
+  if (leaders_comm != MPI_COMM_NULL)
+  {
+    MPI_Comm_free(&leaders_comm);
+  }
+  MPI_Comm_free(&node_comm);
+
+  return stats;
+}
+
 }  // namespace
 
 MemoryStats GetCurrentMemoryStats(MPI_Comm comm)
 {
-  return ComputeStats("Current", GetCurrentMemory(), comm);
+  return ComputeStats("Current per-rank", GetCurrentMemory(), comm);
 }
 
 MemoryStats GetPeakMemoryStats(MPI_Comm comm)
 {
-  return ComputeStats("Peak", GetPeakMemory(), comm);
+  return ComputeStats("Peak per-rank", GetPeakMemory(), comm);
+}
+
+MemoryStats GetCurrentNodeMemoryStats(MPI_Comm comm)
+{
+  return ComputeNodeStats("Current per-node", GetCurrentMemory(), comm);
+}
+
+MemoryStats GetPeakNodeMemoryStats(MPI_Comm comm)
+{
+  return ComputeNodeStats("Peak per-node", GetPeakMemory(), comm);
 }
 
 void PrintMemoryUsage(MPI_Comm comm, const MemoryStats &stats)
 {
-  Mpi::Print(comm, "\n{} RSS: Min. {}, Max. {}, Avg. {}, Total {}\n", stats.label,
-             FormatBytes(stats.min), FormatBytes(stats.max), FormatBytes(stats.avg),
-             FormatBytes(stats.sum));
+  // For per-node stats, we sum all processes on each node, assuming shared
+  // memory is negligible.
+  Mpi::Print(comm, "\nEstimated {} memory usage is: Min. {}, Max. {}, Avg. {}, Total {}\n",
+             stats.label, FormatBytes(stats.min), FormatBytes(stats.max),
+             FormatBytes(stats.avg), FormatBytes(stats.sum));
 }
 
 }  // namespace palace::memory_reporting
