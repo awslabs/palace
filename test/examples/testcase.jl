@@ -152,7 +152,8 @@ function testcase(
             filter!(d -> d ∉ exclude_folders, dirs)
             relroot = relpath(root, refpostprodir)
             for f in fs
-                endswith(f, ".csv") && push!(csvfilesref, relroot == "." ? f : joinpath(relroot, f))
+                endswith(f, ".csv") &&
+                    push!(csvfilesref, relroot == "." ? f : joinpath(relroot, f))
             end
         end
 
@@ -161,7 +162,8 @@ function testcase(
         if gridfunction_fields
             push!(expected_dirs, "gridfunction")
         end
-        max_its = get(get(get(config_json, "Model", Dict()), "Refinement", Dict()), "MaxIts", 0)
+        max_its =
+            get(get(get(config_json, "Model", Dict()), "Refinement", Dict()), "MaxIts", 0)
         for i = 1:max_its
             push!(expected_dirs, "iteration$(i)")
             gridfunction_fields && push!(expected_dirs, "iteration$(i)/gridfunction")
@@ -178,7 +180,8 @@ function testcase(
         for i = 1:max_its
             push!(expected_metafiles, "iteration$(i)/palace.json")
         end
-        @test sort(metafiles) == sort(expected_metafiles) || (@show metafiles, expected_metafiles; false)
+        @test sort(metafiles) == sort(expected_metafiles) ||
+              (@show metafiles, expected_metafiles; false)
 
         # Helper to extract the stdout and stderr files and dump their contents.
         # Useful when debugging a failure
