@@ -191,7 +191,7 @@ void PrintMemoryUsage(MPI_Comm comm, const MemoryStats &stats)
 {
   // For per-node stats, we sum all processes on each node, assuming shared
   // memory is negligible.
-  Mpi::Print(comm, "\nEstimated {} memory usage is: Min. {}, Max. {}, Avg. {}, Total {}\n",
+  Mpi::Print(comm, "Estimated {} memory usage is: Min. {}, Max. {}, Avg. {}, Total {}\n",
              stats.label, FormatBytes(stats.min), FormatBytes(stats.max),
              FormatBytes(stats.avg), FormatBytes(stats.sum));
 }

@@ -284,6 +284,7 @@ int main(int argc, char *argv[])
     mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
+    Mpi::Print(world_comm, "\n");
     memory_reporting::PrintMemoryUsage(world_comm,
                                        memory_reporting::GetCurrentMemoryStats(world_comm));
     memory_reporting::PrintMemoryUsage(
@@ -300,6 +301,7 @@ int main(int argc, char *argv[])
   // Print timing summary.
   auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
   auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(world_comm);
+  Mpi::Print(world_comm, "\n");
   memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
   memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
   BlockTimer::Print(world_comm);

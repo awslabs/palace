@@ -162,12 +162,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
-    Mpi::Print("\nCumulative timing statistics:\n");
+    Mpi::Print(comm, "\nCumulative timing statistics:\n");
+    BlockTimer::Print(comm);
     auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
     auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
     memory_reporting::PrintMemoryUsage(comm, peak_mem);
     memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-    BlockTimer::Print(comm);
     SaveMetadata(BlockTimer::GlobalTimer());
     SaveMetadata(peak_mem);
     SaveMetadata(peak_node_mem);
