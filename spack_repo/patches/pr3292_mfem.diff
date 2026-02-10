@@ -1,0 +1,162 @@
+diff --git a/repos/spack_repo/builtin/packages/mfem/mfem-4.9.patch b/repos/spack_repo/builtin/packages/mfem/mfem-4.9.patch
+index d5f1a15080..5b8b352ee2 100644
+--- a/repos/spack_repo/builtin/packages/mfem/mfem-4.9.patch
++++ b/repos/spack_repo/builtin/packages/mfem/mfem-4.9.patch
+@@ -1,5 +1,5 @@
+ diff --git a/fem/fe/fe_base.cpp b/fem/fe/fe_base.cpp
+-index 535fdaca8b..281de35fac 100644
++index 535fdaca8b..b951c9bdd1 100644
+ --- a/fem/fe/fe_base.cpp
+ +++ b/fem/fe/fe_base.cpp
+ @@ -382,11 +382,7 @@ const DofToQuad &FiniteElement::GetDofToQuad(const IntegrationRule &ir,
+@@ -15,14 +15,14 @@ index 535fdaca8b..281de35fac 100644
+        if (!d2q)
+        {
+  #ifdef MFEM_THREAD_SAFE
+-@@ -661,14 +657,22 @@ void ScalarFiniteElement::ScalarLocalL2Restriction(
++@@ -661,58 +657,66 @@ void ScalarFiniteElement::ScalarLocalL2Restriction(
+  void NodalFiniteElement::CreateLexicographicFullMap(const IntegrationRule &ir)
+  const
+  {
+ +   // Get the FULL version of the map. This call contains omp critical region,
+ +   // so it is done before the critical region below.
+ +   auto &d2q = GetDofToQuad(ir, DofToQuad::FULL);
+- 
++
+  #if defined(MFEM_THREAD_SAFE) && defined(MFEM_USE_OPENMP)
+     #pragma omp critical (DofToQuad)
+  #endif
+@@ -30,17 +30,91 @@ index 535fdaca8b..281de35fac 100644
+ -      // Get the FULL version of the map.
+ -      auto &d2q = GetDofToQuad(ir, DofToQuad::FULL);
+ -      //Undo the native ordering which is what FiniteElement::GetDofToQuad returns.
+-+      // If the new Dof2Quad is already present, e.g. added in a previous call
+-+      // or added by another omp thread, return.
+-+      if (DofToQuad::SearchArray(dof2quad_array, ir,
+-+                                 DofToQuad::LEXICOGRAPHIC_FULL))
+-+      { return; }
+-+
+-+      // Undo the native ordering which is what FiniteElement::GetDofToQuad
+-+      // returns.
+-       auto *d2q_new = new DofToQuad(d2q);
+-       d2q_new->mode = DofToQuad::LEXICOGRAPHIC_FULL;
+-       const int nqpt = ir.GetNPoints();
++-      auto *d2q_new = new DofToQuad(d2q);
++-      d2q_new->mode = DofToQuad::LEXICOGRAPHIC_FULL;
++-      const int nqpt = ir.GetNPoints();
+++      // Do work only if the new Dof2Quad is not already present, e.g. added in a
+++      // previous call or added by another omp thread.
+++      if (!DofToQuad::SearchArray(dof2quad_array, ir,
+++                                  DofToQuad::LEXICOGRAPHIC_FULL))
+++      {
+++         // Undo the native ordering which is what FiniteElement::GetDofToQuad
+++         // returns.
+++         auto *d2q_new = new DofToQuad(d2q);
+++         d2q_new->mode = DofToQuad::LEXICOGRAPHIC_FULL;
+++         const int nqpt = ir.GetNPoints();
++
++-      const int b_dim = (range_type == VECTOR) ? dim : 1;
+++         const int b_dim = (range_type == VECTOR) ? dim : 1;
++
++-      for (int i = 0; i < nqpt; i++)
++-      {
++-         for (int d = 0; d < b_dim; d++)
+++         for (int i = 0; i < nqpt; i++)
++          {
++-            for (int j = 0; j < dof; j++)
+++            for (int d = 0; d < b_dim; d++)
++             {
++-               const double val = d2q.B[i + nqpt*(d+b_dim*lex_ordering[j])];
++-               d2q_new->B[i+nqpt*(d+b_dim*j)] = val;
++-               d2q_new->Bt[j+dof*(i+nqpt*d)] = val;
+++               for (int j = 0; j < dof; j++)
+++               {
+++                  const double val = d2q.B[i + nqpt*(d+b_dim*lex_ordering[j])];
+++                  d2q_new->B[i+nqpt*(d+b_dim*j)] = val;
+++                  d2q_new->Bt[j+dof*(i+nqpt*d)] = val;
+++               }
++             }
++          }
++-      }
++
++-      const int g_dim = [this]()
++-      {
++-         switch (deriv_type)
+++         const int g_dim = [this]()
++          {
++-            case GRAD: return dim;
++-            case DIV: return 1;
++-            case CURL: return cdim;
++-            default: return 0;
++-         }
++-      }();
+++            switch (deriv_type)
+++            {
+++               case GRAD: return dim;
+++               case DIV: return 1;
+++               case CURL: return cdim;
+++               default: return 0;
+++            }
+++         }();
++
++-      for (int i = 0; i < nqpt; i++)
++-      {
++-         for (int d = 0; d < g_dim; d++)
+++         for (int i = 0; i < nqpt; i++)
++          {
++-            for (int j = 0; j < dof; j++)
+++            for (int d = 0; d < g_dim; d++)
++             {
++-               const double val = d2q.G[i + nqpt*(d+g_dim*lex_ordering[j])];
++-               d2q_new->G[i+nqpt*(d+g_dim*j)] = val;
++-               d2q_new->Gt[j+dof*(i+nqpt*d)] = val;
+++               for (int j = 0; j < dof; j++)
+++               {
+++                  const double val = d2q.G[i + nqpt*(d+g_dim*lex_ordering[j])];
+++                  d2q_new->G[i+nqpt*(d+g_dim*j)] = val;
+++                  d2q_new->Gt[j+dof*(i+nqpt*d)] = val;
+++               }
++             }
++          }
++-      }
++
++-      dof2quad_array.Append(d2q_new);
+++         dof2quad_array.Append(d2q_new);
+++      }
++    }
++ }
++
+ @@ -724,13 +728,7 @@ const DofToQuad &NodalFiniteElement::GetDofToQuad(const IntegrationRule &ir,
+     #pragma omp critical (DofToQuad)
+  #endif
+@@ -78,7 +152,7 @@ index a579faf835..ad356bcd2d 100644
+ --- a/fem/fe/fe_base.hpp
+ +++ b/fem/fe/fe_base.hpp
+ @@ -222,6 +222,12 @@ public:
+- 
++
+     /// Returns absolute value of the maps
+     DofToQuad Abs() const;
+ +
+@@ -88,12 +162,12 @@ index a579faf835..ad356bcd2d 100644
+ +      const IntegrationRule &ir,
+ +      DofToQuad::Mode mode);
+  };
+- 
++
+  /// Describes the function space on each element
+ @@ -1376,6 +1382,21 @@ public:
+  void InvertLinearTrans(ElementTransformation &trans,
+                         const IntegrationPoint &pt, Vector &x);
+- 
++
+ +
+ +// static inline method
+ +inline DofToQuad *DofToQuad::SearchArray(
+@@ -110,5 +184,5 @@ index a579faf835..ad356bcd2d 100644
+ +}
+ +
+  } // namespace mfem
+- 
++
+  #endif

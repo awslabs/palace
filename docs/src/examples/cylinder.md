@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 ```@setup include_example
@@ -12,7 +14,7 @@ end
 # Eigenmodes of a Cylinder
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/cylinder/`](https://github.com/awslabs/palace/blob/main/examples/cylinder)
     directory of the *Palace* source code.

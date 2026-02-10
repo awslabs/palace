@@ -1,5 +1,8 @@
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
+
 # Changelog
 
 > Note: *Palace* is under active initial development, pre-v1.0. Functionality and interfaces
@@ -13,6 +16,9 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added JSON schema validation for configuration files at runtime, with embedded schemas
+    and detailed error messages including valid enum options
+    [PR 613](https://github.com/awslabs/palace/pull/613).
   - Added support for electric current dipole source excitations. Current dipoles can be
     configured as an array in `config["Domains"]["CurrentDipole"]` with specifications for
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the

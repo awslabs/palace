@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Installation
@@ -18,7 +20,7 @@ Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
 source](#Build-from-source) instead.
 
 !!! note "Installation issues/questions?"
-    
+
     If the steps described in the sections below do not work as expected, consult the
     [Frequently Asked Questions](faq.md#Installation) page.
 
@@ -196,7 +198,7 @@ and LAPACK libraries depending on the system architecture according to the follo
 procedure:
 
   - For `x86_64` systems:
-    
+
       + If the `MKLROOT` environment variable is set, looks for an
         [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
@@ -207,7 +209,7 @@ procedure:
         which is permissively licensed and available from most package managers.
 
   - For `aarch64`/`arm64` systems:
-    
+
       + If the `ARMPL_DIR` environment variable is set, looks for an
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.

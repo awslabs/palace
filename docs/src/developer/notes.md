@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Developer Notes
@@ -59,10 +61,10 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 `E/Ec` with `Ec = Z₀ × Hc`.
 
 !!! note "Example: converting times and distances"
-    
+
     Consider a spherical mesh with `L0` of 1 micron and radius of 3 in mesh units.
     Then:
-    
+
       - Mesh size in mesh units: 6
       - Mesh size in non-dimensional units: 1
       - Mesh size in dimensional units: 6e-6
@@ -75,7 +77,7 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
       - Time for light to cross the sphere in SI: 2e-14 seconds
 
 !!! warning "Non-SI time units"
-    
+
     The dimensional unit system uses nanoseconds for time, not seconds. This affects
     unit combinations: `units::POWER * units::TIME` is not equivalent to `units::ENERGY`.
     This choice of nanoseconds reflects a prioritization of the microwave engineering
@@ -83,12 +85,12 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
     scales of nanoseconds).
 
 !!! warning "Omega instead of Frequency"
-    
+
     Internally, *Palace* uses the angular frequency `omega` instead of the regular
     frequency, with both names `omega` and `freq` being used.
 
 !!! warning "Finite element considerations"
-    
+
     Changing mesh units requires additional rescaling for fields defined on
     H(curl) and H(div) spaces to convert them to proper physical units. This is a
     function of the length scales inherent to the reference element transformations
@@ -220,7 +222,7 @@ Total                           // < Total simulation time
 A typical *Palace* simulation spends most of its time in libCEED kernels, which, in turn, executed `libsxmm` code on CPUs. Libsxmm generates code just-in-time to ensure it is the most performant on the given architecture and for the given problem. This code generation confuses most profilers. Luckily, [libsxmm](https://libxsmm.readthedocs.io/en/latest/libxsmm_prof/) can integrate with the VTune APIs to enable profiling of jitted functions as well.
 
 !!! note "Using a different libCEED backend?"
-    
+
     The following notes assume that you are using the `libxsmm` backend for libCEED. If this is not the case and you have a preference for other profilers, such as [perf](https://perfwiki.github.io/main/) or [HPCToolkit](https://hpctoolkit.org/), you can consider using them as well.
 
 ### Requirements
