@@ -573,22 +573,22 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   std::unique_ptr<mfem::Coefficient> Ue_nondim, Ue_dim, Um_nondim, Um_dim;
 
   // Omit scaling argument (e.g. scaling = 1.0) for non-dimensional coefficients.
-  Ue_nondim =
-      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
-  Um_nondim =
-      std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
-  S_nondim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op);
+  Ue_nondim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+      mesh, *E, mat_op);
+  Um_nondim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+      mesh, *B, mat_op);
+  S_nondim = std::make_unique<PoyntingVectorCoefficient>(mesh, *E, *B, mat_op);
 
   // Use same scaling as in postoperator.cpp for dimensional coefficients.
   auto scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) /
                  iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
   Ue_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
-      *E, mat_op, scaling);
+      mesh, *E, mat_op, scaling);
   scaling = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
             iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
   Um_dim = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
-      *B, mat_op, scaling);
-  S_dim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
+      mesh, *B, mat_op, scaling);
+  S_dim = std::make_unique<PoyntingVectorCoefficient>(mesh, *E, *B, mat_op, scaling);
 
   // Expected scalings (including both units dimensionalization and mesh scaling Lc0 =
   // Lc/L0). See comment in ScaleGridFunctions() in postoperator.cpp for mesh scaling

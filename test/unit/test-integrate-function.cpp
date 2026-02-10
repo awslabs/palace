@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -230,12 +231,12 @@ TEST_CASE("BdrInnerProductCoefficient", "[coefficient][Serial]")
     // Create a simple 3D mesh.
     auto serial_mesh = std::make_unique<mfem::Mesh>(
         mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
-    auto mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    palace::Mesh mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
     serial_mesh.reset();
 
     // Create Nedelec space and grid function.
-    mfem::ND_FECollection fec(1, mesh->Dimension());
-    mfem::ParFiniteElementSpace fespace(mesh.get(), &fec);
+    mfem::ND_FECollection fec(1, mesh.Dimension());
+    mfem::ParFiniteElementSpace fespace(&mesh.Get(), &fec);
     mfem::ParGridFunction gf(&fespace);
 
     // Set grid function to a constant vector field (1, 0, 0).
@@ -254,16 +255,16 @@ TEST_CASE("BdrInnerProductCoefficient", "[coefficient][Serial]")
     mfem::VectorConstantCoefficient vec_coeff(coeff_vec);
 
     // BdrInnerProductCoefficient should compute gf · vec_coeff = (1,0,0) · (2,3,4) = 2.
-    BdrInnerProductCoefficient bdr_ip(gf, vec_coeff);
+    BdrInnerProductCoefficient bdr_ip(mesh, gf, vec_coeff);
 
     // Mark all boundary elements.
-    int bdr_attr_max = mesh->bdr_attributes.Max();
+    int bdr_attr_max = mesh.MaxBdrAttribute();
     mfem::Array<int> marker(bdr_attr_max);
     marker = 1;
 
     // Integrate over boundary - should be 2 * surface_area = 2 * 6 = 12.
     auto GetOrder = [](const mfem::ElementTransformation &) { return 2; };
-    double result = fem::IntegrateFunction(*mesh, marker, true, bdr_ip, GetOrder);
+    double result = fem::IntegrateFunction(mesh, marker, true, bdr_ip, GetOrder);
 
     REQUIRE_THAT(result, Catch::Matchers::WithinRel(12.0, 1e-10));
   }

@@ -339,9 +339,9 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
     const auto &test_fec = test_fespace.GetFEColl();
     if (trial_fespace.Dimension() == 3 &&
         ((dynamic_cast<const mfem::ND_FECollection *>(&trial_fec) &&
-          trial_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(trial_fespace)) ||
+          trial_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(trial_fespace.Get())) ||
          (dynamic_cast<const mfem::ND_FECollection *>(&test_fec) &&
-          test_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(test_fespace))))
+          test_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(test_fespace.Get()))))
     {
       rtol = 1.0;
     }
@@ -413,7 +413,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   }
 
   // Benchmark MFEM PA (tensor-product elements only).
-  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(fespace))
+  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(fespace.Get()))
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
@@ -539,8 +539,8 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   }
 
   // Benchmark MFEM PA (tensor-product elements only).
-  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(trial_fespace) &&
-      mfem::UsesTensorBasis(test_fespace))
+  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(trial_fespace.Get()) &&
+      mfem::UsesTensorBasis(test_fespace.Get()))
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
@@ -1144,7 +1144,8 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
         fine_h1_fespace(mesh, &fine_h1_fec);
     DiscreteLinearOperator id_test(coarse_h1_fespace, fine_h1_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
-    mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace, fine_h1_fespace);
+    mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace.Get(),
+                                             fine_h1_fespace.Get());
     TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
   SECTION("H(curl) Prolongation")
@@ -1154,7 +1155,8 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
         fine_nd_fespace(mesh, &fine_nd_fec);
     DiscreteLinearOperator id_test(coarse_nd_fespace, fine_nd_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
-    mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace, fine_nd_fespace);
+    mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace.Get(),
+                                             fine_nd_fespace.Get());
     TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
   SECTION("H(div) Prolongation")
@@ -1164,7 +1166,8 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
         fine_rt_fespace(mesh, &fine_rt_fec);
     DiscreteLinearOperator id_test(coarse_rt_fespace, fine_rt_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
-    mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace, fine_rt_fespace);
+    mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace.Get(),
+                                             fine_rt_fespace.Get());
     TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
 
