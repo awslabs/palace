@@ -361,7 +361,7 @@ TEST_CASE("Default IOData", "[iodata][Serial]")
   IoData iodata(units);
 
   iodata.domains.materials.emplace_back();
-  iodata.domains.materials.back().attributes = {0};
+  iodata.domains.materials.back().attributes = {1};
 
   // Pull from the mfem externals data folder.
   mfem::Mesh mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
