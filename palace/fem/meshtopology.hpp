@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -20,11 +21,13 @@ namespace palace
 {
 
 //
-// Prototype mesh topology for simplex elements with conformal bisection refinement.
+// Mesh topology for simplex and hexahedral elements with refinement support.
+// Simplex elements (tet/tri) use conformal bisection refinement.
+// Hexahedral elements (hex/quad) use isotropic refinement (1 hex → 8 children).
 // Stores elements, vertices, and boundary elements with single-source attributes.
-// Maintains an append-only refinement history enabling conformal coarsening.
+// Maintains an append-only refinement history enabling coarsening.
 //
-// Current scope: serial, tet/tri only (simplex elements).
+// Current scope: serial, tet/tri and hex/quad elements.
 //
 class MeshTopology
 {
@@ -47,14 +50,15 @@ public:
   struct RefinementRecord
   {
     int parent;
-    std::array<int, 2> children;
+    std::vector<int> children;  // 2 for bisection, 8 for hex refinement
     // The bisected edge (global vertex indices) and the midpoint vertex.
+    // Set to -1 for hex refinement (which uses face/body centers instead).
     int edge_v0, edge_v1;
     int midpoint;
   };
 
 private:
-  int dim;   // topological dimension (2 = tri, 3 = tet)
+  int dim;   // topological dimension (2 = tri/quad, 3 = tet/hex)
   int sdim;  // space dimension
 
   std::vector<std::array<double, 3>> vertices;
@@ -65,6 +69,14 @@ private:
   // Edge midpoint cache: maps sorted (v0, v1) pair to midpoint vertex index.
   // Ensures shared edges produce a single midpoint.
   std::unordered_map<int64_t, int> edge_midpoints;
+
+  // Face center cache: maps sorted (v0, v1, v2, v3) to center vertex index.
+  // Used for hex/quad refinement where quad faces need center vertices.
+  std::map<std::array<int, 4>, int> face_centers;
+
+  // Body center cache: maps sorted 8-vertex key to center vertex index.
+  // Used for hex refinement where the hex body needs a center vertex.
+  std::map<std::array<int, 8>, int> body_centers;
 
   static int64_t EdgeKey(int v0, int v1)
   {
@@ -85,22 +97,35 @@ private:
   // bisect along that edge instead of the longest edge (used for closure).
   std::array<int, 2> BisectElement(int elem_idx, int force_va = -1, int force_vb = -1);
 
+  // Get or create the center vertex of a quad face (4 vertices).
+  int GetFaceCenter(int v0, int v1, int v2, int v3);
+
+  // Get or create the body center vertex of a hex element (8 vertices).
+  int GetBodyCenter(const std::vector<int> &hex_vertices);
+
+  // Refine a hex element isotropically into 8 children. Returns child indices.
+  std::array<int, 8> RefineHexElement(int elem_idx);
+
+  // Refine a quad element isotropically into 4 children. Returns child indices.
+  std::array<int, 4> RefineQuadElement(int elem_idx);
+
   // Update boundary elements after refinement of a set of elements.
   void UpdateBdrElements(const std::vector<int> &refined_elements);
 
 public:
-  // Import from an MFEM serial mesh (simplex elements only).
+  // Import from an MFEM serial mesh (simplex and hexahedral elements).
   static MeshTopology FromMFEM(const mfem::Mesh &mesh);
 
   // Export to an MFEM serial mesh.
   std::unique_ptr<mfem::Mesh> ToMFEM() const;
 
-  // Uniform refinement: bisect all active elements.
+  // Uniform refinement: bisect all active simplex elements, isotropically refine hex/quad.
   void UniformRefinement();
 
-  // Adaptive refinement: bisect marked elements (global indices) with closure to
-  // maintain conformity. The result depends only on the mesh topology and the marked
-  // element set, not on how the mesh is partitioned across ranks.
+  // Adaptive refinement: bisect marked simplex elements with closure for conformity,
+  // or isotropically refine marked hex/quad elements (no closure needed).
+  // The result depends only on the mesh topology and the marked element set,
+  // not on how the mesh is partitioned across ranks.
   void Refine(const std::vector<int> &marked_elements);
 
   // Distributed adaptive refinement: each rank provides local element marks using a

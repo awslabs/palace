@@ -639,3 +639,224 @@ TEST_CASE("MeshTopology vs MFEM Refinement Comparison", "[meshtopology][Serial][
   // Both paths should compute the same volume (it's a geometric invariant).
   CHECK(std::abs(vol_a - vol_b) / vol_a < 1e-10);
 }
+
+// ============================================================================
+// Hex element tests
+// ============================================================================
+
+TEST_CASE("MeshTopology Hex Import/Export", "[meshtopology][Serial]")
+{
+  // Load a hex mesh, import into MeshTopology, export back, verify round-trip fidelity.
+  auto mesh_path = GetMeshPath("fichera-hex.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+  CHECK(topo.GetNE() == orig_mesh.GetNE());
+  CHECK(topo.GetNV() == orig_mesh.GetNV());
+  CHECK(topo.GetNBE() == orig_mesh.GetNBE());
+  CHECK(topo.Dimension() == orig_mesh.Dimension());
+  CHECK(topo.SpaceDimension() == orig_mesh.SpaceDimension());
+
+  // Round-trip: export back to MFEM and verify.
+  auto rt_mesh = topo.ToMFEM();
+  CHECK(rt_mesh->GetNE() == orig_mesh.GetNE());
+  CHECK(rt_mesh->GetNV() == orig_mesh.GetNV());
+  CHECK(rt_mesh->GetNBE() == orig_mesh.GetNBE());
+
+  // Volume should match.
+  double orig_vol = MeshVolume(orig_mesh);
+  double rt_vol = MeshVolume(*rt_mesh);
+  CHECK(std::abs(rt_vol - orig_vol) < 1e-12 * orig_vol);
+
+  // Mass matrix trace should match (FE assembly fingerprint).
+  double orig_trace = MassMatrixTrace(orig_mesh, 1);
+  double rt_trace = MassMatrixTrace(*rt_mesh, 1);
+  CHECK(std::abs(rt_trace - orig_trace) < 1e-12 * std::abs(orig_trace));
+}
+
+TEST_CASE("MeshTopology Hex Uniform Refinement", "[meshtopology][Serial]")
+{
+  auto mesh_path = GetMeshPath("fichera-hex.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+  int orig_ne = orig_mesh.GetNE();
+  double orig_vol = MeshVolume(orig_mesh);
+
+  // Refine via MeshTopology.
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+  topo.UniformRefinement();
+
+  // Each hex splits into 8 children.
+  CHECK(topo.GetNE() == 8 * orig_ne);
+
+  // History should have one record per original element.
+  CHECK(static_cast<int>(topo.GetHistory().size()) == orig_ne);
+
+  // Each record should have 8 children.
+  for (const auto &rec : topo.GetHistory())
+  {
+    CHECK(static_cast<int>(rec.children.size()) == 8);
+    CHECK(rec.edge_v0 == -1);
+    CHECK(rec.edge_v1 == -1);
+    CHECK(rec.midpoint == -1);
+  }
+
+  // Export and verify.
+  auto refined_mesh = topo.ToMFEM();
+  CHECK(refined_mesh->GetNE() == 8 * orig_ne);
+
+  // Volume must be conserved.
+  double refined_vol = MeshVolume(*refined_mesh);
+  CHECK(std::abs(refined_vol - orig_vol) < 1e-12 * orig_vol);
+
+  // All elements should have positive volume (no inversions).
+  for (int i = 0; i < refined_mesh->GetNE(); i++)
+  {
+    CHECK(refined_mesh->GetElementVolume(i) > 0.0);
+  }
+
+  // FE assembly should succeed.
+  double trace = MassMatrixTrace(*refined_mesh, 1);
+  CHECK(trace > 0.0);
+
+  // P2 FE assembly should also work.
+  double trace_p2 = MassMatrixTrace(*refined_mesh, 2);
+  CHECK(trace_p2 > 0.0);
+}
+
+TEST_CASE("MeshTopology Hex Multiple Refinement Levels", "[meshtopology][Serial]")
+{
+  auto mesh_path = GetMeshPath("fichera-hex.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+  int orig_ne = orig_mesh.GetNE();
+  double orig_vol = MeshVolume(orig_mesh);
+
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+
+  // Refine 2 times: 8^2 = 64x elements.
+  for (int level = 0; level < 2; level++)
+  {
+    topo.UniformRefinement();
+  }
+
+  CHECK(topo.GetNE() == 64 * orig_ne);
+
+  auto refined_mesh = topo.ToMFEM();
+  double refined_vol = MeshVolume(*refined_mesh);
+  CHECK(std::abs(refined_vol - orig_vol) < 1e-10 * orig_vol);
+
+  // All elements should have positive volume.
+  for (int i = 0; i < refined_mesh->GetNE(); i++)
+  {
+    CHECK(refined_mesh->GetElementVolume(i) > 0.0);
+  }
+
+  // FE assembly should work.
+  double trace = MassMatrixTrace(*refined_mesh, 1);
+  CHECK(trace > 0.0);
+}
+
+TEST_CASE("MeshTopology Hex Adaptive (No Closure)", "[meshtopology][Serial]")
+{
+  // Mark a single hex element for refinement. No closure is needed for hex meshes.
+  auto mesh_path = GetMeshPath("fichera-hex.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+  int orig_ne = orig_mesh.GetNE();
+  double orig_vol = MeshVolume(orig_mesh);
+
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+
+  // Mark only the first element.
+  topo.Refine({0});
+
+  // Should have original elements minus 1 (refined) plus 8 (children) = orig + 7.
+  CHECK(topo.GetNE() == orig_ne + 7);
+
+  // Export and verify volume conservation.
+  auto refined_mesh = topo.ToMFEM();
+  double refined_vol = MeshVolume(*refined_mesh);
+  CHECK(std::abs(refined_vol - orig_vol) < 1e-12 * orig_vol);
+
+  // All elements should have positive volume.
+  for (int i = 0; i < refined_mesh->GetNE(); i++)
+  {
+    CHECK(refined_mesh->GetElementVolume(i) > 0.0);
+  }
+}
+
+TEST_CASE("MeshTopology Hex Coarsening", "[meshtopology][Serial]")
+{
+  auto mesh_path = GetMeshPath("fichera-hex.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+  int orig_ne = orig_mesh.GetNE();
+
+  // Refine then coarsen back.
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+  topo.UniformRefinement();
+  CHECK(topo.GetNE() == 8 * orig_ne);
+
+  // Coarsen all elements (error = 0, threshold = 1 → all merge).
+  std::vector<double> zero_error(topo.GetTotalElements(), 0.0);
+  topo.Coarsen(zero_error, 1.0);
+  CHECK(topo.GetNE() == orig_ne);
+
+  // Verify each restored parent has the correct level and is active.
+  for (int i = 0; i < orig_ne; i++)
+  {
+    const auto &elem = topo.GetElement(i);
+    CHECK(elem.active);
+    CHECK(elem.level == 0);
+    CHECK(elem.parent == -1);
+  }
+
+  // Note: ToMFEM export after coarsening requires boundary element rebuild, which is
+  // not yet implemented (boundary quads are still in the refined state). The element
+  // topology is correctly restored as verified by the checks above.
+}
+
+TEST_CASE("MeshTopology Quad Import/Export", "[meshtopology][Serial]")
+{
+  // Load a 2D quad mesh, import, export, verify round-trip fidelity.
+  auto mesh_path = GetMeshPath("star-quad.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+  CHECK(topo.GetNE() == orig_mesh.GetNE());
+  CHECK(topo.GetNV() == orig_mesh.GetNV());
+  CHECK(topo.GetNBE() == orig_mesh.GetNBE());
+  CHECK(topo.Dimension() == 2);
+
+  auto rt_mesh = topo.ToMFEM();
+  CHECK(rt_mesh->GetNE() == orig_mesh.GetNE());
+
+  double orig_vol = MeshVolume(orig_mesh);
+  double rt_vol = MeshVolume(*rt_mesh);
+  CHECK(std::abs(rt_vol - orig_vol) < 1e-12 * std::abs(orig_vol));
+}
+
+TEST_CASE("MeshTopology Quad Uniform Refinement", "[meshtopology][Serial]")
+{
+  auto mesh_path = GetMeshPath("star-quad.mesh");
+  mfem::Mesh orig_mesh(mesh_path);
+  int orig_ne = orig_mesh.GetNE();
+  double orig_vol = MeshVolume(orig_mesh);
+
+  auto topo = MeshTopology::FromMFEM(orig_mesh);
+  topo.UniformRefinement();
+
+  // Each quad splits into 4 children.
+  CHECK(topo.GetNE() == 4 * orig_ne);
+
+  auto refined_mesh = topo.ToMFEM();
+  double refined_vol = MeshVolume(*refined_mesh);
+  CHECK(std::abs(refined_vol - orig_vol) < 1e-12 * std::abs(orig_vol));
+
+  // All elements should have positive area.
+  for (int i = 0; i < refined_mesh->GetNE(); i++)
+  {
+    CHECK(refined_mesh->GetElementVolume(i) > 0.0);
+  }
+
+  // FE assembly should succeed.
+  double trace = MassMatrixTrace(*refined_mesh, 1);
+  CHECK(trace > 0.0);
+}

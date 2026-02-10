@@ -33,6 +33,212 @@ int MeshTopology::GetMidpoint(int v0, int v1)
   return mid;
 }
 
+int MeshTopology::GetFaceCenter(int v0, int v1, int v2, int v3)
+{
+  std::array<int, 4> key = {v0, v1, v2, v3};
+  std::sort(key.begin(), key.end());
+  auto it = face_centers.find(key);
+  if (it != face_centers.end())
+  {
+    return it->second;
+  }
+  int fc = static_cast<int>(vertices.size());
+  std::array<double, 3> coords;
+  for (int d = 0; d < 3; d++)
+  {
+    coords[d] =
+        0.25 * (vertices[v0][d] + vertices[v1][d] + vertices[v2][d] + vertices[v3][d]);
+  }
+  vertices.push_back(coords);
+  face_centers[key] = fc;
+  return fc;
+}
+
+int MeshTopology::GetBodyCenter(const std::vector<int> &hex_vertices)
+{
+  std::array<int, 8> key;
+  std::copy(hex_vertices.begin(), hex_vertices.end(), key.begin());
+  std::sort(key.begin(), key.end());
+  auto it = body_centers.find(key);
+  if (it != body_centers.end())
+  {
+    return it->second;
+  }
+  int bc = static_cast<int>(vertices.size());
+  std::array<double, 3> coords = {0.0, 0.0, 0.0};
+  for (int i = 0; i < 8; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      coords[d] += vertices[hex_vertices[i]][d];
+    }
+  }
+  for (int d = 0; d < 3; d++)
+  {
+    coords[d] *= 0.125;
+  }
+  vertices.push_back(coords);
+  body_centers[key] = bc;
+  return bc;
+}
+
+std::array<int, 8> MeshTopology::RefineHexElement(int elem_idx)
+{
+  MFEM_ASSERT(elements[elem_idx].active,
+              "Cannot refine an inactive (already refined) element!");
+  MFEM_ASSERT(elements[elem_idx].vertices.size() == 8,
+              "RefineHexElement requires a hex element with 8 vertices!");
+
+  // Capture parent data before any push_back (which may reallocate).
+  const auto parent_verts = elements[elem_idx].vertices;
+  int attr = elements[elem_idx].attribute;
+  int level = elements[elem_idx].level;
+
+  // MFEM hex vertex ordering:
+  //      7--------6
+  //     /|       /|
+  //    4--------5 |
+  //    | |      | |
+  //    | 3------|-2
+  //    |/       |/
+  //    0--------1
+  int v0 = parent_verts[0], v1 = parent_verts[1];
+  int v2 = parent_verts[2], v3 = parent_verts[3];
+  int v4 = parent_verts[4], v5 = parent_verts[5];
+  int v6 = parent_verts[6], v7 = parent_verts[7];
+
+  // 12 edge midpoints.
+  int e01 = GetMidpoint(v0, v1);
+  int e12 = GetMidpoint(v1, v2);
+  int e23 = GetMidpoint(v2, v3);
+  int e30 = GetMidpoint(v3, v0);
+  int e45 = GetMidpoint(v4, v5);
+  int e56 = GetMidpoint(v5, v6);
+  int e67 = GetMidpoint(v6, v7);
+  int e74 = GetMidpoint(v7, v4);
+  int e04 = GetMidpoint(v0, v4);
+  int e15 = GetMidpoint(v1, v5);
+  int e26 = GetMidpoint(v2, v6);
+  int e37 = GetMidpoint(v3, v7);
+
+  // 6 face centers.
+  int fc_bot = GetFaceCenter(v0, v1, v2, v3);  // bottom z=0
+  int fc_top = GetFaceCenter(v4, v5, v6, v7);  // top z=1
+  int fc_fro = GetFaceCenter(v0, v1, v5, v4);  // front y=0
+  int fc_bac = GetFaceCenter(v2, v3, v7, v6);  // back y=1
+  int fc_lef = GetFaceCenter(v0, v3, v7, v4);  // left x=0
+  int fc_rig = GetFaceCenter(v1, v2, v6, v5);  // right x=1
+
+  // 1 body center.
+  int bc = GetBodyCenter(parent_verts);
+
+  // Reserve space for 8 children to avoid reallocation during push_back.
+  elements.reserve(elements.size() + 8);
+
+  // Deactivate parent BEFORE push_back (push_back may reallocate and invalidate refs).
+  elements[elem_idx].active = false;
+
+  int child0_idx = static_cast<int>(elements.size());
+
+  // 8 children, each a hex with MFEM vertex ordering.
+  // Child 0: corner v0
+  elements.push_back(
+      {{v0, e01, fc_bot, e30, e04, fc_fro, bc, fc_lef}, attr, elem_idx, level + 1, true});
+  // Child 1: corner v1
+  elements.push_back(
+      {{e01, v1, e12, fc_bot, fc_fro, e15, fc_rig, bc}, attr, elem_idx, level + 1, true});
+  // Child 2: corner v2
+  elements.push_back(
+      {{fc_bot, e12, v2, e23, bc, fc_rig, e26, fc_bac}, attr, elem_idx, level + 1, true});
+  // Child 3: corner v3
+  elements.push_back(
+      {{e30, fc_bot, e23, v3, fc_lef, bc, fc_bac, e37}, attr, elem_idx, level + 1, true});
+  // Child 4: corner v4
+  elements.push_back(
+      {{e04, fc_fro, bc, fc_lef, v4, e45, fc_top, e74}, attr, elem_idx, level + 1, true});
+  // Child 5: corner v5
+  elements.push_back(
+      {{fc_fro, e15, fc_rig, bc, e45, v5, e56, fc_top}, attr, elem_idx, level + 1, true});
+  // Child 6: corner v6
+  elements.push_back(
+      {{bc, fc_rig, e26, fc_bac, fc_top, e56, v6, e67}, attr, elem_idx, level + 1, true});
+  // Child 7: corner v7
+  elements.push_back(
+      {{fc_lef, bc, fc_bac, e37, e74, fc_top, e67, v7}, attr, elem_idx, level + 1, true});
+
+  std::array<int, 8> children;
+  for (int i = 0; i < 8; i++)
+  {
+    children[i] = child0_idx + i;
+  }
+
+  // Record history with sentinel values for bisection-specific fields.
+  history.push_back({elem_idx,
+                     {children[0], children[1], children[2], children[3], children[4],
+                      children[5], children[6], children[7]},
+                     -1,
+                     -1,
+                     -1});
+
+  return children;
+}
+
+std::array<int, 4> MeshTopology::RefineQuadElement(int elem_idx)
+{
+  MFEM_ASSERT(elements[elem_idx].active,
+              "Cannot refine an inactive (already refined) element!");
+  MFEM_ASSERT(elements[elem_idx].vertices.size() == 4,
+              "RefineQuadElement requires a quad element with 4 vertices!");
+
+  // Capture parent data before any push_back.
+  const auto parent_verts = elements[elem_idx].vertices;
+  int attr = elements[elem_idx].attribute;
+  int level = elements[elem_idx].level;
+
+  // MFEM quad vertex ordering:
+  //  3--------2
+  //  |        |
+  //  |        |
+  //  0--------1
+  int v0 = parent_verts[0], v1 = parent_verts[1];
+  int v2 = parent_verts[2], v3 = parent_verts[3];
+
+  // 4 edge midpoints.
+  int e01 = GetMidpoint(v0, v1);
+  int e12 = GetMidpoint(v1, v2);
+  int e23 = GetMidpoint(v2, v3);
+  int e30 = GetMidpoint(v3, v0);
+
+  // Face center.
+  int fc = GetFaceCenter(v0, v1, v2, v3);
+
+  // Reserve space for 4 children.
+  elements.reserve(elements.size() + 4);
+
+  // Deactivate parent.
+  elements[elem_idx].active = false;
+
+  int child0_idx = static_cast<int>(elements.size());
+
+  // 4 children, each a quad with MFEM vertex ordering.
+  elements.push_back({{v0, e01, fc, e30}, attr, elem_idx, level + 1, true});
+  elements.push_back({{e01, v1, e12, fc}, attr, elem_idx, level + 1, true});
+  elements.push_back({{fc, e12, v2, e23}, attr, elem_idx, level + 1, true});
+  elements.push_back({{e30, fc, e23, v3}, attr, elem_idx, level + 1, true});
+
+  std::array<int, 4> children;
+  for (int i = 0; i < 4; i++)
+  {
+    children[i] = child0_idx + i;
+  }
+
+  // Record history with sentinel values for bisection-specific fields.
+  history.push_back(
+      {elem_idx, {children[0], children[1], children[2], children[3]}, -1, -1, -1});
+
+  return children;
+}
+
 std::pair<int, int> MeshTopology::FindLongestEdge(int elem_idx) const
 {
   const auto &elem = elements[elem_idx];
@@ -112,9 +318,10 @@ std::array<int, 2> MeshTopology::BisectElement(int elem_idx, int force_va, int f
 
 void MeshTopology::UpdateBdrElements(const std::vector<int> &refined_elements)
 {
-  // For each boundary element, check if volume element bisection split any of its edges.
-  // A boundary triangle may need multiple splits if multiple edges have midpoints.
-  // We iterate until no more splits are needed.
+  // For each boundary element, check if volume element refinement split its edges.
+  // Triangles and segments are handled iteratively (bisection may split one edge at a
+  // time). Quads are split into 4 child quads when all 4 edge midpoints exist (they
+  // always will after hex refinement since all 12 edges are split).
   bool changed = true;
   while (changed)
   {
@@ -124,42 +331,75 @@ void MeshTopology::UpdateBdrElements(const std::vector<int> &refined_elements)
     for (const auto &bdr : bdr_elements)
     {
       int nv = static_cast<int>(bdr.vertices.size());
-      bool split = false;
 
-      for (int i = 0; i < nv && !split; i++)
+      if (nv == 4)
       {
-        for (int j = i + 1; j < nv && !split; j++)
+        // Quad boundary face: check if all 4 edge midpoints exist.
+        // If so, compute face center and split into 4 child quads.
+        int v0 = bdr.vertices[0], v1 = bdr.vertices[1];
+        int v2 = bdr.vertices[2], v3 = bdr.vertices[3];
+        auto k01 = EdgeKey(v0, v1), k12 = EdgeKey(v1, v2);
+        auto k23 = EdgeKey(v2, v3), k30 = EdgeKey(v3, v0);
+        auto it01 = edge_midpoints.find(k01), it12 = edge_midpoints.find(k12);
+        auto it23 = edge_midpoints.find(k23), it30 = edge_midpoints.find(k30);
+
+        if (it01 != edge_midpoints.end() && it12 != edge_midpoints.end() &&
+            it23 != edge_midpoints.end() && it30 != edge_midpoints.end())
         {
-          auto key = EdgeKey(bdr.vertices[i], bdr.vertices[j]);
-          auto it = edge_midpoints.find(key);
-          if (it != edge_midpoints.end())
-          {
-            int mid = it->second;
-            if (dim == 3)
-            {
-              // Boundary triangle: split into 2 triangles along this edge.
-              auto verts0 = bdr.vertices;
-              auto verts1 = bdr.vertices;
-              verts0[j] = mid;
-              verts1[i] = mid;
-              new_bdr.push_back({std::move(verts0), bdr.attribute});
-              new_bdr.push_back({std::move(verts1), bdr.attribute});
-            }
-            else
-            {
-              // Boundary edge: split into 2 edges.
-              new_bdr.push_back({{bdr.vertices[i], mid}, bdr.attribute});
-              new_bdr.push_back({{mid, bdr.vertices[j]}, bdr.attribute});
-            }
-            split = true;
-            changed = true;
-          }
+          int e01 = it01->second, e12 = it12->second;
+          int e23 = it23->second, e30 = it30->second;
+          int fc = GetFaceCenter(v0, v1, v2, v3);
+
+          new_bdr.push_back({{v0, e01, fc, e30}, bdr.attribute});
+          new_bdr.push_back({{e01, v1, e12, fc}, bdr.attribute});
+          new_bdr.push_back({{fc, e12, v2, e23}, bdr.attribute});
+          new_bdr.push_back({{e30, fc, e23, v3}, bdr.attribute});
+          changed = true;
+        }
+        else
+        {
+          new_bdr.push_back(bdr);
         }
       }
-
-      if (!split)
+      else
       {
-        new_bdr.push_back(bdr);
+        // Triangle or segment boundary: split along the first edge with a midpoint.
+        bool split = false;
+        for (int i = 0; i < nv && !split; i++)
+        {
+          for (int j = i + 1; j < nv && !split; j++)
+          {
+            auto key = EdgeKey(bdr.vertices[i], bdr.vertices[j]);
+            auto it = edge_midpoints.find(key);
+            if (it != edge_midpoints.end())
+            {
+              int mid = it->second;
+              if (nv == 3)
+              {
+                // Boundary triangle: split into 2 triangles along this edge.
+                auto verts0 = bdr.vertices;
+                auto verts1 = bdr.vertices;
+                verts0[j] = mid;
+                verts1[i] = mid;
+                new_bdr.push_back({std::move(verts0), bdr.attribute});
+                new_bdr.push_back({std::move(verts1), bdr.attribute});
+              }
+              else
+              {
+                // Boundary segment: split into 2 edges.
+                new_bdr.push_back({{bdr.vertices[i], mid}, bdr.attribute});
+                new_bdr.push_back({{mid, bdr.vertices[j]}, bdr.attribute});
+              }
+              split = true;
+              changed = true;
+            }
+          }
+        }
+
+        if (!split)
+        {
+          new_bdr.push_back(bdr);
+        }
       }
     }
 
@@ -197,8 +437,9 @@ MeshTopology MeshTopology::FromMFEM(const mfem::Mesh &mesh)
     mfem::Array<int> v;
     mesh.GetElementVertices(i, v);
     auto geom = mesh.GetElementGeometry(i);
-    MFEM_VERIFY(geom == mfem::Geometry::TETRAHEDRON || geom == mfem::Geometry::TRIANGLE,
-                "MeshTopology only supports simplex elements (tet/tri), got geometry type "
+    MFEM_VERIFY(geom == mfem::Geometry::TETRAHEDRON || geom == mfem::Geometry::TRIANGLE ||
+                    geom == mfem::Geometry::CUBE || geom == mfem::Geometry::SQUARE,
+                "MeshTopology only supports tet/tri/hex/quad elements, got geometry type "
                     << geom);
     topo.elements[i].vertices.assign(v.begin(), v.end());
     topo.elements[i].attribute = mesh.GetAttribute(i);
@@ -235,10 +476,6 @@ std::unique_ptr<mfem::Mesh> MeshTopology::ToMFEM() const
 
   int ne = static_cast<int>(active_indices.size());
   int nbe = static_cast<int>(bdr_elements.size());
-  int nv_per_elem = (dim == 3) ? 4 : 3;
-  int nv_per_bdr = (dim == 3) ? 3 : 2;
-  auto elem_type = (dim == 3) ? mfem::Element::TETRAHEDRON : mfem::Element::TRIANGLE;
-  auto bdr_type = (dim == 3) ? mfem::Element::TRIANGLE : mfem::Element::SEGMENT;
 
   auto mesh =
       std::make_unique<mfem::Mesh>(dim, static_cast<int>(vertices.size()), ne, nbe, sdim);
@@ -249,11 +486,36 @@ std::unique_ptr<mfem::Mesh> MeshTopology::ToMFEM() const
     mesh->AddVertex(vertices[i].data());
   }
 
+  // Determine element type from vertex count.
+  auto GetElemType = [this](int nv) -> mfem::Element::Type
+  {
+    if (dim == 3)
+    {
+      return (nv == 8) ? mfem::Element::HEXAHEDRON : mfem::Element::TETRAHEDRON;
+    }
+    else
+    {
+      return (nv == 4) ? mfem::Element::QUADRILATERAL : mfem::Element::TRIANGLE;
+    }
+  };
+
+  auto GetBdrElemType = [this](int nv) -> mfem::Element::Type
+  {
+    if (dim == 3)
+    {
+      return (nv == 4) ? mfem::Element::QUADRILATERAL : mfem::Element::TRIANGLE;
+    }
+    else
+    {
+      return mfem::Element::SEGMENT;
+    }
+  };
+
   // Add active elements.
   for (int idx : active_indices)
   {
     const auto &elem = elements[idx];
-    mfem::Element *e = mesh->NewElement(elem_type);
+    mfem::Element *e = mesh->NewElement(GetElemType(elem.vertices.size()));
     e->SetVertices(elem.vertices.data());
     e->SetAttribute(elem.attribute);
     mesh->AddElement(e);
@@ -262,9 +524,10 @@ std::unique_ptr<mfem::Mesh> MeshTopology::ToMFEM() const
   // Add boundary elements.
   for (int i = 0; i < nbe; i++)
   {
-    mfem::Element *e = mesh->NewElement(bdr_type);
-    e->SetVertices(bdr_elements[i].vertices.data());
-    e->SetAttribute(bdr_elements[i].attribute);
+    const auto &bdr = bdr_elements[i];
+    mfem::Element *e = mesh->NewElement(GetBdrElemType(bdr.vertices.size()));
+    e->SetVertices(bdr.vertices.data());
+    e->SetAttribute(bdr.attribute);
     mesh->AddBdrElement(e);
   }
 
@@ -286,16 +549,28 @@ void MeshTopology::UniformRefinement()
     }
   }
 
-  // Clear edge midpoint cache for this refinement pass.
+  // Clear caches for this refinement pass.
   edge_midpoints.clear();
+  face_centers.clear();
+  body_centers.clear();
 
-  // Reserve space for children to avoid repeated reallocation.
-  elements.reserve(elements.size() + 2 * to_refine.size());
-
-  // Bisect each element.
+  // Refine each element based on its type.
   for (int idx : to_refine)
   {
-    BisectElement(idx);
+    int nv = static_cast<int>(elements[idx].vertices.size());
+    if (nv == 8)
+    {
+      RefineHexElement(idx);
+    }
+    else if (nv == 4 && dim == 2)
+    {
+      RefineQuadElement(idx);
+    }
+    else
+    {
+      // Simplex element (tet or tri): bisect.
+      BisectElement(idx);
+    }
   }
 
   // Update boundary elements for any edges that were split.
@@ -305,20 +580,36 @@ void MeshTopology::UniformRefinement()
 void MeshTopology::Refine(const std::vector<int> &marked_elements)
 {
   edge_midpoints.clear();
+  face_centers.clear();
+  body_centers.clear();
 
-  // Phase 1: Bisect all marked elements along their longest edges.
+  // Phase 1: Refine all marked elements.
   for (int idx : marked_elements)
   {
-    if (elements[idx].active)
+    if (!elements[idx].active)
     {
+      continue;
+    }
+    int nv = static_cast<int>(elements[idx].vertices.size());
+    if (nv == 8)
+    {
+      RefineHexElement(idx);
+    }
+    else if (nv == 4 && dim == 2)
+    {
+      RefineQuadElement(idx);
+    }
+    else
+    {
+      // Simplex element: bisect along longest edge.
       BisectElement(idx);
     }
   }
 
-  // Phase 2: Closure — resolve hanging vertices to maintain conformity.
-  // Scan active elements for edges that have midpoints in the cache. If found,
-  // that element has a hanging vertex and must be bisected along that edge.
-  // Repeat until no hanging vertices remain.
+  // Phase 2: Closure — only needed for simplex elements.
+  // Hex/quad refinement does not require closure (hanging nodes are acceptable
+  // or the mesh is uniformly refined). Closure only applies to simplex meshes.
+  // Scan active simplex elements for edges that have midpoints in the cache.
   bool changed = true;
   while (changed)
   {
@@ -331,20 +622,24 @@ void MeshTopology::Refine(const std::vector<int> &marked_elements)
         continue;
       }
       int nv = static_cast<int>(elements[i].vertices.size());
-      for (int a = 0; a < nv; a++)
+      // Only simplex elements need closure.
+      if ((nv == 4 && dim == 3) || nv == 3)
       {
-        for (int b = a + 1; b < nv; b++)
+        for (int a = 0; a < nv; a++)
         {
-          int va = elements[i].vertices[a];
-          int vb = elements[i].vertices[b];
-          auto key = EdgeKey(va, vb);
-          if (edge_midpoints.count(key))
+          for (int b = a + 1; b < nv; b++)
           {
-            // Hanging vertex found — bisect along this edge.
-            elements.reserve(elements.size() + 2);
-            BisectElement(i, va, vb);
-            changed = true;
-            goto next_element;
+            int va = elements[i].vertices[a];
+            int vb = elements[i].vertices[b];
+            auto key = EdgeKey(va, vb);
+            if (edge_midpoints.count(key))
+            {
+              // Hanging vertex found — bisect along this edge.
+              elements.reserve(elements.size() + 2);
+              BisectElement(i, va, vb);
+              changed = true;
+              goto next_element;
+            }
           }
         }
       }
@@ -400,40 +695,49 @@ void MeshTopology::RefineDistributed(MPI_Comm comm, const std::vector<int> &loca
 
 void MeshTopology::Coarsen(const std::vector<double> &elem_error, double threshold)
 {
-  // Walk history backwards. For each refinement record, if both children are active
+  // Walk history backwards. For each refinement record, if all children are active
   // and their combined error is below the threshold, merge them back into the parent.
   for (int h = static_cast<int>(history.size()) - 1; h >= 0; h--)
   {
     const auto &rec = history[h];
-    auto &child0 = elements[rec.children[0]];
-    auto &child1 = elements[rec.children[1]];
 
-    if (!child0.active || !child1.active)
+    // Check if all children are active.
+    bool all_active = true;
+    for (int child_idx : rec.children)
     {
-      continue;  // One or both children have been further refined.
+      if (!elements[child_idx].active)
+      {
+        all_active = false;
+        break;
+      }
+    }
+    if (!all_active)
+    {
+      continue;  // One or more children have been further refined.
     }
 
-    // Check error: both children must have low error.
+    // Check error: all children must have low combined error.
     double combined_error = 0.0;
-    if (rec.children[0] < static_cast<int>(elem_error.size()))
+    for (int child_idx : rec.children)
     {
-      combined_error += elem_error[rec.children[0]];
-    }
-    if (rec.children[1] < static_cast<int>(elem_error.size()))
-    {
-      combined_error += elem_error[rec.children[1]];
+      if (child_idx < static_cast<int>(elem_error.size()))
+      {
+        combined_error += elem_error[child_idx];
+      }
     }
 
     if (combined_error < threshold)
     {
       // Merge: deactivate children, reactivate parent.
-      child0.active = false;
-      child1.active = false;
+      for (int child_idx : rec.children)
+      {
+        elements[child_idx].active = false;
+      }
       elements[rec.parent].active = true;
 
-      // Note: The midpoint vertex stays in the vertex list (it's just unused).
-      // Boundary elements are not updated here — a full boundary rebuild would be
-      // needed for production use.
+      // Note: The midpoint/face center/body center vertices stay in the vertex list
+      // (they're just unused). Boundary elements are not updated here — a full
+      // boundary rebuild would be needed for production use.
     }
   }
 }
