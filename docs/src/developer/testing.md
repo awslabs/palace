@@ -25,7 +25,7 @@ with `CMake`. From the *Palace* root directory:
 ```bash
 mkdir build && cd build
 cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes ..
-make -j palace-tests
+make -j $(nproc) palace-tests
 ```
 
 The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
@@ -33,36 +33,97 @@ test assertions. If you want to also measure test coverage, turn
 `PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
 for more details on this.
 
-Once the build completes, the `palace-unit-tests` executable will be installed in the
-same `bin/` directory as the main `palace` executable. Run the tests with:
+Once the build completes, the `palace-unit-tests` executable will be installed
+in the same `bin/` directory as the main `palace` executable, and you can run
+tests in two ways:
+
+ 1. Using CTest (recommended for running all tests): Automatically runs all test
+    categories in parallel with proper environment setup
+ 2. Using the test executable directly: Provides fine-grained control over which
+    tests run using Catch2's filtering syntax
+
+### Running tests with CTest
+
+CTest provides automated test execution with parallel support and proper categorization:
+
+```bash
+cd palace-build
+ctest
+```
+
+This discovers and runs all registered tests. CTest automatically:
+
+  - Runs serial tests with a single process
+  - Runs MPI tests with 2 processes
+  - Runs GPU tests with proper device configuration
+  - Prevents concurrent execution of tests that require exclusive resources
+
+To see all the tests available, call:
+
+```bash
+ctest -N
+```
+
+This will print something like:
+
+```
+Test project palace/build
+  Test  #1: serial-Config Boundary Ports
+  Test  #2: serial-Config Driven Solver
+  Test  #3: serial-FarField
+  Test  #4: serial-EM Constant Check
+  ....
+```
+
+If you want to run all tests in parallel (e.g., with 8 processes):
+
+```bash
+ctest -j8 --output-on-failure
+```
+
+CTest will schedule execution of tests trying to use all the 8 processes. In
+this, CTest handles MPI processes correctly, and ensures that only one GPU test
+is being run at the time. If you compiled *Palace*, the total number of
+processes that could end up used in this example is `8 * OMP_NUM_THREADS`.
+
+If you run specific tests categories, you can use regex matching, for example
+
+```bash
+ctest -R mpi-            # Run only MPI tests
+ctest -R postoperator    # Run tests with postoperator in the name
+```
+
+### Running tests directly with the executable
+
+CTest is powerful, but sometimes we want to have more direct control of how the
+tests are being run. When this happens, we can use directly the `unit-tests`
+executable.
+
+To run all the `Serial` tests (including the benchmarks):
+>>>>>>> 7675acc5 (Use ctest, parallelize tests, report coverage)
 
 ```bash
 bin/palace-unit-tests
 ```
 
-This runs all the `Serial` tests. To run `Parallel` tests, call
+This runs all `Serial` tests. For `Parallel` tests:
 
 ```bash
 mpirun -np 2 bin/palace-unit-tests
 ```
 
-To run the `GPU` tests (this can be combined with `mpirun`):
+For `GPU` tests:
 
 ```bash
 bin/palace-unit-tests --device cuda
 ```
 
-If you are interested in running only a subset of tests, you can use filters.
-For example, to run the tests tagged with `[vector]`, call
+You can use Catch2 filters to run specific subsets:
 
 ```bash
-bin/palace-unit-tests [vector]
-```
-
-To run a specific test by name:
-
-```bash
-bin/palace-unit-tests "Vector Sum - Real"
+bin/palace-unit-tests [vector]              # Tests tagged [vector]
+bin/palace-unit-tests "Vector Sum - Real"   # Specific test by name
+bin/palace-unit-tests [^postoperator]       # Tests not tagged with [postoperator]
 ```
 
 #### Benchmarks
@@ -81,6 +142,8 @@ These benchmarks can be accelerated using MPI and/or OpenMP parallelism (when
 configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are only testing
 the local operator assembly on each process.
 
+CTest skips all the benchmarks.
+
 ### Adding unit tests
 
 Palace uses [Catch2](https://github.com/catchorg/Catch2) for unit testing. Refer
@@ -95,7 +158,7 @@ _tags_. When creating a test, you provide a name and a series of tags
 TEST_CASE("My name", "[MyFirstTag][MyOtherTag][Serial]"){ ... }
 ```
 
-`Catch2` tags are typically used for filtering tests. *Palace* defines three
+`Catch2` tags are typically used for filtering tests. *Palace* defines four
 special tags that control when tests execute based on the runtime environment:
 
   - `[Serial]` tests run only with a single MPI process. Use this for tests that
@@ -105,6 +168,9 @@ special tags that control when tests execute based on the runtime environment:
     inter-process communication.
   - `[GPU]` tests run only when GPU devices are available. Use this for tests that
     are meaningful and interesting on GPU hardware.
+  - `[NoConcurrent]` tests run serially without any other tests executing
+    simultaneously. Use this for tests that modify shared resources or have
+    timing-sensitive behavior that could be affected by concurrent execution.
 
 These tags are inclusive, meaning that a test can be marked with multiple
 special tags, if the test is meaningful in different contexts (e.g., if a test
@@ -130,6 +196,17 @@ supports CPU and GPU implementation at the same time). For example,
     run (same with GPUs). Therefore, this test should only be marked as
     `[Serial]`.
 
+!!! note "Try improving your test instead of relying on `[NoConcurrent]`"
+    
+    `[NoConcurrent]` serializes tests to ensure that shared resources are not
+    being used/modified at the same time. Sometimes, this is needed (e.g.,
+    you have tests that require large amounts of memory, or that talk through
+    a socket to a GLVis server). Often times, howoever, it is possible to modify
+    the test to remove potential race conditions and ensure isolation. A common
+    case where you might be using shared resources is file-system operations. For
+    that, you can create and destory temporary directories. `TempDirFixture` in
+    `test-fixtures.hpp` helps you with that.
+
 For the other tags, we recommend grouping related tests using descriptive tag
 names like `[vector]` or `[materialoperator]` (typically named after files or
 classes). This enables effective filtering, as described in [Building and
@@ -151,17 +228,9 @@ important settings:
 
 When *Palace* is built with `PALACE_BUILD_WITH_COVERAGE`, running the unit tests
 generates coverage information that tracks which parts of the codebase are
-exercised by the tests. This feature uses "[source-based code
-coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html)" for
-LLVM-based compilers (Clang, AppleClang, IntelLLVM) and
-[`gcov`](https://gcc.gnu.org/onlinedocs/gcc/Gcov.html) for GNU compilers.
-
-Both methods can produce coverage data compatible with
-[LCOV](https://github.com/linux-test-project/lcov), which provides standardized
-processing and HTML report generation. In the sections below, we discuss how to
-obtain a `coverage.info` that can be further processed by `lcov`. Before
-proceeding, ensure `lcov` is installed on your system. If not, you can obtain it
-from your package manager.
+exercised by the tests. The `scripts/measure-test-coverage` script automates
+the entire coverage measurement process, handling compiler detection, test
+execution, and report generation.
 
 !!! warning "Before continuing"
 
@@ -170,7 +239,10 @@ from your package manager.
     ```sh
     lcov --version
     ```
-
+    
+    You need a version newer than 1.15. For LLVM, you will also need `llvm-profdata`
+    and `llvm-cov`. For GCC, you will need `gcov-tool` (which comes with GCC).
+    
     Also make sure that *Palace* was build with `PALACE_BUILD_WITH_COVERAGE`.
     If not, compile it with
 
@@ -178,86 +250,65 @@ from your package manager.
     cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_COVERAGE=yes ..
     ```
 
-To obtain comprehensive coverage data, tests must be executed in three
-configurations: `Serial`, `Parallel`, and `GPU` (if available). Each
-configuration produces separate coverage files that are later merged into a
-unified report.
-
-*Palace* is a complex codebase that involves inlined and just-in-time compiled
-functions. This can lead to minor inconsistencies in the coverage files. These
-are not fatal, and ignoring them still produces good reports. For this reason,
-most `lcov` commands you will see in the following sections have the
-`--ignore-errors inconsistent` flag.
-
-#### Coverage with GNU compilers
-
-GNU compilers automatically generate raw coverage files during program
-execution. The `lcov` tool can directly process these files without additional
-conversion steps.
-
-Run the test suite in all configurations and capture coverage data:
+Assuming you correctly built *Palace* in the `build` folder, the simplest
+approach runs tests and generates an HTML report in one command:
 
 ```sh
-# Serial tests
-bin/palace-unit-tests
-lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage1.info
-
-# Parallel tests
-mpirun -np 2 bin/palace-unit-tests
-lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage2.info
-
-# GPU tests (if available)
-# (command -v nvidia-smi is for your convenience, so that you can copy this block of code
-#  and use it as-is even when a GPU is not available)
-command -v nvidia-smi && bin/palace-unit-tests --device cuda
-command -v nvidia-smi && lcov --capture --directory palace-build --ignore-errors inconsistent --output-file coverage3.info
-
-# Merge all coverage files (works whether coverage3.info exists or not)
-# The $() expands to --add-tracefile coverage1.info --add-tracefile coverage2.info --add-tracefile coverage3.info 
-lcov $(for f in coverage[1-3].info; do echo "--add-tracefile $f"; done) --ignore-errors inconsistent --output-file coverage.info
+cd scripts
+./measure-test-coverage report
 ```
 
-#### Coverage with LLVM-based compilers
+This automatically:
 
-LLVM compilers use a different coverage format that requires additional
-processing steps. The `LLVM_PROFILE_FILE` environment variable controls the
-naming pattern for generated coverage files.
+ 1. Detects your compiler type (GCC or LLVM)
+ 2. Runs all tests via CTest (serial, MPI, GPU if available)
+ 3. Collects and merges coverage data
+ 4. Filters to *Palace* source code only
+ 5. Generates an HTML report at `../build/coverage_html/index.html`
 
-First, clean any existing coverage files and configure the profile naming:
+You can control test parallelism with the `-j` flag:
 
 ```sh
-rm -f coverage*.profraw
-export LLVM_PROFILE_FILE="coverage-%p.profraw"
+./measure-test-coverage report -j8
 ```
 
-Execute the test suite in all configurations:
+Note that MPI tests run with 2 processes each, so `-j8` allows up to 4 MPI tests
+simultaneously.
+
+The `measure-test-coverage` allows for more control, for example:
 
 ```sh
-# Serial tests
-bin/palace-unit-tests
+# Generate coverage data only
+./measure-test-coverage generate /path/to/unit-test
 
-# Parallel tests
-mpirun -np 2 bin/palace-unit-tests
+# Generate HTML report from existing coverage data
+./measure-test-coverage report coverage_filtered.info
 
-# GPU tests (if available)
-# (command -v nvidia-smi is for your convenience, so that you can copy this block of code
-#  and use it as-is even when a GPU is not available)
-command -v nvidia-smi && bin/palace-unit-tests --device cuda
+# Merge coverage from multiple builds
+./measure-test-coverage generate /path/to/build1/unit-tests
+./measure-test-coverage generate /path/to/build2/unit-tests
+./measure-test-coverage merge build1/coverage_filtered.info build2/coverage_filtered.info
+./measure-test-coverage report coverage_filtered.info
 ```
 
-This generates multiple `coverage-<pid>.profraw` files, where `<pid>` represents
-each process ID. These raw files must be merged and converted to LCOV format:
+#### Understanding the coverage system
 
-```sh
-# Merge raw coverage files
-llvm-profdata merge -output=coverage.profdata coverage*.profraw
+*Palace* supports two coverage implementations:
 
-# Export to JSON format
-llvm-cov export -format text -instr-profile coverage.profdata bin/palace-unit-tests > coverage_llvm.json
+  - LLVM source-based coverage (Clang, AppleClang, IntelLLVM): Provides accurate
+    instrumentation through compiler integration. Coverage data is written to
+    `.profraw` files during test execution, then merged and converted to LCOV
+    format.
+  - GCC gcov coverage: Uses compile-time annotations (`.gcno`) and runtime data
+    (`.gcda`). The `measure-test-coverage` script handles the complexity of
+    merging parallel test runs and unmangling filenames.
 
-# Convert to LCOV format
-llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
-```
+Both produce LCOV-compatible output for standardized processing and HTML
+visualization.
+
+Note that `measure-test-coverage` runs all the tests and produces only one
+coverage report, merging the results from the serial, parallel, gpu, and
+noconcurrent tests.
 
 !!! note "Why two different coverage systems?"
 
@@ -265,32 +316,6 @@ llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
     gcov-compatible mode, which attempts to emulate gcov behavior but has known
     reliability issues. The source-based approach offers better precision
     for complex codebases.
-
-#### Generating coverage reports
-
-Once you have produced `coverage.info` using either method, filter the data to
-include only *Palace* source code:
-
-```sh
-lcov --extract coverage.info \
-  '*/palace/drivers/*' \
-  '*/palace/fem/*' \
-  '*/palace/linalg/*' \
-  '*/palace/models/*' \
-  '*/palace/utils/*' \
-  '*/test/unit/*' \
-  --output-file coverage_filtered.info
-```
-
-Generate an HTML report for visualization:
-
-```sh
-genhtml coverage_filtered.info --output-directory coverage_html
-```
-
-Open `coverage_html/index.html` in your web browser to explore the interactive
-coverage report, which shows line-by-line coverage statistics and identifies
-untested code paths.
 
 ## Regression tests
 

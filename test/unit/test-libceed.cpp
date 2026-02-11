@@ -1450,7 +1450,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
                            amr, order);
 }
 
-TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
+TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel][NoConcurrent]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
   RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,

@@ -132,3 +132,71 @@ install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mesh/
   DESTINATION share/palace/test/mesh
 )
+
+# Enable CTest for coverage support
+include(CTest)
+
+# Discover and register tests with CTest using Catch2's built-in function
+include(Catch)
+
+# Common coverage environment variable setup
+set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>")
+
+# Serial tests
+catch_discover_tests(unit-tests
+  TEST_PREFIX "serial-"
+  TEST_SPEC "[Serial]"
+  EXTRA_ARGS --skip-benchmarks
+  PROPERTIES
+    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
+)
+
+# MPI tests  
+catch_discover_tests(unit-tests
+  TEST_PREFIX "mpi-"
+  TEST_SPEC "[Parallel]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
+  PROPERTIES
+    PROCESSORS 2
+    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
+# GPU tests (if available)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  catch_discover_tests(unit-tests
+    TEST_PREFIX "gpu-"
+    TEST_SPEC "[GPU]"
+    EXTRA_ARGS --device cuda --backend /gpu/cuda/magma --skip-benchmarks
+    PROPERTIES
+      # Don't allow one more than GPU test at the time.
+      # In theory, we could allow one per GPU, but that's much harder to implement.
+      RESOURCE_LOCK gpu
+
+      # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+      ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
+  )
+
+  # TODO: ADD MPI+GPU tests. This requires checking that we have enough GPUs
+  # (one per rank).
+endif()
+
+# NoConcurrent tests (run serially)
+catch_discover_tests(unit-tests
+  TEST_PREFIX "noconcurrent-"
+  TEST_SPEC "[NoConcurrent]"
+  EXTRA_ARGS --skip-benchmarks
+  PROPERTIES
+    # The difference between RESOURCE_LOCK and RUN_SERIAL is that
+    # RESOURCE_LOCKed tests can run with other tests that no lock, while serial
+    # tests are forced to run on their own. Here we pick the latter, which is a
+    # more conservative choice, for test that might modify shared resources.
+    RUN_SERIAL ON
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/noconcurrent/coverage-%p.profraw>"
+)
+
+# Enable testing
+enable_testing()
+
