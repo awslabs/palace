@@ -169,22 +169,22 @@ MemoryStats ComputeNodeStats(std::string label, long local_value, MPI_Comm comm)
 
 MemoryStats GetCurrentMemoryStats(MPI_Comm comm)
 {
-  return ComputeStats("Current per-rank", GetCurrentMemory(), comm);
+  return ComputeStats("current per-rank", GetCurrentMemory(), comm);
 }
 
 MemoryStats GetPeakMemoryStats(MPI_Comm comm)
 {
-  return ComputeStats("Peak per-rank", GetPeakMemory(), comm);
+  return ComputeStats("peak per-rank", GetPeakMemory(), comm);
 }
 
 MemoryStats GetCurrentNodeMemoryStats(MPI_Comm comm)
 {
-  return ComputeNodeStats("Current per-node", GetCurrentMemory(), comm);
+  return ComputeNodeStats("current per-node", GetCurrentMemory(), comm);
 }
 
 MemoryStats GetPeakNodeMemoryStats(MPI_Comm comm)
 {
-  return ComputeNodeStats("Peak per-node", GetPeakMemory(), comm);
+  return ComputeNodeStats("peak per-node", GetPeakMemory(), comm);
 }
 
 void PrintMemoryUsage(MPI_Comm comm, const MemoryStats &stats)
