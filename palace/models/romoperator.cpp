@@ -754,8 +754,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   else
   {
-    // LU solve.
-    RHSr = Ar.fullPivLu().solve(RHSr);
+    // QR solve, for maximal stability. The small system is cheap to compute but can be
+    // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
+    // into separate columns.
+    RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
   }
   ProlongatePROMSolution(V.size(), V, RHSr, u);
 }
