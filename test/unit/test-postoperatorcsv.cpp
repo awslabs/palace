@@ -31,7 +31,7 @@ IoData load_iodata(std::string_view relative_path)
   fs::path io_file(PALACE_TEST_DIR);
   io_file /= relative_path;
   assert(fs::exists(io_file));
-  return {io_file.c_str(), false};
+  return IoData{io_file.c_str(), false};
 }
 
 std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_)
