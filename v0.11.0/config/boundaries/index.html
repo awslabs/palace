@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>config[&quot;Boundaries&quot;] · Palace</title><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script><link href="../../assets/favicon.ico" rel="icon" type="image/x-icon"/></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img class="docs-light-only" src="../../assets/logo.png" alt="Palace logo"/><img class="docs-dark-only" src="../../assets/logo-dark.png" alt="Palace logo"/></a><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../install/">Installation</a></li><li><a class="tocitem" href="../../run/">Running <em>Palace</em></a></li><li><span class="tocitem">User Guide</span><ul><li><a class="tocitem" href="../../guide/guide/">Overview</a></li><li><a class="tocitem" href="../../guide/problem/">Problem Types</a></li><li><a class="tocitem" href="../../guide/model/">Simulation Models</a></li><li><a class="tocitem" href="../../guide/postprocessing/">Postprocessing and Visualization</a></li></ul></li><li><span class="tocitem">Configuration File</span><ul><li><a class="tocitem" href="../config/">Overview</a></li><li><a class="tocitem" href="../problem/"><code>config[&quot;Problem&quot;]</code></a></li><li><a class="tocitem" href="../model/"><code>config[&quot;Model&quot;]</code></a></li><li><a class="tocitem" href="../domains/"><code>config[&quot;Domains&quot;]</code></a></li><li class="is-active"><a class="tocitem" href><code>config[&quot;Boundaries&quot;]</code></a><ul class="internal"><li><a class="tocitem" href="#boundaries[&quot;PEC&quot;]"><span><code>boundaries[&quot;PEC&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;PMC&quot;]"><span><code>boundaries[&quot;PMC&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Absorbing&quot;]"><span><code>boundaries[&quot;Absorbing&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Conductivity&quot;]"><span><code>boundaries[&quot;Conductivity&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Impedance&quot;]"><span><code>boundaries[&quot;Impedance&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;LumpedPort&quot;]"><span><code>boundaries[&quot;LumpedPort&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;WavePort&quot;]"><span><code>boundaries[&quot;WavePort&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;WavePortPEC&quot;]"><span><code>boundaries[&quot;WavePortPEC&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;SurfaceCurrent&quot;]"><span><code>boundaries[&quot;SurfaceCurrent&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Ground&quot;]"><span><code>boundaries[&quot;Ground&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;ZeroCharge&quot;]"><span><code>boundaries[&quot;ZeroCharge&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Terminal&quot;]"><span><code>boundaries[&quot;Terminal&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]"><span><code>boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]"><span><code>boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]</code></span></a></li><li><a class="tocitem" href="#boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]"><span><code>boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]</code></span></a></li></ul></li><li><a class="tocitem" href="../solver/"><code>config[&quot;Solver&quot;]</code></a></li></ul></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../../examples/examples/">Overview</a></li><li><a class="tocitem" href="../../examples/spheres/">Capacitance Matrix for Two Spheres</a></li><li><a class="tocitem" href="../../examples/rings/">Inductance Matrix for a Pair of Concentric Rings</a></li><li><a class="tocitem" href="../../examples/cavity/">Eigenmodes of a Cylindrical Cavity</a></li><li><a class="tocitem" href="../../examples/coaxial/">Signal Propagation in a Coaxial Cable</a></li><li><a class="tocitem" href="../../examples/cpw/">Crosstalk Between Coplanar Waveguides</a></li></ul></li><li><a class="tocitem" href="../../developer/">Developer Notes</a></li><li><a class="tocitem" href="../../reference/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Configuration File</a></li><li class="is-active"><a href><code>config[&quot;Boundaries&quot;]</code></a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href><code>config[&quot;Boundaries&quot;]</code></a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/awslabs/palace/blob/main/docs/src/config/boundaries.md" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
+<!--- SPDX-License-Identifier: Apache-2.0 ---><h1 id="config[&quot;Boundaries&quot;]"><a class="docs-heading-anchor" href="#config[&quot;Boundaries&quot;]"><code>config[&quot;Boundaries&quot;]</code></a><a id="config[&quot;Boundaries&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#config[&quot;Boundaries&quot;]" title="Permalink"></a></h1><pre><code class="language-json hljs">&quot;Boundaries&quot;:
+{
+    &quot;PEC&quot;:
+    {
+        ...
+    },
+    &quot;PMC&quot;:
+    {
+        ...
+    },
+    &quot;Absorbing&quot;:
+    {
+        ...
+    },
+    &quot;Conductivity&quot;:
+    [
+        ...
+    ],
+    &quot;Impedance&quot;:
+    [
+        ...
+    ],
+    &quot;LumpedPort&quot;:
+    [
+        ...
+    ],
+    &quot;WavePort&quot;:
+    [
+        ...
+    ],
+    &quot;WavePortPEC&quot;:
+    {
+        ...
+    },
+    &quot;SurfaceCurrent&quot;:
+    [
+        ...
+    ],
+    &quot;Ground&quot;:
+    {
+        ...
+    },
+    &quot;ZeroCharge&quot;:
+    {
+        ...
+    },
+    &quot;Terminal&quot;:
+    [
+        ...
+    ],
+    &quot;Postprocessing&quot;:
+    {
+        &quot;Capacitance&quot;:
+        [
+            ...
+        ],
+        &quot;Inductance&quot;:
+        [
+            ...
+        ],
+        &quot;Dielectric&quot;:
+        [
+            ...
+        ]
+    }
+}</code></pre><p>with</p><p><code>&quot;PEC&quot;</code> :  Top-level object for configuring perfect electric conductor (PEC) boundary conditions (zero tangential electric field).</p><p><code>&quot;PMC&quot;</code> :  Top-level object for configuring perfect magnetic conductor (PMC) boundary conditions (zero tangential magnetic field). Also imposes symmetry of the electric field across the boundary surface.</p><p><code>&quot;Absorbing&quot;</code> : Top-level object for configuring absorbing boundary conditions. These are artificial scattering boundary conditions at farfield boundaries.</p><p><code>&quot;Conductivity&quot;</code> :  Array of objects for configuring finite conductivity surface impedance boundary conditions. Finite conductivity boundaries are only available for the frequency domain driven simulation type.</p><p><code>&quot;Impedance&quot;</code> :  Array of objects for configuring surface impedance boundary conditions. A surface impedance boundary relates the tangential electric and magnetic fields on the boundary using a user specified surface impedance.</p><p><code>&quot;LumpedPort&quot;</code> :  Array of objects for configuring lumped port boundary conditions. Lumped ports can be specified on boundaries which are internal to the computational domain.</p><p><code>&quot;WavePort&quot;</code> :  Array of objects for configuring numeric wave port boundary conditions. Wave ports can only be specified on boundaries which are on the true boundary of the computational domain. Addiitionally, wave port boundaries are only available for the frequency domain driven simulation type.</p><p><code>&quot;WavePortPEC&quot;</code> :  Top-level object for configuring PEC boundary conditions for boundary mode analysis performed on the wave port boundaries. Thus, this object is only relevant when wave port boundaries are specified under <a href="#boundaries[&quot;WavePort&quot;]"><code>config[&quot;Boundaries&quot;][&quot;WavePort&quot;]</code></a>.</p><p><code>&quot;SurfaceCurrent&quot;</code> :  Array of objects for configuring surface current boundary conditions. This boundary prescribes a unit source surface current excitation on the given boundary in order to excite a frequency or time domain driven simulation or magnetostatic simulation. For the magnetostatic simulation type, entries of the inductance matrix are extracted corresponding to each surface current boundary.</p><p><code>&quot;Ground&quot;</code> :  Top-level object for specifying ground, or zero voltage, boundary conditions for for electrostatic simulations.</p><p><code>&quot;ZeroCharge&quot;</code> :  Top-level object for specifying zero charge boundary conditions for for electrostatic simulations. Also imposes symmetry of the electric field across the boundary surface.</p><p><code>&quot;Terminal&quot;</code> :  Array of objects for configuring terminal boundary conditions for electrostatic simulations. Entries of the capacitance matrix are extracted corresponding to each terminal boundary.</p><p><code>&quot;Postprocessing&quot;</code> :  Top-level object for configuring boundary postprocessing.</p><p><code>&quot;Capacitance&quot;</code> :  Array of objects for postprocessing surface capacitance by the ratio of the integral of the induced surface charge on the boundary and the excitation voltage.</p><p><code>&quot;Inductance&quot;</code> :  Array of objects for postprocessing surface inductance by the ratio of the integral of the magnetic flux through the boundary and the excitation current.</p><p><code>&quot;Dielectric&quot;</code> :  Array of objects for postprocessing surface interface dielectric loss.</p><h2 id="boundaries[&quot;PEC&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;PEC&quot;]"><code>boundaries[&quot;PEC&quot;]</code></a><a id="boundaries[&quot;PEC&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;PEC&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;PEC&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;]
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes at which to apply the PEC boundary condition.</p><h2 id="boundaries[&quot;PMC&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;PMC&quot;]"><code>boundaries[&quot;PMC&quot;]</code></a><a id="boundaries[&quot;PMC&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;PMC&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;PMC&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;]
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes at which to apply the PMC boundary condition.</p><h2 id="boundaries[&quot;Absorbing&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Absorbing&quot;]"><code>boundaries[&quot;Absorbing&quot;]</code></a><a id="boundaries[&quot;Absorbing&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Absorbing&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Absorbing&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;],
+    &quot;Order&quot;: &lt;int&gt;
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes at which to apply this boundary condition.</p><p><code>&quot;Order&quot; [1]</code> :  Specify a first- or second-order approximation for the farfield absorbing boundary condition. Second-order absorbing boundary conditions are only available for the frequency domain driven simulation type.</p><h2 id="boundaries[&quot;Conductivity&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Conductivity&quot;]"><code>boundaries[&quot;Conductivity&quot;]</code></a><a id="boundaries[&quot;Conductivity&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Conductivity&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Conductivity&quot;:
+[
+    {
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+        &quot;Conductivity&quot;: &lt;int&gt;,
+        &quot;Permeability&quot;: &lt;int&gt;,
+        &quot;Thickness&quot;: &lt;int&gt;
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this finite conductivity boundary.</p><p><code>&quot;Conductivity&quot; [None]</code> :  Electrical conductivity for this finite conductivity boundary, S/m.</p><p><code>&quot;Permeability&quot; [1.0]</code> :  Relative permeability for this finite conductivity boundary.</p><p><code>&quot;Thickness&quot; [None]</code> :  Optional conductor thickness for this finite conductivity boundary specified in mesh length units. Activates a finite conductivity boundary condition which accounts for nonzero metal thickness.</p><h2 id="boundaries[&quot;Impedance&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Impedance&quot;]"><code>boundaries[&quot;Impedance&quot;]</code></a><a id="boundaries[&quot;Impedance&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Impedance&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Impedance&quot;:
+[
+    {
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+        &quot;Rs&quot;: &lt;float&gt;,
+        &quot;Ls&quot;: &lt;float&gt;,
+        &quot;Cs&quot;: &lt;float&gt;
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this surface impedance boundary.</p><p><code>&quot;Rs&quot; [0.0]</code> :  Surface resistance used for computing this surface impedance boundary&#39;s impedance per square, <span>$\Omega$</span>/sq.</p><p><code>&quot;Ls&quot; [0.0]</code> :  Surface inductance used for computing this surface impedance boundary&#39;s impedance per square, H/sq.</p><p><code>&quot;Cs&quot; [0.0]</code> :  Surface capacitance used computing this surface impedance boundary&#39;s impedance per square, F/sq.</p><h2 id="boundaries[&quot;LumpedPort&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;LumpedPort&quot;]"><code>boundaries[&quot;LumpedPort&quot;]</code></a><a id="boundaries[&quot;LumpedPort&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;LumpedPort&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;LumpedPort&quot;:
+[
+    {
+        &quot;Index&quot;: &lt;int&gt;,
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+        &quot;Direction&quot;: &lt;string&gt;,
+        &quot;Excitation&quot;: &lt;bool&gt;,
+        &quot;R&quot;: &lt;float&gt;,
+        &quot;L&quot;: &lt;float&gt;,
+        &quot;C&quot;: &lt;float&gt;,
+        &quot;Rs&quot;: &lt;float&gt;,
+        &quot;Ls&quot;: &lt;float&gt;,
+        &quot;Cs&quot;: &lt;float&gt;,
+        &quot;Elements&quot;:
+        [
+            {
+                &quot;Attributes&quot;: [&lt;int array&gt;],
+                &quot;Direction&quot;: &lt;string&gt;
+            },
+            ...
+        ]
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this lumped port, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>&quot;Direction&quot; [None]</code> :  Direction to define the polarization direction of the port field mode on this lumped port boundary. Lumped ports must be axis-aligned unless the port is a coaxial port. The available options are: <code>&quot;+X&quot;</code>, <code>&quot;-X&quot;</code>, <code>&quot;+Y&quot;</code>, <code>&quot;-Y&quot;</code>, <code>&quot;+Z&quot;</code>, <code>&quot;-Z&quot;</code>, <code>&quot;+R&quot;</code>, <code>&quot;-R&quot;</code> (<code>&quot;R&quot;</code> is for a coaxial lumped port). If this port is to be a multielement lumped port with more than a single lumped element, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>&quot;Excitation&quot; [false]</code> :  Turns on or off port excitation for this lumped port boundary for driven or transient simulation types.</p><p><code>&quot;R&quot; [0.0]</code> :  Circuit resistance used for computing this lumped port boundary&#39;s impedance, <span>$\Omega$</span>. This option should only be used along with the corresponding <code>&quot;L&quot;</code> and <code>&quot;C&quot;</code> parameters, and not with any of the surface parameters <code>&quot;Rs&quot;</code>, <code>&quot;Ls&quot;</code>, or <code>&quot;Cs&quot;</code>.</p><p><code>&quot;L&quot; [0.0]</code> :  Circuit inductance used for computing this lumped port boundary&#39;s impedance, H. This option should only be used along with the corresponding <code>&quot;R&quot;</code> and <code>&quot;C&quot;</code> parameters, and not with any of the surface parameters <code>&quot;Rs&quot;</code>, <code>&quot;Ls&quot;</code>, or <code>&quot;Cs&quot;</code>.</p><p><code>&quot;C&quot; [0.0]</code> :  Circuit capacitance used for computing this lumped port boundary&#39;s impedance, F. This option should only be used along with the corresponding <code>&quot;R&quot;</code> and <code>&quot;L&quot;</code> parameters, and not with any of the surface parameters <code>&quot;Rs&quot;</code>, <code>&quot;Ls&quot;</code>, or <code>&quot;Cs&quot;</code>.</p><p><code>&quot;Rs&quot; [0.0]</code> :  Surface resistance used for computing this lumped port boundary&#39;s impedance, <span>$\Omega$</span>/sq. This option should only be used along with the corresponding <code>&quot;Ls&quot;</code> and <code>&quot;Cs&quot;</code> parameters, and not with any of the circuit parameters <code>&quot;R&quot;</code>, <code>&quot;L&quot;</code>, or <code>&quot;C&quot;</code>.</p><p><code>&quot;Ls&quot; [0.0]</code> :  Surface inductance used for computing this lumped port boundary&#39;s impedance, H/sq. This option should only be used along with the corresponding <code>&quot;Rs&quot;</code> and <code>&quot;Cs&quot;</code> parameters, and not with any of the circuit parameters <code>&quot;R&quot;</code>, <code>&quot;L&quot;</code>, or <code>&quot;C&quot;</code>.</p><p><code>&quot;Cs&quot; [0.0]</code> :  Surface capacitance used for computing this lumped port boundary&#39;s impedance, F/sq. This option should only be used along with the corresponding <code>&quot;Rs&quot;</code> and <code>&quot;Ls&quot;</code> parameters, and not with any of the circuit parameters <code>&quot;R&quot;</code>, <code>&quot;L&quot;</code>, or <code>&quot;C&quot;</code>.</p><p><code>&quot;Elements&quot;[].&quot;Attributes&quot; [None]</code> :  This option is for multielement lumped ports and should not be combined with the <code>&quot;Attributes&quot;</code> field described above. Each element of a multielement lumped port can be described by its own unique integer array of mesh boundary attributes, which are specified here. The elements of a multielement port add in parallel.</p><p><code>&quot;Elements&quot;[].&quot;Direction&quot; [None]</code> :  This option is for multielement lumped ports and should not be combined with the <code>&quot;Direction&quot;</code> field described above. Each element of a multielement lumped port can be described by its own unique direction, which is specified here. The elements of a multielement port add in parallel.</p><h2 id="boundaries[&quot;WavePort&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;WavePort&quot;]"><code>boundaries[&quot;WavePort&quot;]</code></a><a id="boundaries[&quot;WavePort&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;WavePort&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;WavePort&quot;:
+[
+    {
+        &quot;Index&quot;: &lt;int&gt;,
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+        &quot;Excitation&quot;: &lt;bool&gt;,
+        &quot;Mode&quot;: &lt;int&gt;,
+        &quot;Offset&quot;: &lt;float&gt;
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this wave port boundary, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this wave port boundary.</p><p><code>&quot;Excitation&quot; [false]</code> :  Turns on or off port excitation for this wave port boundary for driven simulation types.</p><p><code>&quot;Mode&quot; [1]</code> :  Mode index (1-based) for the characteristic port mode of this wave port boundary. Ranked in order of decreasing wave number.</p><p><code>&quot;Offset&quot; [0.0]</code> :  Offset distance used for S-parameter de-embedding for this wave port boundary, specified in mesh length units.</p><h2 id="boundaries[&quot;WavePortPEC&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;WavePortPEC&quot;]"><code>boundaries[&quot;WavePortPEC&quot;]</code></a><a id="boundaries[&quot;WavePortPEC&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;WavePortPEC&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;WavePortPEC&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;]
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes to consider along with those specified under <code>[&quot;Boundaries&quot;][&quot;PEC&quot;][&quot;Attributes&quot;]</code> as PEC when performing wave port boundary mode analysis.</p><h2 id="boundaries[&quot;SurfaceCurrent&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;SurfaceCurrent&quot;]"><code>boundaries[&quot;SurfaceCurrent&quot;]</code></a><a id="boundaries[&quot;SurfaceCurrent&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;SurfaceCurrent&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;SurfaceCurrent&quot;:
+[
+    {
+        &quot;Index&quot;: &lt;int&gt;,
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+        &quot;Direction&quot;: &lt;string&gt;
+        &quot;Elements&quot;:
+        [
+            {
+                &quot;Attributes&quot;: [&lt;int array&gt;],
+                &quot;Direction&quot;: &lt;string&gt;
+            },
+            ...
+        ]
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this surface current boundary, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this surface current boundary. If this boundary is to be a multielement boundary which distributes the source across more than a single lumped element, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>&quot;Direction&quot; [None]</code> :  Defines the source current direction for this surface current boundary. The available options are the same as under <code>[&quot;Boundaries&quot;][&quot;LumpedPort&quot;][&quot;Direction&quot;]</code>. If this boundary is to be a multielement boundary which distributes the source across more than a single lumped element, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>[&quot;Elements&quot;][][&quot;Attributes&quot;] [None]</code> :  This option is for multielement surface current boundaries should not be combined with the <code>&quot;Attributes&quot;</code> field described above. Each element of a multielement current source can be described by its own unique integer array of mesh boundary attributes, which are specified here. The elements of a multielement source add in parallel to give the same total current as a single-element source.</p><p><code>[&quot;Elements&quot;][][&quot;Direction&quot;] [None]</code> :  This option is for multielement surface current boundaires and should not be combined with the <code>&quot;Direction&quot;</code> field described above. Each element of a multielement current source can be described by its own unique direction, which is specified here. The elements of a multielement source add in parallel to give the same total current as a single-element source.</p><h2 id="boundaries[&quot;Ground&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Ground&quot;]"><code>boundaries[&quot;Ground&quot;]</code></a><a id="boundaries[&quot;Ground&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Ground&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Ground&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;]
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes at which to apply the ground boundary condition.</p><h2 id="boundaries[&quot;ZeroCharge&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;ZeroCharge&quot;]"><code>boundaries[&quot;ZeroCharge&quot;]</code></a><a id="boundaries[&quot;ZeroCharge&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;ZeroCharge&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;ZeroCharge&quot;:
+{
+    &quot;Attributes&quot;: [&lt;int array&gt;]
+}</code></pre><p>with</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes at which to apply the zero-charge boundary condition.</p><h2 id="boundaries[&quot;Terminal&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Terminal&quot;]"><code>boundaries[&quot;Terminal&quot;]</code></a><a id="boundaries[&quot;Terminal&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Terminal&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Terminal&quot;:
+[
+    {
+        &quot;Index&quot;: &lt;int&gt;
+        &quot;Attributes&quot;: [&lt;int array&gt;],
+    },
+    ...
+]</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this terminal boundary, used in postprocessing output files and to index the computed capacitance matrix.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this terminal boundary.</p><h2 id="boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]"><code>boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]</code></a><a id="boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Postprocessing&quot;][&quot;Capacitance&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Postprocessing&quot;:
+{
+    &quot;Capacitance&quot;:
+    [
+        {
+            &quot;Index&quot;: &lt;int&gt;
+            &quot;Attributes&quot;: [&lt;int array&gt;],
+        },
+        ...
+    ]
+}</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this capacitance postprocessing boundary, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this capacitance postprocessing boundary.</p><h2 id="boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]"><code>boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]</code></a><a id="boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Postprocessing&quot;][&quot;Inductance&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Postprocessing&quot;:
+{
+    &quot;Inductance&quot;:
+    [
+        {
+            &quot;Index&quot;: &lt;int&gt;,
+            &quot;Attributes&quot;: [&lt;int array&gt;],
+            &quot;Direction&quot;: &lt;string&gt;
+        },
+        ...
+    ]
+}</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this inductance postprocessing boundary, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this inductance postprocessing boundary.</p><p><code>&quot;Direction&quot; [None]</code> :  Defines the global direction with which to orient the surface normals with computing the magnetic flux for this inductance postprocessing boundary. The available options are: <code>&quot;+X&quot;</code>, <code>&quot;-X&quot;</code>, <code>&quot;+Y&quot;</code>, <code>&quot;-Y&quot;</code>, <code>&quot;+Z&quot;</code>, <code>&quot;-Z&quot;</code>.</p><h2 id="boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]"><a class="docs-heading-anchor" href="#boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]"><code>boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]</code></a><a id="boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]-1"></a><a class="docs-heading-anchor-permalink" href="#boundaries[&quot;Postprocessing&quot;][&quot;Dielectric&quot;]" title="Permalink"></a></h2><pre><code class="language-json hljs">&quot;Postprocessing&quot;:
+{
+    &quot;Dielectric&quot;:
+    [
+        {
+            &quot;Index&quot;: &lt;int&gt;,
+            &quot;Attributes&quot;: [&lt;int array&gt;],
+            &quot;Side&quot;: &lt;string&gt;,
+            &quot;Thickness&quot;: &lt;float&gt;,
+            &quot;Permittivity&quot;: &lt;float&gt;,
+            &quot;PermittivityMA&quot;: &lt;float&gt;,
+            &quot;PermittivityMS&quot;: &lt;float&gt;,
+            &quot;PermittivitySA&quot;: &lt;float&gt;,
+            &quot;LossTan&quot;: &lt;float&gt;,
+            &quot;Elements&quot;:
+            [
+                {
+                    &quot;Attributes&quot;: [&lt;int array&gt;],
+                    &quot;Side&quot;: &lt;string&gt;
+                },
+                ...
+            ]
+        },
+        ...
+    ]
+}</code></pre><p>with</p><p><code>&quot;Index&quot; [None]</code> :  Index of this lossy dielectric interface, used in postprocessing output files.</p><p><code>&quot;Attributes&quot; [None]</code> :  Integer array of mesh boundary attributes for this lossy dielectric interface. If the interface consists of multiple elements with different <code>&quot;Side&quot;</code> values, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>&quot;Side&quot; [None]</code> :  Defines the postprocessing side when this dielectric interface is an internal boundary surface (and thus the electric field on the boundary is in general double-valued). The available options are: <code>&quot;+X&quot;</code>, <code>&quot;-X&quot;</code>, <code>&quot;+Y&quot;</code>, <code>&quot;-Y&quot;</code>, <code>&quot;+Z&quot;</code>, <code>&quot;-Z&quot;</code>. If the boundary is not axis-aligned, the field value is taken from the side which is oriented along the specified direction. If no <code>&quot;Side&quot;</code> is specified, the field solution is taken from the neighboring element with the smaller electrical permittivity, which is an attempt to get the field in the domain corresponding to vacuum. If the interface consists of multiple elements with different <code>&quot;Side&quot;</code> values, use the <code>&quot;Elements&quot;</code> array described below.</p><p><code>&quot;Thickness&quot; [None]</code> :  Thickness of this dielectric interface, specified in mesh length units.</p><p><code>&quot;Permittivity&quot; [None]</code> :  Relative permittivity for this dielectric interface. Leads to the general quality factor calculation without assuming the interface is a specific metal-air (MA), metal-substrate (MS), or substrate-air (SA) interface. None of <code>&quot;PermittivityMA&quot;</code>, <code>&quot;PermittivityMS&quot;</code>, or <code>&quot;PermittivitySA&quot;</code> should be specified when this value is given.</p><p><code>&quot;PermittivityMA&quot; [None]</code> :  Relative permittivity for this dielectric interface assuming it is a metal-air (MA) interface. None of <code>&quot;PermittivityMS&quot;</code>, <code>&quot;PermittivitySA&quot;</code>, or the general <code>&quot;Permittivity&quot;</code> should be specified when this value is given.</p><p><code>&quot;PermittivityMS&quot; [None]</code> :  Relative permittivity for this dielectric interface assuming it is a metal-substrate (MS) interface. None of <code>&quot;PermittivityMA&quot;</code>, <code>&quot;PermittivitySA&quot;</code>, or the general <code>&quot;Permittivity&quot;</code> should be specified when this value is given.</p><p><code>&quot;PermittivitySA&quot; [None]</code> :  Relative permittivity for this dielectric interface assuming it is a substrate-air (SA) interface. None of <code>&quot;PermittivityMA&quot;</code>, <code>&quot;PermittivityMS&quot;</code>, or the general <code>&quot;Permittivity&quot;</code> should be specified when this value is given.</p><p><code>&quot;LossTan&quot; [0.0]</code> :  Loss tangent for this lossy dielectric interface.</p><p><code>&quot;Elements&quot;[].&quot;Attributes&quot; [None]</code> :  This option should not be combined with the <code>&quot;Attributes&quot;</code> field described above. In the case where a single dielectric interface is made up of contributions with their own unique integer arrays of mesh boundary attributes, they can be specified here.</p><p><code>&quot;Elements&quot;[].&quot;Side&quot; [None]</code> :  This option should not be combined with the <code>&quot;Side&quot;</code> field described above. In the case where a single dielectric interface is made up of contributions with their own entry for side, they can be specified here.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../domains/">« <code>config[&quot;Domains&quot;]</code></a><a class="docs-footer-nextpage" href="../solver/"><code>config[&quot;Solver&quot;]</code> »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.24 on <span class="colophon-date" title="Thursday 26 January 2023 21:26">Thursday 26 January 2023</span>. Using Julia version 1.8.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

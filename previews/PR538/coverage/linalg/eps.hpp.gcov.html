@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - linalg/eps.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">linalg</a> - eps.hpp<span style="font-size: 80%;"> (source / <a href="eps.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">10</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_LINALG_EPS_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_LINALG_EPS_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : </span>
+<span id="L12"><span class="lineNum">      12</span>              : namespace palace</span>
+<span id="L13"><span class="lineNum">      13</span>              : {</span>
+<span id="L14"><span class="lineNum">      14</span>              : </span>
+<span id="L15"><span class="lineNum">      15</span>              : template &lt;typename VecType&gt;</span>
+<span id="L16"><span class="lineNum">      16</span>              : class DivFreeSolver;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : //</span>
+<span id="L19"><span class="lineNum">      19</span>              : // Pure abstract base class for solving generalized linear eigenvalue problems problems or</span>
+<span id="L20"><span class="lineNum">      20</span>              : // quadratic polynomial eigenvalue problems.</span>
+<span id="L21"><span class="lineNum">      21</span>              : //</span>
+<span id="L22"><span class="lineNum">      22</span>              : class EigenvalueSolver</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : public:</span>
+<span id="L25"><span class="lineNum">      25</span>              :   enum class ScaleType</span>
+<span id="L26"><span class="lineNum">      26</span>              :   {</span>
+<span id="L27"><span class="lineNum">      27</span>              :     NONE,</span>
+<span id="L28"><span class="lineNum">      28</span>              :     NORM_2</span>
+<span id="L29"><span class="lineNum">      29</span>              :   };</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              :   enum class WhichType</span>
+<span id="L32"><span class="lineNum">      32</span>              :   {</span>
+<span id="L33"><span class="lineNum">      33</span>              :     LARGEST_MAGNITUDE,</span>
+<span id="L34"><span class="lineNum">      34</span>              :     SMALLEST_MAGNITUDE,</span>
+<span id="L35"><span class="lineNum">      35</span>              :     LARGEST_REAL,</span>
+<span id="L36"><span class="lineNum">      36</span>              :     SMALLEST_REAL,</span>
+<span id="L37"><span class="lineNum">      37</span>              :     LARGEST_IMAGINARY,</span>
+<span id="L38"><span class="lineNum">      38</span>              :     SMALLEST_IMAGINARY,</span>
+<span id="L39"><span class="lineNum">      39</span>              :     TARGET_MAGNITUDE,</span>
+<span id="L40"><span class="lineNum">      40</span>              :     TARGET_REAL,</span>
+<span id="L41"><span class="lineNum">      41</span>              :     TARGET_IMAGINARY</span>
+<span id="L42"><span class="lineNum">      42</span>              :   };</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              :   enum class ErrorType</span>
+<span id="L45"><span class="lineNum">      45</span>              :   {</span>
+<span id="L46"><span class="lineNum">      46</span>              :     ABSOLUTE,</span>
+<span id="L47"><span class="lineNum">      47</span>              :     RELATIVE,</span>
+<span id="L48"><span class="lineNum">      48</span>              :     BACKWARD</span>
+<span id="L49"><span class="lineNum">      49</span>              :   };</span>
+<span id="L50"><span class="lineNum">      50</span>              : </span>
+<span id="L51"><span class="lineNum">      51</span>              : public:</span>
+<span id="L52"><span class="lineNum">      52</span>              :   EigenvalueSolver() = default;</span>
+<span id="L53"><span class="lineNum">      53</span>              :   virtual ~EigenvalueSolver() = default;</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              :   // Set operators for the generalized eigenvalue problem, quadratic polynomial</span>
+<span id="L56"><span class="lineNum">      56</span>              :   // eigenvalue problem, or nonlinear eigenvalue problem.</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaUNC tlaBgUNC">           0 :   virtual void SetOperators(const ComplexOperator &amp;K, const ComplexOperator &amp;M,</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :                             ScaleType type)</span>
+<span id="L59"><span class="lineNum">      59</span>              :   {</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;SetOperators not defined!&quot;);</span></span>
+<span id="L61"><span class="lineNum">      61</span>              :   }</span>
+<span id="L62"><span class="lineNum">      62</span>              : </span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 :   virtual void SetOperators(const ComplexOperator &amp;K, const ComplexOperator &amp;C,</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :                             const ComplexOperator &amp;M, ScaleType type)</span>
+<span id="L65"><span class="lineNum">      65</span>              :   {</span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;SetOperators not defined!&quot;);</span></span>
+<span id="L67"><span class="lineNum">      67</span>              :   }</span>
+<span id="L68"><span class="lineNum">      68</span>              : </span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaUNC">           0 :   virtual void SetOperators(const ComplexOperator &amp;K, const ComplexOperator &amp;M,</span></span>
+<span id="L70"><span class="lineNum">      70</span>              :                             std::function&lt;const ComplexOperator &amp;(std::complex&lt;double&gt;)&gt; A2,</span>
+<span id="L71"><span class="lineNum">      71</span>              :                             ScaleType type)</span>
+<span id="L72"><span class="lineNum">      72</span>              :   {</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;SetOperators not defined!&quot;);</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :   }</span>
+<span id="L75"><span class="lineNum">      75</span>              : </span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaUNC">           0 :   virtual void SetExtraSystemMatrix(std::function&lt;std::unique_ptr&lt;ComplexOperator&gt;(double)&gt;)</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   {</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;SetExtraSystemMatrix not defined!&quot;);</span></span>
+<span id="L79"><span class="lineNum">      79</span>              :   }</span>
+<span id="L80"><span class="lineNum">      80</span>              : </span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :   virtual void SetPreconditionerUpdate(</span></span>
+<span id="L82"><span class="lineNum">      82</span>              :       std::function&lt;std::unique_ptr&lt;ComplexOperator&gt;(</span>
+<span id="L83"><span class="lineNum">      83</span>              :           std::complex&lt;double&gt;, std::complex&lt;double&gt;, std::complex&lt;double&gt;, double)&gt;)</span>
+<span id="L84"><span class="lineNum">      84</span>              :   {</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;SetPreconditionerUpdate not defined!&quot;);</span></span>
+<span id="L86"><span class="lineNum">      86</span>              :   }</span>
+<span id="L87"><span class="lineNum">      87</span>              : </span>
+<span id="L88"><span class="lineNum">      88</span>              :   // For the linear generalized case, the linear solver should be configured to compute the</span>
+<span id="L89"><span class="lineNum">      89</span>              :   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic</span>
+<span id="L90"><span class="lineNum">      90</span>              :   // case, the linear solver should be configured to compute the action of M⁻¹ (with no</span>
+<span id="L91"><span class="lineNum">      91</span>              :   // spectral transformation) or P(σ)⁻¹.</span>
+<span id="L92"><span class="lineNum">      92</span>              :   virtual void SetLinearSolver(ComplexKspSolver &amp;ksp) = 0;</span>
+<span id="L93"><span class="lineNum">      93</span>              : </span>
+<span id="L94"><span class="lineNum">      94</span>              :   // Set the projection operator for enforcing the divergence-free constraint.</span>
+<span id="L95"><span class="lineNum">      95</span>              :   virtual void SetDivFreeProjector(const DivFreeSolver&lt;ComplexVector&gt; &amp;divfree) = 0;</span>
+<span id="L96"><span class="lineNum">      96</span>              : </span>
+<span id="L97"><span class="lineNum">      97</span>              :   // Set optional B matrix used for weighted inner products. This must be set explicitly</span>
+<span id="L98"><span class="lineNum">      98</span>              :   // even for generalized problems, otherwise the identity will be used.</span>
+<span id="L99"><span class="lineNum">      99</span>              :   virtual void SetBMat(const Operator &amp;B) = 0;</span>
+<span id="L100"><span class="lineNum">     100</span>              : </span>
+<span id="L101"><span class="lineNum">     101</span>              :   // Get scaling factors used by the solver.</span>
+<span id="L102"><span class="lineNum">     102</span>              :   virtual double GetScalingGamma() const = 0;</span>
+<span id="L103"><span class="lineNum">     103</span>              :   virtual double GetScalingDelta() const = 0;</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              :   // Set the number of required eigenmodes.</span>
+<span id="L106"><span class="lineNum">     106</span>              :   virtual void SetNumModes(int num_eig, int num_vec = 0) = 0;</span>
+<span id="L107"><span class="lineNum">     107</span>              : </span>
+<span id="L108"><span class="lineNum">     108</span>              :   // Set solver tolerance.</span>
+<span id="L109"><span class="lineNum">     109</span>              :   virtual void SetTol(double tol) = 0;</span>
+<span id="L110"><span class="lineNum">     110</span>              : </span>
+<span id="L111"><span class="lineNum">     111</span>              :   // Set maximum number of Arnoldi update iterations.</span>
+<span id="L112"><span class="lineNum">     112</span>              :   virtual void SetMaxIter(int max_it) = 0;</span>
+<span id="L113"><span class="lineNum">     113</span>              : </span>
+<span id="L114"><span class="lineNum">     114</span>              :   // Set target spectrum for the eigensolver. When a spectral transformation is used, this</span>
+<span id="L115"><span class="lineNum">     115</span>              :   // applies to the spectrum of the shifted operator.</span>
+<span id="L116"><span class="lineNum">     116</span>              :   virtual void SetWhichEigenpairs(WhichType type) = 0;</span>
+<span id="L117"><span class="lineNum">     117</span>              : </span>
+<span id="L118"><span class="lineNum">     118</span>              :   // Set shift-and-invert spectral transformation.</span>
+<span id="L119"><span class="lineNum">     119</span>              :   virtual void SetShiftInvert(std::complex&lt;double&gt; s, bool precond = false) = 0;</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span>              :   // Set an initial vector for the solution subspace.</span>
+<span id="L122"><span class="lineNum">     122</span>              :   virtual void SetInitialSpace(const ComplexVector &amp;v) = 0;</span>
+<span id="L123"><span class="lineNum">     123</span>              : </span>
+<span id="L124"><span class="lineNum">     124</span>              :   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.</span>
+<span id="L125"><span class="lineNum">     125</span>              :   virtual int Solve() = 0;</span>
+<span id="L126"><span class="lineNum">     126</span>              : </span>
+<span id="L127"><span class="lineNum">     127</span>              :   // Get the corresponding eigenvalue.</span>
+<span id="L128"><span class="lineNum">     128</span>              :   virtual std::complex&lt;double&gt; GetEigenvalue(int i) const = 0;</span>
+<span id="L129"><span class="lineNum">     129</span>              : </span>
+<span id="L130"><span class="lineNum">     130</span>              :   // Get the corresponding eigenvector. Eigenvectors are normalized such that ||x||₂ = 1,</span>
+<span id="L131"><span class="lineNum">     131</span>              :   // unless the B-matrix is set for weighted inner products.</span>
+<span id="L132"><span class="lineNum">     132</span>              :   virtual void GetEigenvector(int i, ComplexVector &amp;x) const = 0;</span>
+<span id="L133"><span class="lineNum">     133</span>              : </span>
+<span id="L134"><span class="lineNum">     134</span>              :   // Get the corresponding eigenpair error.</span>
+<span id="L135"><span class="lineNum">     135</span>              :   virtual double GetError(int i, ErrorType type) const = 0;</span>
+<span id="L136"><span class="lineNum">     136</span>              : </span>
+<span id="L137"><span class="lineNum">     137</span>              :   // Re-normalize the given number of eigenvectors, for example if the matrix B for weighted</span>
+<span id="L138"><span class="lineNum">     138</span>              :   // inner products has changed. This does not perform re-orthogonalization with respect to</span>
+<span id="L139"><span class="lineNum">     139</span>              :   // the new matrix, only normalization.</span>
+<span id="L140"><span class="lineNum">     140</span>              :   virtual void RescaleEigenvectors(int num_eig) = 0;</span>
+<span id="L141"><span class="lineNum">     141</span>              : };</span>
+<span id="L142"><span class="lineNum">     142</span>              : </span>
+<span id="L143"><span class="lineNum">     143</span>              : }  // namespace palace</span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span>              : #endif  // PALACE_LINALG_EPS_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

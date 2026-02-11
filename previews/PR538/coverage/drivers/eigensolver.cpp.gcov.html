@@ -1,0 +1,538 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - drivers/eigensolver.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">drivers</a> - eigensolver.cpp<span style="font-size: 80%;"> (source / <a href="eigensolver.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">166</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;eigensolver.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;complex&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &quot;fem/errorindicator.hpp&quot;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;linalg/arpack.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;linalg/divfree.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;linalg/errorestimator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;linalg/floquetcorrection.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;linalg/nleps.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;linalg/rap.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;linalg/slepc.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;models/lumpedportoperator.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;models/postoperator.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L24"><span class="lineNum">      24</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L25"><span class="lineNum">      25</span>              : #include &quot;utils/timer.hpp&quot;</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : namespace palace</span>
+<span id="L28"><span class="lineNum">      28</span>              : {</span>
+<span id="L29"><span class="lineNum">      29</span>              : </span>
+<span id="L30"><span class="lineNum">      30</span>              : using namespace std::complex_literals;</span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span>              : std::pair&lt;ErrorIndicator, long long int&gt;</span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaUNC tlaBgUNC">           0 : EigenSolver::Solve(const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh) const</span></span>
+<span id="L34"><span class="lineNum">      34</span>              : {</span>
+<span id="L35"><span class="lineNum">      35</span>              :   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal</span>
+<span id="L36"><span class="lineNum">      36</span>              :   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the</span>
+<span id="L37"><span class="lineNum">      37</span>              :   // computational range. The damping matrix may be nullptr.</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaUNC">           0 :   BlockTimer bt0(Timer::CONSTRUCT);</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaUNC">           0 :   SpaceOperator space_op(iodata, mesh);</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 :   auto K = space_op.GetStiffnessMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ONE);</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :   auto C = space_op.GetDampingMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaUNC">           0 :   auto M = space_op.GetMassMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              :   // Check if there are nonlinear terms and, if so, setup interpolation operator.</span>
+<span id="L45"><span class="lineNum">      45</span>              :   auto funcA2 = [&amp;space_op](double omega) -&gt; std::unique_ptr&lt;ComplexOperator&gt;</span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaUNC">           0 :   { return space_op.GetExtraSystemMatrix&lt;ComplexOperator&gt;(omega, Operator::DIAG_ZERO); };</span></span>
+<span id="L47"><span class="lineNum">      47</span>              :   auto funcP = [&amp;space_op](std::complex&lt;double&gt; a0, std::complex&lt;double&gt; a1,</span>
+<span id="L48"><span class="lineNum">      48</span>              :                            std::complex&lt;double&gt; a2,</span>
+<span id="L49"><span class="lineNum">      49</span>              :                            double omega) -&gt; std::unique_ptr&lt;ComplexOperator&gt;</span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaUNC">           0 :   { return space_op.GetPreconditionerMatrix&lt;ComplexOperator&gt;(a0, a1, a2, omega); };</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaUNC">           0 :   const double target = iodata.solver.eigenmode.target;</span></span>
+<span id="L52"><span class="lineNum">      52</span>              :   auto A2 = funcA2(target);</span>
+<span id="L53"><span class="lineNum">      53</span>              :   bool has_A2 = (A2 != nullptr);</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              :   // Extend K, C, M operators with interpolated A2 operator.</span>
+<span id="L56"><span class="lineNum">      56</span>              :   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2</span>
+<span id="L57"><span class="lineNum">      57</span>              :   std::unique_ptr&lt;ComplexOperator&gt; Kp, Cp, Mp;</span>
+<span id="L58"><span class="lineNum">      58</span>              :   std::unique_ptr&lt;Interpolation&gt; interp_op;</span>
+<span id="L59"><span class="lineNum">      59</span>              :   std::unique_ptr&lt;ComplexOperator&gt; A2_0, A2_1, A2_2;</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 :   if (has_A2 &amp;&amp; nonlinear_type == NonlinearEigenSolver::HYBRID)</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :   {</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 :     const double target_max = iodata.solver.eigenmode.target_upper;</span></span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaUNC">           0 :     interp_op = std::make_unique&lt;NewtonInterpolationOperator&gt;(funcA2, A2-&gt;Width());</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaUNC">           0 :     interp_op-&gt;Interpolate(1i * target, 1i * target_max);</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaUNC">           0 :     A2_0 = interp_op-&gt;GetInterpolationOperator(0);</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :     A2_1 = interp_op-&gt;GetInterpolationOperator(1);</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaUNC">           0 :     A2_2 = interp_op-&gt;GetInterpolationOperator(2);</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaUNC">           0 :     Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaUNC">           0 :     Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaUNC">           0 :     Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});</span></span>
+<span id="L72"><span class="lineNum">      72</span>              :   }</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span>              :   const auto &amp;Curl = space_op.GetCurlMatrix();</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC">           0 :   SaveMetadata(space_op.GetNDSpaces());</span></span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span>              :   // Configure objects for postprocessing.</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaUNC">           0 :   PostOperator&lt;ProblemType::EIGENMODE&gt; post_op(iodata, space_op);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC">           0 :   ComplexVector E(Curl.Width()), B(Curl.Height());</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaUNC">           0 :   E.UseDevice(true);</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :   B.UseDevice(true);</span></span>
+<span id="L82"><span class="lineNum">      82</span>              : </span>
+<span id="L83"><span class="lineNum">      83</span>              :   // Define and configure the eigensolver to solve the eigenvalue problem:</span>
+<span id="L84"><span class="lineNum">      84</span>              :   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u</span>
+<span id="L85"><span class="lineNum">      85</span>              :   // with λ = iω. In general, the system matrices are complex and symmetric.</span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;EigenvalueSolver&gt; eigen;</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :   EigenSolverBackend type = iodata.solver.eigenmode.type;</span></span>
+<span id="L88"><span class="lineNum">      88</span>              : </span>
+<span id="L89"><span class="lineNum">      89</span>              : #if defined(PALACE_WITH_ARPACK) &amp;&amp; defined(PALACE_WITH_SLEPC)</span>
+<span id="L90"><span class="lineNum">      90</span>              :   if (type == EigenSolverBackend::DEFAULT)</span>
+<span id="L91"><span class="lineNum">      91</span>              :   {</span>
+<span id="L92"><span class="lineNum">      92</span>              :     type = EigenSolverBackend::SLEPC;</span>
+<span id="L93"><span class="lineNum">      93</span>              :   }</span>
+<span id="L94"><span class="lineNum">      94</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
+<span id="L95"><span class="lineNum">      95</span>              :   if (type == EigenSolverBackend::SLEPC)</span>
+<span id="L96"><span class="lineNum">      96</span>              :   {</span>
+<span id="L97"><span class="lineNum">      97</span>              :     Mpi::Warning(&quot;SLEPc eigensolver not available, using ARPACK!\n&quot;);</span>
+<span id="L98"><span class="lineNum">      98</span>              :   }</span>
+<span id="L99"><span class="lineNum">      99</span>              :   type = EigenSolverBackend::ARPACK;</span>
+<span id="L100"><span class="lineNum">     100</span>              :   if (nonlinear_type == NonlinearEigenSolver::SLP)</span>
+<span id="L101"><span class="lineNum">     101</span>              :   {</span>
+<span id="L102"><span class="lineNum">     102</span>              :     Mpi::Warning(&quot;SLP nonlinear eigensolver not available, using Hybrid!\n&quot;);</span>
+<span id="L103"><span class="lineNum">     103</span>              :   }</span>
+<span id="L104"><span class="lineNum">     104</span>              :   nonlinear_type = NonlinearEigenSolver::HYBRID;</span>
+<span id="L105"><span class="lineNum">     105</span>              : #elif defined(PALACE_WITH_SLEPC)</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC">           0 :   if (type == EigenSolverBackend::ARPACK)</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :   {</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaUNC">           0 :     Mpi::Warning(&quot;ARPACK eigensolver not available, using SLEPc!\n&quot;);</span></span>
+<span id="L109"><span class="lineNum">     109</span>              :   }</span>
+<span id="L110"><span class="lineNum">     110</span>              :   type = EigenSolverBackend::SLEPC;</span>
+<span id="L111"><span class="lineNum">     111</span>              : #else</span>
+<span id="L112"><span class="lineNum">     112</span>              : #error &quot;Eigenmode solver requires building with ARPACK or SLEPc!&quot;</span>
+<span id="L113"><span class="lineNum">     113</span>              : #endif</span>
+<span id="L114"><span class="lineNum">     114</span>              :   if (type == EigenSolverBackend::ARPACK)</span>
+<span id="L115"><span class="lineNum">     115</span>              :   {</span>
+<span id="L116"><span class="lineNum">     116</span>              : #if defined(PALACE_WITH_ARPACK)</span>
+<span id="L117"><span class="lineNum">     117</span>              :     Mpi::Print(&quot;\nConfiguring ARPACK eigenvalue solver:\n&quot;);</span>
+<span id="L118"><span class="lineNum">     118</span>              :     if (C || has_A2)</span>
+<span id="L119"><span class="lineNum">     119</span>              :     {</span>
+<span id="L120"><span class="lineNum">     120</span>              :       eigen = std::make_unique&lt;arpack::ArpackPEPSolver&gt;(space_op.GetComm(),</span>
+<span id="L121"><span class="lineNum">     121</span>              :                                                         iodata.problem.verbose);</span>
+<span id="L122"><span class="lineNum">     122</span>              :     }</span>
+<span id="L123"><span class="lineNum">     123</span>              :     else</span>
+<span id="L124"><span class="lineNum">     124</span>              :     {</span>
+<span id="L125"><span class="lineNum">     125</span>              :       eigen = std::make_unique&lt;arpack::ArpackEPSSolver&gt;(space_op.GetComm(),</span>
+<span id="L126"><span class="lineNum">     126</span>              :                                                         iodata.problem.verbose);</span>
+<span id="L127"><span class="lineNum">     127</span>              :     }</span>
+<span id="L128"><span class="lineNum">     128</span>              : #endif</span>
+<span id="L129"><span class="lineNum">     129</span>              :   }</span>
+<span id="L130"><span class="lineNum">     130</span>              :   else  // EigenSolverBackend::SLEPC</span>
+<span id="L131"><span class="lineNum">     131</span>              :   {</span>
+<span id="L132"><span class="lineNum">     132</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nConfiguring SLEPc eigenvalue solver:\n&quot;);</span></span>
+<span id="L134"><span class="lineNum">     134</span>              :     std::unique_ptr&lt;slepc::SlepcEigenvalueSolver&gt; slepc;</span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaUNC">           0 :     if (nonlinear_type == NonlinearEigenSolver::SLP)</span></span>
+<span id="L136"><span class="lineNum">     136</span>              :     {</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC">           0 :       slepc = std::make_unique&lt;slepc::SlepcNEPSolver&gt;(space_op.GetComm(),</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaUNC">           0 :                                                       iodata.problem.verbose);</span></span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaUNC">           0 :       slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::SLP);</span></span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaUNC">           0 :       slepc-&gt;SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);</span></span>
+<span id="L141"><span class="lineNum">     141</span>              :     }</span>
+<span id="L142"><span class="lineNum">     142</span>              :     else</span>
+<span id="L143"><span class="lineNum">     143</span>              :     {</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaUNC">           0 :       if (C || has_A2)</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :       {</span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaUNC">           0 :         if (!iodata.solver.eigenmode.pep_linear)</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :         {</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :           slepc = std::make_unique&lt;slepc::SlepcPEPSolver&gt;(space_op.GetComm(),</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaUNC">           0 :                                                           iodata.problem.verbose);</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaUNC">           0 :           slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);</span></span>
+<span id="L151"><span class="lineNum">     151</span>              :         }</span>
+<span id="L152"><span class="lineNum">     152</span>              :         else</span>
+<span id="L153"><span class="lineNum">     153</span>              :         {</span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :           slepc = std::make_unique&lt;slepc::SlepcPEPLinearSolver&gt;(space_op.GetComm(),</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :                                                                 iodata.problem.verbose);</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :           slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :         }</span>
+<span id="L158"><span class="lineNum">     158</span>              :       }</span>
+<span id="L159"><span class="lineNum">     159</span>              :       else</span>
+<span id="L160"><span class="lineNum">     160</span>              :       {</span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :         slepc = std::make_unique&lt;slepc::SlepcEPSSolver&gt;(space_op.GetComm(),</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaUNC">           0 :                                                         iodata.problem.verbose);</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :         slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :       }</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :       slepc-&gt;SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :     }</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC">           0 :     slepc-&gt;SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :                                 iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :     eigen = std::move(slepc);</span>
+<span id="L170"><span class="lineNum">     170</span>              : #endif</span>
+<span id="L171"><span class="lineNum">     171</span>              :   }</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :                                           ? EigenvalueSolver::ScaleType::NORM_2</span></span>
+<span id="L174"><span class="lineNum">     174</span>              :                                           : EigenvalueSolver::ScaleType::NONE;</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC">           0 :   if (nonlinear_type == NonlinearEigenSolver::SLP)</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :   {</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaUNC">           0 :     eigen-&gt;SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);</span></span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC">           0 :     eigen-&gt;SetExtraSystemMatrix(funcA2);</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaUNC">           0 :     eigen-&gt;SetPreconditionerUpdate(funcP);</span></span>
+<span id="L180"><span class="lineNum">     180</span>              :   }</span>
+<span id="L181"><span class="lineNum">     181</span>              :   else</span>
+<span id="L182"><span class="lineNum">     182</span>              :   {</span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaUNC">           0 :     if (has_A2)</span></span>
+<span id="L184"><span class="lineNum">     184</span>              :     {</span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaUNC">           0 :       eigen-&gt;SetOperators(*Kp, *Cp, *Mp, scale);</span></span>
+<span id="L186"><span class="lineNum">     186</span>              :     }</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaUNC">           0 :     else if (C)</span></span>
+<span id="L188"><span class="lineNum">     188</span>              :     {</span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaUNC">           0 :       eigen-&gt;SetOperators(*K, *C, *M, scale);</span></span>
+<span id="L190"><span class="lineNum">     190</span>              :     }</span>
+<span id="L191"><span class="lineNum">     191</span>              :     else</span>
+<span id="L192"><span class="lineNum">     192</span>              :     {</span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaUNC">           0 :       eigen-&gt;SetOperators(*K, *M, scale);</span></span>
+<span id="L194"><span class="lineNum">     194</span>              :     }</span>
+<span id="L195"><span class="lineNum">     195</span>              :   }</span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 :   eigen-&gt;SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);</span></span>
+<span id="L197"><span class="lineNum">     197</span>              :   const double tol = (has_A2 &amp;&amp; nonlinear_type == NonlinearEigenSolver::HYBRID)</span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 :                          ? iodata.solver.eigenmode.linear_tol</span></span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaUNC">           0 :                          : iodata.solver.eigenmode.tol;</span></span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaUNC">           0 :   eigen-&gt;SetTol(tol);</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :   eigen-&gt;SetMaxIter(iodata.solver.eigenmode.max_it);</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot; Scaling γ = {:.3e}, δ = {:.3e}\n&quot;, eigen-&gt;GetScalingGamma(),</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaUNC">           0 :              eigen-&gt;GetScalingDelta());</span></span>
+<span id="L204"><span class="lineNum">     204</span>              : </span>
+<span id="L205"><span class="lineNum">     205</span>              :   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The</span>
+<span id="L206"><span class="lineNum">     206</span>              :   // constructed matrix just references the real SPD part of the mass matrix (no copy is</span>
+<span id="L207"><span class="lineNum">     207</span>              :   // performed). Boundary conditions don't need to be eliminated here.</span>
+<span id="L208"><span class="lineNum">     208</span>              :   std::unique_ptr&lt;Operator&gt; KM;</span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :   if (iodata.solver.eigenmode.mass_orthog)</span></span>
+<span id="L210"><span class="lineNum">     210</span>              :   {</span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Basis uses M-inner product\n&quot;);</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaUNC">           0 :     eigen-&gt;SetBMat(*KM);</span></span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span>              :     // Mpi::Print(&quot; Basis uses (K + M)-inner product\n&quot;);</span>
+<span id="L216"><span class="lineNum">     216</span>              :     // KM = space_op.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());</span>
+<span id="L217"><span class="lineNum">     217</span>              :     // eigen-&gt;SetBMat(*KM);</span>
+<span id="L218"><span class="lineNum">     218</span>              :   }</span>
+<span id="L219"><span class="lineNum">     219</span>              : </span>
+<span id="L220"><span class="lineNum">     220</span>              :   // Construct a divergence-free projector so the eigenvalue solve is performed in the space</span>
+<span id="L221"><span class="lineNum">     221</span>              :   // orthogonal to the zero eigenvalues of the stiffness matrix.</span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;DivFreeSolver&lt;ComplexVector&gt;&gt; divfree;</span></span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaUNC">           0 :   if (iodata.solver.linear.divfree_max_it &gt; 0 &amp;&amp;</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaUNC">           0 :       !space_op.GetMaterialOp().HasWaveVector() &amp;&amp;</span></span>
+<span id="L225"><span class="lineNum">     225</span>              :       !space_op.GetMaterialOp().HasLondonDepth())</span>
+<span id="L226"><span class="lineNum">     226</span>              :   {</span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Configuring divergence-free projection\n&quot;);</span></span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaUNC">           0 :     constexpr int divfree_verbose = 0;</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 :     divfree = std::make_unique&lt;DivFreeSolver&lt;ComplexVector&gt;&gt;(</span></span>
+<span id="L230"><span class="lineNum">     230</span>              :         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),</span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaUNC">           0 :         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :         iodata.solver.linear.divfree_max_it, divfree_verbose);</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :     eigen-&gt;SetDivFreeProjector(*divfree);</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :   }</span>
+<span id="L235"><span class="lineNum">     235</span>              : </span>
+<span id="L236"><span class="lineNum">     236</span>              :   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.</span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;FloquetCorrSolver&lt;ComplexVector&gt;&gt; floquet_corr;</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :   if (space_op.GetMaterialOp().HasWaveVector())</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :   {</span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaUNC">           0 :     floquet_corr = std::make_unique&lt;FloquetCorrSolver&lt;ComplexVector&gt;&gt;(</span></span>
+<span id="L241"><span class="lineNum">     241</span>              :         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),</span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);</span></span>
+<span id="L243"><span class="lineNum">     243</span>              :   }</span>
+<span id="L244"><span class="lineNum">     244</span>              : </span>
+<span id="L245"><span class="lineNum">     245</span>              :   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is</span>
+<span id="L246"><span class="lineNum">     246</span>              :   // projected appropriately.</span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :   if (iodata.solver.eigenmode.init_v0)</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :   {</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 :     ComplexVector v0;</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 :     if (iodata.solver.eigenmode.init_v0_const)</span></span>
+<span id="L251"><span class="lineNum">     251</span>              :     {</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; Using constant starting vector\n&quot;);</span></span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaUNC">           0 :       space_op.GetConstantInitialVector(v0);</span></span>
+<span id="L254"><span class="lineNum">     254</span>              :     }</span>
+<span id="L255"><span class="lineNum">     255</span>              :     else</span>
+<span id="L256"><span class="lineNum">     256</span>              :     {</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; Using random starting vector\n&quot;);</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaUNC">           0 :       space_op.GetRandomInitialVector(v0);</span></span>
+<span id="L259"><span class="lineNum">     259</span>              :     }</span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaUNC">           0 :     if (divfree)</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :     {</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :       divfree-&gt;Mult(v0);</span></span>
+<span id="L263"><span class="lineNum">     263</span>              :     }</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC">           0 :     eigen-&gt;SetInitialSpace(v0);  // Copies the vector</span></span>
+<span id="L265"><span class="lineNum">     265</span>              : </span>
+<span id="L266"><span class="lineNum">     266</span>              :     // Debug</span>
+<span id="L267"><span class="lineNum">     267</span>              :     // const auto &amp;Grad = space_op.GetGradMatrix();</span>
+<span id="L268"><span class="lineNum">     268</span>              :     // ComplexVector r0(Grad-&gt;Width());</span>
+<span id="L269"><span class="lineNum">     269</span>              :     // r0.UseDevice(true);</span>
+<span id="L270"><span class="lineNum">     270</span>              :     // Grad.MultTranspose(v0.Real(), r0.Real());</span>
+<span id="L271"><span class="lineNum">     271</span>              :     // Grad.MultTranspose(v0.Imag(), r0.Imag());</span>
+<span id="L272"><span class="lineNum">     272</span>              :     // r0.Print();</span>
+<span id="L273"><span class="lineNum">     273</span>              :   }</span>
+<span id="L274"><span class="lineNum">     274</span>              : </span>
+<span id="L275"><span class="lineNum">     275</span>              :   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues</span>
+<span id="L276"><span class="lineNum">     276</span>              :   // closest to the specified target, σ.</span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span>              :     const double f_target =</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaUNC">           0 :         iodata.units.Dimensionalize&lt;Units::ValueType::FREQUENCY&gt;(target);</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Shift-and-invert σ = {:.3e} GHz ({:.3e})\n&quot;, f_target, target);</span></span>
+<span id="L281"><span class="lineNum">     281</span>              :   }</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaUNC">           0 :   if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)</span></span>
+<span id="L283"><span class="lineNum">     283</span>              :   {</span>
+<span id="L284"><span class="lineNum">     284</span>              :     // Search for eigenvalues closest to λ = iσ.</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaUNC">           0 :     eigen-&gt;SetShiftInvert(1i * target);</span></span>
+<span id="L286"><span class="lineNum">     286</span>              :     if (type == EigenSolverBackend::ARPACK)</span>
+<span id="L287"><span class="lineNum">     287</span>              :     {</span>
+<span id="L288"><span class="lineNum">     288</span>              :       // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue</span>
+<span id="L289"><span class="lineNum">     289</span>              :       // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue</span>
+<span id="L290"><span class="lineNum">     290</span>              :       // λ with frequency close to but not below the target σ.</span>
+<span id="L291"><span class="lineNum">     291</span>              :       eigen-&gt;SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);</span>
+<span id="L292"><span class="lineNum">     292</span>              :     }</span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :     else if (nonlinear_type == NonlinearEigenSolver::SLP)</span></span>
+<span id="L294"><span class="lineNum">     294</span>              :     {</span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaUNC">           0 :       eigen-&gt;SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);</span></span>
+<span id="L296"><span class="lineNum">     296</span>              :     }</span>
+<span id="L297"><span class="lineNum">     297</span>              :     else</span>
+<span id="L298"><span class="lineNum">     298</span>              :     {</span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :       eigen-&gt;SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);</span></span>
+<span id="L300"><span class="lineNum">     300</span>              :     }</span>
+<span id="L301"><span class="lineNum">     301</span>              :   }</span>
+<span id="L302"><span class="lineNum">     302</span>              :   else</span>
+<span id="L303"><span class="lineNum">     303</span>              :   {</span>
+<span id="L304"><span class="lineNum">     304</span>              :     // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².</span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaUNC">           0 :     eigen-&gt;SetShiftInvert(target * target);</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :     if (type == EigenSolverBackend::ARPACK)</span>
+<span id="L307"><span class="lineNum">     307</span>              :     {</span>
+<span id="L308"><span class="lineNum">     308</span>              :       // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)</span>
+<span id="L309"><span class="lineNum">     309</span>              :       // will be a large-magnitude positive real number for an eigenvalue μ with frequency</span>
+<span id="L310"><span class="lineNum">     310</span>              :       // close to but below the target σ².</span>
+<span id="L311"><span class="lineNum">     311</span>              :       eigen-&gt;SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);</span>
+<span id="L312"><span class="lineNum">     312</span>              :     }</span>
+<span id="L313"><span class="lineNum">     313</span>              :     else</span>
+<span id="L314"><span class="lineNum">     314</span>              :     {</span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaUNC">           0 :       eigen-&gt;SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :     }</span>
+<span id="L317"><span class="lineNum">     317</span>              :   }</span>
+<span id="L318"><span class="lineNum">     318</span>              : </span>
+<span id="L319"><span class="lineNum">     319</span>              :   // Set up the linear solver required for solving systems involving the shifted operator</span>
+<span id="L320"><span class="lineNum">     320</span>              :   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The</span>
+<span id="L321"><span class="lineNum">     321</span>              :   // preconditioner for complex linear systems is constructed from a real approximation</span>
+<span id="L322"><span class="lineNum">     322</span>              :   // to the complex system matrix.</span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC">           0 :   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaUNC">           0 :                                     K.get(), C.get(), M.get(), A2.get());</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :   auto P = space_op.GetPreconditionerMatrix&lt;ComplexOperator&gt;(</span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaUNC">           0 :       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);</span></span>
+<span id="L327"><span class="lineNum">     327</span>              :   auto ksp = std::make_unique&lt;ComplexKspSolver&gt;(iodata, space_op.GetNDSpaces(),</span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaUNC">           0 :                                                 &amp;space_op.GetH1Spaces());</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaUNC">           0 :   ksp-&gt;SetOperators(*A, *P);</span></span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaUNC">           0 :   eigen-&gt;SetLinearSolver(*ksp);</span></span>
+<span id="L331"><span class="lineNum">     331</span>              : </span>
+<span id="L332"><span class="lineNum">     332</span>              :   // Initialize structures for storing and reducing the results of error estimation.</span>
+<span id="L333"><span class="lineNum">     333</span>              :   TimeDependentFluxErrorEstimator&lt;ComplexVector&gt; estimator(</span>
+<span id="L334"><span class="lineNum">     334</span>              :       space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),</span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaUNC">           0 :       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaUNC">           0 :       iodata.solver.linear.estimator_mg);</span></span>
+<span id="L337"><span class="lineNum">     337</span>              :   ErrorIndicator indicator;</span>
+<span id="L338"><span class="lineNum">     338</span>              : </span>
+<span id="L339"><span class="lineNum">     339</span>              :   // Eigenvalue problem solve.</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaUNC">           0 :   BlockTimer bt1(Timer::EPS);</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaUNC">           0 :   int num_conv = eigen-&gt;Solve();</span></span>
+<span id="L343"><span class="lineNum">     343</span>              :   {</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; lambda = (num_conv &gt; 0) ? eigen-&gt;GetEigenvalue(0) : 0.0;</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Found {:d} converged eigenvalue{}{}\n&quot;, num_conv,</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaUNC">           0 :                (num_conv &gt; 1) ? &quot;s&quot; : &quot;&quot;,</span></span>
+<span id="L347"><span class="lineNum">     347</span>              :                (num_conv &gt; 0)</span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaUNC">           0 :                    ? fmt::format(&quot; (first = {:.3e}{:+.3e}i)&quot;, lambda.real(), lambda.imag())</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaUNC">           0 :                    : &quot;&quot;);</span></span>
+<span id="L350"><span class="lineNum">     350</span>              :   }</span>
+<span id="L351"><span class="lineNum">     351</span>              : </span>
+<span id="L352"><span class="lineNum">     352</span> <span class="tlaUNC">           0 :   if (has_A2 &amp;&amp; nonlinear_type == NonlinearEigenSolver::HYBRID)</span></span>
+<span id="L353"><span class="lineNum">     353</span>              :   {</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\n Refining eigenvalues with Quasi-Newton solver\n&quot;);</span></span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaUNC">           0 :     auto qn = std::make_unique&lt;QuasiNewtonSolver&gt;(space_op.GetComm(), std::move(eigen),</span></span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :                                                   num_conv, iodata.problem.verbose,</span></span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaUNC">           0 :                                                   iodata.solver.eigenmode.refine_nonlinear);</span></span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :     qn-&gt;SetTol(iodata.solver.eigenmode.tol);</span></span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaUNC">           0 :     qn-&gt;SetMaxIter(iodata.solver.eigenmode.max_it);</span></span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaUNC">           0 :     if (C)</span></span>
+<span id="L361"><span class="lineNum">     361</span>              :     {</span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaUNC">           0 :       qn-&gt;SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);</span></span>
+<span id="L363"><span class="lineNum">     363</span>              :     }</span>
+<span id="L364"><span class="lineNum">     364</span>              :     else</span>
+<span id="L365"><span class="lineNum">     365</span>              :     {</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaUNC">           0 :       qn-&gt;SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);</span></span>
+<span id="L367"><span class="lineNum">     367</span>              :     }</span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaUNC">           0 :     qn-&gt;SetExtraSystemMatrix(funcA2);</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaUNC">           0 :     qn-&gt;SetPreconditionerUpdate(funcP);</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 :     qn-&gt;SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);</span></span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaUNC">           0 :     qn-&gt;SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaUNC">           0 :                              iodata.solver.eigenmode.preconditioner_lag_tol);</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaUNC">           0 :     qn-&gt;SetMaxRestart(iodata.solver.eigenmode.max_restart);</span></span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaUNC">           0 :     qn-&gt;SetLinearSolver(*ksp);</span></span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaUNC">           0 :     qn-&gt;SetShiftInvert(1i * target);</span></span>
+<span id="L376"><span class="lineNum">     376</span>              :     eigen = std::move(qn);</span>
+<span id="L377"><span class="lineNum">     377</span>              : </span>
+<span id="L378"><span class="lineNum">     378</span>              :     // Suppress wave port output during nonlinear eigensolver iterations.</span>
+<span id="L379"><span class="lineNum">     379</span>              :     space_op.GetWavePortOp().SetSuppressOutput(true);</span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaUNC">           0 :     num_conv = eigen-&gt;Solve();</span></span>
+<span id="L381"><span class="lineNum">     381</span>              :     space_op.GetWavePortOp().SetSuppressOutput(false);</span>
+<span id="L382"><span class="lineNum">     382</span>              :   }</span>
+<span id="L383"><span class="lineNum">     383</span>              : </span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaUNC">           0 :   BlockTimer bt2(Timer::POSTPRO);</span></span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :   SaveMetadata(*ksp);</span></span>
+<span id="L386"><span class="lineNum">     386</span>              : </span>
+<span id="L387"><span class="lineNum">     387</span>              :   // Calculate and record the error indicators, and postprocess the results.</span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nComputing solution error estimates and performing postprocessing\n&quot;);</span></span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaUNC">           0 :   if (!KM)</span></span>
+<span id="L390"><span class="lineNum">     390</span>              :   {</span>
+<span id="L391"><span class="lineNum">     391</span>              :     // Normalize the finalized eigenvectors with respect to mass matrix (unit electric field</span>
+<span id="L392"><span class="lineNum">     392</span>              :     // energy) even if they are not computed to be orthogonal with respect to it.</span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaUNC">           0 :     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());</span></span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaUNC">           0 :     eigen-&gt;SetBMat(*KM);</span></span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaUNC">           0 :     eigen-&gt;RescaleEigenvectors(num_conv);</span></span>
+<span id="L396"><span class="lineNum">     396</span>              :   }</span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L398"><span class="lineNum">     398</span>              : </span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; num_conv; i++)</span></span>
+<span id="L400"><span class="lineNum">     400</span>              :   {</span>
+<span id="L401"><span class="lineNum">     401</span>              :     // Get the eigenvalue and relative error.</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; omega = eigen-&gt;GetEigenvalue(i);</span></span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaUNC">           0 :     double error_bkwd = eigen-&gt;GetError(i, EigenvalueSolver::ErrorType::BACKWARD);</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :     double error_abs = eigen-&gt;GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);</span></span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaUNC">           0 :     if (!C &amp;&amp; !has_A2)</span></span>
+<span id="L406"><span class="lineNum">     406</span>              :     {</span>
+<span id="L407"><span class="lineNum">     407</span>              :       // Linear EVP has eigenvalue μ = -λ² = ω².</span>
+<span id="L408"><span class="lineNum">     408</span>              :       omega = std::sqrt(omega);</span>
+<span id="L409"><span class="lineNum">     409</span>              :     }</span>
+<span id="L410"><span class="lineNum">     410</span>              :     else</span>
+<span id="L411"><span class="lineNum">     411</span>              :     {</span>
+<span id="L412"><span class="lineNum">     412</span>              :       // Quadratic EVP solves for eigenvalue λ = iω.</span>
+<span id="L413"><span class="lineNum">     413</span>              :       omega /= 1i;</span>
+<span id="L414"><span class="lineNum">     414</span>              :     }</span>
+<span id="L415"><span class="lineNum">     415</span>              : </span>
+<span id="L416"><span class="lineNum">     416</span>              :     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in</span>
+<span id="L417"><span class="lineNum">     417</span>              :     // PostOperator for all postprocessing operations.</span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaUNC">           0 :     eigen-&gt;GetEigenvector(i, E);</span></span>
+<span id="L419"><span class="lineNum">     419</span>              : </span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaUNC">           0 :     linalg::NormalizePhase(space_op.GetComm(), E);</span></span>
+<span id="L421"><span class="lineNum">     421</span>              : </span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaUNC">           0 :     Curl.Mult(E.Real(), B.Real());</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaUNC">           0 :     Curl.Mult(E.Imag(), B.Imag());</span></span>
+<span id="L424"><span class="lineNum">     424</span> <span class="tlaUNC">           0 :     B *= -1.0 / (1i * omega);</span></span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaUNC">           0 :     if (space_op.GetMaterialOp().HasWaveVector())</span></span>
+<span id="L426"><span class="lineNum">     426</span>              :     {</span>
+<span id="L427"><span class="lineNum">     427</span>              :       // Calculate B field correction for Floquet BCs.</span>
+<span id="L428"><span class="lineNum">     428</span>              :       // B = -1/(iω) ∇ x E + 1/ω kp x E.</span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaUNC">           0 :       floquet_corr-&gt;AddMult(E, B, 1.0 / omega);</span></span>
+<span id="L430"><span class="lineNum">     430</span>              :     }</span>
+<span id="L431"><span class="lineNum">     431</span>              : </span>
+<span id="L432"><span class="lineNum">     432</span>              :     auto total_domain_energy =</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaUNC">           0 :         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);</span></span>
+<span id="L434"><span class="lineNum">     434</span>              : </span>
+<span id="L435"><span class="lineNum">     435</span>              :     // Calculate and record the error indicators.</span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC">           0 :     if (i &lt; iodata.solver.eigenmode.n)</span></span>
+<span id="L437"><span class="lineNum">     437</span>              :     {</span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaUNC">           0 :       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);</span></span>
+<span id="L439"><span class="lineNum">     439</span>              :     }</span>
+<span id="L440"><span class="lineNum">     440</span>              : </span>
+<span id="L441"><span class="lineNum">     441</span>              :     // Final write: Different condition than end of loop (i = num_conv - 1).</span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaUNC">           0 :     if (i == iodata.solver.eigenmode.n - 1)</span></span>
+<span id="L443"><span class="lineNum">     443</span>              :     {</span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaUNC">           0 :       post_op.MeasureFinalize(indicator);</span></span>
+<span id="L445"><span class="lineNum">     445</span>              :     }</span>
+<span id="L446"><span class="lineNum">     446</span>              :   }</span>
+<span id="L447"><span class="lineNum">     447</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(num_conv &gt;= iodata.solver.eigenmode.n, &quot;Eigenmode solve only found &quot;</span></span>
+<span id="L448"><span class="lineNum">     448</span>              :                                                          &lt;&lt; num_conv &lt;&lt; &quot; modes when &quot;</span>
+<span id="L449"><span class="lineNum">     449</span>              :                                                          &lt;&lt; iodata.solver.eigenmode.n</span>
+<span id="L450"><span class="lineNum">     450</span>              :                                                          &lt;&lt; &quot; were requested!&quot;);</span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC">           0 :   return {indicator, space_op.GlobalTrueVSize()};</span></span>
+<span id="L452"><span class="lineNum">     452</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L453"><span class="lineNum">     453</span>              : </span>
+<span id="L454"><span class="lineNum">     454</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

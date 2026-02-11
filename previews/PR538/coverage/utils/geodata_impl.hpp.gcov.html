@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - utils/geodata_impl.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">utils</a> - geodata_impl.hpp<span style="font-size: 80%;"> (source / <a href="geodata_impl.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-10-23 22:45:05</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_UTILS_GEODATA_IMPL_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_UTILS_GEODATA_IMPL_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;array&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;memory&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;vector&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;Eigen/Dense&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : namespace palace</span>
+<span id="L15"><span class="lineNum">      15</span>              : {</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : struct BoundingBox;</span>
+<span id="L18"><span class="lineNum">      18</span>              : </span>
+<span id="L19"><span class="lineNum">      19</span>              : namespace mesh</span>
+<span id="L20"><span class="lineNum">      20</span>              : {</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : //</span>
+<span id="L23"><span class="lineNum">      23</span>              : // Implementations Functions for mesh related functionality. Isolated to avoid Eigen</span>
+<span id="L24"><span class="lineNum">      24</span>              : // propagation.</span>
+<span id="L25"><span class="lineNum">      25</span>              : //</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : // For the public interface, we can use a BoundingBox as a generalization of a BoundingBall.</span>
+<span id="L28"><span class="lineNum">      28</span>              : // Internally, however, it's nice to work with a specific ball data type.</span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaUNC tlaBgUNC">           0 : struct BoundingBall</span></span>
+<span id="L30"><span class="lineNum">      30</span>              : {</span>
+<span id="L31"><span class="lineNum">      31</span>              :   Eigen::Vector3d origin;</span>
+<span id="L32"><span class="lineNum">      32</span>              :   double radius;</span>
+<span id="L33"><span class="lineNum">      33</span>              :   bool planar;</span>
+<span id="L34"><span class="lineNum">      34</span>              : };</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span>              : // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and</span>
+<span id="L37"><span class="lineNum">      37</span>              : // bounding balls. Returns the dominant rank, for which the vertices argument will be</span>
+<span id="L38"><span class="lineNum">      38</span>              : // filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a</span>
+<span id="L39"><span class="lineNum">      39</span>              : // certain floating point precision.</span>
+<span id="L40"><span class="lineNum">      40</span>              : int CollectPointCloudOnRoot(const mfem::ParMesh &amp;mesh, const mfem::Array&lt;int&gt; &amp;marker,</span>
+<span id="L41"><span class="lineNum">      41</span>              :                             bool bdr, std::vector&lt;Eigen::Vector3d&gt; &amp;vertices);</span>
+<span id="L42"><span class="lineNum">      42</span>              : </span>
+<span id="L43"><span class="lineNum">      43</span>              : // Calculates a bounding box from a point cloud, result is broadcast across all processes.</span>
+<span id="L44"><span class="lineNum">      44</span>              : BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,</span>
+<span id="L45"><span class="lineNum">      45</span>              :                                       const std::vector&lt;Eigen::Vector3d&gt; &amp;vertices,</span>
+<span id="L46"><span class="lineNum">      46</span>              :                                       int dominant_rank);</span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span>              : // Compute the distance from a point orthogonal to the list of normal axes, relative to</span>
+<span id="L49"><span class="lineNum">      49</span>              : // the given origin.</span>
+<span id="L50"><span class="lineNum">      50</span>              : auto PerpendicularDistance(const std::initializer_list&lt;Eigen::Vector3d&gt; &amp;normals,</span>
+<span id="L51"><span class="lineNum">      51</span>              :                            const Eigen::Vector3d &amp;origin, const Eigen::Vector3d &amp;v);</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span>              : // Use 4 points to define a sphere in 3D. If the points are coplanar, 3 of them are used to</span>
+<span id="L54"><span class="lineNum">      54</span>              : // define a circle which is interpreted as the equator of the sphere. We assume the points</span>
+<span id="L55"><span class="lineNum">      55</span>              : // are unique and not collinear.</span>
+<span id="L56"><span class="lineNum">      56</span>              : BoundingBall SphereFromPoints(const std::vector&lt;std::size_t&gt; &amp;indices,</span>
+<span id="L57"><span class="lineNum">      57</span>              :                               const std::vector&lt;Eigen::Vector3d&gt; &amp;vertices);</span>
+<span id="L58"><span class="lineNum">      58</span>              : </span>
+<span id="L59"><span class="lineNum">      59</span>              : // Implementation of the recursive Welzl algorithm kernel.</span>
+<span id="L60"><span class="lineNum">      60</span>              : BoundingBall Welzl(std::vector&lt;std::size_t&gt; P, std::vector&lt;std::size_t&gt; R,</span>
+<span id="L61"><span class="lineNum">      61</span>              :                    const std::vector&lt;Eigen::Vector3d&gt; &amp;vertices);</span>
+<span id="L62"><span class="lineNum">      62</span>              : </span>
+<span id="L63"><span class="lineNum">      63</span>              : // Calculates a bounding ball from a point cloud using Welzl's algorithm, result is</span>
+<span id="L64"><span class="lineNum">      64</span>              : // broadcast across all processes. We don't operate on the convex hull, since the number of</span>
+<span id="L65"><span class="lineNum">      65</span>              : // points should be small enough that operating on the full set should be OK. If only three</span>
+<span id="L66"><span class="lineNum">      66</span>              : // points are provided, the bounding circle is computed (likewise for if the points are</span>
+<span id="L67"><span class="lineNum">      67</span>              : // coplanar).</span>
+<span id="L68"><span class="lineNum">      68</span>              : BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,</span>
+<span id="L69"><span class="lineNum">      69</span>              :                                        const std::vector&lt;Eigen::Vector3d&gt; &amp;vertices,</span>
+<span id="L70"><span class="lineNum">      70</span>              :                                        int dominant_rank);</span>
+<span id="L71"><span class="lineNum">      71</span>              : </span>
+<span id="L72"><span class="lineNum">      72</span>              : // Compute a normal vector from an element transformation, optionally ensure aligned</span>
+<span id="L73"><span class="lineNum">      73</span>              : // (| normal ⋅ align | &gt; 0)</span>
+<span id="L74"><span class="lineNum">      74</span>              : void Normal(mfem::ElementTransformation &amp;T, mfem::Vector &amp;normal,</span>
+<span id="L75"><span class="lineNum">      75</span>              :             const mfem::Vector *const align);</span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span>              : // Determine the vertex mapping between donor and receiver boundary attributes.</span>
+<span id="L78"><span class="lineNum">      78</span>              : // Uses the translation vector or affine transformation matrix specified in the</span>
+<span id="L79"><span class="lineNum">      79</span>              : // configuration file. If not provided, attempts to automatically detect the</span>
+<span id="L80"><span class="lineNum">      80</span>              : // affine transformation between donor and receiver boundary vertices.</span>
+<span id="L81"><span class="lineNum">      81</span>              : std::vector&lt;int&gt;</span>
+<span id="L82"><span class="lineNum">      82</span>              : DeterminePeriodicVertexMapping(std::unique_ptr&lt;mfem::Mesh&gt; &amp;mesh,</span>
+<span id="L83"><span class="lineNum">      83</span>              :                                const struct palace::config::PeriodicData &amp;data,</span>
+<span id="L84"><span class="lineNum">      84</span>              :                                const double tol = 1e-8);</span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span>              : }  // namespace mesh</span>
+<span id="L87"><span class="lineNum">      87</span>              : </span>
+<span id="L88"><span class="lineNum">      88</span>              : }  // namespace palace</span>
+<span id="L89"><span class="lineNum">      89</span>              : </span>
+<span id="L90"><span class="lineNum">      90</span>              : #endif  // PALACE_UTILS_GEODATA_IMPL_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
