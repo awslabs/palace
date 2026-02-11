@@ -105,6 +105,11 @@ jobs:
         with:
           ref: refs/pull/${{ matrix.pr }}/merge
 
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          test-cases: nightly
+
       - name: Get PR head SHA
         id: pr-sha
         run: |
@@ -112,11 +117,6 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          test-cases: nightly
 
       - name: Set success status
         if: success()
