@@ -105,6 +105,14 @@ jobs:
         with:
           ref: refs/pull/${{ matrix.pr }}/merge
 
+      - name: Get PR head SHA
+        id: pr-sha
+        run: |
+          SHA=$(gh pr view ${{ matrix.pr }} --repo ${{ github.repository }} --json headRefOid -q .headRefOid)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -113,7 +121,7 @@ jobs:
       - name: Set success status
         if: success()
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.sha }} \
+          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
             --method POST \
             --field state=success \
             --field context=nightly-tests \
@@ -124,7 +132,7 @@ jobs:
       - name: Set failure status
         if: failure()
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.sha }} \
+          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
             --method POST \
             --field state=failure \
             --field context=nightly-tests \
