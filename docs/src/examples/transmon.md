@@ -296,7 +296,17 @@ with each refinement:
 ```@example
 import JSON #hide
 # Path to AMR reference results #hide
-amr_dir = joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", "transmon", "transmon_amr") #hide
+amr_dir = joinpath(   #hide
+    @__DIR__,         #hide
+    "..",             #hide
+    "..",             #hide
+    "..",             #hide
+    "test",           #hide
+    "examples",       #hide
+    "ref",            #hide
+    "transmon",       #hide
+    "transmon_amr"    #hide
+)                     #hide
 # Find all iteration folders and sort them #hide
 iter_folders = filter(x -> startswith(x, "iteration"), readdir(amr_dir)) #hide
 iter_numbers = [parse(Int, replace(f, "iteration" => "")) for f in iter_folders] #hide
