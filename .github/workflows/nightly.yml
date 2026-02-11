@@ -1,10 +1,9 @@
 # This workflow runs nightly tests on all the open PRs that:
 # - are not marked as "draft",
+# - are not trivial,
 # - do not have the `no-nightly` label,
 # - did not already pass the nightly tests,
 # - are not from forks.
-#
-# TODO: Do not run on trivial changes (e.g., only changing the README)
 #
 # Nightly tests can be triggered immediately by adding 'trigger-nightly' label
 # to a PR.
