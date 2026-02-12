@@ -4,7 +4,6 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
-#include <array>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -45,7 +44,7 @@ struct ElementTypeInfo
   bool has_hexahedra;
   bool has_prisms;
   bool has_pyramids;
-  std::vector<mfem::Geometry::Type> GetGeomTypes() const;
+  std::vector<mfem::Geometry::Type> GetGeomTypes(int dim = 3) const;
 };
 
 // Simplified helper for describing the element types in a (Par)Mesh.
@@ -101,33 +100,41 @@ inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &m
 }
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
-// specify the direction from the center of the box.
+// specify the direction from the center of the box. Supports both 2D and 3D: in 2D,
+// center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is 3x3.
 struct BoundingBox
 {
-  // The central point of the bounding box.
-  std::array<double, 3> center;
+  // The central point of the bounding box (size 2 or 3).
+  mfem::Vector center;
 
-  // Vectors from center to the midpoint of each face.
-  std::array<std::array<double, 3>, 3> axes;
+  // Vectors from center to the midpoint of each face, stored as columns of a dense matrix.
+  // In 3D this is 3x3, in 2D this is 2x2. Column i is the i-th axis vector.
+  mfem::DenseMatrix axes;
 
-  // Whether or not this bounding box is two dimensional.
+  // Whether or not this bounding box is two dimensional (i.e. planar in the highest
+  // dimension). In 2D meshes this is always true. In 3D meshes this indicates a planar
+  // surface.
   bool planar;
+
+  // Return the spatial dimension (number of axes).
+  int Dim() const { return axes.Width(); }
 
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
 
-  // Compute the volume of the 3D bounding box. Returns zero if planar.
+  // Compute the volume of the 3D bounding box. Returns zero if planar or 2D.
   double Volume() const;
 
-  // Compute the normalized axes of the bounding box.
-  std::array<std::array<double, 3>, 3> Normals() const;
+  // Compute the normalized axes of the bounding box, returned as columns of a dense
+  // matrix.
+  mfem::DenseMatrix Normals() const;
 
   // Compute the lengths along each axis.
-  std::array<double, 3> Lengths() const;
+  mfem::Vector Lengths() const;
 
   // Compute the deviations in degrees of a vector from each of the axis directions. Angles
   // are returned in the interval [0, 180].
-  std::array<double, 3> Deviations(const std::array<double, 3> &direction) const;
+  mfem::Vector Deviations(const mfem::Vector &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
@@ -163,10 +170,10 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
 
 // Helper function for computing the direction aligned length of a marked group.
 double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir);
+                          bool bdr, const mfem::Vector &dir);
 
 inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                 const std::array<double, 3> &dir)
+                                 const mfem::Vector &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -178,11 +185,10 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
 // by brute force searching over the entire point set. Optionally compute the furthest
 // distance instead of the closest.
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin,
-                            bool max = false);
+                            bool bdr, const mfem::Vector &origin, bool max = false);
 
 inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                   const std::array<double, 3> &dir, bool max = false)
+                                   const mfem::Vector &dir, bool max = false)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;

@@ -1062,6 +1062,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
 {
   // Check that wave port boundary attributes have been specified correctly.
   const auto &mesh = *nd_fespace.GetParMesh();
+  MFEM_VERIFY(iodata.boundaries.waveport.empty() || mesh.Dimension() == 3,
+              "Wave port boundaries are only available for 3D simulations!");
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.waveport.empty())
   {

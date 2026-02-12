@@ -53,7 +53,7 @@ WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
   {
     constexpr bool skip_zeros = false;
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetInvPermeability());
+                                           mat_op.GetCurlCurlInvPermeability());
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm a(nd_fespaces.GetFinestFESpace()), a_aux(h1_fespaces.GetFinestFESpace());
