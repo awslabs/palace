@@ -89,7 +89,9 @@ arg_configs = [
             "cpw/wave_adaptive",
             "cpw/lumped_eigen",
             "cpw/wave_eigen",
-            "adapter/hybrid"
+            "adapter/hybrid",
+            "disc2d",
+            "cavity2d/eigenmode"
         ],
         description="Test cases to run",
         parser=s -> String.(split(s, ' '))
@@ -545,6 +547,45 @@ if "adapter/slp" in cases
         skip_rowcount=true,
         device=device,
         linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+abstol = 1.0e-16
+
+if "disc2d" in cases
+    @info "Testing disc2d (2D electrostatic)..."
+    @time testcase(
+        "disc2d",
+        "disc2d.json",
+        "";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/eigenmode" in cases
+    @info "Testing cavity2d/eigenmode (2D eigenmode)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d.json",
+        "eigenmode";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
         eigen_solver=eigensolver
     )
 end

@@ -44,13 +44,29 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
         rt_fecs)),
-    mat_op(iodata, *mesh.back()), current_dipole_op(iodata, *mesh.back()),
+    mat_op(iodata, *mesh.back()),
+    current_dipole_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
     surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
     surf_j_op(iodata, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
 {
+  // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
+  // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
+  // target space.
+  if (mesh.back()->Dimension() == 2)
+  {
+    const int l2_order = iodata.solver.order - 1;
+    const int dim = mesh.back()->Dimension();
+    l2_curl_fecs.push_back(std::make_unique<mfem::L2_FECollection>(
+        l2_order, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL));
+    l2_curl_fespaces =
+        std::make_unique<FiniteElementSpaceHierarchy>(
+            fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(
+                1, mesh, l2_curl_fecs));
+  }
+
   // Check Excitations.
   if (iodata.problem.type == ProblemType::DRIVEN)
   {
@@ -208,7 +224,7 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    : "Full");
 
     const auto &mesh = *nd_fespace.GetParMesh();
-    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
+    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : geom_types)
     {
@@ -719,8 +735,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {
-  // Contribution from material permeability.
-  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coeff);
+  // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
+  // coefficient is scalar (1x1).
+  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability(),
+                    coeff);
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())

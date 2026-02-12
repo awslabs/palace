@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_LUMPED_ELEMENT_HPP
 #define PALACE_FEM_LUMPED_ELEMENT_HPP
 
+#include <array>
 #include <memory>
 #include <mfem.hpp>
 
