@@ -45,10 +45,16 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              space_op.GetPortExcitations().FmtLog());
 
   // Initialize structures for storing and reducing the results of error estimation.
+  auto *curl_fespace_est = (space_op.GetNDSpace().Dimension() < 3)
+                               ? &space_op.GetCurlSpace()
+                               : nullptr;
+  auto *h1_fespaces_est = (space_op.GetNDSpace().Dimension() < 3)
+                              ? &space_op.GetH1Spaces()
+                              : nullptr;
   TimeDependentFluxErrorEstimator<Vector> estimator(
       space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, curl_fespace_est, h1_fespaces_est);
   ErrorIndicator indicator;
 
   // Main time integration loop.

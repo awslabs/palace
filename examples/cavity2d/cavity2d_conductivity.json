@@ -1,0 +1,72 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/conductivity"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cavity2d.mesh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1, 3]  // bottom, top
+    },
+    "Conductivity":
+    [
+      {
+        "Attributes": [2],  // right wall
+        "Conductivity": 5.8e7  // S/m (copper)
+      }
+    ],
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 50.0,
+        "Excitation": true,
+        "Elements":
+        [
+          {
+            "Attributes": [4],  // left wall as port
+            "Direction": "+Y"
+          }
+        ]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 0.1,  // GHz
+      "MaxFreq": 0.4,  // GHz
+      "FreqStep": 0.1,  // GHz
+      "SaveStep": 1
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

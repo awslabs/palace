@@ -1,0 +1,65 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cavity2d.msh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ],
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [3]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 50.0,
+        "Excitation": true,
+        "Elements":
+        [
+          {
+            "Attributes": [2],
+            "Direction": "+X"
+          }
+        ]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 0.1,  // GHz
+      "MaxFreq": 0.4,  // GHz
+        "FreqStep": 0.05,  // GHz
+        "SaveStep": 1
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}
