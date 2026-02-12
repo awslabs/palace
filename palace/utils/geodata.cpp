@@ -2481,7 +2481,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       const mfem::Element *el = new_mesh->GetElement(e1);
       for (int j = 0; j < bdr_el->GetNVertices(); j++)
       {
-        bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
+        bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
       }
 
       // Add the duplicate boundary element for boundary elements on the crack.
@@ -2503,7 +2503,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         el = new_mesh->GetElement(e2);
         for (int j = 0; j < bdr_el->GetNVertices(); j++)
         {
-          bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
+          bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
         }
         new_mesh->AddBdrElement(bdr_el);
       }
@@ -2567,7 +2567,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         const mfem::Element *el = new_mesh->GetElement(e1);
         for (int j = 0; j < bdr_el->GetNVertices(); j++)
         {
-          bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
+          bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
         }
         new_mesh->AddBdrElement(bdr_el);
         if constexpr (false)
@@ -2695,7 +2695,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           const mfem::Element *el = new_mesh->GetElement(e);
           for (int j = 0; j < el->GetNFaceVertices(i); j++)
           {
-            NodeUpdate(el->GetVertices()[el->GetFaceVertices(i)[j]]);
+            NodeUpdate(el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]]);
           }
         }
       }
