@@ -52,8 +52,10 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
                                       std::vector<std::array<double, 3>> &integrand_r,
                                       std::vector<std::array<double, 3>> &integrand_i)
 {
-  MFEM_ASSERT(E.VectorDim() == 3, "Stratton-Chu requires 3D vector fields!");
-  MFEM_ASSERT(B.VectorDim() == 3, "Stratton-Chu requires 3D vector fields!");
+  MFEM_VERIFY(E.VectorDim() == 3,
+              "Stratton-Chu far-field computation is only available for 3D simulations!");
+  MFEM_VERIFY(B.VectorDim() == 3,
+              "Stratton-Chu far-field computation is only available for 3D simulations!");
 
   MFEM_VERIFY(integrand_r.size() == r_naughts.size() &&
                   integrand_i.size() == r_naughts.size(),

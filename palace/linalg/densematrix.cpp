@@ -38,7 +38,29 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
   Mout = 0.0;
   if (N == 2)
   {
-    MFEM_ABORT("2x2 MatrixFunction is not implemented yet!");
+    const auto &a = M(0, 0), &b = M(1, 1);
+    const auto &d = M(0, 1);
+    const bool d_non_zero = std::abs(d) > tol;
+    if (!d_non_zero)
+    {
+      // a 0
+      // 0 b
+      for (int i = 0; i < 2; i++)
+      {
+        Mout(i, i) = functor(M(i, i));
+      }
+      return Mout;
+    }
+    // a d
+    // d b
+    const double disc = std::sqrt((a - b) * (a - b) + 4.0 * d * d);
+    const double lambda1 = (a + b - disc) / 2.0;
+    const double lambda2 = (a + b + disc) / 2.0;
+    const mfem::Vector v1{{d, lambda1 - a}};
+    const mfem::Vector v2{{d, lambda2 - a}};
+    AddMult_a_VVt(functor(lambda1), v1, Mout);
+    AddMult_a_VVt(functor(lambda2), v2, Mout);
+    return Mout;
   }
   else if (N == 3)
   {

@@ -319,6 +319,13 @@ void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType
 // root).
 void Sqrt(Vector &x, double s = 1.0);
 
+// 2D "cross product": returns the scalar A[0]*B[1] - A[1]*B[0].
+template <typename VecTypeA, typename VecTypeB>
+auto Cross2(const VecTypeA &A, const VecTypeB &B) -> decltype(A[0] * B[1])
+{
+  return A[0] * B[1] - A[1] * B[0];
+}
+
 // Compute the 3D Cartesian product between A and B and store the result in C.
 // If add is true, accumulate the result to C instead of overwriting its
 // content.
