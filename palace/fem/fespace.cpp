@@ -175,13 +175,24 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
   // Allow finite element spaces to be swapped in their order (intended as deriv(aux) ->
   // primal). G is always partially assembled.
   const int dim = Dimension();
+  const bool forward =
+      (GetFEColl().GetMapType(dim) == aux_fespace->GetFEColl().GetDerivMapType(dim));
   const bool swap =
+      !forward &&
       (aux_fespace->GetFEColl().GetMapType(dim) == GetFEColl().GetDerivMapType(dim));
+  if (swap)
+  {
+    Mpi::Print("DiscreteInterpolator: forward={}, dim={}, primal_map={}, aux_map={}, "
+               "primal_deriv={}, aux_deriv={}\n",
+               forward, dim, GetFEColl().GetMapType(dim),
+               aux_fespace->GetFEColl().GetMapType(dim), GetFEColl().GetDerivMapType(dim),
+               aux_fespace->GetFEColl().GetDerivMapType(dim));
+  }
   MFEM_VERIFY(!swap, "Incorrect order for primal/auxiliary (test/trial) spaces in discrete "
                      "interpolator construction!");
-  MFEM_VERIFY(
-      GetFEColl().GetMapType(dim) == aux_fespace->GetFEColl().GetDerivMapType(dim),
-      "Unsupported trial/test FE spaces for FiniteElementSpace discrete interpolator!");
+  MFEM_VERIFY(forward,
+              "Unsupported trial/test FE spaces for FiniteElementSpace discrete "
+              "interpolator!");
   const FiniteElementSpace &trial_fespace = !swap ? *aux_fespace : *this;
   const FiniteElementSpace &test_fespace = !swap ? *this : *aux_fespace;
   const auto aux_map_type = trial_fespace.GetFEColl().GetMapType(dim);
@@ -198,11 +209,28 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
   else if (aux_map_type == mfem::FiniteElement::H_CURL &&
            primal_map_type == mfem::FiniteElement::H_DIV)
   {
-    // Discrete curl interpolator.
+    // Discrete curl interpolator (3D: H(curl) → H(div)).
     DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<CurlInterpolator>();
     G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
                                       true);
+  }
+  else if (aux_map_type == mfem::FiniteElement::H_CURL &&
+           primal_map_type == mfem::FiniteElement::INTEGRAL)
+  {
+    // Discrete curl interpolator (2D: H(curl) → L2, scalar curl). Uses MFEM's native
+    // assembly because libCEED does not support partial assembly for this operator type.
+    auto *trial_pfes =
+        const_cast<mfem::ParFiniteElementSpace *>(&trial_fespace.Get());
+    auto *test_pfes =
+        const_cast<mfem::ParFiniteElementSpace *>(&test_fespace.Get());
+    mfem::DiscreteLinearOperator interp(trial_pfes, test_pfes);
+    interp.AddDomainInterpolator(new mfem::CurlInterpolator);
+    interp.Assemble();
+    interp.Finalize();
+    G = std::make_unique<ParOperator>(
+        std::unique_ptr<mfem::SparseMatrix>(interp.LoseMat()), trial_fespace, test_fespace,
+        true);
   }
   else if (aux_map_type == mfem::FiniteElement::H_DIV &&
            primal_map_type == mfem::FiniteElement::INTEGRAL)

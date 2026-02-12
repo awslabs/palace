@@ -24,6 +24,7 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/22/hcurlhdiv_error_22_qf.h"
 #include "fem/qfunctions/hcurlhdiv_error_qf.h"
 
 PalacePragmaDiagnosticPop
@@ -373,7 +374,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     bool use_mg)
   : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetInvPermeability()),
+                                          mat_op.GetCurlCurlInvPermeability()),
               nd_fespaces, rt_fespace, tol, max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
@@ -434,11 +435,15 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                                                   mesh.SpaceDimension(), &sqrtmu_func);
 
       // Assemble the libCEED operator. Inputs: B (for discontinuous flux), then smooth
-      // flux. Currently only supports 3D, since curl in 2D requires special treatment.
+      // flux.
       ceed::CeedQFunctionInfo info;
       info.assemble_q_data = false;
       switch (10 * mesh.SpaceDimension() + mesh.Dimension())
       {
+        case 22:
+          info.apply_qf = f_apply_hdivhcurl_error_22;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_error_22_loc);
+          break;
         case 33:
           info.apply_qf = f_apply_hdivhcurl_error_33;
           info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_error_33_loc);
@@ -484,10 +489,14 @@ TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
     bool use_mg)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg),
-    curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
                    use_mg)
 {
+  // In 2D, curl B flux estimation is skipped because B lives on L2 (scalar), not RT.
+  if (nd_fespaces.GetFinestFESpace().Dimension() >= 3)
+  {
+    curl_estimator = std::make_unique<CurlFluxErrorEstimator<VecType>>(
+        mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print, use_mg);
+  }
 }
 
 template <typename VecType>
@@ -498,11 +507,16 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
       ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
                             grad_estimator.nd_fespace, grad_estimator.rt_fespace,
                             grad_estimator.projector, grad_estimator.integ_op);
-  auto curl_estimates =
-      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
-                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
-                            curl_estimator.projector, curl_estimator.integ_op);
-  grad_estimates += curl_estimates;  // Sum of squares
+  // In 2D, the curl flux estimator is skipped because B lives on L2 (scalar curl), not
+  // RT. The error estimate is based solely on the E-field gradient flux.
+  if (curl_estimator)
+  {
+    auto curl_estimates = ComputeErrorEstimates(
+        B, curl_estimator->B_gf, curl_estimator->H, curl_estimator->H_gf,
+        curl_estimator->rt_fespace, curl_estimator->nd_fespace, curl_estimator->projector,
+        curl_estimator->integ_op);
+    grad_estimates += curl_estimates;  // Sum of squares
+  }
   linalg::Sqrt(grad_estimates,
                (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(grad_estimates);

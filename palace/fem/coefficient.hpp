@@ -92,7 +92,7 @@ private:
 public:
   BdrSurfaceCurrentVectorCoefficient(const mfem::ParGridFunction &B,
                                      const MaterialOperator &mat_op, double scaling = 1.0)
-    : mfem::VectorCoefficient(B.VectorDim()),
+    : mfem::VectorCoefficient(B.ParFESpace()->GetParMesh()->SpaceDimension()),
       BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh(), scaling), B(B),
       mat_op(mat_op)
   {
@@ -109,26 +109,49 @@ public:
 
     // For interior faces, compute Jₛ = n x H = n x μ⁻¹ (B1 - B2), where B1 (B2) is B in
     // element 1 (element 2) and n points into element 1.
-    double W_data[3], VU_data[3];
-    mfem::Vector W(W_data, vdim), VU(VU_data, vdim);
-    B.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), W);
-    mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(W, VU);
-    if (FET.Elem2)
+    if (vdim == 2)
     {
-      // Double-sided, not a true boundary. Add result with opposite normal.
-      double VL_data[3];
-      mfem::Vector VL(VL_data, vdim);
-      B.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
-      mat_op.GetInvPermeability(FET.Elem2->Attribute).Mult(W, VL);
-      VU -= VL;
+      // In 2D, B is a scalar (out-of-plane component). H_z = μ⁻¹ B_z. The surface
+      // current on a 1D boundary edge is Jₛ = n x (H_z ẑ), which gives a tangential
+      // 2D vector: Jₛ = H_z * (n_y, -n_x).
+      double Hz = B.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint());
+      Hz *= mat_op.GetInvPermeability(FET.Elem1->Attribute)(0, 0);
+      if (FET.Elem2)
+      {
+        double Hz2 = B.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint());
+        Hz2 *= mat_op.GetInvPermeability(FET.Elem2->Attribute)(0, 0);
+        Hz -= Hz2;
+      }
+      double normal_data[2];
+      mfem::Vector normal(normal_data, 2);
+      GetNormal(T, normal, ori);
+      V.SetSize(2);
+      V[0] = Hz * normal[1];
+      V[1] = -Hz * normal[0];
     }
+    else
+    {
+      double W_data[3], VU_data[3];
+      mfem::Vector W(W_data, vdim), VU(VU_data, vdim);
+      B.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), W);
+      mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(W, VU);
+      if (FET.Elem2)
+      {
+        // Double-sided, not a true boundary. Add result with opposite normal.
+        double VL_data[3];
+        mfem::Vector VL(VL_data, vdim);
+        B.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
+        mat_op.GetInvPermeability(FET.Elem2->Attribute).Mult(W, VL);
+        VU -= VL;
+      }
 
-    // Orient with normal pointing into element 1.
-    double normal_data[3];
-    mfem::Vector normal(normal_data, vdim);
-    GetNormal(T, normal, ori);
-    V.SetSize(vdim);
-    linalg::Cross3(normal, VU, V);
+      // Orient with normal pointing into element 1.
+      double normal_data[3];
+      mfem::Vector normal(normal_data, vdim);
+      GetNormal(T, normal, ori);
+      V.SetSize(vdim);
+      linalg::Cross3(normal, VU, V);
+    }
 
     V *= scaling;
   }
@@ -244,13 +267,30 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
                                                             mfem::Vector &V) const
 {
   // Flux E x H = E x μ⁻¹ B.
-  double W1_data[3], W2_data[3];
-  mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
-  B->GetVectorValue(T, T.GetIntPoint(), W1);
-  mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
-  E->GetVectorValue(T, T.GetIntPoint(), W1);
-  V.SetSize(W1.Size());
-  linalg::Cross3(W1, W2, V);
+  const int sdim = T.GetSpaceDim();
+  if (sdim == 2)
+  {
+    // In 2D, E is in-plane (2-component) and H = μ⁻¹ B is a scalar (out-of-plane).
+    // Poynting vector S = E × (H_z ẑ) = H_z * (E_y, -E_x).
+    double Hz = B->GetValue(T, T.GetIntPoint());
+    Hz *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+    double E_data[2];
+    mfem::Vector Ev(E_data, 2);
+    E->GetVectorValue(T, T.GetIntPoint(), Ev);
+    V.SetSize(2);
+    V[0] = Ev[1] * Hz;
+    V[1] = -Ev[0] * Hz;
+  }
+  else
+  {
+    double W1_data[3], W2_data[3];
+    mfem::Vector W1(W1_data, sdim), W2(W2_data, sdim);
+    B->GetVectorValue(T, T.GetIntPoint(), W1);
+    mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
+    E->GetVectorValue(T, T.GetIntPoint(), W1);
+    V.SetSize(W1.Size());
+    linalg::Cross3(W1, W2, V);
+  }
   V *= scaling;
 }
 
@@ -545,19 +585,44 @@ private:
 
   void GetLocalPower(mfem::ElementTransformation &T, mfem::Vector &V) const
   {
-    double W1_data[3], W2_data[3];
-    mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
-    B.Real().GetVectorValue(T, T.GetIntPoint(), W1);
-    mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
-    E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
-    V.SetSize(vdim);
-    linalg::Cross3(W1, W2, V);
-    if (E.HasImag())
+    const int sdim = T.GetSpaceDim();
+    if (sdim == 2)
     {
-      B.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
+      // In 2D, E is in-plane (2-component) and H = μ⁻¹ B is a scalar (out-of-plane).
+      // Poynting vector S = Re{E × H⋆} with E × (H_z ẑ) = H_z * (E_y, -E_x).
+      double Hz = B.Real().GetValue(T, T.GetIntPoint());
+      Hz *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+      double E_data[2];
+      mfem::Vector Ev(E_data, 2);
+      E.Real().GetVectorValue(T, T.GetIntPoint(), Ev);
+      V.SetSize(vdim);
+      V[0] = Ev[1] * Hz;
+      V[1] = -Ev[0] * Hz;
+      if (E.HasImag())
+      {
+        double Hzi = B.Imag().GetValue(T, T.GetIntPoint());
+        Hzi *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+        E.Imag().GetVectorValue(T, T.GetIntPoint(), Ev);
+        V[0] += Ev[1] * Hzi;
+        V[1] += -Ev[0] * Hzi;
+      }
+    }
+    else
+    {
+      double W1_data[3], W2_data[3];
+      mfem::Vector W1(W1_data, sdim), W2(W2_data, sdim);
+      B.Real().GetVectorValue(T, T.GetIntPoint(), W1);
       mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
-      E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
-      linalg::Cross3(W1, W2, V, true);
+      E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
+      V.SetSize(vdim);
+      linalg::Cross3(W1, W2, V);
+      if (E.HasImag())
+      {
+        B.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
+        mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
+        E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
+        linalg::Cross3(W1, W2, V, true);
+      }
     }
     V *= scaling;
   }
