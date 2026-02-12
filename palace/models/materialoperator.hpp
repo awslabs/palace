@@ -28,8 +28,9 @@ private:
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
-  mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
-      mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+  mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_imag,
+      mat_epsilon_abs, mat_invz0, mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx,
+      mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
@@ -84,6 +85,12 @@ public:
 
   bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
 
+  // Returns scalar (1x1) inverse permeability for 2D curl-curl (curl is scalar in 2D),
+  // or the full matrix for 3D.
+  const auto &GetCurlCurlInvPermeability() const
+  {
+    return (mat_muinv.SizeI() == 2) ? mat_muinv_scalar : mat_muinv;
+  }
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
   const auto &GetPermittivityImag() const { return mat_epsilon_imag; }

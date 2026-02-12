@@ -38,8 +38,10 @@ private:
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::unique_ptr<mfem::RT_FECollection> rt_fec;
+  std::unique_ptr<mfem::L2_FECollection> l2_curl_fec;
   FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
   FiniteElementSpace rt_fespace;
+  std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -70,6 +72,12 @@ public:
   const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
   auto &GetRTSpace() { return rt_fespace; }
   const auto &GetRTSpace() const { return rt_fespace; }
+  // In 2D, curl maps H(curl) → L2 (scalar), so use L2 space for B = curl A.
+  auto &GetCurlSpace() { return l2_curl_fespace ? *l2_curl_fespace : rt_fespace; }
+  const auto &GetCurlSpace() const
+  {
+    return l2_curl_fespace ? *l2_curl_fespace : rt_fespace;
+  }
 
   // Access the underlying mesh object.
   const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
@@ -84,7 +92,7 @@ public:
   // Construct and return the discrete curl matrix.
   const Operator &GetCurlMatrix() const
   {
-    return GetRTSpace().GetDiscreteInterpolator(GetNDSpace());
+    return GetCurlSpace().GetDiscreteInterpolator(GetNDSpace());
   }
 
   // Assemble the right-hand side source term vector for a current source applied on

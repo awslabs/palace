@@ -88,6 +88,26 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
+// Extract the leading sdim x sdim submatrix from a SymmetricMatrixData<N> matrix.
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &data, int sdim)
+{
+  auto M = ToDenseMatrix(data);
+  if (sdim >= static_cast<int>(N))
+  {
+    return M;
+  }
+  mfem::DenseMatrix Msub(sdim, sdim);
+  for (int i = 0; i < sdim; i++)
+  {
+    for (int j = 0; j < sdim; j++)
+    {
+      Msub(i, j) = M(i, j);
+    }
+  }
+  return Msub;
+}
+
 }  // namespace internal::mat
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
@@ -150,6 +170,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
+  if (sdim == 2)
+  {
+    mat_muinv_scalar.SetSize(1, 1, nmats);
+  }
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
   mat_epsilon_abs.SetSize(sdim, sdim, nmats);
@@ -239,14 +263,25 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       }
     }
 
-    // Compute the inverse of the input permeability matrix.
-    mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrix(data.mu_r);
+    // Compute the inverse of the input permeability matrix. Use truncated versions
+    // of the config 3x3 matrices for 2D meshes.
+    mfem::DenseMatrix mat_mu =
+        internal::mat::ToDenseMatrixTruncated(data.mu_r, sdim);
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
+    if (sdim == 2)
+    {
+      // In 2D, curl-curl uses a scalar coefficient (curl is scalar). Extract
+      // the (0,0) entry of the inverse permeability, which is exact for isotropic
+      // materials and the in-plane component for anisotropic.
+      mat_muinv_scalar(count)(0, 0) = mat_muinv(count)(0, 0);
+    }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
-    mat_epsilon(count).Set(1.0, internal::mat::ToDenseMatrix(data.epsilon_r));
-    Mult(mat_epsilon(count), internal::mat::ToDenseMatrix(data.tandelta), T);
+    mat_epsilon(count).Set(
+        1.0, internal::mat::ToDenseMatrixTruncated(data.epsilon_r, sdim));
+    Mult(mat_epsilon(count),
+         internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     T *= -1.0;
     mat_epsilon_imag(count).Set(1.0, T);
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
@@ -255,7 +290,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
 
     // ε * √(I + tan(δ) * tan(δ)ᵀ)
-    MultAAt(internal::mat::ToDenseMatrix(data.tandelta), T);
+    MultAAt(internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     for (int d = 0; d < T.Height(); d++)
     {
       T(d, d) += 1.0;
@@ -273,7 +308,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
-    mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrix(data.sigma));
+    mat_sigma(count).Set(
+        1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
@@ -319,9 +355,9 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   mfem::Vector wave_vector(sdim);
   wave_vector = 0.0;
   const auto &data = iodata.boundaries.periodic;
-  MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) == sdim,
-              "Floquet wave vector size must equal the spatial dimension.");
-  std::copy(data.wave_vector.begin(), data.wave_vector.end(), wave_vector.GetData());
+  MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) >= sdim,
+              "Floquet wave vector size must be at least the spatial dimension.");
+  std::copy_n(data.wave_vector.begin(), sdim, wave_vector.GetData());
   has_wave_attr = (wave_vector.Norml2() > tol);
 
   MFEM_VERIFY(!has_wave_attr || iodata.problem.type == ProblemType::DRIVEN ||

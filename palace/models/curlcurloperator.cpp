@@ -37,6 +37,15 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, *mesh.back())
 {
+  // In 2D, curl maps H(curl) → L2 (scalar), so add an L2 space for B = curl A.
+  if (mesh.back()->Dimension() == 2)
+  {
+    l2_curl_fec = std::make_unique<mfem::L2_FECollection>(
+        iodata.solver.order - 1, mesh.back()->Dimension(),
+        mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+    l2_curl_fespace = std::make_unique<FiniteElementSpace>(*mesh.back(), l2_curl_fec.get());
+  }
+
   // Finalize setup.
   CheckBoundaryProperties();
 
@@ -132,7 +141,7 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    : "Full");
 
     const auto &mesh = *nd_fespace.GetParMesh();
-    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
+    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : geom_types)
     {
@@ -160,7 +169,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+                                         mat_op.GetCurlCurlInvPermeability());
   BilinearForm k(GetNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   // k.AssembleQuadratureData();
