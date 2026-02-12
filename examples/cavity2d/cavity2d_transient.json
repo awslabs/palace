@@ -1,0 +1,68 @@
+{
+  "Problem":
+  {
+    "Type": "Transient",
+    "Verbose": 2,
+    "Output": "postpro/transient"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cavity2d.mesh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [3]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 50.0,
+        "Excitation": true,
+        "Elements":
+        [
+          {
+            "Attributes": [2],
+            "Direction": "+Y"
+          }
+        ]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Transient":
+    {
+      "Type": "GeneralizedAlpha",
+      "Excitation": "ModulatedGaussian",
+      "ExcitationFreq": 0.15,  // GHz
+      "ExcitationWidth": 2.0,  // ns
+      "MaxTime": 40.0,  // ns
+      "TimeStep": 0.1,  // ns
+      "SaveStep": 10
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}

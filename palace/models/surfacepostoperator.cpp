@@ -360,6 +360,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
 {
   if (theta_phi_pairs.empty())
     return {};
+  MFEM_VERIFY(nd_fespace.GetParMesh()->SpaceDimension() == 3,
+              "Far-field computation is only available for 3D simulations!");
   BlockTimer bt0(Timer::POSTPRO_FARFIELD);
 
   // Compute target unit vectors from the given theta and phis.

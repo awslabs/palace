@@ -127,7 +127,7 @@ class TimeDependentFluxErrorEstimator
 {
 private:
   GradFluxErrorEstimator<VecType> grad_estimator;
-  CurlFluxErrorEstimator<VecType> curl_estimator;
+  std::unique_ptr<CurlFluxErrorEstimator<VecType>> curl_estimator;
 
 public:
   TimeDependentFluxErrorEstimator(const MaterialOperator &mat_op,

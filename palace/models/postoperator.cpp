@@ -66,7 +66,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
           else
           {
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
-                                      fem_op_.GetRTSpace());
+                                      fem_op_.GetCurlSpace());
           }
         }())),
     surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
@@ -89,7 +89,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
-    B = std::make_unique<GridFunction>(fem_op->GetRTSpace(),
+    B = std::make_unique<GridFunction>(fem_op_.GetCurlSpace(),
                                        HasComplexGridFunction<solver_t>());
   }
 
@@ -223,16 +223,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
-    B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-    // J_s = n x H = n x μ⁻¹ B.
-    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-        B->Real(), fem_op->GetMaterialOp(), scaling);
+    // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
+    if (B->Real().VectorDim() > 1)
+    {
+      B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+      // J_s = n x H = n x μ⁻¹ B.
+      J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+          B->Real(), fem_op->GetMaterialOp(), scaling);
+    }
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-          B->Imag(), fem_op->GetMaterialOp(), scaling);
+      if (B->Imag().VectorDim() > 1)
+      {
+        B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
+        J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+            B->Imag(), fem_op->GetMaterialOp(), scaling);
+      }
     }
   }
 
@@ -322,13 +329,22 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       paraview->RegisterField("B_real", &B->Real());
       paraview->RegisterField("B_imag", &B->Imag());
-      paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
-      paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+      if (B_sr)
+      {
+        paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
+      }
+      if (B_si)
+      {
+        paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+      }
     }
     else
     {
       paraview->RegisterField("B", &B->Real());
-      paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+      if (B_sr)
+      {
+        paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+      }
     }
   }
   if (V)

@@ -881,24 +881,38 @@ void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
   ScaleMesh(mesh, 1.0 / L);
 }
 
-std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes() const
+std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes(int dim) const
 {
   std::vector<mfem::Geometry::Type> geom_types;
-  if (has_simplices)
+  if (dim == 2)
   {
-    geom_types.push_back(mfem::Geometry::TETRAHEDRON);
+    if (has_simplices)
+    {
+      geom_types.push_back(mfem::Geometry::TRIANGLE);
+    }
+    if (has_hexahedra)
+    {
+      geom_types.push_back(mfem::Geometry::SQUARE);
+    }
   }
-  if (has_hexahedra)
+  else
   {
-    geom_types.push_back(mfem::Geometry::CUBE);
-  }
-  if (has_prisms)
-  {
-    geom_types.push_back(mfem::Geometry::PRISM);
-  }
-  if (has_pyramids)
-  {
-    geom_types.push_back(mfem::Geometry::PYRAMID);
+    if (has_simplices)
+    {
+      geom_types.push_back(mfem::Geometry::TETRAHEDRON);
+    }
+    if (has_hexahedra)
+    {
+      geom_types.push_back(mfem::Geometry::CUBE);
+    }
+    if (has_prisms)
+    {
+      geom_types.push_back(mfem::Geometry::PRISM);
+    }
+    if (has_pyramids)
+    {
+      geom_types.push_back(mfem::Geometry::PYRAMID);
+    }
   }
   return geom_types;
 }
@@ -1118,50 +1132,128 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
 
 double BoundingBox::Area() const
 {
-  return 4.0 * CVector3dMap(axes[0].data()).cross(CVector3dMap(axes[1].data())).norm();
+  const int dim = Dim();
+  if (dim == 3)
+  {
+    return 4.0 *
+           CVector3dMap(axes.GetColumn(0))
+               .cross(CVector3dMap(axes.GetColumn(1)))
+               .norm();
+  }
+  // 2D: area of the parallelogram spanned by the two axis vectors (2D cross product).
+  const double *a0 = axes.GetColumn(0);
+  const double *a1 = axes.GetColumn(1);
+  return 4.0 * std::abs(a0[0] * a1[1] - a0[1] * a1[0]);
 }
 
 double BoundingBox::Volume() const
 {
-  return planar ? 0.0 : 2.0 * CVector3dMap(axes[2].data()).norm() * Area();
+  if (Dim() < 3 || planar)
+  {
+    return 0.0;
+  }
+  return 2.0 * CVector3dMap(axes.GetColumn(2)).norm() * Area();
 }
 
-std::array<std::array<double, 3>, 3> BoundingBox::Normals() const
+mfem::DenseMatrix BoundingBox::Normals() const
 {
-  std::array<std::array<double, 3>, 3> normals = {axes[0], axes[1], axes[2]};
-  Vector3dMap(normals[0].data()).normalize();
-  Vector3dMap(normals[1].data()).normalize();
-  Vector3dMap(normals[2].data()).normalize();
+  const int dim = Dim();
+  mfem::DenseMatrix normals(axes);
+  for (int i = 0; i < dim; i++)
+  {
+    mfem::Vector col(normals.GetColumn(i), normals.Height());
+    double nrm = col.Norml2();
+    if (nrm > 0.0)
+    {
+      col /= nrm;
+    }
+  }
   return normals;
 }
 
-std::array<double, 3> BoundingBox::Lengths() const
+mfem::Vector BoundingBox::Lengths() const
 {
-  return {2.0 * CVector3dMap(axes[0].data()).norm(),
-          2.0 * CVector3dMap(axes[1].data()).norm(),
-          2.0 * CVector3dMap(axes[2].data()).norm()};
+  const int dim = Dim();
+  const int h = axes.Height();
+  mfem::Vector lengths(dim);
+  for (int i = 0; i < dim; i++)
+  {
+    const double *col = axes.GetColumn(i);
+    double nrm = 0.0;
+    for (int j = 0; j < h; j++)
+    {
+      nrm += col[j] * col[j];
+    }
+    lengths(i) = 2.0 * std::sqrt(nrm);
+  }
+  return lengths;
 }
 
-std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direction) const
+mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
 {
-  const auto eig_dir = CVector3dMap(direction.data());
-  std::array<double, 3> deviation_deg;
-  for (std::size_t i = 0; i < 3; i++)
+  const int dim = Dim();
+  const int h = axes.Height();
+  MFEM_VERIFY(direction.Size() == dim,
+              "Direction vector size must match bounding box dimension!");
+  double dir_norm = direction.Norml2();
+  mfem::Vector deviation_deg(dim);
+  for (int i = 0; i < dim; i++)
   {
-    deviation_deg[i] =
-        std::acos(std::min(1.0, std::abs(eig_dir.normalized().dot(
-                                    CVector3dMap(axes[i].data()).normalized())))) *
-        (180.0 / M_PI);
+    const double *col = axes.GetColumn(i);
+    double ax_norm = 0.0, dot = 0.0;
+    for (int j = 0; j < h; j++)
+    {
+      ax_norm += col[j] * col[j];
+      dot += direction(j) * col[j];
+    }
+    ax_norm = std::sqrt(ax_norm);
+    double cosine = (dir_norm > 0.0 && ax_norm > 0.0)
+                         ? dot / (dir_norm * ax_norm)
+                         : 0.0;
+    deviation_deg(i) =
+        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / M_PI);
   }
   return deviation_deg;
 }
+
+namespace
+{
+
+// Trim a 3D BoundingBox to the given spatial dimension by extracting the leading
+// dim x dim submatrix from axes and first dim entries of center.
+void TrimBoundingBox(BoundingBox &box, int sdim)
+{
+  if (sdim < 3 && box.Dim() == 3)
+  {
+    mfem::Vector c(sdim);
+    for (int i = 0; i < sdim; i++)
+    {
+      c(i) = box.center(i);
+    }
+    box.center = c;
+
+    mfem::DenseMatrix a(sdim, sdim);
+    for (int j = 0; j < sdim; j++)
+    {
+      for (int i = 0; i < sdim; i++)
+      {
+        a(i, j) = box.axes(i, j);
+      }
+    }
+    box.axes = a;
+  }
+}
+
+}  // namespace
 
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+  auto box = BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+  TrimBoundingBox(box, mesh.SpaceDimension());
+  return box;
 }
 
 BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -1169,18 +1261,24 @@ BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &m
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+  auto ball = BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+  TrimBoundingBox(ball, mesh.SpaceDimension());
+  return ball;
 }
 
 double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir)
+                          bool bdr, const mfem::Vector &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   double length;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
-    CVector3dMap direction(dir.data());
+    Eigen::Vector3d direction = Eigen::Vector3d::Zero();
+    for (int i = 0; i < dir.Size(); i++)
+    {
+      direction(i) = dir(i);
+    }
     auto Dot = [&](const auto &x, const auto &y)
     { return direction.dot(x) < direction.dot(y); };
     auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
@@ -1192,14 +1290,18 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
 }
 
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin, bool max)
+                            bool bdr, const mfem::Vector &origin, bool max)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   double dist;
   if (dominant_rank == Mpi::Rank(mesh.GetComm()))
   {
-    CVector3dMap x0(origin.data());
+    Eigen::Vector3d x0 = Eigen::Vector3d::Zero();
+    for (int i = 0; i < origin.Size(); i++)
+    {
+      x0(i) = origin(i);
+    }
     auto p =
         max ? std::max_element(vertices.begin(), vertices.end(),
                                [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
@@ -1976,7 +2078,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
                       "erroneous results, consider separating into different attributes!");
     }
     vert_to_elem.reset(orig_mesh->GetVertexToElementTable());  // Owned by caller
-    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
+    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                                : orig_mesh->ElementToFaceTable());
     int new_nv_dups = 0;
     for (auto be : crack_bdr_elem)
     {
@@ -2350,7 +2453,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     // also renumber the original boundary elements. To renumber the original boundary
     // elements in the mesh, we use the updated vertex connectivity from the torn elements
     // in the new mesh (done above).
-    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
+    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                                : orig_mesh->ElementToFaceTable());
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       // Whether on the crack or not, we renumber the boundary element vertices as needed
@@ -2412,7 +2516,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     // Some (1-based) boundary attributes may be empty since they were removed from the
     // original mesh, but to keep attributes the same as config file we don't compress the
     // list.
-    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
+    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                                : orig_mesh->ElementToFaceTable());
     int bdr_attr_max =
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
@@ -2522,8 +2627,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     mfem::Vector displacements(nv * sdim);
     displacements = 0.0;
     double h_min = mfem::infinity();
-    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
-    const mfem::Table &new_elem_to_face = new_mesh->ElementToFaceTable();
+    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                                : orig_mesh->ElementToFaceTable());
+    const mfem::Table &new_elem_to_face = (new_mesh->Dimension() == 2 ? new_mesh->ElementToEdgeTable()
+                                               : new_mesh->ElementToFaceTable());
     for (auto be : crack_bdr_elem)
     {
       // Get the neighboring elements (same indices in the old and new mesh).

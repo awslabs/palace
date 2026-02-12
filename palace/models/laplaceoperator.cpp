@@ -154,7 +154,7 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    : "Full");
 
     const auto &mesh = *h1_fespace.GetParMesh();
-    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
+    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : geom_types)
     {
