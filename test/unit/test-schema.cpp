@@ -50,7 +50,6 @@ TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial
   }
 }
 
-
 TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
 {
   // Schema directory is relative to test source directory.
