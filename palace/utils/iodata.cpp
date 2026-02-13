@@ -448,12 +448,12 @@ void IoData::CheckConfiguration()
   }
   // Compute matrix symmetry type for sparse direct solvers.
   if (solver.linear.pc_mat_shifted || problem.type == ProblemType::TRANSIENT ||
-      problem.type == ProblemType::ELECTROSTATIC)
+      problem.type == ProblemType::ELECTROSTATIC ||
+      problem.type == ProblemType::MAGNETOSTATIC)
   {
     solver.linear.pc_mat_sym = MatrixSymmetry::SPD;
   }
-  else if (problem.type == ProblemType::MAGNETOSTATIC ||
-           boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
+  else if (boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
   {
     solver.linear.pc_mat_sym = MatrixSymmetry::SYMMETRIC;
   }
