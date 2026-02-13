@@ -130,10 +130,15 @@ private:
   std::unique_ptr<CurlFluxErrorEstimator<VecType>> curl_estimator;
 
 public:
+  // For 2D, curl_fespace and h1_fespaces provide the L2 curl space (B-field) and H1
+  // hierarchy (smooth H projection). For 3D, these are nullptr and the RT/ND spaces are
+  // used instead.
   TimeDependentFluxErrorEstimator(const MaterialOperator &mat_op,
                                   FiniteElementSpaceHierarchy &nd_fespaces,
                                   FiniteElementSpaceHierarchy &rt_fespaces, double tol,
-                                  int max_it, int print, bool use_mg);
+                                  int max_it, int print, bool use_mg,
+                                  FiniteElementSpace *curl_fespace = nullptr,
+                                  FiniteElementSpaceHierarchy *h1_fespaces = nullptr);
 
   // Compute elemental error indicators given the electric field and magnetic flux density
   // as a vectors of true dofs, and fold into an existing indicator. The indicators are
