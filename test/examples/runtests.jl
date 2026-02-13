@@ -91,7 +91,12 @@ arg_configs = [
             "cpw/wave_eigen",
             "adapter/hybrid",
             "disc2d",
-            "cavity2d/eigenmode"
+            "cavity2d/eigenmode",
+            "cavity2d/pmc",
+            "cavity2d/impedance",
+            "cavity2d/absorbing",
+            "cavity2d/conductivity",
+            "cavity2d/periodic"
         ],
         description="Test cases to run",
         parser=s -> String.(split(s, ' '))
@@ -582,6 +587,105 @@ if "cavity2d/eigenmode" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/pmc" in cases
+    @info "Testing cavity2d/pmc (2D eigenmode with PMC BC)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_pmc.json",
+        "pmc";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/impedance" in cases
+    @info "Testing cavity2d/impedance (2D eigenmode with impedance BC)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_impedance.json",
+        "impedance";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/absorbing" in cases
+    @info "Testing cavity2d/absorbing (2D eigenmode with absorbing BC)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_absorbing.json",
+        "absorbing";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 2.0e-2
+
+if "cavity2d/conductivity" in cases
+    @info "Testing cavity2d/conductivity (2D driven with conductivity BC)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_conductivity.json",
+        "conductivity";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        paraview_fields=false,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+
+if "cavity2d/periodic" in cases
+    @info "Testing cavity2d/periodic (2D eigenmode with periodic BC)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_periodic.json",
+        "periodic";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)",
+                          "Q", "Im{f} (GHz)"],
         paraview_fields=false,
         skip_rowcount=true,
         device=device,
