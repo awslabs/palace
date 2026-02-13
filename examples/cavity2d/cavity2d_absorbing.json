@@ -1,0 +1,55 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/absorbing"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cavity2d.mesh",
+    "L0": 1.0  // m
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1, 3, 4]  // bottom, top, left
+    },
+    "Absorbing":
+    {
+      "Attributes": [2],  // right wall
+      "Order": 1
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 5,
+      "Tol": 1.0e-8,
+      "Target": 0.1,  // GHz
+      "Save": 5
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
