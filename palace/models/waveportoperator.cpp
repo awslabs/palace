@@ -713,8 +713,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
           {
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
-                port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
-                0.0, true, data.verbose - 1);
+                port_comm, MatrixSymmetry::UNSYMMETRIC, SymbolicFactorization::DEFAULT, 0.0,
+                true, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
