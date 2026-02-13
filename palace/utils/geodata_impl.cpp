@@ -218,6 +218,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
   box.axes.SetSize(3, 3);
   box.axes = 0.0;
   box.planar = false;
+  bool collinear = false;
   if (dominant_rank == Mpi::Rank(comm))
   {
     // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
@@ -263,7 +264,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                             return PerpendicularDistance({n_1}, origin, x) <
                                    PerpendicularDistance({n_1}, origin, y);
                           }));
-    if (max_perp_dist < rel_tol * diag_length)
+    collinear = (max_perp_dist < rel_tol * diag_length);
+    if (collinear)
     {
       // Collinear case: all points lie on the same line. Build a bounding box with the
       // primary axis along the line and a perpendicular second axis (zero length but
@@ -301,11 +303,9 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
         box.axes(i, 0) = eig_axis(i);
         box.axes(i, 1) = perp(i);  // Zero-length perpendicular (direction only)
       }
-      Mpi::Broadcast(3, box.center.HostReadWrite(), dominant_rank, comm);
-      Mpi::Broadcast(3 * 3, box.axes.HostReadWrite(), dominant_rank, comm);
-      Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
-      return box;
     }
+    if (!collinear)
+    {
     const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(),
                                         [&](const auto &x, const auto &y)
                                         {
@@ -460,6 +460,18 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
         box.axes(j, i) = eig_axes[i](j);
       }
     }
+    }  // if (!collinear)
+  }
+
+  // Broadcast collinear flag so all ranks can take the same early return path,
+  // avoiding MPI deadlock from mismatched broadcast counts.
+  Mpi::Broadcast(1, &collinear, dominant_rank, comm);
+  if (collinear)
+  {
+    Mpi::Broadcast(3, box.center.HostReadWrite(), dominant_rank, comm);
+    Mpi::Broadcast(3 * 3, box.axes.HostReadWrite(), dominant_rank, comm);
+    Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
+    return box;
   }
 
   // Broadcast result to all processors.

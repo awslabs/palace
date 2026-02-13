@@ -69,6 +69,17 @@ public:
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
   auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
+  // Returns the scalar z-z (out-of-plane) component of the inverse permeability for a
+  // given attribute. In 2D, this is stored in mat_muinv_scalar; in 3D, it is the (2,2)
+  // entry of the full inverse permeability tensor.
+  double GetInvPermeabilityZZ(int attr) const
+  {
+    if (mat_muinv.SizeI() == 2)
+    {
+      return Wrap(mat_muinv_scalar, attr)(0, 0);
+    }
+    return Wrap(mat_muinv, attr)(2, 2);
+  }
   auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
   auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
