@@ -1,0 +1,95 @@
+{
+  "Problem":
+  {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw2d_postpro.mesh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 9.3
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        { "Index": 1, "Attributes": [1] },
+        { "Index": 2, "Attributes": [2] }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "Ground":
+    {
+      "Attributes": [6]
+    },
+    "Terminal":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5]
+      }
+    ],
+    "Postprocessing":
+    {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [5],
+          "Type": "Electric",
+          "TwoSided": true
+        }
+      ],
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [7],
+          "Type": "SA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 2,
+          "Attributes": [5],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 3,
+          "Attributes": [5],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 1.0
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Electrostatic": { "Save": 1 },
+    "Linear": { "Type": "BoomerAMG", "KSPType": "CG", "Tol": 1.0e-8, "MaxIts": 100 }
+  }
+}
