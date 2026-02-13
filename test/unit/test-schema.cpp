@@ -113,8 +113,8 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
   {
     json config = {{"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}}};
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
     // Missing "Problem" which is required.
 
     std::string err = ValidateConfig(config);
@@ -126,8 +126,8 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     json config = {{"Problem", {{"Type", "InvalidType"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}}};
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
 
     std::string err = ValidateConfig(config);
     CHECK(!err.empty());
@@ -138,12 +138,54 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     json config = {{"Problem", {{"Type", "Eigenmode"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()},
                    {"UnknownSection", {}}};
 
     std::string err = ValidateConfig(config);
     CHECK(!err.empty());
+  }
+
+  SECTION("Problem.Type requires matching Solver section")
+  {
+    // Driven type requires Solver.Driven section
+    json driven_missing = {{"Problem", {{"Type", "Driven"}}},
+                           {"Model", {{"Mesh", "test.msh"}}},
+                           {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                           {"Boundaries", json::object()},
+                           {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(driven_missing).empty());
+
+    // Eigenmode type requires Solver.Eigenmode section
+    json eigen_missing = {{"Problem", {{"Type", "Eigenmode"}}},
+                          {"Model", {{"Mesh", "test.msh"}}},
+                          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                          {"Boundaries", json::object()},
+                          {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(eigen_missing).empty());
+
+    // Transient type requires Solver.Transient section
+    json transient_missing = {{"Problem", {{"Type", "Transient"}}},
+                              {"Model", {{"Mesh", "test.msh"}}},
+                              {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                              {"Boundaries", json::object()},
+                              {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(transient_missing).empty());
+
+    // Electrostatic and Magnetostatic don't require matching sections (have defaults)
+    json electro_ok = {{"Problem", {{"Type", "Electrostatic"}}},
+                       {"Model", {{"Mesh", "test.msh"}}},
+                       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                       {"Boundaries", json::object()},
+                       {"Solver", json::object()}};
+    CHECK(ValidateConfig(electro_ok).empty());
+
+    json magneto_ok = {{"Problem", {{"Type", "Magnetostatic"}}},
+                       {"Model", {{"Mesh", "test.msh"}}},
+                       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                       {"Boundaries", json::object()},
+                       {"Solver", json::object()}};
+    CHECK(ValidateConfig(magneto_ok).empty());
   }
 }
 

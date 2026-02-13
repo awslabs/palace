@@ -19,7 +19,7 @@
       "required": ["Target"],
       "properties":
       {
-        "Target": { "type": "number" },
+        "Target": { "type": "number", "exclusiveMinimum": 0.0 },
         "Tol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
@@ -113,8 +113,8 @@
         "Excitation": { "type": "string" },
         "ExcitationFreq": { "type": "number" },
         "ExcitationWidth": { "type": "number" },
-        "MaxTime": { "type": "number" },
-        "TimeStep": { "type": "number" },
+        "MaxTime": { "type": "number", "exclusiveMinimum": 0.0 },
+        "TimeStep": { "type": "number", "exclusiveMinimum": 0.0 },
         "SaveStep": { "type": "integer" },
         "Order": {"type": "integer", "minimum": 2, "maximum": 5},
         "RelTol": {"type": "number", "exclusiveMinimum": 0.0},

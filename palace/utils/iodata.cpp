@@ -219,11 +219,26 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   }
 
   // Set up configuration option data structures.
-  problem.SetUp(config);
-  model.SetUp(config);
-  domains.SetUp(config);
-  boundaries.SetUp(config);
-  solver.SetUp(config);
+  auto problem_it = config.find("Problem");
+  MFEM_VERIFY(problem_it != config.end(),
+              "\"Problem\" must be specified in the configuration file!");
+  problem = config::ProblemData(*problem_it);
+  auto model_it = config.find("Model");
+  MFEM_VERIFY(model_it != config.end(),
+              "\"Model\" must be specified in the configuration file!");
+  model = config::ModelData(*model_it);
+  auto domains_it = config.find("Domains");
+  MFEM_VERIFY(domains_it != config.end(),
+              "\"Domains\" must be specified in the configuration file!");
+  domains = config::DomainData(*domains_it);
+  auto boundaries_it = config.find("Boundaries");
+  MFEM_VERIFY(boundaries_it != config.end(),
+              "\"Boundaries\" must be specified in the configuration file!");
+  boundaries = config::BoundaryData(*boundaries_it);
+  if (auto solver_it = config.find("Solver"); solver_it != config.end())
+  {
+    solver = config::SolverData(*solver_it);
+  }
 
   // Cleanup and error checking.
   config.erase("Problem");
