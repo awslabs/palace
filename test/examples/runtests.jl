@@ -96,7 +96,9 @@ arg_configs = [
             "cavity2d/impedance",
             "cavity2d/absorbing",
             "cavity2d/conductivity",
-            "cavity2d/periodic"
+            "cavity2d/periodic",
+            "cavity2d/magnetostatic",
+            "cavity2d/transient"
         ],
         description="Test cases to run",
         parser=s -> String.(split(s, ' '))
@@ -688,6 +690,44 @@ if "cavity2d/periodic" in cases
                           "Q", "Im{f} (GHz)"],
         paraview_fields=false,
         skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/magnetostatic" in cases
+    @info "Testing cavity2d/magnetostatic (2D magnetostatic)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_magnetostatic.json",
+        "magnetostatic";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        paraview_fields=false,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 2.0e-2
+
+if "cavity2d/transient" in cases
+    @info "Testing cavity2d/transient (2D transient)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_transient.json",
+        "transient";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver

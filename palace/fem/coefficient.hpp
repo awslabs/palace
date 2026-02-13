@@ -111,15 +111,15 @@ public:
     // element 1 (element 2) and n points into element 1.
     if (vdim == 2)
     {
-      // In 2D, B is a scalar (out-of-plane component). H_z = μ⁻¹ B_z. The surface
+      // In 2D, B is a scalar (out-of-plane component). H_z = μ⁻¹_zz B_z. The surface
       // current on a 1D boundary edge is Jₛ = n x (H_z ẑ), which gives a tangential
       // 2D vector: Jₛ = H_z * (n_y, -n_x).
       double Hz = B.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint());
-      Hz *= mat_op.GetInvPermeability(FET.Elem1->Attribute)(0, 0);
+      Hz *= mat_op.GetInvPermeabilityZZ(FET.Elem1->Attribute);
       if (FET.Elem2)
       {
         double Hz2 = B.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint());
-        Hz2 *= mat_op.GetInvPermeability(FET.Elem2->Attribute)(0, 0);
+        Hz2 *= mat_op.GetInvPermeabilityZZ(FET.Elem2->Attribute);
         Hz -= Hz2;
       }
       double normal_data[2];
@@ -270,10 +270,10 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
   const int sdim = T.GetSpaceDim();
   if (sdim == 2)
   {
-    // In 2D, E is in-plane (2-component) and H = μ⁻¹ B is a scalar (out-of-plane).
+    // In 2D, E is in-plane (2-component) and H = μ⁻¹_zz B is a scalar (out-of-plane).
     // Poynting vector S = E × (H_z ẑ) = H_z * (E_y, -E_x).
     double Hz = B->GetValue(T, T.GetIntPoint());
-    Hz *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+    Hz *= mat_op.GetInvPermeabilityZZ(T.Attribute);
     double E_data[2];
     mfem::Vector Ev(E_data, 2);
     E->GetVectorValue(T, T.GetIntPoint(), Ev);
@@ -588,10 +588,10 @@ private:
     const int sdim = T.GetSpaceDim();
     if (sdim == 2)
     {
-      // In 2D, E is in-plane (2-component) and H = μ⁻¹ B is a scalar (out-of-plane).
+      // In 2D, E is in-plane (2-component) and H = μ⁻¹_zz B is a scalar (out-of-plane).
       // Poynting vector S = Re{E × H⋆} with E × (H_z ẑ) = H_z * (E_y, -E_x).
       double Hz = B.Real().GetValue(T, T.GetIntPoint());
-      Hz *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+      Hz *= mat_op.GetInvPermeabilityZZ(T.Attribute);
       double E_data[2];
       mfem::Vector Ev(E_data, 2);
       E.Real().GetVectorValue(T, T.GetIntPoint(), Ev);
@@ -601,7 +601,7 @@ private:
       if (E.HasImag())
       {
         double Hzi = B.Imag().GetValue(T, T.GetIntPoint());
-        Hzi *= mat_op.GetInvPermeability(T.Attribute)(0, 0);
+        Hzi *= mat_op.GetInvPermeabilityZZ(T.Attribute);
         E.Imag().GetVectorValue(T, T.GetIntPoint(), Ev);
         V[0] += Ev[1] * Hzi;
         V[1] += -Ev[0] * Hzi;

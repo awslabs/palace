@@ -180,14 +180,6 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
   const bool swap =
       !forward &&
       (aux_fespace->GetFEColl().GetMapType(dim) == GetFEColl().GetDerivMapType(dim));
-  if (swap)
-  {
-    Mpi::Print("DiscreteInterpolator: forward={}, dim={}, primal_map={}, aux_map={}, "
-               "primal_deriv={}, aux_deriv={}\n",
-               forward, dim, GetFEColl().GetMapType(dim),
-               aux_fespace->GetFEColl().GetMapType(dim), GetFEColl().GetDerivMapType(dim),
-               aux_fespace->GetFEColl().GetDerivMapType(dim));
-  }
   MFEM_VERIFY(!swap, "Incorrect order for primal/auxiliary (test/trial) spaces in discrete "
                      "interpolator construction!");
   MFEM_VERIFY(forward,

@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cpw2d_postpro.mesh",
+    "Mesh": "mesh/cpw2d_postpro.msh",
     "L0": 1.0e-6  // μm
   },
   "Domains":
@@ -36,7 +36,7 @@
   {
     "Ground":
     {
-      "Attributes": [6]
+      "Attributes": [3, 4, 6]
     },
     "Terminal":
     [
