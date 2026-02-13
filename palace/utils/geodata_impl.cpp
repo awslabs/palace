@@ -265,11 +265,33 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                           }));
     if (max_perp_dist < rel_tol * diag_length)
     {
-      // Collinear case: all points lie on the same line. Build a degenerate bounding box
-      // with one axis along the line and all other axes zero.
+      // Collinear case: all points lie on the same line. Build a bounding box with the
+      // primary axis along the line and a perpendicular second axis (zero length but
+      // defines the direction, needed for lumped port direction alignment in 2D).
       box.planar = true;
       Eigen::Vector3d eig_center = 0.5 * (v_000 + v_111);
       Eigen::Vector3d eig_axis = 0.5 * (v_111 - v_000);
+      // Compute perpendicular direction: rotate 90° in the dominant plane
+      Eigen::Vector3d perp = Eigen::Vector3d::Zero();
+      if (std::abs(eig_axis(0)) > rel_tol || std::abs(eig_axis(1)) > rel_tol)
+      {
+        // Line has x-y component: perpendicular in the x-y plane
+        perp(0) = -eig_axis(1);
+        perp(1) = eig_axis(0);
+      }
+      else if (std::abs(eig_axis(2)) > rel_tol)
+      {
+        // Line is purely in z: perpendicular in x
+        perp(0) = eig_axis(2);
+      }
+      // Scale perpendicular to same half-length as primary axis, so the collinear
+      // bounding box appears "square". This allows direction alignment to work for
+      // directions perpendicular to the edge (e.g. +Y for a horizontal port edge).
+      if (perp.norm() > 0.0)
+      {
+        perp.normalize();
+        perp *= eig_axis.norm();
+      }
       box.center.SetSize(3);
       box.axes.SetSize(3, 3);
       box.axes = 0.0;
@@ -277,6 +299,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
       {
         box.center(i) = eig_center(i);
         box.axes(i, 0) = eig_axis(i);
+        box.axes(i, 1) = perp(i);  // Zero-length perpendicular (direction only)
       }
       Mpi::Broadcast(3, box.center.HostReadWrite(), dominant_rank, comm);
       Mpi::Broadcast(3 * 3, box.axes.HostReadWrite(), dominant_rank, comm);
