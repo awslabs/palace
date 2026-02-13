@@ -541,8 +541,8 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
       ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
                             grad_estimator.nd_fespace, grad_estimator.rt_fespace,
                             grad_estimator.projector, grad_estimator.integ_op);
-  // In 2D, the curl flux estimator is skipped because B lives on L2 (scalar curl), not
-  // RT. The error estimate is based solely on the E-field gradient flux.
+  // In 2D, the curl flux estimator uses L2/H1 spaces (scalar curl) instead of RT/ND.
+  // Both E-field gradient flux and B-field curl flux contribute to the error estimate.
   if (curl_estimator)
   {
     auto curl_estimates = ComputeErrorEstimates(

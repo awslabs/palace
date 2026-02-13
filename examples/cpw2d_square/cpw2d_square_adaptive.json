@@ -3,7 +3,7 @@
   {
     "Type": "Driven",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro/adaptive"
   },
   "Model":
   {
@@ -68,16 +68,25 @@
     "Device": "CPU",
     "Driven":
     {
-      "MinFreq": 2.0,  // GHz
-      "MaxFreq": 30.0,  // GHz
-      "FreqStep": 4.0  // GHz
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 2.0,  // GHz
+          "MaxFreq": 30.0,  // GHz
+          "FreqStep": 1.0  // GHz (output resolution)
+        }
+      ],
+      "AdaptiveTol": 1.0e-3,
+      "AdaptiveMaxSamples": 15
     },
     "Linear":
     {
       "Type": "Default",
         "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 200
+      "MaxIts": 200,
+      "MGMaxLevels": 1
     }
   }
 }

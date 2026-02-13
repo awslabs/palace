@@ -271,10 +271,13 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
     if (sdim == 2)
     {
-      // In 2D, curl-curl uses a scalar coefficient (curl is scalar). Extract
-      // the (0,0) entry of the inverse permeability, which is exact for isotropic
-      // materials and the in-plane component for anisotropic.
-      mat_muinv_scalar(count)(0, 0) = mat_muinv(count)(0, 0);
+      // In 2D, curl-curl uses a scalar coefficient (curl is scalar). For TM mode,
+      // the curl-curl operator needs the z-z (out-of-plane) component of the inverse
+      // permeability, which is the (2,2) entry of the full 3x3 inverse.
+      mfem::DenseMatrix mat_mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
+      mfem::DenseMatrix mat_muinv_3d(3, 3);
+      mfem::DenseMatrixInverse(mat_mu_3d, true).GetInverseMatrix(mat_muinv_3d);
+      mat_muinv_scalar(count)(0, 0) = mat_muinv_3d(2, 2);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
