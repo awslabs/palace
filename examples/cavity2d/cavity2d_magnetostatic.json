@@ -51,7 +51,7 @@
     "Device": "CPU",
     "Magnetostatic":
     {
-      "Save": 0
+      "Save": 1
     },
     "Linear":
     {
