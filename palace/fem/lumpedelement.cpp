@@ -94,12 +94,16 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
     }
   }
   l = lengths(l_component);
-  MFEM_VERIFY(
-      std::abs(l - mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec)) <
-          rel_tol * l,
-      "Bounding box discovered length ("
-          << l << ") should match projected length ("
-          << mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec) << "!");
+  // In 2D, the direction may be perpendicular to a collinear boundary (e.g., +Y for a
+  // horizontal edge). In this case the projected length is zero and the cross-check does
+  // not apply. The bounding box length from the perpendicular axis is used instead.
+  {
+    double proj_l = mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec);
+    MFEM_VERIFY(
+        sdim == 2 || std::abs(l - proj_l) < rel_tol * l,
+        "Bounding box discovered length ("
+            << l << ") should match projected length (" << proj_l << "!");
+  }
 
   if (sdim == 3)
   {
