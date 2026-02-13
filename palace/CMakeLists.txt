@@ -340,8 +340,10 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Generate embedded schema header from JSON schema files
+# Generate embedded schema header from JSON schema files at build time.
+# The header regenerates when any schema .json file changes.
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
+add_dependencies(${LIB_TARGET_NAME} generate_schema_header)
 
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
