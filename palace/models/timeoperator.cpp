@@ -51,11 +51,11 @@ public:
                                   std::function<double(double)> dJ_coef, double t0,
                                   mfem::TimeDependentOperator::Type type)
     : mfem::TimeDependentOperator(2 * space_op.GetNDSpace().GetTrueVSize() +
-                                      space_op.GetRTSpace().GetTrueVSize(),
+                                      space_op.GetCurlSpace().GetTrueVSize(),
                                   t0, type),
       comm(space_op.GetComm()), dJ_coef(dJ_coef),
       size_E(space_op.GetNDSpace().GetTrueVSize()),
-      size_B(space_op.GetRTSpace().GetTrueVSize()), Curl(space_op.GetCurlMatrix())
+      size_B(space_op.GetCurlSpace().GetTrueVSize()), Curl(space_op.GetCurlMatrix())
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
@@ -293,9 +293,9 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                           "excitation, received {}",
                           excitation_helper.Size()));
 
-  // Get sizes.
+  // Get sizes. Use GetCurlSpace() for B: RT in 3D, L2 in 2D.
   int size_E = space_op.GetNDSpace().GetTrueVSize();
-  int size_B = space_op.GetRTSpace().GetTrueVSize();
+  int size_B = space_op.GetCurlSpace().GetTrueVSize();
 
   // Allocate space for solution vectors.
   sol.SetSize(2 * size_E + size_B);
