@@ -36,7 +36,12 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
   }
   mfem::DenseMatrix Mout(N, N);
   Mout = 0.0;
-  if (N == 2)
+  if (N == 1)
+  {
+    Mout(0, 0) = functor(M(0, 0));
+    return Mout;
+  }
+  else if (N == 2)
   {
     const auto &a = M(0, 0), &b = M(1, 1);
     const auto &d = M(0, 1);

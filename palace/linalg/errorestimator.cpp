@@ -26,6 +26,7 @@ PalacePragmaDiagnosticDisableUnused
 
 #include "fem/qfunctions/22/hcurlhdiv_error_22_qf.h"
 #include "fem/qfunctions/hcurlhdiv_error_qf.h"
+#include "fem/qfunctions/l2h1_error_qf.h"
 
 PalacePragmaDiagnosticPop
 
@@ -112,10 +113,23 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
+  // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
+  const int dim = smooth_fespace.Dimension();
+  const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
+  const bool scalar_flux =
+      (map_type == mfem::FiniteElement::VALUE ||
+       map_type == mfem::FiniteElement::INTEGRAL);
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
-    m.AddDomainIntegrator<VectorFEMassIntegrator>();
+    if (scalar_flux)
+    {
+      m.AddDomainIntegrator<MassIntegrator>();
+    }
+    else
+    {
+      m.AddDomainIntegrator<VectorFEMassIntegrator>();
+    }
     if (!use_mg)
     {
       M = BuildLevelParOperator<OperType>(m.Assemble(skip_zeros), smooth_fespace);
@@ -136,7 +150,14 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   {
     // Flux operator is always partially assembled.
     BilinearForm flux(rhs_fespace, smooth_fespace);
-    flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+    if (scalar_flux)
+    {
+      flux.AddDomainIntegrator<MassIntegrator>(coeff);
+    }
+    else
+    {
+      flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+    }
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
@@ -426,13 +447,18 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
       // Construct coefficient for discontinuous flux, then smooth flux.
-      auto mat_invsqrtmu = linalg::MatrixSqrt(mat_op.GetInvPermeability());
-      auto mat_sqrtmu = linalg::MatrixPow(mat_op.GetInvPermeability(), -0.5);
+      // In 2D, the curl is scalar so we use scalar (1x1) √μ⁻¹ and √μ coefficients.
+      const bool scalar_curl = (mesh.Dimension() == 2);
+      const auto &muinv_tensor = scalar_curl ? mat_op.GetCurlCurlInvPermeability()
+                                             : mat_op.GetInvPermeability();
+      auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
+      auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
-      auto ctx = ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &invsqrtmu_func,
-                                                  mesh.SpaceDimension(), &sqrtmu_func);
+      const int coeff_dim = scalar_curl ? 1 : mesh.SpaceDimension();
+      auto ctx = ceed::PopulateCoefficientContext(coeff_dim, &invsqrtmu_func,
+                                                  coeff_dim, &sqrtmu_func);
 
       // Assemble the libCEED operator. Inputs: B (for discontinuous flux), then smooth
       // flux.
@@ -441,8 +467,9 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       switch (10 * mesh.SpaceDimension() + mesh.Dimension())
       {
         case 22:
-          info.apply_qf = f_apply_hdivhcurl_error_22;
-          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_error_22_loc);
+          // 2D scalar curl: L2 (B) × H1 (smooth H) error
+          info.apply_qf = f_apply_l2h1_error;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2h1_error_loc);
           break;
         case 33:
           info.apply_qf = f_apply_hdivhcurl_error_33;
@@ -487,13 +514,20 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg)
+    bool use_mg, FiniteElementSpace *curl_fespace,
+    FiniteElementSpaceHierarchy *h1_fespaces)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
                    use_mg)
 {
-  // In 2D, curl B flux estimation is skipped because B lives on L2 (scalar), not RT.
-  if (nd_fespaces.GetFinestFESpace().Dimension() >= 3)
+  if (curl_fespace && h1_fespaces)
   {
+    // 2D: curl is scalar. Use the L2 curl space for B and H1 spaces for smooth H.
+    curl_estimator = std::make_unique<CurlFluxErrorEstimator<VecType>>(
+        mat_op, *curl_fespace, *h1_fespaces, tol, max_it, print, use_mg);
+  }
+  else
+  {
+    // 3D: curl is vector. Use RT for B and ND for smooth H.
     curl_estimator = std::make_unique<CurlFluxErrorEstimator<VecType>>(
         mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print, use_mg);
   }
