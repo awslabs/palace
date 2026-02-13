@@ -12,6 +12,8 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+#include "units.hpp"
+
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
 // value corresponding to the string cannot be found. Also adds an overload for stream
 // printing enum values.
@@ -436,7 +438,7 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
 
 DomainData::DomainData(const json &domains)
 {
-  for (const auto &d : *domains.find("Materials"))
+  for (const auto &d : domains.at("Materials"))
   {
     materials.emplace_back(d);
   }
@@ -552,7 +554,7 @@ LumpedPortData::LumpedPortData(const json &port)
   }
   else
   {
-    for (const auto &e : *port.find("Elements"))
+    for (const auto &e : port.at("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
@@ -574,8 +576,8 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
-  auto pairs = periodic.find("BoundaryPairs");
-  for (auto it = pairs->begin(); it != pairs->end(); ++it)
+  const auto &pairs = periodic.at("BoundaryPairs");
+  for (auto it = pairs.begin(); it != pairs.end(); ++it)
   {
     PeriodicData &data = boundary_pairs.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
@@ -625,7 +627,7 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
   }
   else
   {
-    for (const auto &e : *source.find("Elements"))
+    for (const auto &e : source.at("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
@@ -1402,8 +1404,6 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 }
 
 }  // namespace palace::config
-
-#include "units.hpp"
 
 namespace palace::config
 {

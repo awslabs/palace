@@ -56,6 +56,8 @@ InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeDa
   {
     if (op.GetCode()[i++] == 2)
     {
+      // Coordinates are nondimensional at this point (already scaled by
+      // NondimensionalizeInputs before operator construction).
       Mpi::Warning(
           "Probe {:d} at ({:.3e}) could not be found!\n Using default value 0.0!\n", idx,
           fmt::join(data.center, ", "));

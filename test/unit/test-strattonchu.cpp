@@ -164,6 +164,10 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
 
   Units units(0.496, 1.453);  // Pick some arbitrary non-trivial units for testing
 
+  // Initialize quadrature order for tests using granular constructors.
+  constexpr int order = 3;  // Matches ND_FECollection order below
+  fem::DefaultIntegrationOrder::p_trial = order;
+
   config::MaterialData material;
   material.attributes = {1};
 

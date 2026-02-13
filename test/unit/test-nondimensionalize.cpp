@@ -13,8 +13,8 @@ namespace palace
 {
 using namespace Catch;
 
-// Test that verifies NondimensionalizeInputs behavior before refactoring.
-// After refactoring to free functions, this test ensures no behavior changed.
+// Integration test verifying IoData::NondimensionalizeInputs correctly scales all config
+// fields to nondimensional units.
 TEST_CASE("Nondimensionalize via IoData", "[nondimensionalize][Serial]")
 {
   // Use non-trivial units: L0 = 1e-3 (mm), Lc = 2.0 (in mesh units, so 2mm)
@@ -193,6 +193,10 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     CHECK(data.sigma.s[0] ==
           Approx(1e6 / units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>()));
     CHECK(data.lambda_L == Approx(0.1 / units.GetMeshLengthRelativeScale()));
+
+    // Golden value: sigma_scale = 1/(Z0 * Lc_m) = 1/(376.730313412 * 2e-3) ~ 1.32721
+    // sigma_nondim = 1e6 / 1.32721 ~ 7.53461e5
+    CHECK(data.sigma.s[0] == Approx(7.534606268240600e+05).epsilon(1e-10));
   }
 
   SECTION("ConductivityData")
@@ -220,6 +224,14 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     CHECK(data.Rs == Approx(50.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>()));
     CHECK(data.Ls == Approx(1e-9 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>()));
     CHECK(data.Cs == Approx(1e-12 / units.GetScaleFactor<Units::ValueType::CAPACITANCE>()));
+
+    // Golden values with Lc_m = 2e-3 m:
+    // L_scale = mu0 * Lc_m = 1.25663706127e-6 * 2e-3 = 2.51327412254e-9 H
+    // Ls_nondim = 1e-9 / 2.51327412254e-9 ~ 0.39789
+    CHECK(data.Ls == Approx(3.978873577822725e-01).epsilon(1e-10));
+    // C_scale = epsilon0 * Lc_m = 8.85418781879e-12 * 2e-3 = 1.77084e-14 F
+    // Cs_nondim = 1e-12 / 1.77084e-14 ~ 56.470
+    CHECK(data.Cs == Approx(5.647045333045141e+01).epsilon(1e-10));
   }
 
   SECTION("LumpedPortData")

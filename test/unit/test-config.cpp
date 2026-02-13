@@ -8,7 +8,6 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
-#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -83,29 +82,6 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
       CHECK(it_bool->first == it_int->first);
       CHECK(it_bool->second.excitation == it_int->second.excitation);
     }
-  }
-
-  SECTION("Negative excitation throws")
-  {
-    json boundaries1 = {
-        {"LumpedPort",
-         {{{"Attributes", {5}},
-           {"Index", 1},
-           {"R", 50},
-           {"Direction", "+Y"},
-           {"Excitation", -1}}}},
-        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 1}}}}};
-    CHECK_THROWS(config::BoundaryData(boundaries1));
-
-    json boundaries2 = {
-        {"LumpedPort",
-         {{{"Attributes", {5}},
-           {"Index", 1},
-           {"R", 50},
-           {"Direction", "+Y"},
-           {"Excitation", 1}}}},
-        {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", -1}}}}};
-    CHECK_THROWS(config::BoundaryData(boundaries2));
   }
 
   SECTION("Repeated index within LumpedPort throws")
@@ -475,15 +451,6 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     json mismatch3 = {{"Samples", {{{"Type", "Linear"}, {"Freq", {0.11, 0.22, 0.34}}}}}};
     CHECK_THROWS(config::DrivenSolverData(mismatch3));
 
-    // Invalid log range (MinFreq = 0)
-    json invalid_log = {{"Samples",
-                         {{{"Type", "Log"},
-                           {"MinFreq", 0.0},
-                           {"MaxFreq", 1.0},
-                           {"NSample", 11},
-                           {"SaveStep", 2}}}}};
-    CHECK_THROWS(config::DrivenSolverData(invalid_log));
-
     // Invalid save frequency
     json invalid_save = {
         {"Samples",
@@ -492,24 +459,6 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
         {"Save", {0.05}},
         {"AdaptiveTol", 1e-3}};
     CHECK_THROWS(config::DrivenSolverData(invalid_save));
-  }
-}
-
-TEST_CASE("Config Linear Solver MaxIts", "[config][Serial]")
-{
-  SECTION("Linear solver MaxIts = 0 should fail schema validation")
-  {
-    json linear = {{"MaxIts", 0}};
-    std::string err = ValidateConfig(linear, "Linear");
-    CHECK(!err.empty());
-    CHECK(err.find("MaxIts") != std::string::npos);
-  }
-
-  SECTION("Linear solver with valid MaxIts should pass schema validation")
-  {
-    json linear = {{"MaxIts", 1}};
-    std::string err = ValidateConfig(linear, "Linear");
-    CHECK(err.empty());
   }
 }
 

@@ -641,3 +641,41 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(err.find("UnknownField") != std::string::npos);
   }
 }
+
+TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
+{
+  SECTION("Numeric bounds - Linear.MaxIts")
+  {
+    CHECK(!ValidateConfig(json{{"MaxIts", 0}}, "Linear").empty());
+    CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
+  }
+
+  SECTION("Excitation integer minimum - LumpedPort")
+  {
+    json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};
+    CHECK(!ValidateConfig(port, "LumpedPort").empty());
+  }
+
+  SECTION("Log exclusiveMinimum - Driven Samples")
+  {
+    json driven = {
+        {"Samples",
+         {{{"Type", "Log"}, {"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 5}}}}};
+    CHECK(!ValidateConfig(driven, "Driven").empty());
+  }
+
+  SECTION("Required field - Model without Mesh")
+  {
+    CHECK(!ValidateConfig(json::object(), "Model").empty());
+  }
+
+  SECTION("Enum - Problem Type")
+  {
+    json config = {{"Problem", {{"Type", "InvalidType"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+    CHECK(!ValidateConfig(config).empty());
+  }
+}
