@@ -16,6 +16,8 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added reporting for memory used by Palace. Peak values are also stored in
+    `postpro/palace.json`. [PR 629](https://github.com/awslabs/palace/pull/629)
   - Added JSON schema validation for configuration files at runtime, with embedded schemas
     and detailed error messages including valid enum options
     [PR 613](https://github.com/awslabs/palace/pull/613).

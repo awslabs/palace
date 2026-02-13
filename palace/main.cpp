@@ -22,6 +22,7 @@
 #include "utils/device.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
@@ -283,6 +284,11 @@ int main(int argc, char *argv[])
     mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
+    Mpi::Print(world_comm, "\n");
+    memory_reporting::PrintMemoryUsage(world_comm,
+                                       memory_reporting::GetCurrentMemoryStats(world_comm));
+    memory_reporting::PrintMemoryUsage(
+        world_comm, memory_reporting::GetCurrentNodeMemoryStats(world_comm));
     for (auto &m : mfem_mesh)
     {
       mesh.push_back(std::make_unique<Mesh>(std::move(m)));
@@ -293,8 +299,15 @@ int main(int argc, char *argv[])
   solver->SolveEstimateMarkRefine(mesh);
 
   // Print timing summary.
+  auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
+  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(world_comm);
+  Mpi::Print(world_comm, "\n");
+  memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
+  memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
+  solver->SaveMetadata(peak_mem);
+  solver->SaveMetadata(peak_node_mem);
   Mpi::Print(world_comm, "\n");
 
   // Finalize libCEED.
