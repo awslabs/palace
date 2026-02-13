@@ -9,10 +9,10 @@
 #include <mfem/linalg/vector.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/integrator.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
-#include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
