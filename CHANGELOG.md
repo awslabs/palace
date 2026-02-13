@@ -24,7 +24,7 @@ The format of this changelog is based on
   - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
     (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
     Many runtime checks are now caught earlier at configuration parsing time with clearer
-    error messages [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    error messages [PR 635](https://github.com/awslabs/palace/pull/635).
   - Added support for electric current dipole source excitations. Current dipoles can be
     configured as an array in `config["Domains"]["CurrentDipole"]` with specifications for
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
@@ -52,7 +52,7 @@ The format of this changelog is based on
     incorrect term in `AddMult` and `AddMultHermitianTranspose`.
     [PR 633](https://github.com/awslabs/palace/pull/633).
   - Fixed port excitation parsing to correctly handle signed integer values
-    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    [PR 635](https://github.com/awslabs/palace/pull/635).
 
 #### Interface Changes
 
