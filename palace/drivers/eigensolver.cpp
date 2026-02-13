@@ -330,10 +330,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen->SetLinearSolver(*ksp);
 
   // Initialize structures for storing and reducing the results of error estimation.
+  auto *curl_fespace = (space_op.GetNDSpace().Dimension() < 3)
+                            ? &space_op.GetCurlSpace()
+                            : nullptr;
+  auto *h1_fespaces = (space_op.GetNDSpace().Dimension() < 3)
+                           ? &space_op.GetH1Spaces()
+                           : nullptr;
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(
       space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, curl_fespace, h1_fespaces);
   ErrorIndicator indicator;
 
   // Eigenvalue problem solve.
