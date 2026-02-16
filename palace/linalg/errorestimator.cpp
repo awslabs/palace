@@ -117,8 +117,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   const int dim = smooth_fespace.Dimension();
   const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
   const bool scalar_flux =
-      (map_type == mfem::FiniteElement::VALUE ||
-       map_type == mfem::FiniteElement::INTEGRAL);
+      (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL);
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
@@ -449,16 +448,16 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       // Construct coefficient for discontinuous flux, then smooth flux.
       // In 2D, the curl is scalar so we use scalar (1x1) √μ⁻¹ and √μ coefficients.
       const bool scalar_curl = (mesh.Dimension() == 2);
-      const auto &muinv_tensor = scalar_curl ? mat_op.GetCurlCurlInvPermeability()
-                                             : mat_op.GetInvPermeability();
+      const auto &muinv_tensor =
+          scalar_curl ? mat_op.GetCurlCurlInvPermeability() : mat_op.GetInvPermeability();
       auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
       auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
       const int coeff_dim = scalar_curl ? 1 : mesh.SpaceDimension();
-      auto ctx = ceed::PopulateCoefficientContext(coeff_dim, &invsqrtmu_func,
-                                                  coeff_dim, &sqrtmu_func);
+      auto ctx = ceed::PopulateCoefficientContext(coeff_dim, &invsqrtmu_func, coeff_dim,
+                                                  &sqrtmu_func);
 
       // Assemble the libCEED operator. Inputs: B (for discontinuous flux), then smooth
       // flux.
@@ -514,8 +513,7 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, FiniteElementSpace *curl_fespace,
-    FiniteElementSpaceHierarchy *h1_fespaces)
+    bool use_mg, FiniteElementSpace *curl_fespace, FiniteElementSpaceHierarchy *h1_fespaces)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
                    use_mg)
 {

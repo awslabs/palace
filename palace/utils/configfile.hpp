@@ -516,6 +516,12 @@ public:
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 
+  // Optional endpoint coordinates for voltage line integral on the port face.
+  // When non-empty, enables GetVoltage() and GetCharacteristicImpedance().
+  std::vector<double> voltage_p1 = {};
+  std::vector<double> voltage_p2 = {};
+  int integration_order = 100;
+
   WavePortData() = default;
   WavePortData(const json &port);
 };
@@ -577,6 +583,30 @@ public:
   InterfaceDielectricData(const json &dielectric);
 };
 
+struct ModeImpedanceData
+{
+public:
+  // Boundary attributes for the voltage integration path (gap between ground and trace).
+  std::vector<int> voltage_attributes = {};
+
+  // Boundary attributes for the current integration loop (around the trace).
+  std::vector<int> current_attributes = {};
+
+  // Optional endpoint coordinates for the voltage line integral (alternative to boundary
+  // attributes). When non-empty, V = integral of E . dl is computed via GSLIB interpolation
+  // along the straight line from voltage_p1 to voltage_p2.
+  std::vector<double> voltage_p1 = {};
+  std::vector<double> voltage_p2 = {};
+
+  // Quadrature order for the coordinate-based line integral. Higher values give more
+  // integration points and better accuracy near field singularities at conductor edges.
+  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
+  int integration_order = 100;
+
+  ModeImpedanceData() = default;
+  ModeImpedanceData(const json &imp);
+};
+
 struct FarFieldPostData
 {
 public:
@@ -602,6 +632,7 @@ public:
   // Boundary postprocessing objects.
   std::map<int, SurfaceFluxData> flux = {};
   std::map<int, InterfaceDielectricData> dielectric = {};
+  std::map<int, ModeImpedanceData> impedance = {};
   FarFieldPostData farfield = {};
 
   BoundaryPostData() = default;
@@ -811,6 +842,12 @@ public:
 
   // Number of modes to write to disk.
   int n_post = 0;
+
+  // Target effective index for the eigenvalue solver shift-and-invert spectral
+  // transformation. When nonzero, the solver searches for modes with effective index near
+  // this value. When zero (default), the shift is computed automatically from material
+  // properties.
+  double target = 0.0;
 
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;

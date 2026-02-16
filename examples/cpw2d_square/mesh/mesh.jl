@@ -40,12 +40,12 @@ Generate a 2D CPW mesh with square lumped port patches, mirroring a horizontal s
 of the 3D CPW example. The trace is boolean-cut from the domain so it is not meshed.
 
 Layout (Y coordinates):
-  y=0          : bottom of domain
-  y=g          : bottom ground / bottom gap boundary
-  y=g+s        : bottom gap / trace boundary (PEC, from cut)
-  y=g+s+w      : trace / top gap boundary (PEC, from cut)
-  y=g+2s+w     : top gap / top ground boundary
-  y=2g+2s+w    : top of domain
+y=0          : bottom of domain
+y=g          : bottom ground / bottom gap boundary
+y=g+s        : bottom gap / trace boundary (PEC, from cut)
+y=g+s+w      : trace / top gap boundary (PEC, from cut)
+y=g+2s+w     : top gap / top ground boundary
+y=2g+2s+w    : top of domain
 
 Port patches are gap_width × gap_width squares at x=0..s and x=L-s..L in each gap.
 The port edge is the horizontal side of each square closest to the trace.
@@ -152,7 +152,7 @@ function generate_cpw2d_square_mesh(;
             else
                 push!(trace_pec_curves, tag)
             end
-        # Outer boundary
+            # Outer boundary
         elseif is_horizontal && (abs(ymid) < tol || abs(ymid - H) < tol)
             push!(outer_pec_curves, tag)
         elseif is_vertical && (abs(xmid) < tol || abs(xmid - L) < tol)
@@ -179,9 +179,15 @@ function generate_cpw2d_square_mesh(;
     gmsh.option.setNumber("Mesh.Algorithm", 6)
 
     # Refine near trace edges
-    trace_ref_curves = unique(vcat(trace_pec_curves,
-                                    port1_bot_curves, port1_top_curves,
-                                    port2_bot_curves, port2_top_curves))
+    trace_ref_curves = unique(
+        vcat(
+            trace_pec_curves,
+            port1_bot_curves,
+            port1_top_curves,
+            port2_bot_curves,
+            port2_top_curves
+        )
+    )
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(trace_ref_curves))
     gmsh.model.mesh.field.setNumber(1, "Sampling", 100)

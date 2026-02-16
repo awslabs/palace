@@ -50,7 +50,8 @@ struct SolverData;
 template <ProblemType solver_t>
 constexpr bool HasComplexGridFunction()
 {
-  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE;
+  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+         solver_t == ProblemType::MODEANALYSIS;
 }
 
 // Statically specify what fields a solver uses
@@ -119,6 +120,11 @@ protected:
 
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
+
+  // Mode analysis: normal (out-of-plane) E component on H1 space, and in-plane B field
+  // on ND space for visualization. The in-plane B is the dominant component:
+  //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+  std::unique_ptr<GridFunction> En, Bt_inplane;
 
   // Field output format control flags.
   bool enable_paraview_output = false;
@@ -237,6 +243,14 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
+
+  // Mode analysis impedance postprocessing state.
+  mfem::Array<int> voltage_marker;
+  mfem::Array<int> current_marker;
+  mfem::Vector voltage_p1, voltage_p2;  // Coordinate-based voltage path endpoints
+  int voltage_integration_order = 100;
+  bool has_impedance_postpro = false;
+  bool has_voltage_coordinates = false;
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
@@ -402,6 +416,13 @@ public:
                           double J_coef)
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
+  // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
+  // propagation constant kn.
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
+                          std::complex<double> kn, double omega, int num_conv)
+      -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>;
+
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.
   void MeasureFinalize(const ErrorIndicator &indicator);
@@ -447,6 +468,9 @@ public:
   {
     return *A;
   }
+
+  // Whether impedance postprocessing is configured (mode analysis).
+  bool HasImpedancePostprocessing() const { return has_impedance_postpro; }
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

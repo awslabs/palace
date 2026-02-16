@@ -20,8 +20,8 @@ class ModeAnalysisSolver : public BaseSolver
 public:
   using BaseSolver::BaseSolver;
 
-  std::pair<ErrorIndicator, long long int> Solve(
-      const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+  std::pair<ErrorIndicator, long long int>
+  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 };
 
 }  // namespace palace

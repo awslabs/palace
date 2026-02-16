@@ -11,8 +11,7 @@
 // (L2 and H1 respectively) and c1, c2 are scalar coefficients.
 // Used for the B-field error in 2D where B = curl E is a scalar.
 CEED_QFUNCTION(f_apply_l2h1_error)(void *__restrict__ ctx, CeedInt Q,
-                                   const CeedScalar *const *in,
-                                   CeedScalar *const *out)
+                                   const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u1 = in[1], *u2 = in[2];
   CeedScalar *v = out[0];

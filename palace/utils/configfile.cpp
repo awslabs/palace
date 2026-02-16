@@ -617,6 +617,15 @@ WavePortData::WavePortData(const json &port)
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);
   verbose = port.value("Verbose", verbose);
+  if (auto it = port.find("VoltageP1"); it != port.end())
+  {
+    voltage_p1 = it->get<std::vector<double>>();
+  }
+  if (auto it = port.find("VoltageP2"); it != port.end())
+  {
+    voltage_p2 = it->get<std::vector<double>>();
+  }
+  integration_order = port.value("IntegrationOrder", integration_order);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -658,6 +667,33 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   t = dielectric.at("Thickness");             // Required
   epsilon_r = dielectric.at("Permittivity");  // Required
   tandelta = dielectric.value("LossTan", tandelta);
+}
+
+ModeImpedanceData::ModeImpedanceData(const json &imp)
+{
+  if (auto it = imp.find("VoltageAttributes"); it != imp.end())
+  {
+    voltage_attributes = it->get<std::vector<int>>();
+    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+  }
+  if (auto it = imp.find("CurrentAttributes"); it != imp.end())
+  {
+    current_attributes = it->get<std::vector<int>>();
+    std::sort(current_attributes.begin(), current_attributes.end());
+  }
+  if (auto it = imp.find("VoltageP1"); it != imp.end())
+  {
+    voltage_p1 = it->get<std::vector<double>>();
+  }
+  if (auto it = imp.find("VoltageP2"); it != imp.end())
+  {
+    voltage_p2 = it->get<std::vector<double>>();
+  }
+  integration_order = imp.value("IntegrationOrder", integration_order);
+  MFEM_VERIFY(!voltage_attributes.empty() ||
+                  (!voltage_p1.empty() && !voltage_p2.empty()),
+              "Impedance boundary requires either \"VoltageAttributes\" or both "
+              "\"VoltageP1\" and \"VoltageP2\" in the configuration file!");
 }
 
 FarFieldPostData::FarFieldPostData(const json &farfield)
@@ -807,6 +843,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
       ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
   dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
                                                          "\"Dielectric\" boundary");
+  impedance = ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance",
+                                                   "\"Impedance\" boundary");
   farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
@@ -817,6 +855,13 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
   for (const auto &[idx, data] : dielectric)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : impedance)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
+    attributes.insert(attributes.end(), data.current_attributes.begin(),
+                      data.current_attributes.end());
   }
 
   attributes.insert(attributes.end(), farfield.attributes.begin(),
@@ -1227,6 +1272,7 @@ ModeAnalysisSolverData::ModeAnalysisSolverData(const json &ma)
   freq = ma.at("Freq");  // Required
   n = ma.value("N", n);
   n_post = ma.value("Save", n_post);
+  target = ma.value("Target", target);
   tol = ma.value("Tol", tol);
   type = ma.value("Type", type);
 }
@@ -1508,6 +1554,14 @@ void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)
 void Nondimensionalize(const Units &units, WavePortData &data)
 {
   data.d_offset /= units.GetMeshLengthRelativeScale();
+  for (auto &v : data.voltage_p1)
+  {
+    v /= units.GetMeshLengthRelativeScale();
+  }
+  for (auto &v : data.voltage_p2)
+  {
+    v /= units.GetMeshLengthRelativeScale();
+  }
 }
 
 void Nondimensionalize(const Units &units, SurfaceFluxData &data)
