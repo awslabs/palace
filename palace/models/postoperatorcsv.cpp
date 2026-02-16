@@ -122,6 +122,9 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
 
+  // Mode analysis data is already in SI units (computed dimensional).
+  measurement_cache.mode_data = nondim_measurement_cache.mode_data;  // NONE
+
   return measurement_cache;
 }
 
@@ -231,6 +234,9 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.farfield.E_field);
 
+  // Mode analysis data is already in SI units (computed dimensional).
+  measurement_cache.mode_data = dim_measurement_cache.mode_data;  // NONE
+
   return measurement_cache;
 }
 
@@ -262,6 +268,7 @@ std::string LabelIndexCol(const ProblemType solver_t)
     case ProblemType::DRIVEN:
       return "f (GHz)";
     case ProblemType::EIGENMODE:
+    case ProblemType::MODEANALYSIS:
       return "m";
     case ProblemType::ELECTROSTATIC:
     case ProblemType::MAGNETOSTATIC:
@@ -282,6 +289,7 @@ int PrecIndexCol(const ProblemType solver_t)
     case ProblemType::EIGENMODE:
     case ProblemType::ELECTROSTATIC:
     case ProblemType::MAGNETOSTATIC:
+    case ProblemType::MODEANALYSIS:
       return 2;
     default:
       return 8;
@@ -1206,6 +1214,69 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
 }
 
 template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeKn()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  mode_kn = TableWithCSVFile(post_dir / "mode-kn.csv");
+  mode_kn->table.reserve(nr_expected_measurement_rows, 5);
+  mode_kn->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  mode_kn->table.insert("kn_re", "Re{kn} (1/m)");
+  mode_kn->table.insert("kn_im", "Im{kn} (1/m)");
+  mode_kn->table.insert("neff_re", "Re{n_eff}");
+  mode_kn->table.insert("neff_im", "Im{n_eff}");
+  mode_kn->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeKn()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  if (!mode_kn)
+  {
+    return;
+  }
+  mode_kn->table["idx"] << row_idx_v;
+  mode_kn->table["kn_re"] << measurement_cache.mode_data.kn_dim.real();
+  mode_kn->table["kn_im"] << measurement_cache.mode_data.kn_dim.imag();
+  mode_kn->table["neff_re"] << measurement_cache.mode_data.n_eff.real();
+  mode_kn->table["neff_im"] << measurement_cache.mode_data.n_eff.imag();
+  mode_kn->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeZ()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  // Only initialize if impedance postprocessing data will be available.
+  mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
+  mode_Z->table.reserve(nr_expected_measurement_rows, 4);
+  mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  mode_Z->table.insert("Z0", "Z0 (Ohm)");
+  mode_Z->table.insert("L", "L (H/m)");
+  mode_Z->table.insert("C", "C (F/m)");
+  mode_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeZ()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  if (!mode_Z || !measurement_cache.mode_data.has_impedance)
+  {
+    return;
+  }
+  mode_Z->table["idx"] << row_idx_v;
+  mode_Z->table["Z0"] << measurement_cache.mode_data.Z0;
+  mode_Z->table["L"] << measurement_cache.mode_data.L_per_m;
+  mode_Z->table["C"] << measurement_cache.mode_data.C_per_m;
+  mode_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintErrorIndicator(
     bool is_root, const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
@@ -1264,6 +1335,14 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp());
     InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp());
   }
+  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  {
+    InitializeModeKn();
+    if (post_op.HasImpedancePostprocessing())
+    {
+      InitializeModeZ();
+    }
+  }
 }
 
 template <ProblemType solver_t>
@@ -1313,6 +1392,11 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
     PrintEigPortEPR();
     PrintEigPortQ();
   }
+  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  {
+    PrintModeKn();
+    PrintModeZ();
+  }
 }
 
 template <ProblemType solver_t>
@@ -1357,6 +1441,10 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
   {
     nr_expected_measurement_rows = iodata.solver.eigenmode.n;
   }
+  else if (solver_t == ProblemType::MODEANALYSIS)
+  {
+    nr_expected_measurement_rows = iodata.solver.mode_analysis.n;
+  }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
     nr_expected_measurement_rows = iodata.solver.electrostatic.n_post;
@@ -1379,11 +1467,25 @@ template class PostOperatorCSV<ProblemType::EIGENMODE>;
 template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
+template class PostOperatorCSV<ProblemType::MODEANALYSIS>;
 
 // Function explicit needed testing since everywhere it's through PostOperator.
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(
     const SpaceOperator &fem_op) -> void;
+
+// Mode analysis CSV explicit instantiations.
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::InitializeModeKn<ProblemType::MODEANALYSIS>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::PrintModeKn<ProblemType::MODEANALYSIS>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::InitializeModeZ<ProblemType::MODEANALYSIS>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::PrintModeZ<ProblemType::MODEANALYSIS>() -> void;
 
 }  // namespace palace

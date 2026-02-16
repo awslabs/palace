@@ -40,7 +40,8 @@ class WavePortOperator;
 template <ProblemType solver_t>
 constexpr bool HasComplexGridFunction()
 {
-  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE;
+  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+         solver_t == ProblemType::MODEANALYSIS;
 }
 
 // Statically specify what fields a solver uses
@@ -228,6 +229,10 @@ protected:
 
   mutable Measurement measurement_cache;
 
+  // Mode analysis impedance postprocessing state.
+  mfem::Array<int> voltage_marker;
+  bool has_impedance_postpro = false;
+
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
   // They dispatch on solver type within the function itself using `if constexpr`, and do
@@ -389,6 +394,12 @@ public:
                           double J_coef)
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
+  // Mode analysis: complex E-field (tangential) eigenvector, propagation constant kn.
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintAll(int step, const ComplexVector &e, std::complex<double> kn,
+                          double omega, int num_conv)
+      -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>;
+
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.
   void MeasureFinalize(const ErrorIndicator &indicator);
@@ -434,6 +445,9 @@ public:
   {
     return *A;
   }
+
+  // Whether impedance postprocessing is configured (mode analysis).
+  bool HasImpedancePostprocessing() const { return has_impedance_postpro; }
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

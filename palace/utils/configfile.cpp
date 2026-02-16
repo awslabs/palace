@@ -685,6 +685,14 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   tandelta = dielectric.value("LossTan", tandelta);
 }
 
+ModeImpedanceData::ModeImpedanceData(const json &imp)
+{
+  voltage_attributes = imp.at("VoltageAttributes").get<std::vector<int>>();  // Required
+  current_attributes = imp.at("CurrentAttributes").get<std::vector<int>>();  // Required
+  std::sort(voltage_attributes.begin(), voltage_attributes.end());
+  std::sort(current_attributes.begin(), current_attributes.end());
+}
+
 FarFieldPostData::FarFieldPostData(const json &farfield)
 {
   attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
@@ -835,6 +843,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
       ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
   dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
                                                          "\"Dielectric\" boundary");
+  impedance = ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance",
+                                                   "\"Impedance\" boundary");
   farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
@@ -845,6 +855,13 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
   for (const auto &[idx, data] : dielectric)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : impedance)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
+    attributes.insert(attributes.end(), data.current_attributes.begin(),
+                      data.current_attributes.end());
   }
 
   attributes.insert(attributes.end(), farfield.attributes.begin(),

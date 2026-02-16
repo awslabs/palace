@@ -7,15 +7,19 @@
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
+#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeanalysisoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -38,6 +42,8 @@ std::string OutputFolderName(const ProblemType solver_t)
       return "magnetostatic";
     case ProblemType::TRANSIENT:
       return "transient";
+    case ProblemType::MODEANALYSIS:
+      return "modeanalysis";
     default:
       return "unknown";
   }
@@ -62,6 +68,12 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
           {
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
                                       fem_op_.GetNDSpace());
+          }
+          else if constexpr (solver_t == ProblemType::MODEANALYSIS)
+          {
+            // Mode analysis: E on ND space, B (Hz) on L2 curl space.
+            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
+                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
           }
           else
           {
@@ -128,6 +140,25 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   else if (solver_t == ProblemType::TRANSIENT)
   {
     output_delta_post = iodata.solver.transient.delta_post;
+  }
+  else if (solver_t == ProblemType::MODEANALYSIS)
+  {
+    output_n_post = iodata.solver.mode_analysis.n_post;
+  }
+
+  // Mode analysis impedance postprocessing setup.
+  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  {
+    const auto &impedance_data = iodata.boundaries.postpro.impedance;
+    if (!impedance_data.empty())
+    {
+      has_impedance_postpro = true;
+      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
+      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+      const auto &imp = impedance_data.begin()->second;
+      voltage_marker =
+          mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+    }
   }
 
   gridfunction_output_dir =
@@ -1397,6 +1428,168 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
          measurement_cache.domain_H_field_energy_all;
 }
 
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+                                                std::complex<double> kn, double omega,
+                                                int num_conv)
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  SetEGridFunction(e);
+
+  // Compute B = curl_t(Et) / (iω) as a scalar (Hz) on the L2 curl space.
+  // B_r = curl(Et_i) / ω,  B_i = -curl(Et_r) / ω  (from 1/(iω) = -i/ω).
+  {
+    auto &nd_fs = fem_op->GetNDSpace();
+    auto &l2_fs = fem_op->GetCurlSpace();
+    const auto &Curl = l2_fs.GetDiscreteInterpolator(nd_fs);
+
+    const int nd_sz = nd_fs.GetTrueVSize();
+    const int l2_sz = l2_fs.GetTrueVSize();
+    ComplexVector b(l2_sz);
+
+    // Get Et true DOFs.
+    Vector etr(nd_sz), eti(nd_sz);
+    E->Real().GetTrueDofs(etr);
+    E->Imag().GetTrueDofs(eti);
+
+    // Apply curl: curl(Et_r) and curl(Et_i).
+    Vector curl_etr(l2_sz), curl_eti(l2_sz);
+    Curl.Mult(etr, curl_etr);
+    Curl.Mult(eti, curl_eti);
+
+    // B = curl(Et) / (iω) = curl(Et) × (-i/ω)
+    // B_r = curl(Et_i) / ω,  B_i = -curl(Et_r) / ω
+    b.Real() = curl_eti;
+    b.Real() *= 1.0 / omega;
+    b.Imag() = curl_etr;
+    b.Imag() *= -1.0 / omega;
+
+    SetBGridFunction(b);
+  }
+
+  measurement_cache = {};
+
+  // Dimensionalization constants.
+  const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  std::complex<double> kn_dim = kn * kc;
+  std::complex<double> n_eff = kn / omega;
+  measurement_cache.mode_data.kn_dim = kn_dim;
+  measurement_cache.mode_data.n_eff = n_eff;
+
+  // Compute impedance if configured.
+  if (has_impedance_postpro)
+  {
+    auto &nd_fespace = fem_op->GetNDSpace();
+    const int nd_size = nd_fespace.GetTrueVSize();
+
+    // Voltage: V = integral of Et . n_hat dl on the voltage boundary.
+    std::complex<double> V(0.0, 0.0);
+    {
+      mfem::ConstantCoefficient one(1.0);
+      mfem::ParLinearForm v_lf(&nd_fespace.Get());
+      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                  voltage_marker);
+      v_lf.UseFastAssembly(false);
+      v_lf.Assemble();
+
+      Vector v_lf_tdof(nd_size);
+      v_lf.ParallelAssemble(v_lf_tdof);
+      Vector etr_tdof(nd_size), eti_tdof(nd_size);
+      E->Real().GetTrueDofs(etr_tdof);
+      E->Imag().GetTrueDofs(eti_tdof);
+      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
+      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
+    }
+
+    // Power: P = (1/2) Re{kn*/omega} * (et^H Btt et) (transmitted Poynting power).
+    const auto *Btt = fem_op->GetBtt();
+    if (Btt != nullptr)
+    {
+      std::complex<double> P(0.0, 0.0);
+      {
+        Vector etr_tdof(nd_size), eti_tdof(nd_size);
+        E->Real().GetTrueDofs(etr_tdof);
+        E->Imag().GetTrueDofs(eti_tdof);
+        Vector Btt_etr(nd_size), Btt_eti(nd_size);
+        Btt->Mult(etr_tdof, Btt_etr);
+        Btt->Mult(eti_tdof, Btt_eti);
+        double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
+        double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
+        double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
+        double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
+        std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
+        P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+      }
+
+      // Impedance computation using the power-voltage definition.
+      //
+      // TODO: The current implementation uses the power-voltage definition:
+      //   Z0 = |V|^2 / (2P)
+      // where V is the line integral of Et across the voltage boundary and P is the
+      // transmitted Poynting power. The V/I definition (Z0 = V/I, where I is the loop
+      // integral of H around the trace) is not yet implemented. The V/I approach requires
+      // either an open integration contour (from ground to signal) or direct H-field
+      // evaluation at boundary points, which needs different mesh topology than the closed
+      // PEC loops currently provide. The "CurrentAttributes" config field in the impedance
+      // boundary data is reserved for a future V/I implementation.
+      if (std::abs(P) > 1e-30)
+      {
+        std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
+        double Z0_ohm = Z0_nondim.real() * electromagnetics::Z0_;
+        double L_per_m = Z0_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_per_m = n_eff.real() / (Z0_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z0 = Z0_ohm;
+        measurement_cache.mode_data.L_per_m = L_per_m;
+        measurement_cache.mode_data.C_per_m = C_per_m;
+        measurement_cache.mode_data.has_impedance = true;
+      }
+    }
+  }
+
+  // Compute electric field energy via the domain post operator.
+  MeasureAllImpl();
+
+  // Pretty-print mode summary using Table (matches eigenmode solver style).
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    Table table;
+    int idx_pad = 1 + static_cast<int>(std::log10(std::max(num_conv, 1)));
+    table.col_options = {6, 6};
+    table.insert(Column("m", "m", idx_pad, {}, {}, "") << (step + 1));
+    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn_dim.real());
+    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn_dim.imag());
+    table.insert(Column("neff_re", "Re{n_eff}") << n_eff.real());
+    table.insert(Column("neff_im", "Im{n_eff}") << n_eff.imag());
+    table[0].print_as_int = true;
+    Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
+  }
+
+  // Print Z0, L, C if computed.
+  if (measurement_cache.mode_data.has_impedance)
+  {
+    Mpi::Print("  Z0 = {:.6e} Ohm, L = {:.6e} H/m, C = {:.6e} F/m\n",
+               measurement_cache.mode_data.Z0, measurement_cache.mode_data.L_per_m,
+               measurement_cache.mode_data.C_per_m);
+  }
+
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
+  if (ShouldWriteParaviewFields(step))
+  {
+    WriteParaviewFields(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (Paraview)\n", print_idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    WriteMFEMGridFunctions(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
+  }
+  return measurement_cache.domain_E_field_energy_all;
+}
+
 // Explicit template instantiation.
 
 template class PostOperator<ProblemType::DRIVEN>;
@@ -1404,6 +1597,7 @@ template class PostOperator<ProblemType::EIGENMODE>;
 template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
+template class PostOperator<ProblemType::MODEANALYSIS>;
 
 // Function explicit instantiation.
 // TODO(C++20): with requires, we won't need a second template.
@@ -1428,6 +1622,11 @@ PostOperator<ProblemType::MAGNETOSTATIC>::MeasureAndPrintAll<ProblemType::MAGNET
 template auto
 PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>(
     int step, const Vector &e, const Vector &b, double t, double J_coef) -> double;
+
+template auto
+PostOperator<ProblemType::MODEANALYSIS>::MeasureAndPrintAll<ProblemType::MODEANALYSIS>(
+    int step, const ComplexVector &e, std::complex<double> kn, double omega,
+    int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(
