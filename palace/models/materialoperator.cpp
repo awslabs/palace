@@ -173,6 +173,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   if (sdim == 2)
   {
     mat_muinv_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_scalar.SetSize(1, 1, nmats);
   }
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
@@ -277,6 +278,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       mfem::DenseMatrix mat_muinv_3d(3, 3);
       mfem::DenseMatrixInverse(mat_mu_3d, true).GetInverseMatrix(mat_muinv_3d);
       mat_muinv_scalar(count)(0, 0) = mat_muinv_3d(2, 2);
+
+      // Similarly, store the z-z permittivity for the normal component in mode analysis.
+      mfem::DenseMatrix mat_eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
+      mat_epsilon_scalar(count)(0, 0) = mat_eps_3d(2, 2);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)

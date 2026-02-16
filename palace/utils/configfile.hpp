@@ -799,6 +799,28 @@ public:
   TransientSolverData(const json &transient);
 };
 
+struct ModeAnalysisSolverData
+{
+public:
+  // Operating frequency for mode analysis [GHz].
+  double freq = 1.0;
+
+  // Desired number of modes.
+  int n = 1;
+
+  // Number of modes to write to disk.
+  int n_post = 0;
+
+  // Eigenvalue solver relative tolerance.
+  double tol = 1.0e-6;
+
+  // Eigenvalue solver type.
+  EigenSolverBackend type = EigenSolverBackend::DEFAULT;
+
+  ModeAnalysisSolverData() = default;
+  ModeAnalysisSolverData(const json &ma);
+};
+
 struct LinearSolverData
 {
 public:
@@ -956,6 +978,7 @@ public:
   ElectrostaticSolverData electrostatic = {};
   MagnetostaticSolverData magnetostatic = {};
   TransientSolverData transient = {};
+  ModeAnalysisSolverData mode_analysis = {};
   LinearSolverData linear = {};
 
   SolverData() = default;
