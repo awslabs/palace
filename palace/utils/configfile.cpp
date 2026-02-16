@@ -67,7 +67,8 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::EIGENMODE, "Eigenmode"},
                                          {ProblemType::ELECTROSTATIC, "Electrostatic"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
-                                         {ProblemType::TRANSIENT, "Transient"}})
+                                         {ProblemType::TRANSIENT, "Transient"},
+                                         {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
@@ -2319,6 +2320,41 @@ void TransientSolverData::SetUp(json &solver)
   }
 }
 
+void ModeAnalysisSolverData::SetUp(json &solver)
+{
+  auto ma = solver.find("ModeAnalysis");
+  if (ma == solver.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(ma->find("Freq") != ma->end(),
+              "Missing \"ModeAnalysis\" solver \"Freq\" in the configuration file!");
+  freq = ma->at("Freq");  // Required
+  n = ma->value("N", n);
+  n_post = ma->value("Save", n_post);
+  tol = ma->value("Tol", tol);
+  type = ma->value("Type", type);
+
+  // Cleanup
+  ma->erase("Freq");
+  ma->erase("N");
+  ma->erase("Save");
+  ma->erase("Tol");
+  ma->erase("Type");
+  MFEM_VERIFY(ma->empty(),
+              "Found an unsupported configuration file keyword under \"ModeAnalysis\"!\n"
+                  << ma->dump(2));
+
+  // Debug
+  if constexpr (JSON_DEBUG)
+  {
+    std::cout << "Freq: " << freq << '\n';
+    std::cout << "N: " << n << '\n';
+    std::cout << "Save: " << n_post << '\n';
+    std::cout << "Tol: " << tol << '\n';
+  }
+}
+
 void LinearSolverData::SetUp(json &solver)
 {
   auto linear = solver.find("Linear");
@@ -2484,6 +2520,7 @@ void SolverData::SetUp(json &config)
   electrostatic.SetUp(*solver);
   magnetostatic.SetUp(*solver);
   transient.SetUp(*solver);
+  mode_analysis.SetUp(*solver);
   linear.SetUp(*solver);
 
   // Cleanup
@@ -2499,6 +2536,7 @@ void SolverData::SetUp(json &config)
   solver->erase("Electrostatic");
   solver->erase("Magnetostatic");
   solver->erase("Transient");
+  solver->erase("ModeAnalysis");
   solver->erase("Linear");
   MFEM_VERIFY(solver->empty(),
               "Found an unsupported configuration file keyword under \"Solver\"!\n"

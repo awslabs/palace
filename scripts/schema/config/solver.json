@@ -121,6 +121,20 @@
         "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }
     },
+    "ModeAnalysis":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Freq"],
+      "properties":
+      {
+        "Freq": { "type": "number", "exclusiveMinimum": 0.0 },
+        "N": { "type": "integer", "minimum": 1 },
+        "Save": { "type": "integer", "minimum": 0 },
+        "Tol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "Type": { "type": "string" }
+      }
+    },
     "Electrostatic":
     {
       "type": "object",
