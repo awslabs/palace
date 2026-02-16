@@ -50,7 +50,7 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 }
 
 // TODO: Should work in parallel but fails due to MFEM parallel issues.
-TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
+TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
 {
   // This is a test of a square lumped port with R=50 Ohm. It tests the geometry,
   // integrators, and port vectors associated with lumped port properties.
@@ -254,8 +254,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
   // some of the electric field without properly compensating in the integral. This defines
   // a new alpha normalization of the field that we want to divide out to return to the
   // original p_0 = 1.
-  double port_power =
-      g_boundary_id.InnerProduct(port_primary_gf_ht_cn.Real(), port_primary_gf_et.Real());
+  double port_power = g_boundary_id.ParInnerProduct(port_primary_gf_ht_cn.Real(),
+                                                    port_primary_gf_et.Real());
   double port_normalization_alpha = std::sqrt(port_power);  // Marks-Williams alpha
   if (boundary_pec_type != PEC::SIDE)
   {
@@ -264,7 +264,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 
   // Plain normalization of et
   double norm_id_et =
-      g_boundary_id.InnerProduct(port_primary_gf_et.Real(), port_primary_gf_et.Real());
+      g_boundary_id.ParInnerProduct(port_primary_gf_et.Real(), port_primary_gf_et.Real());
 
   // The normalization of e_t is Z_R \sum_e  W_e / L_e but with Z_R = 1.0 in the
   // internal units.
@@ -272,7 +272,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 
   if (boundary_pec_type != PEC::SIDE)
   {
-    CHECK_THAT(norm_id_et, WithinRel(et_norm_expected));
+    CHECK_THAT(norm_id_et, WithinRel(et_norm_expected, 1e-13));
   }
   else
   {
