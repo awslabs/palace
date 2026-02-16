@@ -368,13 +368,13 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   const auto &port_1_test_cast = static_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
-  VecFormS.SetSize(form_s->Size());
+  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormS.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
 
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
-  VecFormV.SetSize(form_v->Size());
+  VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
 
@@ -719,13 +719,13 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   const auto &port_1_test_cast = static_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
-  VecFormS.SetSize(form_s->Size());
+  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormS.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
 
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
-  VecFormV.SetSize(form_v->Size());
+  VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
 
