@@ -146,7 +146,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
   // Put in a single port with single attribute.
   setup_json["Boundaries"] = {
-      {"PEC", json::object({{"Attributes", json::array({})}})},
+      // {"PEC", json::object({{"Attributes", json::array({})}})},
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", port_ref_R},
                                                 {"Excitation", uint(1)},
@@ -687,7 +687,6 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 
   // Port on neighbouring attributes along same direction will have overlap.
   setup_json["Boundaries"] = {
-      {"PEC", json::object({{"Attributes", json::array({})}})},
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", 50.0},
                                                 {"Excitation", uint(1)},

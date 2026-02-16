@@ -535,14 +535,14 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
   return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
 }
 
-// Project a boundary coefficient into a Vector, via a brute force solve.
+// Project a boundary coefficient into a Vector via a boundary mass matrix solve.
 //
 // This should be done by ParGridFunction::ProjectBdrCoefficientTangent, including parallel
 // reduction. See also https://github.com/mfem/mfem/pull/606. However there seems to be a
 // bug in MFEM that breaks this for Nédélec elements, perhaps due to orientation signs.
 // TODO(future): Investigate and fix this bug.
 //
-// Here project via brute force solve of boundary mass matrix system M_bdr * e = f.
+// Here project via CG solve of boundary mass matrix system M_bdr * e = f.
 void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPortData &data,
                                        const MaterialOperator &mat_op,
                                        FiniteElementSpace &nd_fespace, MPI_Comm comm,
@@ -605,6 +605,7 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
   M_bdr->SetEssentialTrueDofs(non_port_tdof_list, Operator::DIAG_ONE);
 
   // CG solve M_bdr * e = f entirely in T-vector space.
+  // TODO: Make solver parameters configurable from IoData, or inherit other settings.
   auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(1.0e-14);
