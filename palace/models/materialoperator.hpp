@@ -28,9 +28,9 @@ private:
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
-  mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_imag,
-      mat_epsilon_abs, mat_invz0, mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx,
-      mat_kxTmuinvkx, mat_kx;
+  mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
+      mat_epsilon_imag, mat_epsilon_abs, mat_invz0, mat_c0, mat_sigma, mat_invLondon,
+      mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
@@ -83,6 +83,8 @@ public:
   auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
   auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
+  // Scalar (1x1) permittivity for the out-of-plane component in 2D mode analysis.
+  const auto &GetPermittivityScalar() const { return mat_epsilon_scalar; }
   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
   auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
   auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
