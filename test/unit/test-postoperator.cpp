@@ -554,7 +554,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   // Create fields, initialize them to random values, and set the corresponding
   // gridfunctions.
   ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
-  Vector a(rt_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
+  Vector a(nd_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
   linalg::SetRandom(comm, e);
   linalg::SetRandom(comm, b);
   linalg::SetRandom(comm, a);
