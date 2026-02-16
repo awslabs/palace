@@ -245,8 +245,8 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   double start = *std::min_element(z.begin(), z.end());
   double end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-  std::vector<std::complex<double>> z_star(N, 0.0);
 
+  // std::vector<std::complex<double>> z_star(N, 0.0);
   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
   //          samples at complex-valued points (yet).
 
@@ -303,6 +303,9 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   std::vector<q_t> queue{};
   queue.reserve(N);
 
+  // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
+  // Consider making configurable or scaling with the parameter range, so that it is e.g.
+  // always 1 kHz.
   const std::size_t nr_sample = 1.0e6;  // must be >= N
   MFEM_VERIFY(N < nr_sample,
               fmt::format("Number of location of error maximum N={} needs to be less than "
@@ -329,7 +332,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
               fmt::format("Internal failure: queue should be size should be N={} (got {})",
                           N, queue.size()));
 
-  std::vector<double> vals(z_star.size());
+  std::vector<double> vals(N);
   std::transform(queue.begin(), queue.end(), vals.begin(),
                  [](const q_t &p) { return p.first.real(); });
   return vals;

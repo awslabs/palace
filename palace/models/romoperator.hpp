@@ -57,9 +57,9 @@ struct HybridBulkBoundaryOperator
     // the PEC contribution removed.
     W_inner_product_weight_bulk->SetEssentialTrueDofs(port_tdof_list, Operator::DIAG_ZERO);
     MFEM_VERIFY((W_inner_product_weight_bulk->NumCols() ==
-                 W_inner_product_weight_bulk->NumCols()) &&
-                    (W_inner_product_weight_bulk->NumCols() ==
-                     W_inner_product_weight_bulk->NumCols()),
+                 W_inner_product_weight_port->NumCols()) &&
+                    (W_inner_product_weight_bulk->NumRows() ==
+                     W_inner_product_weight_port->NumRows()),
                 "Mismatch sizes of inner product matrices!")
   }
 
