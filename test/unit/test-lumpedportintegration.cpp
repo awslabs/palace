@@ -109,25 +109,23 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial]")
 
   iodata.solver.order = solver_order;
 
-  json domains_json{};
-  domains_json["Domains"] = {
+  json domains_json = {
       {"Materials",
        json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
                                   {"Permeability", 1.0},
                                   {"Permittivity", 1.0},
                                   {"LossTan", 0.0}})})}};
-  iodata.domains.SetUp(domains_json);
+  iodata.domains = config::DomainData(domains_json);
 
   // Case 1: Put in a single port with single attribute.
-  json boundary_json_1{};
-  boundary_json_1["Boundaries"] = {
+  json boundary_json_1 = {
       {"PEC", json::object({{"Attributes", boundary_pec_attr}})},
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"R", 50.0},
                                                 {"Excitation", uint(1)},
                                                 {"Attributes", json::array({1})},
                                                 {"Direction", "+Y"}})})}};
-  iodata.boundaries.SetUp(boundary_json_1);
+  iodata.boundaries = config::BoundaryData(boundary_json_1);
   iodata.CheckConfiguration();
 
   auto mesh_io = LoadScaleParMesh(iodata, world_comm);
@@ -470,17 +468,15 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
 
   iodata.solver.order = solver_order;
 
-  json domains_json{};
-  domains_json["Domains"] = {
+  json domains_json = {
       {"Materials",
        json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
                                   {"Permeability", 1.0},
                                   {"Permittivity", 1.0},
                                   {"LossTan", 0.0}})})}};
-  iodata.domains.SetUp(domains_json);
+  iodata.domains = config::DomainData(domains_json);
 
-  json boundary_json_1{};
-  boundary_json_1["Boundaries"] = {
+  json boundary_json_1 = {
       {"PEC", json::object({{"Attributes", boundary_pec_attr}})},
       {"LumpedPort",
        json::array({json::object(
@@ -495,7 +491,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
                                 {"Direction", "+Y"}}),
                   json::object({{"Attributes", json::array({2, 6, 10})},  // dx,dy = 3,1
                                 {"Direction", "+X"}})})}})})}};
-  iodata.boundaries.SetUp(boundary_json_1);
+  iodata.boundaries = config::BoundaryData(boundary_json_1);
   iodata.CheckConfiguration();
 
   auto mesh_io = LoadScaleParMesh(iodata, world_comm);
