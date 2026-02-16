@@ -135,6 +135,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   else if (map_type == mfem::FiniteElement::H_CURL)
   {
     // H(curl) space for magnetic vector potential and magnetic field energy.
+    // (This is the magnetostatic case — creates curl-curl mass for B-field energy.)
     {
       MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetCurlCurlInvPermeability());
@@ -162,6 +163,39 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   else
   {
     MFEM_ABORT("Unexpected finite element space type for domain energy postprocessing!");
+  }
+}
+
+DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                       const FiniteElementSpace &nd_fespace,
+                                       bool electric_energy_only)
+{
+  // Mode analysis: ND space for electric field energy only (VectorFE mass with ε).
+  MFEM_VERIFY(nd_fespace.GetFEColl().GetMapType(nd_fespace.Dimension()) ==
+                  mfem::FiniteElement::H_CURL,
+              "Electric energy only constructor requires H(curl) space!");
+  {
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
+    BilinearForm m(nd_fespace);
+    m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    M_elec = m.PartialAssemble();
+    D.SetSize(M_elec->Height());
+    D.UseDevice(true);
+  }
+
+  for (const auto &[idx, data] : iodata.domains.postpro.energy)
+  {
+    std::unique_ptr<Operator> M_elec_i;
+    {
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetPermittivityReal());
+      epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+      BilinearForm m(nd_fespace);
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+      M_elec_i = m.PartialAssemble();
+    }
+    M_i.emplace(idx, std::make_pair(std::move(M_elec_i), nullptr));
   }
 }
 

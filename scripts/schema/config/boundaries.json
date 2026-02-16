@@ -314,6 +314,22 @@
             }
           }
         },
+        "Impedance":
+        {
+          "type": "array",
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index", "VoltageAttributes", "CurrentAttributes"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
+              "CurrentAttributes": { "$ref": "#/$defs/Attributes" }
+            }
+          }
+        },
         "FarField": {
           "type": "object",
           "additionalProperties": false,

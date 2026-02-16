@@ -1492,6 +1492,52 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
   }
 }
+void ModeImpedancePostData::SetUp(json &postpro)
+{
+  auto impedance = postpro.find("Impedance");
+  if (impedance == postpro.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(impedance->is_array(),
+              "\"Impedance\" should specify an array in the configuration file!");
+  for (auto it = impedance->begin(); it != impedance->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"Impedance\" boundary");
+    MFEM_VERIFY(it->find("VoltageAttributes") != it->end() &&
+                    it->find("CurrentAttributes") != it->end(),
+                "Missing \"Impedance\" boundary \"VoltageAttributes\" or "
+                "\"CurrentAttributes\" in the configuration file!");
+    auto ret = mapdata.insert(std::make_pair(index, ModeImpedanceData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Impedance\" "
+                            "boundaries in the configuration file!");
+    auto &data = ret.first->second;
+    data.index = index;
+    data.voltage_attributes =
+        it->at("VoltageAttributes").get<std::vector<int>>();  // Required
+    data.current_attributes =
+        it->at("CurrentAttributes").get<std::vector<int>>();  // Required
+    std::sort(data.voltage_attributes.begin(), data.voltage_attributes.end());
+    std::sort(data.current_attributes.begin(), data.current_attributes.end());
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("VoltageAttributes");
+    it->erase("CurrentAttributes");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"Impedance\"!\n"
+                    << it->dump(2));
+
+    // Debug
+    if constexpr (JSON_DEBUG)
+    {
+      std::cout << "Index: " << data.index << '\n';
+      std::cout << "VoltageAttributes: " << data.voltage_attributes << '\n';
+      std::cout << "CurrentAttributes: " << data.current_attributes << '\n';
+    }
+  }
+}
+
 void FarFieldPostData::SetUp(json &postpro)
 {
   auto farfield = postpro.find("FarField");
@@ -1671,6 +1717,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
+  impedance.SetUp(*postpro);
   farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
@@ -1681,6 +1728,13 @@ void BoundaryPostData::SetUp(json &boundaries)
   for (const auto &[idx, data] : dielectric)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : impedance)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
+    attributes.insert(attributes.end(), data.current_attributes.begin(),
+                      data.current_attributes.end());
   }
 
   attributes.insert(attributes.end(), farfield.attributes.begin(),
@@ -1693,6 +1747,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Cleanup
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
+  postpro->erase("Impedance");
   postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
@@ -2334,7 +2389,6 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   n_post = ma->value("Save", n_post);
   tol = ma->value("Tol", tol);
   type = ma->value("Type", type);
-
   // Cleanup
   ma->erase("Freq");
   ma->erase("N");

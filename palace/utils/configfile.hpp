@@ -637,6 +637,27 @@ public:
   void SetUp(json &postpro);
 };
 
+struct ModeImpedanceData
+{
+public:
+  // Index of this impedance computation.
+  int index = -1;
+
+  // Boundary attributes for the voltage integration path (gap between ground and trace).
+  std::vector<int> voltage_attributes = {};
+
+  // Boundary attributes for the current integration loop (around the trace).
+  std::vector<int> current_attributes = {};
+
+  void SetUp(json &impedance);
+};
+
+struct ModeImpedancePostData : public internal::DataMap<ModeImpedanceData>
+{
+public:
+  void SetUp(json &postpro);
+};
+
 struct FarFieldPostData
 {
 public:
@@ -661,6 +682,7 @@ public:
   // Boundary postprocessing objects.
   SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
+  ModeImpedancePostData impedance = {};
   FarFieldPostData farfield = {};
 
   void SetUp(json &boundaries);
