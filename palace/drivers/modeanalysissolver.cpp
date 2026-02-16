@@ -21,16 +21,15 @@
 #include "linalg/superlu.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeanalysisoperator.hpp"
+#include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
-
-using namespace std::complex_literals;
 
 namespace
 {
@@ -42,7 +41,6 @@ constexpr bool skip_zeros = false;
 std::pair<ErrorIndicator, long long int>
 ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
-  // Mode analysis requires a 2D mesh (waveguide cross-section).
   MFEM_VERIFY(mesh.back()->Dimension() == 2,
               "ModeAnalysis solver requires a 2D mesh (waveguide cross-section)!");
 
@@ -50,8 +48,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const double freq_GHz = ma_data.freq;
   const int num_modes = ma_data.n;
   const double tol = ma_data.tol;
-
-  // Nondimensionalize the operating frequency.
   const double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
 
@@ -59,7 +55,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "{:.6e})\n",
              freq_GHz, omega);
 
-  // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E component.
+  // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
   BlockTimer bt0(Timer::CONSTRUCT);
   auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
                                                          mesh.back()->Dimension());
@@ -68,12 +64,11 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   FiniteElementSpace nd_fespace(*mesh.back(), nd_fec.get());
   FiniteElementSpace h1_fespace(*mesh.back(), h1_fec.get());
 
-  // Apply PEC boundary conditions (essential BCs).
+  // PEC essential BCs.
   const auto &pmesh = mesh.back()->Get();
   int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
   mfem::Array<int> dbc_marker =
       palace::mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
-
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
   h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
@@ -84,20 +79,19 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              nd_fespace.GlobalTrueVSize(), h1_fespace.GlobalTrueVSize(),
              nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());
 
-  // Construct material operator.
+  // Material operator, mode analysis operator wrapper, and PostOperator.
   MaterialOperator mat_op(iodata, *mesh.back());
-
-  // Compute shift parameter: sigma = -omega^2 * max(eps_r * mu_r) with safety factor.
+  ModeAnalysisOperator mode_op(mat_op, nd_fespace, h1_fespace, *mesh.back(),
+                               iodata.solver.order);
+  PostOperator<ProblemType::MODEANALYSIS> post_op(iodata, mode_op);
   double c_min = mat_op.GetLightSpeedMax().Min();
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light in ModeAnalysisSolver!");
   const double mu_eps_max = 1.0 / (c_min * c_min) * 1.1;
   const double sigma = -omega * omega * mu_eps_max;
-  Mpi::Print(" Shift: sigma = {:.6e}\n", sigma);
 
   // Assemble block system matrices.
-  // Att = (mu^-1 curl et, curl ft) - omega^2 (eps et, ft) - sigma (mu^-1 et, ft)
   MaterialPropertyCoefficient muinv_cc(mat_op.GetAttributeToMaterial(),
                                        mat_op.GetCurlCurlInvPermeability());
   MaterialPropertyCoefficient eps_shifted(mat_op.GetAttributeToMaterial(),
@@ -108,41 +102,40 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc, eps_shifted);
   auto Att = ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
 
-  // Atn = -(mu^-1 grad en, ft)
   MaterialPropertyCoefficient muinv_neg(mat_op.GetAttributeToMaterial(),
                                         mat_op.GetInvPermeability(), -1.0);
   BilinearForm atn(h1_fespace, nd_fespace);
   atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_neg);
-  auto Atn =
-      ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
-          .StealParallelAssemble();
+  auto Atn = ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
+                 .StealParallelAssemble();
 
-  // Ant = -(eps et, grad fn)
   MaterialPropertyCoefficient eps_pos(mat_op.GetAttributeToMaterial(),
                                       mat_op.GetPermittivityReal(), 1.0);
   BilinearForm ant(nd_fespace, h1_fespace);
   ant.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(eps_pos);
-  auto Ant =
-      ParOperator(ant.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-          .StealParallelAssemble();
+  auto Ant = ParOperator(ant.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
+                 .StealParallelAssemble();
 
-  // Ann = -(eps_zz en, fn) — uses the z-z (out-of-plane) permittivity component (1×1).
-  // For a 2D mesh, the normal (propagation) direction is z-hat. The scalar permittivity
-  // is stored as mat_epsilon_scalar from the (2,2) entry of the full 3×3 tensor.
   MaterialPropertyCoefficient eps_neg(mat_op.GetAttributeToMaterial(),
                                       mat_op.GetPermittivityScalar(), -1.0);
   BilinearForm ann(h1_fespace);
   ann.AddDomainIntegrator<MassIntegrator>(eps_neg);
   auto Ann = ParOperator(ann.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
 
-  // Btt = (mu^-1 et, ft)
   MaterialPropertyCoefficient muinv_pos(mat_op.GetAttributeToMaterial(),
                                         mat_op.GetInvPermeability());
   BilinearForm btt(nd_fespace);
   btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_pos);
   auto Btt = ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
 
-  // Build 2x2 block A matrix and eliminate essential DOFs.
+  // Store Btt in ModeAnalysisOperator for impedance postprocessing in PostOperator.
+  // Make a copy since the original is also needed in the block B matrix below.
+  {
+    auto Btt_copy = std::make_unique<mfem::HypreParMatrix>(*Btt);
+    mode_op.SetBttMatrix(std::move(Btt_copy));
+  }
+
+  // Block A matrix with essential BC elimination.
   std::unique_ptr<mfem::HypreParMatrix> opAr;
   {
     mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
@@ -151,7 +144,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     blocks(1, 0) = Ant.get();
     blocks(1, 1) = Ann.get();
     opAr.reset(mfem::HypreParMatrixFromBlocks(blocks));
-
     mfem::Array<int> dbc_tdof_list;
     dbc_tdof_list.Append(nd_dbc_tdof_list);
     for (int i = 0; i < h1_dbc_tdof_list.Size(); i++)
@@ -161,7 +153,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     opAr->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
   }
 
-  // Build 2x2 block B matrix (Btt in (0,0), zero elsewhere).
+  // Block B matrix.
   std::unique_ptr<mfem::HypreParMatrix> opBr;
   {
     mfem::SparseMatrix zero_sp(h1_size, h1_size);
@@ -170,7 +162,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                   h1_fespace.GlobalTrueVSize(),
                                   h1_fespace.Get().GetTrueDofOffsets(),
                                   h1_fespace.Get().GetTrueDofOffsets(), &zero_sp);
-
     mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
     blocks(0, 0) = Btt.get();
     blocks(0, 1) = nullptr;
@@ -179,11 +170,10 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     opBr.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
 
-  // Wrap as complex operators (real-valued system, no imaginary part for lossless).
   auto opA = std::make_unique<ComplexWrapperOperator>(std::move(opAr), nullptr);
   auto opB = std::make_unique<ComplexWrapperOperator>(std::move(opBr), nullptr);
 
-  // Configure eigenvalue solver.
+  // Eigenvalue solver.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\nSolving for {:d} propagation mode(s)...\n", num_modes);
 
@@ -193,8 +183,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto slepc = std::make_unique<slepc::SlepcEPSSolver>(
         mesh.back()->GetComm(), iodata.problem.verbose);
     slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    slepc->SetProblemType(
-        slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetNumModes(num_modes, std::max(2 * num_modes + 1, 20));
     slepc->SetTol(tol);
     slepc->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
@@ -213,83 +202,116 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_ABORT("ModeAnalysis solver requires SLEPc or ARPACK!");
 #endif
 
-  // Set up the KSP linear solver for the shift-and-invert spectral transformation.
-  // Uses GMRES with a sparse direct preconditioner (same pattern as the wave port solver).
+  // Linear solver for shift-and-invert. Uses GMRES preconditioned with a sparse direct
+  // solver (same pattern as the wave port solver). The direct solver type is read from the
+  // linear solver config, defaulting to whatever sparse direct solver is available.
+  // Note: multigrid (AMS, BoomerAMG) is not applicable for the block eigenvalue problem
+  // since the combined ND+H1 system doesn't have a standard multigrid hierarchy.
   std::unique_ptr<ComplexKspSolver> ksp;
   {
+    const auto &linear = iodata.solver.linear;
     auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(
         mesh.back()->GetComm(), iodata.problem.verbose);
     gmres->SetInitialGuess(false);
-    gmres->SetRelTol(iodata.solver.linear.tol);
-    gmres->SetMaxIter(iodata.solver.linear.max_it);
-    gmres->SetRestartDim(iodata.solver.linear.max_it);
+    gmres->SetRelTol(linear.tol);
+    gmres->SetMaxIter(linear.max_it);
+    gmres->SetRestartDim(linear.max_it);
 
-    // Choose a sparse direct solver as preconditioner.
+    // Select sparse direct solver from config (or default to whatever is available).
+    LinearSolver pc_type = linear.type;
+    if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||
+        pc_type == LinearSolver::BOOMER_AMG)
+    {
+      // Multigrid/AMS not applicable for the block system; fall back to sparse direct.
 #if defined(MFEM_USE_SUPERLU)
-    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-        std::make_unique<SuperLUSolver>(mesh.back()->GetComm(),
-                                        SymbolicFactorization::DEFAULT, false, true,
-                                        iodata.problem.verbose - 1));
+      pc_type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-        std::make_unique<StrumpackSolver>(mesh.back()->GetComm(),
-                                           SymbolicFactorization::DEFAULT,
-                                           SparseCompression::NONE, 0.0, 0, 0, true,
-                                           iodata.problem.verbose - 1));
+      pc_type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-        std::make_unique<MumpsSolver>(mesh.back()->GetComm(),
-                                      mfem::MUMPSSolver::UNSYMMETRIC,
-                                      SymbolicFactorization::DEFAULT, 0.0, true,
-                                      iodata.problem.verbose - 1));
+      pc_type = LinearSolver::MUMPS;
 #else
-    MFEM_ABORT("ModeAnalysis solver requires SuperLU_DIST, STRUMPACK, or MUMPS!");
-    std::unique_ptr<MfemWrapperSolver<ComplexOperator>> pc;
+      MFEM_ABORT(
+          "ModeAnalysis solver requires SuperLU_DIST, STRUMPACK, or MUMPS for the "
+          "shift-and-invert linear solver!");
 #endif
+    }
+    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+        [&]() -> std::unique_ptr<mfem::Solver>
+        {
+          if (pc_type == LinearSolver::SUPERLU)
+          {
+#if defined(MFEM_USE_SUPERLU)
+            return std::make_unique<SuperLUSolver>(
+                mesh.back()->GetComm(), linear.sym_factorization,
+                linear.superlu_3d, true, iodata.problem.verbose - 1);
+#endif
+          }
+          else if (pc_type == LinearSolver::STRUMPACK ||
+                   pc_type == LinearSolver::STRUMPACK_MP)
+          {
+#if defined(MFEM_USE_STRUMPACK)
+            return std::make_unique<StrumpackSolver>(
+                mesh.back()->GetComm(), linear.sym_factorization,
+                linear.strumpack_compression_type, linear.strumpack_lr_tol,
+                linear.strumpack_lossy_precision, linear.strumpack_butterfly_l, true,
+                iodata.problem.verbose - 1);
+#endif
+          }
+          else if (pc_type == LinearSolver::MUMPS)
+          {
+#if defined(MFEM_USE_MUMPS)
+            return std::make_unique<MumpsSolver>(
+                mesh.back()->GetComm(), mfem::MUMPSSolver::UNSYMMETRIC,
+                linear.sym_factorization, linear.strumpack_lr_tol, true,
+                iodata.problem.verbose - 1);
+#endif
+          }
+          MFEM_ABORT("Unsupported linear solver type for ModeAnalysis!");
+          return {};
+        }());
     pc->SetSaveAssembled(false);
     pc->SetDropSmallEntries(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
   }
-
-  // Precondition with the real part of A.
   ComplexWrapperOperator opP(opA->Real(), nullptr);
   ksp->SetOperators(*opA, opP);
   eigen->SetLinearSolver(*ksp);
-
-  // Solve the generalized eigenvalue problem B x = lambda A x (shift-and-invert).
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
+
   int num_conv = eigen->Solve();
-  Mpi::Print(" Found {:d} converged eigenvalue(s)\n\n", num_conv);
+  {
+    std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
+    Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
+               (num_conv > 1) ? "s" : "",
+               (num_conv > 0)
+                   ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
+                   : "");
+  }
 
-  // Extract and report mode properties.
+  // Postprocessing: extract propagation constants, effective indices, and impedance.
   BlockTimer bt2(Timer::POSTPRO);
-  const double kc = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  SaveMetadata(*ksp);
 
-  Mpi::Print(" {:>5s}  {:>22s}  {:>22s}  {:>16s}  {:>16s}\n", "Mode", "Re{kn} (1/m)",
-             "Im{kn} (1/m)", "Re{n_eff}", "Im{n_eff}");
-  Mpi::Print(" {}\n", std::string(88, '-'));
-
-  for (int i = 0; i < std::min(num_conv, num_modes); i++)
+  Mpi::Print("\nComputing mode analysis results and performing postprocessing\n\n");
+  const int n_print = std::min(num_conv, num_modes);
+  for (int i = 0; i < n_print; i++)
   {
     std::complex<double> lambda = eigen->GetEigenvalue(i);
-
-    // The extracted eigenvalue is lambda = 1 / (-kn^2 - sigma).
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
 
-    // Effective index: n_eff = kn / k0, where k0 = omega/c is the free-space wavenumber.
-    // In Palace's nondimensional units: k0 = omega (since c = 1/sqrt(mu0*eps0) = 1 nondim).
-    std::complex<double> n_eff = kn / omega;
+    // Extract the tangential E eigenvector for PostOperator (only the ND portion).
+    ComplexVector et(nd_size);
+    {
+      ComplexVector e0(nd_size + h1_size);
+      eigen->GetEigenvector(i, e0);
+      std::copy_n(e0.Real().begin(), nd_size, et.Real().begin());
+      std::copy_n(e0.Imag().begin(), nd_size, et.Imag().begin());
+    }
 
-    // Dimensionalize kn.
-    std::complex<double> kn_dim = kn * kc;
-
-    Mpi::Print(" {:5d}  {:>+22.12e}  {:>+22.12e}  {:>+16.8e}  {:>+16.8e}\n", i + 1,
-               kn_dim.real(), kn_dim.imag(), n_eff.real(), n_eff.imag());
+    // PostOperator handles all measurements, printing, and CSV output.
+    post_op.MeasureAndPrintAll(i, et, kn, omega, n_print);
   }
   Mpi::Print("\n");
-
-  // TODO: Save mode field patterns to Paraview (Phase 1b).
-  // TODO: Compute Z0 from V/I integrals, then L and C per unit length (Phase 2).
 
   ErrorIndicator indicator;
   return {indicator, nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize()};
