@@ -40,6 +40,11 @@ public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
 
+  // Mode analysis: ND space for electric field energy only (no B-field).
+  // Uses VectorFEMassIntegrator with ε (not CurlCurlIntegrator).
+  DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &nd_fespace, bool electric_energy_only);
+
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.
   double GetElectricFieldEnergy(const GridFunction &E) const;
