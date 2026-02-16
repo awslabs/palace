@@ -49,7 +49,6 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
   return mesh_;
 }
 
-// TODO: Should work in parallel but fails due to MFEM parallel issues.
 TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
 {
   // This is a test of a square lumped port with R=50 Ohm. It tests the geometry,
@@ -427,8 +426,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   }
 }
 
-// TODO: Extend to parallel case.
-TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
+TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
 {
   // Similar to LumpedPort_BasicTests_1ElementPort_Cube321 test above,
   // but now the single lump port consists of three disjoint elements to test
@@ -721,11 +719,15 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial]")
   const auto &port_1_test_cast = static_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
-  space_op.GetNDSpace().GetProlongationMatrix()->Mult(*form_s, VecFormS.Real());
+  VecFormS.SetSize(form_s->Size());
+  VecFormS.UseDevice(true);
+  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
 
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
-  space_op.GetNDSpace().GetProlongationMatrix()->Mult(*form_v, VecFormV.Real());
+  VecFormV.SetSize(form_v->Size());
+  VecFormV.UseDevice(true);
+  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
