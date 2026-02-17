@@ -739,7 +739,9 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
   if (boundary_pec_type != PEC::NONE)
   {
-    CHECK(nd_dbc_tdof.Size() > 0);
+    auto nd_dbc_tdof_size = nd_dbc_tdof.Size();
+    Mpi::GlobalSum(1, &nd_dbc_tdof_size, world_comm);
+    CHECK(nd_dbc_tdof_size > 0);
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
