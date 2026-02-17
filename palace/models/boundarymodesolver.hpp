@@ -126,8 +126,9 @@ public:
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 
-  // Access the linear solver (for metadata reporting).
-  const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
+  // Access the linear solver (for metadata reporting). Returns nullptr if this process
+  // does not have a solver configured (non-port process in wave port mode).
+  const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
 
 private:
   // Configuration (stored for Solve-time assembly).
