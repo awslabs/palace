@@ -7,6 +7,7 @@
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/interpolator.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -210,10 +211,27 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
       const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
       int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
       const auto &imp = impedance_data.begin()->second;
-      voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+      if (!imp.voltage_attributes.empty())
+      {
+        voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+      }
       if (!imp.current_attributes.empty())
       {
         current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+      }
+      voltage_integration_order = imp.integration_order;
+      if (!imp.voltage_p1.empty() && !imp.voltage_p2.empty())
+      {
+        has_voltage_coordinates = true;
+        const int dim = imp.voltage_p1.size();
+        voltage_p1.SetSize(dim);
+        voltage_p2.SetSize(dim);
+        for (int d = 0; d < dim; d++)
+        {
+          // Coordinates are already nondimensionalized in IoData::NondimensionalizeInputs.
+          voltage_p1(d) = imp.voltage_p1[d];
+          voltage_p2(d) = imp.voltage_p2[d];
+        }
       }
     }
   }
@@ -1137,8 +1155,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       auto &vi = measurement_cache.wave_port_vi[idx];
       vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
-      // vi.V = vi.I[0] = vi.I[1] = vi.I[2] = 0.0;  // Not yet implemented
-      //                                            // (Z = V² / P, I = V / Z)
+      vi.V = data.GetVoltage(*E);
     }
   }
 }
@@ -1612,9 +1629,19 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     auto &nd_fespace = fem_op->GetNDSpace();
     const int nd_size = nd_fespace.GetTrueVSize();
 
-    // Voltage: V = integral of Et . n_hat dl on the voltage boundary.
+    // Voltage: V = integral of Et . dl along the voltage path.
     std::complex<double> V(0.0, 0.0);
+    if (has_voltage_coordinates)
     {
+      // Coordinate-based: sample E along line from p1 to p2 via GSLIB interpolation.
+      V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E->Real(),
+                                      voltage_integration_order));
+      V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E->Imag(),
+                                      voltage_integration_order));
+    }
+    else if (voltage_marker.Size() > 0)
+    {
+      // Boundary attribute-based: integrate Et . n on marked boundary edges.
       mfem::ConstantCoefficient one(1.0);
       mfem::ParLinearForm v_lf(&nd_fespace.Get());
       v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),

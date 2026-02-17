@@ -6,6 +6,7 @@
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -505,6 +506,22 @@ WavePortData::WavePortData(const config::WavePortData &data,
     port_S0t = std::make_unique<GridFunction>(*port_nd_fespace);
     port_S0t->Real().ProjectCoefficient(tfunc);
   }
+
+  // Store voltage line integral coordinates if provided.
+  // Coordinates are already nondimensionalized in IoData::NondimensionalizeInputs.
+  if (!data.voltage_p1.empty() && !data.voltage_p2.empty())
+  {
+    has_voltage_coords = true;
+    const int vdim = data.voltage_p1.size();
+    voltage_p1.SetSize(vdim);
+    voltage_p2.SetSize(vdim);
+    for (int d = 0; d < vdim; d++)
+    {
+      voltage_p1(d) = data.voltage_p1[d];
+      voltage_p2(d) = data.voltage_p2[d];
+    }
+    voltage_integration_order = data.integration_order;
+  }
 }
 
 WavePortData::~WavePortData()
@@ -704,6 +721,59 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
   return dot;
+}
+
+std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
+{
+  // Compute voltage V = integral of E . dl along the configured line from p1 to p2.
+  // Uses GSLIB interpolation on the 3D parent mesh E field.
+  if (!has_voltage_coords)
+  {
+    return 0.0;
+  }
+  MFEM_VERIFY(E.HasImag(),
+              "Wave ports expect complex-valued E field in port voltage calculation!");
+  std::complex<double> V;
+  V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E.Real(),
+                                  voltage_integration_order));
+  V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E.Imag(),
+                                  voltage_integration_order));
+  return V;
+}
+
+std::complex<double> WavePortData::GetExcitationVoltage() const
+{
+  // Excitation voltage from the normalized port mode field. The mode is normalized to
+  // unit power, so V_inc = sqrt(2 * P * Z) = sqrt(2 * 1 * Z) = sqrt(2*Z).
+  // This requires voltage coordinates to be configured.
+  if (!has_voltage_coords || !port_E0t)
+  {
+    return 0.0;
+  }
+  std::complex<double> V;
+  V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, port_E0t->Real(),
+                                  voltage_integration_order));
+  V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, port_E0t->Imag(),
+                                  voltage_integration_order));
+  return V;
+}
+
+std::complex<double> WavePortData::GetCharacteristicImpedance() const
+{
+  // Characteristic impedance Z = |V_mode|^2 / (2 * P_mode) where the mode is normalized
+  // to unit power (P_mode = 1). Requires voltage coordinates to be configured.
+  if (!has_voltage_coords || !port_E0t)
+  {
+    return 0.0;
+  }
+  // Compute voltage from the stored port mode field on the submesh.
+  std::complex<double> V;
+  V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, port_E0t->Real(),
+                                  voltage_integration_order));
+  V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, port_E0t->Imag(),
+                                  voltage_integration_order));
+  // Z = |V|^2 / (2P), P = 1 for normalized mode.
+  return (V * std::conj(V)) / 2.0;
 }
 
 WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,

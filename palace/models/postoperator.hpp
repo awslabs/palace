@@ -237,7 +237,10 @@ protected:
   // Mode analysis impedance postprocessing state.
   mfem::Array<int> voltage_marker;
   mfem::Array<int> current_marker;
+  mfem::Vector voltage_p1, voltage_p2;  // Coordinate-based voltage path endpoints
+  int voltage_integration_order = 100;
   bool has_impedance_postpro = false;
+  bool has_voltage_coordinates = false;
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
