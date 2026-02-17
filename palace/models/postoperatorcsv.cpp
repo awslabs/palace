@@ -10,6 +10,7 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/waveportoperator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -898,13 +899,25 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                             U == ProblemType::TRANSIENT,
                         void>
 {
-  if (!(fem_op.GetLumpedPortOp().Size() > 0))
+  const auto &lumped_port_op = fem_op.GetLumpedPortOp();
+  // Check if any wave ports have voltage coordinates configured.
+  bool has_wave_port_voltage = false;
+  if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
+  {
+    for (const auto &[idx, data] : fem_op.GetWavePortOp())
+    {
+      if (data.has_voltage_coords)
+      {
+        has_wave_port_voltage = true;
+        break;
+      }
+    }
+  }
+  if (lumped_port_op.Size() == 0 && !has_wave_port_voltage)
   {
     return;
   }
   using fmt::format;
-  // Currently only works for lumped ports.
-  const auto &lumped_port_op = fem_op.GetLumpedPortOp();
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
@@ -952,6 +965,20 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                   ex_idx);
         tI.insert(format("re{}_{}", idx, ex_idx), format("I[{}]{} (A)", idx, ex_label),
                   ex_idx);
+      }
+    }
+    // Wave port voltage (when voltage coordinates are configured).
+    if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
+    {
+      for (const auto &[idx, data] : fem_op.GetWavePortOp())
+      {
+        if (data.has_voltage_coords)
+        {
+          tV.insert(format("re_w{}_{}", idx, ex_idx),
+                    format("Re{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tV.insert(format("im_w{}_{}", idx, ex_idx),
+                    format("Im{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+        }
       }
     }
   }
@@ -1009,6 +1036,15 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
     {
       port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag();
       port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag();
+    }
+  }
+  // Wave port voltage (for ports with voltage coordinates configured).
+  for (const auto &[idx, data] : measurement_cache.wave_port_vi)
+  {
+    if (std::abs(data.V) > 0.0)
+    {
+      port_V->table[fmt::format("re_w{}_{}", idx, m_ex_idx)] << data.V.real();
+      port_V->table[fmt::format("im_w{}_{}", idx, m_ex_idx)] << data.V.imag();
     }
   }
   port_V->WriteFullTableTrunc();
@@ -1079,6 +1115,87 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
     port_S->table[format("arg_{}_{}", idx, m_ex_idx)] << Measurement::Phase(data.S);
   }
   port_S->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // Only create port-Z.csv when wave ports have voltage coordinates configured.
+  bool has_wave_port_voltage = false;
+  for (const auto &[idx, data] : fem_op.GetWavePortOp())
+  {
+    if (data.has_voltage_coords)
+    {
+      has_wave_port_voltage = true;
+      break;
+    }
+  }
+  if (!has_wave_port_voltage)
+  {
+    return;
+  }
+  using fmt::format;
+  port_Z = TableWithCSVFile(post_dir / "port-Z.csv", reload_table);
+
+  Table t;
+  t.reserve(nr_expected_measurement_rows, 10);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    std::string ex_label = HasSingleExIdx() ? "" : format("[{}]", ex_idx);
+    for (const auto &[idx, data] : fem_op.GetWavePortOp())
+    {
+      if (data.has_voltage_coords)
+      {
+        t.insert(format("re_z_{}_{}", idx, ex_idx),
+                 format("Re{{Z[{}]{}}} (Ohm)", idx, ex_label), ex_idx);
+        t.insert(format("im_z_{}_{}", idx, ex_idx),
+                 format("Im{{Z[{}]{}}} (Ohm)", idx, ex_label), ex_idx);
+      }
+    }
+  }
+  MoveTableValidateReload(*port_Z, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintPortZ()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!port_Z)
+  {
+    return;
+  }
+  using fmt::format;
+  CheckAppendIndex(port_Z->table["idx"], row_idx_v, row_i);
+  for (const auto &[idx, data] : measurement_cache.wave_port_vi)
+  {
+    // Only write Z for ports that have voltage coordinates (columns in the table).
+    if (std::abs(data.V) == 0.0)
+    {
+      continue;
+    }
+    if (std::abs(data.P) > 0.0)
+    {
+      // Z = V * conj(V) / (2P) — power-voltage impedance definition.
+      // The Poynting power P is signed by the port normal: positive for power flowing
+      // into the domain, negative for power flowing out. For impedance we want the
+      // magnitude of the transmitted power, so flip the sign when Re{P} < 0.
+      auto P_pos = (data.P.real() < 0.0) ? -data.P : data.P;
+      auto Z = (data.V * std::conj(data.V)) / (2.0 * P_pos);
+      port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
+      port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
+    }
+    else
+    {
+      port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << 0.0;
+      port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << 0.0;
+    }
+  }
+  port_Z->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1331,6 +1448,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS(*post_op.fem_op);
+    InitializePortZ(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
@@ -1388,6 +1506,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
+    PrintPortZ();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {

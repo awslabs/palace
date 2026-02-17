@@ -298,6 +298,64 @@ void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
 #endif
 }
 
+double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
+                           const mfem::ParGridFunction &field, int quad_order)
+{
+#if defined(MFEM_USE_GSLIB)
+  const int dim = p1.Size();
+  MFEM_VERIFY(p2.Size() == dim, "ComputeLineIntegral: p1 and p2 must have same dimension!");
+
+  // Direction vector dl = p2 - p1. The full integral is V = ∫₀¹ F(r(t)) · dl dt.
+  mfem::Vector dl(dim);
+  for (int d = 0; d < dim; d++)
+  {
+    dl(d) = p2(d) - p1(d);
+  }
+  const double line_length = dl.Norml2();
+
+  // Use the caller-specified quadrature order on a single segment. The caller is
+  // responsible for choosing a high enough order to resolve the field variation along
+  // the line (the IntegrationOrder config parameter controls this).
+
+  // Gauss-Legendre quadrature on the segment [0, 1].
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(mfem::Geometry::SEGMENT, quad_order);
+  const int npts = ir.GetNPoints();
+
+  // Generate physical coordinates along the line: r(t_i) = p1 + t_i * dl.
+  // Stored in byNODES ordering: [x0,x1,...,xN, y0,y1,...,yN, (z0,...,zN)].
+  mfem::Vector xyz(npts * dim);
+  for (int i = 0; i < npts; i++)
+  {
+    double t = ir.IntPoint(i).x;
+    for (int d = 0; d < dim; d++)
+    {
+      xyz(d * npts + i) = p1(d) + t * dl(d);
+    }
+  }
+
+  // Interpolate the vector field at the quadrature points.
+  const int vdim = field.VectorDim();
+  mfem::Vector vals(npts * vdim);
+  InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES);
+
+  // Compute the dot product F · dl at each quadrature point and sum.
+  double result = 0.0;
+  for (int i = 0; i < npts; i++)
+  {
+    double dot = 0.0;
+    for (int d = 0; d < vdim && d < dim; d++)
+    {
+      dot += vals(d * npts + i) * dl(d);
+    }
+    result += ir.IntPoint(i).weight * dot;
+  }
+  return result;
+#else
+  MFEM_ABORT("ComputeLineIntegral requires MFEM_USE_GSLIB!");
+  return 0.0;
+#endif
+}
+
 }  // namespace fem
 
 }  // namespace palace

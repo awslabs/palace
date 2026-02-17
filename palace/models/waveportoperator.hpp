@@ -78,7 +78,12 @@ private:
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
+  // Voltage line integral configuration (optional, for impedance postprocessing).
+  mfem::Vector voltage_p1, voltage_p2;
+  int voltage_integration_order = 100;
+
 public:
+  bool has_voltage_coords = false;
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
@@ -101,26 +106,21 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientImag(double scaling = 1.0) const;
 
-  std::complex<double> GetCharacteristicImpedance() const
-  {
-    MFEM_ABORT("GetImpedance is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+  // Characteristic impedance Z = |V|^2 / (2P) from the port mode voltage and unit power.
+  // Requires voltage coordinates to be configured.
+  std::complex<double> GetCharacteristicImpedance() const;
 
   double GetExcitationPower() const;
-  std::complex<double> GetExcitationVoltage() const
-  {
-    MFEM_ABORT("GetExcitationVoltage is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+
+  // Excitation voltage from the normalized port mode field.
+  std::complex<double> GetExcitationVoltage() const;
 
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
-  std::complex<double> GetVoltage(GridFunction &E) const
-  {
-    MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+
+  // Voltage line integral V = integral of E . dl on the port, using the 3D E field.
+  // Requires voltage coordinates to be configured.
+  std::complex<double> GetVoltage(GridFunction &E) const;
 };
 
 //
