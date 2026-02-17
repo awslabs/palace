@@ -581,6 +581,10 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view node_label)
   {
     auto dim_V = V.size();
+    MFEM_VERIFY(
+        dim_V < V.capacity(),
+        "PROM basis storage exceeded. Please increase maximum number of prom "
+        "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
     double pre_norm;
     if (weight_op_W.has_value())
