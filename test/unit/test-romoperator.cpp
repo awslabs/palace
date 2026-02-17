@@ -327,7 +327,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
   CHECK(((inductance_L_inv->rows() == 1) && (inductance_L_inv->cols() == 1)));
   CHECK(((resistance_R_inv->rows() == 1) && (resistance_R_inv->cols() == 1)));
-  CHECK(((capacitance_C->rows() == 1) && (resistance_R_inv->cols() == 1)));
+  CHECK(((capacitance_C->rows() == 1) && (capacitance_C->cols() == 1)));
   CHECK(((orth_R.rows() == 1) && (orth_R.cols() == 1)));
 
   // This should be the same as norm of primary port vector ht_cn with Z_R = 1.0.
@@ -494,9 +494,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   // 1. See normalization tests of LumpedPort_BasicTests_1ElementPort_Cube321 in
   //    test-lumpedportintegration.cpp.
 
-  // double et_norm_expected_port1 = 0.0;
-  const auto &port_1 = space_op.GetLumpedPortOp().GetPort(1);
-  double et_norm_expected_port1 = port_1.GetExcitationFieldEtNormSqWithUnityZR();
 
   for (const auto &[port_i, port_norm] :
        std::vector<std::pair<int, double>>{{1, 1.0}, {2, 1.}})
@@ -513,7 +510,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
     W_bulk->Mult(port_primary_et.Real(), port_primary_et_tmp);
     auto overlap_bulk =
         linalg::Dot(world_comm, port_primary_et.Real(), port_primary_et_tmp);
-    Mpi::GlobalSum(1, &overlap_bulk, world_comm);
     CHECK_THAT(overlap_bulk, WithinAbs(0.0, 1e-15));
 
     auto overlap_combined = (*weight_op)
@@ -532,11 +528,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 
   CHECK(((inductance_L_inv->rows() == rom_dim) && (inductance_L_inv->cols() == rom_dim)));
   CHECK(((resistance_R_inv->rows() == rom_dim) && (resistance_R_inv->cols() == rom_dim)));
-  CHECK(((capacitance_C->rows() == rom_dim) && (resistance_R_inv->cols() == rom_dim)));
+  CHECK(((capacitance_C->rows() == rom_dim) && (capacitance_C->cols() == rom_dim)));
   CHECK(((orth_R.rows() == rom_dim) && (orth_R.cols() == rom_dim)));
-
-  Eigen::MatrixXd orth_R_ref = Eigen::MatrixXd::Identity(rom_dim, rom_dim);
-  orth_R_ref(0, 0) = std::sqrt(et_norm_expected_port1);
 
   Eigen::MatrixXd inductance_L_inv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
   inductance_L_inv_ref(0, 0) = 1.0 / port1_ref_L;
@@ -571,8 +564,10 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   check_mat_zero_pattern(*inductance_L_inv,
                          true);  // skip: could extras overlap crowded mesh
 
-  CHECK_THAT(std::real(orth_R(0, 0)), WithinRel(orth_R(0, 0)));
-  CHECK_THAT(std::real(orth_R(1, 1)), WithinRel(orth_R(1, 1)));
+  // Port vectors are chosen so that after orthogonalization with the hybrid mass matrix
+  // their norm is 1.0.
+  CHECK_THAT(std::real(orth_R(0, 0)), WithinRel(1.0));
+  CHECK_THAT(std::real(orth_R(1, 1)), WithinRel(1.0));
 
   CHECK_THAT(std::real((*resistance_R_inv)(0, 0)), WithinRel(resistance_R_inv_ref(0, 0)));
   CHECK_THAT(std::real((*resistance_R_inv)(1, 1)), WithinRel(resistance_R_inv_ref(1, 1)));
@@ -677,8 +672,8 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 
   RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
 
-  CHECK_THROWS(prom_op.AddLumpedPortModesForSynthesis(),
-               Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
+  CHECK_THROWS_WITH(prom_op.AddLumpedPortModesForSynthesis(),
+                    Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
 }
 
 // Currently all vectors being added to the PROM basis must be different. The logic of
