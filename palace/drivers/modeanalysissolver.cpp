@@ -5,23 +5,12 @@
 
 #include <complex>
 
-#include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
-#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
-#include "linalg/arpack.hpp"
 #include "linalg/errorestimator.hpp"
-#include "linalg/iterative.hpp"
-#include "linalg/ksp.hpp"
-#include "linalg/mumps.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/rap.hpp"
-#include "linalg/slepc.hpp"
-#include "linalg/solver.hpp"
-#include "linalg/strumpack.hpp"
-#include "linalg/superlu.hpp"
 #include "linalg/vector.hpp"
+#include "models/boundarymodesolver.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeanalysisoperator.hpp"
 #include "models/postoperator.hpp"
@@ -32,13 +21,6 @@
 
 namespace palace
 {
-
-namespace
-{
-
-constexpr bool skip_zeros = false;
-
-}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -60,9 +42,9 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
   BlockTimer bt0(Timer::CONSTRUCT);
   auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
-                                                         mesh.back()->Dimension());
+                                                        mesh.back()->Dimension());
   auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
-                                                         mesh.back()->Dimension());
+                                                        mesh.back()->Dimension());
   FiniteElementSpace nd_fespace(*mesh.back(), nd_fec.get());
   FiniteElementSpace h1_fespace(*mesh.back(), h1_fec.get());
 
@@ -91,7 +73,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // single-level hierarchy. For the 2D case, the curl flux estimator also needs the L2
   // curl space (from ModeAnalysisOperator) and an H1 hierarchy.
   auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                         mesh.back()->Dimension());
+                                                        mesh.back()->Dimension());
   FiniteElementSpaceHierarchy nd_fespaces(
       std::make_unique<FiniteElementSpace>(*mesh.back(), nd_fec.get()));
   FiniteElementSpaceHierarchy rt_fespaces(
@@ -123,196 +105,47 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     sigma = -omega * omega * mu_eps_max;
   }
 
-  // Assemble block system matrices.
-  MaterialPropertyCoefficient muinv_cc(mat_op.GetAttributeToMaterial(),
-                                       mat_op.GetCurlCurlInvPermeability());
-  MaterialPropertyCoefficient eps_shifted(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetPermittivityReal(), -omega * omega);
-  eps_shifted.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                             mat_op.GetInvPermeability(), -sigma);
-  BilinearForm att(nd_fespace);
-  att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc, eps_shifted);
-  auto Att = ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
+  // Configure and construct the boundary mode solver.
+  BoundaryModeSolverConfig config;
+  config.attr_to_material = &mat_op.GetAttributeToMaterial();
+  config.inv_permeability = &mat_op.GetInvPermeability();
+  config.curlcurl_inv_permeability = &mat_op.GetCurlCurlInvPermeability();
+  config.permittivity_real = &mat_op.GetPermittivityReal();
+  config.permittivity_scalar = &mat_op.GetPermittivityScalar();
+  config.permittivity_imag =
+      mat_op.HasLossTangent() ? &mat_op.GetPermittivityImag() : nullptr;
+  config.has_loss_tangent = mat_op.HasLossTangent();
+  config.normal = nullptr;  // 2D domain mesh, no normal projection
+  config.num_modes = num_modes;
+  config.num_vec = std::max(2 * num_modes + 1, 20);
+  config.eig_tol = tol;
+  config.which_eig = EigenvalueSolver::WhichType::LARGEST_MAGNITUDE;
+  config.linear = &iodata.solver.linear;
+  config.eigen_backend = ma_data.type;
+  config.verbose = iodata.problem.verbose;
 
-  MaterialPropertyCoefficient muinv_neg(mat_op.GetAttributeToMaterial(),
-                                        mat_op.GetInvPermeability(), -1.0);
-  BilinearForm atn(h1_fespace, nd_fespace);
-  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_neg);
-  auto Atn = ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
-                 .StealParallelAssemble();
+  // Build combined dbc_tdof_list for the block system.
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(nd_dbc_tdof_list);
+  for (int i = 0; i < h1_dbc_tdof_list.Size(); i++)
+  {
+    dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
+  }
 
-  MaterialPropertyCoefficient eps_pos(mat_op.GetAttributeToMaterial(),
-                                      mat_op.GetPermittivityReal(), 1.0);
-  BilinearForm ant(nd_fespace, h1_fespace);
-  ant.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(eps_pos);
-  auto Ant = ParOperator(ant.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-                 .StealParallelAssemble();
-
-  MaterialPropertyCoefficient eps_neg(mat_op.GetAttributeToMaterial(),
-                                      mat_op.GetPermittivityScalar(), -1.0);
-  BilinearForm ann(h1_fespace);
-  ann.AddDomainIntegrator<MassIntegrator>(eps_neg);
-  auto Ann = ParOperator(ann.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
-
-  MaterialPropertyCoefficient muinv_pos(mat_op.GetAttributeToMaterial(),
-                                        mat_op.GetInvPermeability());
-  BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_pos);
-  auto Btt = ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
+  BoundaryModeSolver mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,
+                                 mesh.back()->GetComm());
 
   // Store Btt in ModeAnalysisOperator for impedance postprocessing in PostOperator.
-  // Make a copy since the original is also needed in the block B matrix below.
-  {
-    auto Btt_copy = std::make_unique<mfem::HypreParMatrix>(*Btt);
-    mode_op.SetBttMatrix(std::move(Btt_copy));
-  }
+  mode_op.SetBttMatrix(std::make_unique<mfem::HypreParMatrix>(*mode_solver.GetBtt()));
 
-  // Block A matrix with essential BC elimination.
-  std::unique_ptr<mfem::HypreParMatrix> opAr;
-  {
-    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-    blocks(0, 0) = Att.get();
-    blocks(0, 1) = Atn.get();
-    blocks(1, 0) = Ant.get();
-    blocks(1, 1) = Ann.get();
-    opAr.reset(mfem::HypreParMatrixFromBlocks(blocks));
-    mfem::Array<int> dbc_tdof_list;
-    dbc_tdof_list.Append(nd_dbc_tdof_list);
-    for (int i = 0; i < h1_dbc_tdof_list.Size(); i++)
-    {
-      dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
-    }
-    opAr->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
-  }
-
-  // Block B matrix.
-  std::unique_ptr<mfem::HypreParMatrix> opBr;
-  {
-    mfem::SparseMatrix zero_sp(h1_size, h1_size);
-    zero_sp.Finalize();
-    mfem::HypreParMatrix zero_h1(h1_fespace.GetComm(), h1_fespace.GlobalTrueVSize(),
-                                  h1_fespace.GlobalTrueVSize(),
-                                  h1_fespace.Get().GetTrueDofOffsets(),
-                                  h1_fespace.Get().GetTrueDofOffsets(), &zero_sp);
-    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-    blocks(0, 0) = Btt.get();
-    blocks(0, 1) = nullptr;
-    blocks(1, 0) = nullptr;
-    blocks(1, 1) = &zero_h1;
-    opBr.reset(mfem::HypreParMatrixFromBlocks(blocks));
-  }
-
-  auto opA = std::make_unique<ComplexWrapperOperator>(std::move(opAr), nullptr);
-  auto opB = std::make_unique<ComplexWrapperOperator>(std::move(opBr), nullptr);
-
-  // Eigenvalue solver.
+  // Solve the eigenvalue problem.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\nSolving for {:d} propagation mode(s)...\n", num_modes);
 
-  std::unique_ptr<EigenvalueSolver> eigen;
-#if defined(PALACE_WITH_SLEPC)
+  auto result = mode_solver.Solve(omega, sigma);
+  int num_conv = result.num_converged;
   {
-    auto slepc = std::make_unique<slepc::SlepcEPSSolver>(
-        mesh.back()->GetComm(), iodata.problem.verbose);
-    slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    slepc->SetNumModes(num_modes, std::max(2 * num_modes + 1, 20));
-    slepc->SetTol(tol);
-    slepc->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
-    eigen = std::move(slepc);
-  }
-#elif defined(PALACE_WITH_ARPACK)
-  {
-    auto arpack = std::make_unique<arpack::ArpackEPSSolver>(
-        mesh.back()->GetComm(), iodata.problem.verbose);
-    arpack->SetNumModes(num_modes, std::max(2 * num_modes + 1, 20));
-    arpack->SetTol(tol);
-    arpack->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
-    eigen = std::move(arpack);
-  }
-#else
-  MFEM_ABORT("ModeAnalysis solver requires SLEPc or ARPACK!");
-#endif
-
-  // Linear solver for shift-and-invert. Uses GMRES preconditioned with a sparse direct
-  // solver (same pattern as the wave port solver). The direct solver type is read from the
-  // linear solver config, defaulting to whatever sparse direct solver is available.
-  // Note: multigrid (AMS, BoomerAMG) is not applicable for the block eigenvalue problem
-  // since the combined ND+H1 system doesn't have a standard multigrid hierarchy.
-  std::unique_ptr<ComplexKspSolver> ksp;
-  {
-    const auto &linear = iodata.solver.linear;
-    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(
-        mesh.back()->GetComm(), iodata.problem.verbose);
-    gmres->SetInitialGuess(false);
-    gmres->SetRelTol(linear.tol);
-    gmres->SetMaxIter(linear.max_it);
-    gmres->SetRestartDim(linear.max_it);
-
-    // Select sparse direct solver from config (or default to whatever is available).
-    LinearSolver pc_type = linear.type;
-    if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||
-        pc_type == LinearSolver::BOOMER_AMG)
-    {
-      // Multigrid/AMS not applicable for the block system; fall back to sparse direct.
-#if defined(MFEM_USE_SUPERLU)
-      pc_type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
-      pc_type = LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-      pc_type = LinearSolver::MUMPS;
-#else
-      MFEM_ABORT(
-          "ModeAnalysis solver requires SuperLU_DIST, STRUMPACK, or MUMPS for the "
-          "shift-and-invert linear solver!");
-#endif
-    }
-    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-        [&]() -> std::unique_ptr<mfem::Solver>
-        {
-          if (pc_type == LinearSolver::SUPERLU)
-          {
-#if defined(MFEM_USE_SUPERLU)
-            return std::make_unique<SuperLUSolver>(
-                mesh.back()->GetComm(), linear.sym_factorization,
-                linear.superlu_3d, true, iodata.problem.verbose - 1);
-#endif
-          }
-          else if (pc_type == LinearSolver::STRUMPACK ||
-                   pc_type == LinearSolver::STRUMPACK_MP)
-          {
-#if defined(MFEM_USE_STRUMPACK)
-            return std::make_unique<StrumpackSolver>(
-                mesh.back()->GetComm(), linear.sym_factorization,
-                linear.strumpack_compression_type, linear.strumpack_lr_tol,
-                linear.strumpack_lossy_precision, linear.strumpack_butterfly_l, true,
-                iodata.problem.verbose - 1);
-#endif
-          }
-          else if (pc_type == LinearSolver::MUMPS)
-          {
-#if defined(MFEM_USE_MUMPS)
-            return std::make_unique<MumpsSolver>(
-                mesh.back()->GetComm(), mfem::MUMPSSolver::UNSYMMETRIC,
-                linear.sym_factorization, linear.strumpack_lr_tol, true,
-                iodata.problem.verbose - 1);
-#endif
-          }
-          MFEM_ABORT("Unsupported linear solver type for ModeAnalysis!");
-          return {};
-        }());
-    pc->SetSaveAssembled(false);
-    pc->SetDropSmallEntries(false);
-    ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
-  }
-  ComplexWrapperOperator opP(opA->Real(), nullptr);
-  ksp->SetOperators(*opA, opP);
-  eigen->SetLinearSolver(*ksp);
-  eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
-
-  int num_conv = eigen->Solve();
-  {
-    std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
+    std::complex<double> lambda = (num_conv > 0) ? mode_solver.GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
                (num_conv > 1) ? "s" : "",
                (num_conv > 0)
@@ -322,7 +155,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocessing: extract propagation constants, effective indices, and impedance.
   BlockTimer bt2(Timer::POSTPRO);
-  SaveMetadata(*ksp);
+  SaveMetadata(mode_solver.GetLinearSolver());
 
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
@@ -335,14 +168,14 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const int n_print = std::min(num_conv, num_modes);
   for (int i = 0; i < n_print; i++)
   {
-    std::complex<double> lambda = eigen->GetEigenvalue(i);
+    std::complex<double> lambda = mode_solver.GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
 
     // Extract the tangential (ND) and normal (H1) E eigenvector components.
     ComplexVector et(nd_size), en(h1_size);
     {
       ComplexVector e0(nd_size + h1_size);
-      eigen->GetEigenvector(i, e0);
+      mode_solver.GetEigenvector(i, e0);
       std::copy_n(e0.Real().begin(), nd_size, et.Real().begin());
       std::copy_n(e0.Imag().begin(), nd_size, et.Imag().begin());
       std::copy_n(e0.Real().begin() + nd_size, h1_size, en.Real().begin());
@@ -380,8 +213,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     // PostOperator handles all measurements, printing, and CSV output.
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
 
     // Calculate and record the error indicators. Compute Bz = curl_t(Et) / (iω) on the
     // L2 curl space for the curl flux part of the estimator.
