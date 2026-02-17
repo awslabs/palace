@@ -338,14 +338,107 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   return vals;
 }
 
+// Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port
+// boundaries summed together. However:
+// - We zero out the domain mass matrix on the dof of the boundary, leaving on the boundary
+//   mass matrix.
+// - We weight the mass matrix by 1 / \eta with reference impedance \vert Z_R \vert = 1, so
+//   that power orthogonality of modes is enforced.
+// - We don't weight by material coefficients so that is fully real and corresponds to to
+//   full space overlap (except excised bulk part).
+//
+// Zero out port dofs of bulk in ctor.
+HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
+    const SpaceOperator &space_op, DomainOrthogonalizationWeight domain_orthog_type)
+{
+  const auto &mat_op = space_op.GetMaterialOp();
+
+  // Port attrs: To zero out true dof corresponding to attrs in bulk
+  mfem::Array<int> port_attr_list_local{};
+
+  // Ports:
+  BilinearForm w_port(space_op.GetNDSpace());
+  MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
+
+  for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+  {
+    for (const auto &elem : data.elems)
+    {
+      // Want to add eta corresponding to a nominal Z_r = 1
+      double eta_norm = data.GetToSquare(*elem);
+      fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
+                                  1.0 / eta_norm);
+      port_attr_list_local.Append(elem->GetAttrList());
+    }
+  }
+  // Need to check this as this per MPI rank. Ranks where the material property is empty
+  // should not add this integrator.
+  if (!fb_port.empty())
+  {
+    w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+  }
+  auto w_port_assemble = w_port.Assemble(false);
+  W_inner_product_weight_port =
+      std::make_unique<ParOperator>(std::move(w_port_assemble), space_op.GetNDSpace());
+
+  // Convert port_attr_list into essential tdof
+  int bdr_attr_max = (space_op.GetMesh().Get().bdr_attributes.Size() != 0)
+                         ? space_op.GetMesh().Get().bdr_attributes.Max()
+                         : 0;
+  auto port_attr_marker = mesh::AttrToMarker(bdr_attr_max, port_attr_list_local);
+  space_op.GetNDSpace().Get().GetEssentialTrueDofs(port_attr_marker, port_tdof_list);
+
+  // Bulk, based on configuration (skip for FE_BASIS_IDENTITY)
+  if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY ||
+      domain_orthog_type == DomainOrthogonalizationWeight::SPACE_OVERLAP)
+  {
+    MaterialPropertyCoefficient epsilon_func = [&mat_op, &domain_orthog_type]()
+    {
+      if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY)
+      {
+        return MaterialPropertyCoefficient{mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal()};
+      }
+      // SPACE_OVERLAP: Integrate \int dx E(x) E(x)
+      // Use Palace existing palace machinery, but make a trivial bulk material.
+      MaterialPropertyCoefficient eps_func_local(mat_op.MaxCeedAttribute());
+      const auto &eps_ref = mat_op.GetPermittivityReal();
+      mfem::DenseTensor eps_id(eps_ref.SizeI(), eps_ref.SizeJ(), eps_ref.SizeK());
+      eps_id = 0.0;
+      for (int k = 0; k < eps_id.SizeK(); k++)
+      {
+        for (int i = 0; i < eps_id.SizeI(); i++)
+        {
+          eps_id(i, i, k) = 1.0;
+        }
+      }
+      eps_func_local.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
+      return eps_func_local;
+    }();
+
+    BilinearForm w_bulk(space_op.GetNDSpace());
+    // Need to check this as this per MPI rank. Ranks where the material property is empty
+    // should not add this integrator.
+    if (!epsilon_func.empty())
+    {
+      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    }
+    auto w_bulk_assemble = w_bulk.Assemble(false);
+    W_inner_product_weight_bulk =
+        std::make_unique<ParOperator>(std::move(w_bulk_assemble), space_op.GetNDSpace());
+  }
+  // Zero out port dofs of bulk in validation.
+  validate_operators_zero_bulk_tdof();
+}
+
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
   : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
 {
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. The damping matrix may be nullptr.
+  // Construct the system matrices defining the linear operator. PEC boundaries are
+  // handled simply by setting diagonal entries of the system matrix for the corresponding
+  // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
+  // required on the RHS. The damping matrix may be nullptr.
   K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -369,81 +462,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
 
-    // Build inner-product weight matrix. This is made from MassIntegrator of the domain and
-    // port boundaries summed together. However:
-    // - We zero out the domain mass matrix on the dof of the boundary, leaving on the
-    //   boundary mass matrix.
-    // - We weight the mass matrix by 1 / \eta with reference impedance \vert Z_R \vert = 1,
-    //   so that power orthogonality of modes is enforced.
-    // - We don't weight by material coefficients so that is fully real and corresponds to
-    //   to full space overlap (except excised bulk part).
-
-    const auto &mat_op = space_op.GetMaterialOp();
-
-    // Ports:
-    BilinearForm w_port(space_op.GetNDSpace());
-    MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
-    // To zero out true dof corresponding to attrs in bulk
-    mfem::Array<int> port_attr_list{}, port_tdof_list{};
-
-    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
-    {
-      for (const auto &elem : data.elems)
-      {
-        // Want to add eta corresponding to a nominal Z_r = 1
-        double eta_norm = data.GetToSquare(*elem);
-        fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                                    1.0 / eta_norm);
-        port_attr_list.Append(elem->GetAttrList());
-      }
-    }
-    // Need to check this as this per MPI rank. Ranks where the material property is empty
-    // should not add this integrator.
-    if (!fb_port.empty())
-    {
-      w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
-    }
-    auto w_port_assemble = w_port.Assemble(false);
-    auto w_port_assemble_parop =
-        std::make_unique<ParOperator>(std::move(w_port_assemble), space_op.GetNDSpace());
-
-    // Convert port_attr_list into essential tdof
-    int bdr_attr_max = space_op.GetMesh().Get().bdr_attributes.Size()
-                           ? space_op.GetMesh().Get().bdr_attributes.Max()
-                           : 0;
-    auto port_attr_marker = mesh::AttrToMarker(bdr_attr_max, port_attr_list);
-    space_op.GetNDSpace().Get().GetEssentialTrueDofs(port_attr_marker, port_tdof_list);
-
-    // Bulk:
-    BilinearForm w_bulk(space_op.GetNDSpace());
-
-    // Use Palace existing palace machinery, but make a trivial bulk material.
-    MaterialPropertyCoefficient f_bulk(mat_op.MaxCeedAttribute());
-    const auto &eps_ref = mat_op.GetPermittivityReal();
-    mfem::DenseTensor eps_id(eps_ref.SizeI(), eps_ref.SizeJ(), eps_ref.SizeK());
-    eps_id = 0.0;
-    for (int k = 0; k < eps_id.SizeK(); k++)
-    {
-      for (int i = 0; i < eps_id.SizeI(); i++)
-      {
-        eps_id(i, i, k) = 1.0;
-      }
-    }
-
-    f_bulk.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
-    // Need to check this as this per MPI rank. Ranks where the material property is empty
-    // should not add this integrator.
-    if (!f_bulk.empty())
-    {
-      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(f_bulk);
-    }
-    auto w_bulk_assemble = w_bulk.Assemble(false);
-    auto w_bulk_assemble_parop =
-        std::make_unique<ParOperator>(std::move(w_bulk_assemble), space_op.GetNDSpace());
-
-    // Zero out port dofs of bulk in ctor.
-    weight_op_W = {std::move(port_tdof_list), std::move(w_bulk_assemble_parop),
-                   std::move(w_port_assemble_parop)};
+    // Build inner-product weight matrix.
+    weight_op_W = HybridBulkBoundaryOperator{
+        space_op, iodata.solver.driven.adaptive_circuit_synthesis_domain_orthog};
   }
 
   // Reserve empty vectors.
@@ -460,7 +481,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
   // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
-  // excitation index, so this is triggered the first time it is called in drivensolver.cpp.
+  // excitation index, so this is triggered the first time it is called in
+  // drivensolver.cpp.
   if (excitation_idx_cache == excitation_idx)
   {
     return;
@@ -526,8 +548,9 @@ void RomOperator::AddLumpedPortModesForSynthesis()
   // Add modes for lumped port to use them a circuit matrices.
   //
   // The excitation vector that we expect to add to the PROM is just the GridFunction
-  // (primary vector) E_t which is the tangential electric field associated with that port.
-  // The field is normalized according with an effective reference impedance of \vert Z_R
+  // (primary vector) E_t which is the tangential electric field associated with that
+  // port. The field is normalized according with an effective reference impedance of
+  // \vert Z_R
   // \vert = 1, see SpaceOp::GetLumpedPortExcitationVectorPrimaryEt &
   // LumpedPortData::GetExcitationFieldEtNormSqWithUnityZR().
   //
@@ -536,8 +559,8 @@ void RomOperator::AddLumpedPortModesForSynthesis()
   // The hybrid weight matrix used for normalization weight_op_W will guarantee that the
   // generic vectors added to the ROM will be orthogonal with respect to the boundary
   // bilinear v_rom * g_port_boundary * e_t = 0 (unless v_rom == e_t). If we used a
-  // conventional mass matrix of the space, this orthogonality would not be true as DoFs of
-  // the boundary also contribute the bulk integral ('leak into the bulk').
+  // conventional mass matrix of the space, this orthogonality would not be true as DoFs
+  // of the boundary also contribute the bulk integral ('leak into the bulk').
   //
   // To have a sensible scattering matrix, we ensure port modes are orthogonal. Ports that
   // neighbor each other in space could fail this since they share DoFs on the finite
