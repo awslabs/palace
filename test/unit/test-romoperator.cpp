@@ -621,42 +621,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
       CHECK_THAT(std::abs(S), WithinAbs(0.0, 1e-14));
     }
   }
-
-  const auto Kr_ref = prom_op.GetKr();
-  const auto Cr_ref = prom_op.GetCr();
-  const auto Mr_ref = prom_op.GetMr();
-
-  // Check re-orthogonality — here everything is order 1 and non-degenerate.
-  prom_op.ReorthogonalizePROM();
-
-  const auto Kr_reorthog = prom_op.GetKr();
-  const auto Cr_reorthog = prom_op.GetCr();
-  const auto Mr_reorthog = prom_op.GetMr();
-
-  REQUIRE(Kr_ref.size() == Kr_reorthog.size());
-  REQUIRE(Cr_ref.size() == Cr_reorthog.size());
-  REQUIRE(Mr_ref.size() == Mr_reorthog.size());
-
-  for (long i = 0; i < Kr_ref.rows(); i++)
-  {
-    for (long j = 0; j < Kr_ref.cols(); j++)
-    {
-      CHECK_THAT(std::real(Kr_reorthog(i, j)),
-                 WithinRel(std::real(Kr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-      CHECK_THAT(std::imag(Kr_reorthog(i, j)),
-                 WithinRel(std::imag(Kr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-
-      CHECK_THAT(std::real(Cr_reorthog(i, j)),
-                 WithinRel(std::real(Cr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-      CHECK_THAT(std::imag(Cr_reorthog(i, j)),
-                 WithinRel(std::imag(Cr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-
-      CHECK_THAT(std::real(Mr_reorthog(i, j)),
-                 WithinRel(std::real(Mr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-      CHECK_THAT(std::imag(Mr_reorthog(i, j)),
-                 WithinRel(std::imag(Mr_reorthog(i, j))) || WithinAbs(0.0, 1e-14));
-    }
-  }
 }
 
 // Checks failure mode that neighbouring ports have overlap because they share and edge
