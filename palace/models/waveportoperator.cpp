@@ -3,19 +3,9 @@
 
 #include "waveportoperator.hpp"
 
-#include <tuple>
 #include <fmt/ranges.h>
-#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
-#include "linalg/arpack.hpp"
-#include "linalg/iterative.hpp"
-#include "linalg/mumps.hpp"
-#include "linalg/rap.hpp"
-#include "linalg/slepc.hpp"
-#include "linalg/solver.hpp"
-#include "linalg/strumpack.hpp"
-#include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -100,186 +90,6 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
   linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
   linalg::SetSubVector(v, dbc_tdof_list, 0.0);
-}
-
-using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
-                                         std::unique_ptr<mfem::HypreParMatrix>>;
-constexpr bool skip_zeros = false;
-
-ComplexHypreParMatrix GetAtt(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &nd_fespace,
-                             const mfem::Vector &normal, double omega, double sigma)
-{
-  // Stiffness matrix (shifted): Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) - σ (μ⁻¹ u, v).
-  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
-  muinv_func.NormalProjectedCoefficient(normal);
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal(), -omega * omega);
-  epsilon_func.AddCoefficient(mat_op.GetBdrAttributeToMaterial(),
-                              mat_op.GetInvPermeability(), -sigma);
-  BilinearForm attr(nd_fespace);
-  attr.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
-
-  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
-  if (!mat_op.HasLossTangent())
-  {
-    return {ParOperator(attr.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
-            nullptr};
-  }
-  MaterialPropertyCoefficient negepstandelta_func(
-      mat_op.GetBdrAttributeToMaterial(), mat_op.GetPermittivityImag(), -omega * omega);
-  BilinearForm atti(nd_fespace);
-  atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
-  return {ParOperator(attr.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
-          ParOperator(atti.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble()};
-}
-
-ComplexHypreParMatrix GetAtn(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &nd_fespace,
-                             const FiniteElementSpace &h1_fespace)
-{
-  // Coupling matrix: Aₜₙ = -(μ⁻¹ ∇ₜ u, v).
-  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability(), -1.0);
-  BilinearForm atn(h1_fespace, nd_fespace);
-  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
-  return {ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
-              .StealParallelAssemble(),
-          nullptr};
-}
-
-ComplexHypreParMatrix GetAnt(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &h1_fespace,
-                             const FiniteElementSpace &nd_fespace)
-{
-  // Coupling matrix: Aₙₜ = -(ε u, ∇ₜ v).
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal(), 1.0);
-
-  BilinearForm antr(nd_fespace, h1_fespace);
-  antr.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
-
-  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
-  if (!mat_op.HasLossTangent())
-  {
-    return {ParOperator(antr.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-                .StealParallelAssemble(),
-            nullptr};
-  }
-  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
-                                                  mat_op.GetPermittivityImag(), 1.0);
-  BilinearForm anti(nd_fespace, h1_fespace);
-  anti.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(negepstandelta_func);
-  return {ParOperator(antr.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-              .StealParallelAssemble(),
-          ParOperator(anti.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-              .StealParallelAssemble()};
-}
-
-ComplexHypreParMatrix GetAnn(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &h1_fespace,
-                             const mfem::Vector &normal)
-{
-  // Mass matrix: Aₙₙ = -(ε u, v).
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal(), -1.0);
-  epsilon_func.NormalProjectedCoefficient(normal);
-  BilinearForm annr(h1_fespace);
-  annr.AddDomainIntegrator<MassIntegrator>(epsilon_func);
-
-  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
-  if (!mat_op.HasLossTangent())
-  {
-    return {ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble(),
-            nullptr};
-  }
-  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
-                                                  mat_op.GetPermittivityImag(), -1.0);
-  negepstandelta_func.NormalProjectedCoefficient(normal);
-  BilinearForm anni(h1_fespace);
-  anni.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
-  return {ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble(),
-          ParOperator(anni.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble()};
-}
-
-ComplexHypreParMatrix GetBtt(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &nd_fespace)
-{
-  // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
-  BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
-  return {ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
-          nullptr};
-}
-
-ComplexHypreParMatrix
-GetSystemMatrixA(const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
-                 const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-                 const mfem::HypreParMatrix *Antr, const mfem::HypreParMatrix *Anti,
-                 const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
-                 const mfem::Array<int> &dbc_tdof_list)
-{
-  // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e.
-  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  blocks(0, 0) = Attr;
-  blocks(0, 1) = Atnr;
-  blocks(1, 0) = Antr;
-  blocks(1, 1) = Annr;
-  std::unique_ptr<mfem::HypreParMatrix> Ar(mfem::HypreParMatrixFromBlocks(blocks));
-
-  std::unique_ptr<mfem::HypreParMatrix> Ai;
-  if (Atti)
-  {
-    blocks(0, 0) = Atti;
-    blocks(0, 1) = Atni;
-    blocks(1, 0) = Anti;
-    blocks(1, 1) = Anni;
-    Ai.reset(mfem::HypreParMatrixFromBlocks(blocks));
-  }
-
-  // Eliminate boundary true dofs not associated with this wave port or constrained by
-  // Dirichlet BCs.
-  Ar->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
-  if (Ai)
-  {
-    Ai->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
-  }
-
-  return {std::move(Ar), std::move(Ai)};
-}
-
-ComplexHypreParMatrix GetSystemMatrixB(const mfem::HypreParMatrix *Bttr,
-                                       const mfem::HypreParMatrix *Btti,
-                                       const mfem::HypreParMatrix *Dnn,
-                                       const mfem::Array<int> &dbc_tdof_list)
-{
-  // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e.
-  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  blocks(0, 0) = Bttr;
-  blocks(0, 1) = nullptr;
-  blocks(1, 0) = nullptr;
-  blocks(1, 1) = Dnn;
-  std::unique_ptr<mfem::HypreParMatrix> Br(mfem::HypreParMatrixFromBlocks(blocks));
-
-  std::unique_ptr<mfem::HypreParMatrix> Bi;
-  if (Btti)
-  {
-    blocks(0, 0) = Btti;
-    Bi.reset(mfem::HypreParMatrixFromBlocks(blocks));
-  }
-
-  // Eliminate boundary true dofs not associated with this wave port or constrained by
-  // Dirichlet BCs.
-  Br->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
-  if (Bi)
-  {
-    Bi->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
-  }
-
-  return {std::move(Br), std::move(Bi)};
 }
 
 void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
@@ -607,24 +417,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
                                              // propagation constant possible
-  std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
-  std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
-  std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
-  {
-    // The HypreParMatrix constructor from a SparseMatrix on each process does not copy
-    // the SparseMatrix data, but that's OK since this Dnn is copied in the block system
-    // matrix construction.
-    Vector d(port_h1_fespace->GetTrueVSize());
-    d.UseDevice(false);  // SparseMatrix constructor uses Vector on host
-    d = 0.0;
-    mfem::SparseMatrix diag(d);
-    auto Dnn = std::make_unique<mfem::HypreParMatrix>(
-        port_h1_fespace->GetComm(), port_h1_fespace->Get().GlobalTrueVSize(),
-        port_h1_fespace->Get().GetTrueDofOffsets(), &diag);
-    auto [Bttr, Btti] = GetBtt(mat_op, *port_nd_fespace);
-    auto [Br, Bi] = GetSystemMatrixB(Bttr.get(), Btti.get(), Dnn.get(), port_dbc_tdof_list);
-    opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
-  }
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -639,142 +431,31 @@ WavePortData::WavePortData(const config::WavePortData &data,
   Mpi::GlobalMin(1, &port_root, comm);
   MFEM_VERIFY(port_root < Mpi::Size(comm), "No root process found for port!");
 
-  // Configure the eigenvalue problem solver. As for the full 3D case, the system matrices
-  // are in general complex and symmetric. We supply the operators to the solver in
-  // shift-inverted form and handle the back-transformation externally.
-  if (port_comm != MPI_COMM_NULL)
+  // Configure the boundary mode solver. Matrix assembly is MPI-collective on the FE space
+  // communicator (all processes), so the config + construction must happen on all processes.
+  // The solver_comm (port_comm) restricts solver setup to port processes only.
   {
-    // Define the linear solver to be used for solving systems associated with the
-    // generalized eigenvalue problem.
-    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, data.verbose);
-    gmres->SetInitialGuess(false);
-    gmres->SetRelTol(data.ksp_tol);
-    gmres->SetMaxIter(data.ksp_max_its);
-    gmres->SetRestartDim(data.ksp_max_its);
-    // gmres->SetPrecSide(PreconditionerSide::RIGHT);
+    port_bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+    BoundaryModeSolverConfig config;
+    config.attr_to_material = &port_bdr_attr_mat;
+    config.inv_permeability = &mat_op.GetInvPermeability();
+    config.curlcurl_inv_permeability = &mat_op.GetInvPermeability();
+    config.permittivity_real = &mat_op.GetPermittivityReal();
+    config.permittivity_scalar = &mat_op.GetPermittivityReal();
+    config.permittivity_imag =
+        mat_op.HasLossTangent() ? &mat_op.GetPermittivityImag() : nullptr;
+    config.has_loss_tangent = mat_op.HasLossTangent();
+    config.normal = &port_normal;
+    config.num_modes = mode_idx;
+    config.num_vec = std::max(2 * mode_idx + 1, 5);
+    config.eig_tol = data.eig_tol;
+    config.which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
+    config.linear = &solver.linear;
+    config.eigen_backend = data.eigen_solver;
+    config.verbose = data.verbose;
 
-    LinearSolver pc_type = solver.linear.type;
-    if (pc_type == LinearSolver::SUPERLU)
-    {
-#if !defined(MFEM_USE_SUPERLU)
-      MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else if (pc_type == LinearSolver::STRUMPACK || pc_type == LinearSolver::STRUMPACK_MP)
-    {
-#if !defined(MFEM_USE_STRUMPACK)
-      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else if (pc_type == LinearSolver::MUMPS)
-    {
-#if !defined(MFEM_USE_MUMPS)
-      MFEM_ABORT("Solver was not built with MUMPS support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else  // Default choice
-    {
-#if defined(MFEM_USE_SUPERLU)
-      pc_type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
-      pc_type = LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-      pc_type = LinearSolver::MUMPS;
-#else
-#error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
-#endif
-    }
-    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-        [&]() -> std::unique_ptr<mfem::Solver>
-        {
-          if (pc_type == LinearSolver::SUPERLU)
-          {
-#if defined(MFEM_USE_SUPERLU)
-            auto slu = std::make_unique<SuperLUSolver>(
-                port_comm, SymbolicFactorization::DEFAULT, false, true, data.verbose - 1);
-            // slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
-            return slu;
-#endif
-          }
-          else if (pc_type == LinearSolver::STRUMPACK)
-          {
-#if defined(MFEM_USE_STRUMPACK)
-            auto strumpack = std::make_unique<StrumpackSolver>(
-                port_comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE, 0.0, 0,
-                0, true, data.verbose - 1);
-            // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
-            return strumpack;
-#endif
-          }
-          else if (pc_type == LinearSolver::MUMPS)
-          {
-#if defined(MFEM_USE_MUMPS)
-            auto mumps = std::make_unique<MumpsSolver>(
-                port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
-                0.0, true, data.verbose - 1);
-            // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
-            return mumps;
-#endif
-          }
-          return {};
-        }());
-    pc->SetSaveAssembled(false);
-    pc->SetDropSmallEntries(false);
-    ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
-
-    // Define the eigenvalue solver.
-    constexpr int print = 0;
-    EigenSolverBackend type = data.eigen_solver;
-    if (type == EigenSolverBackend::SLEPC)
-    {
-#if !defined(PALACE_WITH_SLEPC)
-      MFEM_ABORT("Solver was not built with SLEPc support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else if (type == EigenSolverBackend::ARPACK)
-    {
-#if !defined(PALACE_WITH_ARPACK)
-      MFEM_ABORT("Solver was not built with ARPACK support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else  // Default choice
-    {
-#if defined(PALACE_WITH_SLEPC)
-      type = EigenSolverBackend::SLEPC;
-#elif defined(PALACE_WITH_ARPACK)
-      type = EigenSolverBackend::ARPACK;
-#else
-#error "Wave port solver requires building with ARPACK or SLEPc!"
-#endif
-    }
-    if (type == EigenSolverBackend::ARPACK)
-    {
-#if defined(PALACE_WITH_ARPACK)
-      eigen = std::make_unique<arpack::ArpackEPSSolver>(port_comm, print);
-#endif
-    }
-    else  // EigenSolverBackend::SLEPC
-    {
-#if defined(PALACE_WITH_SLEPC)
-      auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-      eigen = std::move(slepc);
-#endif
-    }
-    eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
-    eigen->SetTol(data.eig_tol);
-    eigen->SetLinearSolver(*ksp);
-
-    // We want to ignore evanescent modes (kₙ with large imaginary component). The
-    // eigenvalue 1 / (-kₙ² - σ) of the shifted problem will be a large-magnitude positive
-    // real number for an eigenvalue kₙ² with real part close to but not above the cutoff σ.
-    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+    mode_solver = std::make_unique<BoundaryModeSolver>(
+        config, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -828,9 +509,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
 WavePortData::~WavePortData()
 {
-  // Free the solvers before the communicator on which they are based.
-  ksp.reset();
-  eigen.reset();
+  // Free the solver before the communicator on which it is based.
+  mode_solver.reset();
   if (port_comm != MPI_COMM_NULL)
   {
     MPI_Comm_free(&port_comm);
@@ -844,35 +524,20 @@ void WavePortData::Initialize(double omega)
     return;
   }
 
-  // Construct matrices and solve the generalized eigenvalue problem for the desired wave
-  // port mode. The B matrix is operating frequency-independent and has already been
-  // constructed.
-  std::unique_ptr<ComplexOperator> opA;
+  // Solve the generalized eigenvalue problem for the desired wave port mode using the
+  // BoundaryModeSolver. Frequency-independent matrices were assembled in the constructor.
   const double sigma = -omega * omega * mu_eps_max;
-  {
-    auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
-    auto [Ar, Ai] =
-        GetSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(), Antr.get(),
-                         Anti.get(), Annr.get(), Anni.get(), port_dbc_tdof_list);
-    opA = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
-  }
-
-  // Configure and solve the (inverse) eigenvalue problem for the desired boundary mode.
-  // Linear solves are preconditioned with the real part of the system matrix (ignore loss
-  // tangent).
   std::complex<double> lambda;
-  if (port_comm != MPI_COMM_NULL)
   {
-    ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
-    ksp->SetOperators(*opA, opP);
-    eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetInitialSpace(v0);
-    int num_conv = eigen->Solve();
-    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
-    lambda = eigen->GetEigenvalue(mode_idx - 1);
-    // Mpi::Print(port_comm, " ... Wave port eigensolver error = {} (bkwd), {} (abs)\n",
-    //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::BACKWARD),
-    //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::ABSOLUTE));
+    bool has_solver = (port_comm != MPI_COMM_NULL);
+    auto result =
+        mode_solver->SolveSplit(omega, sigma, has_solver, has_solver ? &v0 : nullptr);
+    if (has_solver)
+    {
+      MFEM_VERIFY(result.num_converged >= mode_idx,
+                  "Wave port eigensolver did not converge!");
+      lambda = mode_solver->GetEigenvalue(mode_idx - 1);
+    }
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
@@ -886,7 +551,7 @@ void WavePortData::Initialize(double omega)
   {
     if (port_comm != MPI_COMM_NULL)
     {
-      eigen->GetEigenvector(mode_idx - 1, e0);
+      mode_solver->GetEigenvector(mode_idx - 1, e0);
       linalg::NormalizePhase(port_comm, e0);
     }
     else

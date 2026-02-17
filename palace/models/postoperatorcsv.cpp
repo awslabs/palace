@@ -1269,9 +1269,8 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintModeZ()
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
-  if (!mode_Z ||
-      (!measurement_cache.mode_data.has_impedance &&
-       !measurement_cache.mode_data.has_vi_impedance))
+  if (!mode_Z || (!measurement_cache.mode_data.has_impedance &&
+                  !measurement_cache.mode_data.has_vi_impedance))
   {
     return;
   }

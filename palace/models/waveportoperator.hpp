@@ -12,10 +12,8 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
-#include "linalg/eps.hpp"
-#include "linalg/ksp.hpp"
-#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/boundarymodesolver.hpp"
 
 namespace palace
 {
@@ -63,18 +61,16 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
+  mfem::Array<int> port_bdr_attr_mat;  // Cached copy for BoundaryModeSolver config
   double mu_eps_max;
 
-  // Operator storage for repeated boundary mode eigenvalue problem solves.
-  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
-  std::unique_ptr<ComplexOperator> opB;
+  // Boundary mode eigenvalue problem solver.
+  std::unique_ptr<BoundaryModeSolver> mode_solver;
   ComplexVector v0, e0;
 
-  // Eigenvalue solver for boundary modes.
+  // Communicator for processes which have elements for this port.
   MPI_Comm port_comm;
   int port_root;
-  std::unique_ptr<EigenvalueSolver> eigen;
-  std::unique_ptr<ComplexKspSolver> ksp;
 
   // Grid functions storing the last computed electric field mode on the port, and stored
   // objects for computing functions of the port modes for use as an excitation or in
