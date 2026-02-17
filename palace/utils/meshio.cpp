@@ -179,12 +179,12 @@ inline int LOElemTypeGmsh(int ho_type)
   return ho_type;
 }
 
-constexpr int ElemNumNodes[] = {2,   // 2-node edge (Gmsh type 1)
-                                3,  4,  4,  8,  6,  5,
-                                3,   // 3-node edge (Gmsh type 8, 2nd order)
-                                6,  9,  10, 27, 18, 14,
-                                1,   // 1-node point (Gmsh type 15)
-                                8,  20, 15, 13};
+constexpr int ElemNumNodes[] = {2,  // 2-node edge (Gmsh type 1)
+                                3, 4,  4,  8,  6,  5,
+                                3,  // 3-node edge (Gmsh type 8, 2nd order)
+                                6, 9,  10, 27, 18, 14,
+                                1,  // 1-node point (Gmsh type 15)
+                                8, 20, 15, 13};
 
 // From COMSOL or Nastran to Gmsh ordering. See:
 //   - https://gmsh.info/doc/texinfo/gmsh.html#Node-ordering
@@ -817,10 +817,12 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
             // dimensional than the mesh: edges in 2D, faces in 3D) and 1-based for
             // domain elements. Gmsh requires 1-based, so add +1 for boundary elements.
             int i = 0;
-            const int elem_dim = (elem_type == 1 || elem_type == 8) ? 1 :
-                                 (elem_type == 15) ? 0 :
-                                 (elem_type == 2 || elem_type == 3 || elem_type == 9 ||
-                                  elem_type == 10 || elem_type == 16) ? 2 : 3;
+            const int elem_dim = (elem_type == 1 || elem_type == 8) ? 1
+                                 : (elem_type == 15)                ? 0
+                                 : (elem_type == 2 || elem_type == 3 || elem_type == 9 ||
+                                    elem_type == 10 || elem_type == 16)
+                                     ? 2
+                                     : 3;
             const int geom_start = (elem_dim < sdim) ? 1 : 0;
             while (i < num_elem)
             {

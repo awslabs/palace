@@ -12,8 +12,8 @@
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
-#include "drivers/transientsolver.hpp"
 #include "drivers/modeanalysissolver.hpp"
+#include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
@@ -274,7 +274,7 @@ int main(int argc, char *argv[])
                                                  omp_threads, GetPalaceGitTag());
       case ProblemType::MODEANALYSIS:
         return std::make_unique<ModeAnalysisSolver>(iodata, world_root, world_size,
-                                                     omp_threads, GetPalaceGitTag());
+                                                    omp_threads, GetPalaceGitTag());
     }
     return nullptr;
   }();

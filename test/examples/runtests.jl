@@ -686,8 +686,15 @@ if "cavity2d/periodic" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)",
-                          "Q", "Im{f} (GHz)"],
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Q",
+            "Im{f} (GHz)"
+        ],
         paraview_fields=false,
         skip_rowcount=true,
         device=device,

@@ -91,7 +91,8 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 // Extract the leading sdim x sdim submatrix from a SymmetricMatrixData<N> matrix.
 template <std::size_t N>
-mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &data, int sdim)
+mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &data,
+                                         int sdim)
 {
   auto M = ToDenseMatrix(data);
   if (sdim >= static_cast<int>(N))
@@ -267,8 +268,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
     // Compute the inverse of the input permeability matrix. Use truncated versions
     // of the config 3x3 matrices for 2D meshes.
-    mfem::DenseMatrix mat_mu =
-        internal::mat::ToDenseMatrixTruncated(data.mu_r, sdim);
+    mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrixTruncated(data.mu_r, sdim);
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
     if (sdim == 2)
     {
@@ -287,10 +287,9 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
-    mat_epsilon(count).Set(
-        1.0, internal::mat::ToDenseMatrixTruncated(data.epsilon_r, sdim));
-    Mult(mat_epsilon(count),
-         internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
+    mat_epsilon(count).Set(1.0,
+                           internal::mat::ToDenseMatrixTruncated(data.epsilon_r, sdim));
+    Mult(mat_epsilon(count), internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     T *= -1.0;
     mat_epsilon_imag(count).Set(1.0, T);
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
@@ -317,8 +316,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
-    mat_sigma(count).Set(
-        1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
+    mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
