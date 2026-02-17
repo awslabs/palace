@@ -41,8 +41,8 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   if (mesh.back()->Dimension() == 2)
   {
     l2_curl_fec = std::make_unique<mfem::L2_FECollection>(
-        iodata.solver.order - 1, mesh.back()->Dimension(),
-        mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+        iodata.solver.order - 1, mesh.back()->Dimension(), mfem::BasisType::GaussLegendre,
+        mfem::FiniteElement::INTEGRAL);
     l2_curl_fespace = std::make_unique<FiniteElementSpace>(*mesh.back(), l2_curl_fec.get());
   }
 

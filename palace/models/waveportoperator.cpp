@@ -432,8 +432,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   MFEM_VERIFY(port_root < Mpi::Size(comm), "No root process found for port!");
 
   // Configure the boundary mode solver. Matrix assembly is MPI-collective on the FE space
-  // communicator (all processes), so the config + construction must happen on all processes.
-  // The solver_comm (port_comm) restricts solver setup to port processes only.
+  // communicator (all processes), so the config + construction must happen on all
+  // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
     port_bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
     BoundaryModeSolverConfig config;

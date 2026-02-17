@@ -48,8 +48,7 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
         rt_fecs)),
-    mat_op(iodata, *mesh.back()),
-    current_dipole_op(iodata, *mesh.back()),
+    mat_op(iodata, *mesh.back()), current_dipole_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
     surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
@@ -65,10 +64,9 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     const int dim = mesh.back()->Dimension();
     l2_curl_fecs.push_back(std::make_unique<mfem::L2_FECollection>(
         l2_order, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL));
-    l2_curl_fespaces =
-        std::make_unique<FiniteElementSpaceHierarchy>(
-            fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(
-                1, mesh, l2_curl_fecs));
+    l2_curl_fespaces = std::make_unique<FiniteElementSpaceHierarchy>(
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(1, mesh,
+                                                                         l2_curl_fecs));
   }
 
   // Check Excitations.
