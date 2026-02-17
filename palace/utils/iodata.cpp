@@ -445,6 +445,24 @@ void IoData::CheckConfiguration()
                                      problem.type == ProblemType::MAGNETOSTATIC ||
                                      problem.type == ProblemType::TRANSIENT);
   }
+  if (solver.linear.ams_max_it < 0)
+  {
+    solver.linear.ams_max_it = solver.order;
+  }
+  if (solver.linear.mg_cycle_it < 0)
+  {
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
+        solver.linear.type == LinearSolver::AMS)
+    {
+      // For frequency-domain problems with AMS, 2 multigrid cycles usually leads to fewer
+      // iterations and comparable or faster runtimes.
+      solver.linear.mg_cycle_it = 2;
+    }
+    else
+    {
+      solver.linear.mg_cycle_it = 1;
+    }
+  }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
       solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
       (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
