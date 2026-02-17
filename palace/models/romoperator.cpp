@@ -491,6 +491,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   // Set up RHS vector (linear in frequency part) for the incident field at port
   // boundaries, and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
+  // Reset has_RHS2 so SolveHDM re-checks, since it may differ per excited port.
+  has_RHS2 = true;
   has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
   if (!has_RHS1)
   {
