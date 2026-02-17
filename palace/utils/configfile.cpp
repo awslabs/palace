@@ -416,10 +416,10 @@ DomainPostData::DomainPostData(const json &postpro)
 
 CurrentDipoleData::CurrentDipoleData(const json &source)
 {
-  auto dir = source.find("Direction");
-  if (dir->is_array())
+  const auto &dir = source.at("Direction");  // Required
+  if (dir.is_array())
   {
-    direction = dir->get<std::array<double, 3>>();
+    direction = dir.get<std::array<double, 3>>();
     double norm = direction[0] * direction[0] + direction[1] * direction[1] +
                   direction[2] * direction[2];
     for (auto &x : direction)
@@ -429,7 +429,7 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   }
   else
   {
-    auto direction_and_coord = ParseStringAsDirection(dir->get<std::string>());
+    auto direction_and_coord = ParseStringAsDirection(dir.get<std::string>());
     direction = direction_and_coord.first;
   }
   center = source.at("Center").get<std::array<double, 3>>();  // Required
