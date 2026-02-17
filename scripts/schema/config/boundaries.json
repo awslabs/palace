@@ -148,7 +148,10 @@
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
           "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "Verbose": { "type": "integer", "minimum": 0.0 }
+          "Verbose": { "type": "integer", "minimum": 0.0 },
+          "VoltageP1": { "type": "array", "items": { "type": "number" } },
+          "VoltageP2": { "type": "array", "items": { "type": "number" } },
+          "IntegrationOrder": { "type": "integer", "minimum": 1 }
         }
       }
     },
@@ -321,12 +324,15 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["Index", "VoltageAttributes", "CurrentAttributes"],
+            "required": ["Index"],
             "properties":
             {
               "Index": { "type": "integer" },
               "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
-              "CurrentAttributes": { "$ref": "#/$defs/Attributes" }
+              "CurrentAttributes": { "$ref": "#/$defs/Attributes" },
+              "VoltageP1": { "type": "array", "items": { "type": "number" } },
+              "VoltageP2": { "type": "array", "items": { "type": "number" } },
+              "IntegrationOrder": { "type": "integer", "minimum": 1 }
             }
           }
         },

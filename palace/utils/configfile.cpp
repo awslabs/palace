@@ -1278,6 +1278,15 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
     data.eig_tol = it->value("EigenTol", data.eig_tol);
     data.verbose = it->value("Verbose", data.verbose);
+    if (it->find("VoltageP1") != it->end())
+    {
+      data.voltage_p1 = it->at("VoltageP1").get<std::vector<double>>();
+    }
+    if (it->find("VoltageP2") != it->end())
+    {
+      data.voltage_p2 = it->at("VoltageP2").get<std::vector<double>>();
+    }
+    data.integration_order = it->value("IntegrationOrder", data.integration_order);
 
     // Cleanup
     it->erase("Index");
@@ -1291,6 +1300,9 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("KSPTol");
     it->erase("EigenTol");
     it->erase("Verbose");
+    it->erase("VoltageP1");
+    it->erase("VoltageP2");
+    it->erase("IntegrationOrder");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
                     << it->dump(2));
@@ -1504,26 +1516,43 @@ void ModeImpedancePostData::SetUp(json &postpro)
   for (auto it = impedance->begin(); it != impedance->end(); ++it)
   {
     auto index = AtIndex(it, "\"Impedance\" boundary");
-    MFEM_VERIFY(it->find("VoltageAttributes") != it->end() &&
-                    it->find("CurrentAttributes") != it->end(),
-                "Missing \"Impedance\" boundary \"VoltageAttributes\" or "
-                "\"CurrentAttributes\" in the configuration file!");
+    // VoltageAttributes or VoltageP1/P2 must be specified; CurrentAttributes is optional.
     auto ret = mapdata.insert(std::make_pair(index, ModeImpedanceData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Impedance\" "
                             "boundaries in the configuration file!");
     auto &data = ret.first->second;
     data.index = index;
-    data.voltage_attributes =
-        it->at("VoltageAttributes").get<std::vector<int>>();  // Required
-    data.current_attributes =
-        it->at("CurrentAttributes").get<std::vector<int>>();  // Required
-    std::sort(data.voltage_attributes.begin(), data.voltage_attributes.end());
-    std::sort(data.current_attributes.begin(), data.current_attributes.end());
+    if (it->find("VoltageAttributes") != it->end())
+    {
+      data.voltage_attributes = it->at("VoltageAttributes").get<std::vector<int>>();
+      std::sort(data.voltage_attributes.begin(), data.voltage_attributes.end());
+    }
+    if (it->find("CurrentAttributes") != it->end())
+    {
+      data.current_attributes = it->at("CurrentAttributes").get<std::vector<int>>();
+      std::sort(data.current_attributes.begin(), data.current_attributes.end());
+    }
+    if (it->find("VoltageP1") != it->end())
+    {
+      data.voltage_p1 = it->at("VoltageP1").get<std::vector<double>>();
+    }
+    if (it->find("VoltageP2") != it->end())
+    {
+      data.voltage_p2 = it->at("VoltageP2").get<std::vector<double>>();
+    }
+    data.integration_order = it->value("IntegrationOrder", data.integration_order);
+    MFEM_VERIFY(!data.voltage_attributes.empty() ||
+                    (!data.voltage_p1.empty() && !data.voltage_p2.empty()),
+                "Impedance boundary requires either \"VoltageAttributes\" or both "
+                "\"VoltageP1\" and \"VoltageP2\" in the configuration file!");
 
     // Cleanup
     it->erase("Index");
     it->erase("VoltageAttributes");
     it->erase("CurrentAttributes");
+    it->erase("VoltageP1");
+    it->erase("VoltageP2");
+    it->erase("IntegrationOrder");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Impedance\"!\n"
                     << it->dump(2));
@@ -1534,6 +1563,11 @@ void ModeImpedancePostData::SetUp(json &postpro)
       std::cout << "Index: " << data.index << '\n';
       std::cout << "VoltageAttributes: " << data.voltage_attributes << '\n';
       std::cout << "CurrentAttributes: " << data.current_attributes << '\n';
+      if (!data.voltage_p1.empty())
+      {
+        std::cout << "VoltageP1: " << data.voltage_p1 << '\n';
+        std::cout << "VoltageP2: " << data.voltage_p2 << '\n';
+      }
     }
   }
 }
