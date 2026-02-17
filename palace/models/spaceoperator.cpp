@@ -71,10 +71,9 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     const int dim = mesh.back()->Dimension();
     l2_curl_fecs.push_back(std::make_unique<mfem::L2_FECollection>(
         l2_order, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL));
-    l2_curl_fespaces =
-        std::make_unique<FiniteElementSpaceHierarchy>(
-            fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(
-                1, mesh, l2_curl_fecs));
+    l2_curl_fespaces = std::make_unique<FiniteElementSpaceHierarchy>(
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(1, mesh,
+                                                                         l2_curl_fecs));
   }
 
   // Check Excitations.
