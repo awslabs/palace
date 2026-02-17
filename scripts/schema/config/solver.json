@@ -131,6 +131,7 @@
         "Freq": { "type": "number", "exclusiveMinimum": 0.0 },
         "N": { "type": "integer", "minimum": 1 },
         "Save": { "type": "integer", "minimum": 0 },
+        "Target": { "type": "number", "minimum": 0.0 },
         "Tol": { "type": "number", "exclusiveMinimum": 0.0 },
         "Type": { "type": "string" }
       }

@@ -2387,12 +2387,14 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   freq = ma->at("Freq");  // Required
   n = ma->value("N", n);
   n_post = ma->value("Save", n_post);
+  target = ma->value("Target", target);
   tol = ma->value("Tol", tol);
   type = ma->value("Type", type);
   // Cleanup
   ma->erase("Freq");
   ma->erase("N");
   ma->erase("Save");
+  ma->erase("Target");
   ma->erase("Tol");
   ma->erase("Type");
   MFEM_VERIFY(ma->empty(),
@@ -2405,6 +2407,7 @@ void ModeAnalysisSolverData::SetUp(json &solver)
     std::cout << "Freq: " << freq << '\n';
     std::cout << "N: " << n << '\n';
     std::cout << "Save: " << n_post << '\n';
+    std::cout << "Target: " << target << '\n';
     std::cout << "Tol: " << tol << '\n';
   }
 }

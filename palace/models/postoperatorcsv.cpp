@@ -1253,11 +1253,14 @@ auto PostOperatorCSV<solver_t>::InitializeModeZ()
 {
   // Only initialize if impedance postprocessing data will be available.
   mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
-  mode_Z->table.reserve(nr_expected_measurement_rows, 4);
+  mode_Z->table.reserve(nr_expected_measurement_rows, 7);
   mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
-  mode_Z->table.insert("Z0", "Z0 (Ohm)");
-  mode_Z->table.insert("L", "L (H/m)");
-  mode_Z->table.insert("C", "C (F/m)");
+  mode_Z->table.insert("Z_PV", "Z_PV (Ohm)");
+  mode_Z->table.insert("L_PV", "L_PV (H/m)");
+  mode_Z->table.insert("C_PV", "C_PV (F/m)");
+  mode_Z->table.insert("Z_VI", "Z_VI (Ohm)");
+  mode_Z->table.insert("L_VI", "L_VI (H/m)");
+  mode_Z->table.insert("C_VI", "C_VI (F/m)");
   mode_Z->WriteFullTableTrunc();
 }
 
@@ -1266,14 +1269,19 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintModeZ()
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
-  if (!mode_Z || !measurement_cache.mode_data.has_impedance)
+  if (!mode_Z ||
+      (!measurement_cache.mode_data.has_impedance &&
+       !measurement_cache.mode_data.has_vi_impedance))
   {
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
-  mode_Z->table["Z0"] << measurement_cache.mode_data.Z0;
-  mode_Z->table["L"] << measurement_cache.mode_data.L_per_m;
-  mode_Z->table["C"] << measurement_cache.mode_data.C_per_m;
+  mode_Z->table["Z_PV"] << measurement_cache.mode_data.Z0;
+  mode_Z->table["L_PV"] << measurement_cache.mode_data.L_per_m;
+  mode_Z->table["C_PV"] << measurement_cache.mode_data.C_per_m;
+  mode_Z->table["Z_VI"] << measurement_cache.mode_data.Z_VI;
+  mode_Z->table["L_VI"] << measurement_cache.mode_data.L_VI_per_m;
+  mode_Z->table["C_VI"] << measurement_cache.mode_data.C_VI_per_m;
   mode_Z->WriteFullTableTrunc();
 }
 
