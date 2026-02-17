@@ -177,7 +177,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   setup_json["Solver"] = json::object();
   setup_json["Solver"]["Order"] = order;
   setup_json["Solver"]["Device"] = "CPU";
-  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
                                     {"MinFreq", 2.0},
                                     {"MaxFreq", 32.0},
                                     {"FreqStep", 1.0}};
@@ -410,7 +411,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   setup_json["Solver"] = json::object();
   setup_json["Solver"]["Order"] = order;
   setup_json["Solver"]["Device"] = "CPU";
-  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
                                     {"MinFreq", 2.0},
                                     {"MaxFreq", 32.0},
                                     {"FreqStep", 1.0}};
@@ -639,7 +641,8 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
   setup_json["Solver"] = json::object();
   setup_json["Solver"]["Order"] = order;
   setup_json["Solver"]["Device"] = "CPU";
-  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
                                     {"MinFreq", 2.0},
                                     {"MaxFreq", 32.0},
                                     {"FreqStep", 1.0}};
@@ -690,7 +693,8 @@ TEST_CASE("RomOperator-UpdatePROM-LinearDependence", "[romoperator][Serial][Para
 
   setup_json["Solver"] = json::object();
   setup_json["Solver"]["Device"] = "CPU";
-  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
                                     {"MinFreq", 2.0},
                                     {"MaxFreq", 32.0},
                                     {"FreqStep", 1.0}};
