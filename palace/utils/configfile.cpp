@@ -1302,7 +1302,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
   ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
-  ams_max_it = linear->value("AMSMaxIts", ams_max_it);
+  ams_max_it = linear.value("AMSMaxIts", ams_max_it);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
