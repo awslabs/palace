@@ -215,12 +215,6 @@ public:
   // to reconstruct if field configuration are pure real, imaginary or complex.
   void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
-  // Re-orthogonalize PROM basis. Take current PROM vectors V and perform additional V =
-  // Q'R' decomposition, then combine R'R. Brute force approach to numerical precision
-  // issues due to almost orthogonality of basis (from convergence or otherwise). Requires
-  // re-projecting high-dimensional matrices.
-  void ReorthogonalizePROM();
-
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
   void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
