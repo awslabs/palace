@@ -375,6 +375,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
                                   {"Permittivity", 1.0},
                                   {"LossTan", 0.0}})})}};
 
+  // Reasonable reference values in correct frequency range.
   const double port1_ref_R = 75.0;
   const double port1_ref_C = 5.5e-5;
   const double port1_ref_L = 1.486e-20;
