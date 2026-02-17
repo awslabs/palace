@@ -28,13 +28,13 @@ using Gmsh: gmsh
         lc_gap=1.5, lc_far=40.0, verbose=5, gui=false)
 
 Generate a 2D CPW cross-section mesh in MFEM format. Output attributes:
-  Domain 1: air (z > 0)
-  Domain 2: substrate (z < 0)
-  Boundary 3: ground_left (z=0, y < g)
-  Boundary 4: ground_right (z=0, y > g+2s+w)
-  Boundary 5: trace (z=0, g+s < y < g+s+w)
-  Boundary 6: outer boundary
-  Boundary 7: SA interface (z=0 gaps, g < y < g+s and g+s+w < y < g+2s+w)
+Domain 1: air (z > 0)
+Domain 2: substrate (z < 0)
+Boundary 3: ground_left (z=0, y < g)
+Boundary 4: ground_right (z=0, y > g+2s+w)
+Boundary 5: trace (z=0, g+s < y < g+s+w)
+Boundary 6: outer boundary
+Boundary 7: SA interface (z=0 gaps, g < y < g+s and g+s+w < y < g+2s+w)
 """
 function generate_cpw_cross_section(;
     filename::AbstractString,
@@ -116,7 +116,7 @@ function generate_cpw_cross_section(;
     # Extract mesh data from Gmsh
     node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
     # Build node index map (Gmsh tags are 1-based but may have gaps)
-    node_map = Dict{Int,Int}()
+    node_map = Dict{Int, Int}()
     for (i, tag) in enumerate(node_tags)
         node_map[tag] = i
     end
@@ -134,10 +134,10 @@ function generate_cpw_cross_section(;
         for (etype, etags, enodes) in zip(elem_types, elem_tags_list, elem_node_tags)
             if etype == 2  # Triangle
                 nnpe = 3
-                for i in 1:length(etags)
-                    n1 = node_map[enodes[(i-1)*nnpe+1]]
-                    n2 = node_map[enodes[(i-1)*nnpe+2]]
-                    n3 = node_map[enodes[(i-1)*nnpe+3]]
+                for i = 1:length(etags)
+                    n1 = node_map[enodes[(i - 1) * nnpe + 1]]
+                    n2 = node_map[enodes[(i - 1) * nnpe + 2]]
+                    n3 = node_map[enodes[(i - 1) * nnpe + 3]]
                     push!(elements, (attr, n1, n2, n3))
                 end
             end
@@ -146,10 +146,10 @@ function generate_cpw_cross_section(;
     ne = length(elements)
 
     # Build edge-to-element connectivity to find boundary and internal edges
-    edge_elements = Dict{Tuple{Int,Int},Vector{Int}}()
+    edge_elements = Dict{Tuple{Int, Int}, Vector{Int}}()
     for (idx, (attr, n1, n2, n3)) in enumerate(elements)
-        for (a, b) in [(n1,n2), (n2,n3), (n3,n1)]
-            edge = (min(a,b), max(a,b))
+        for (a, b) in [(n1, n2), (n2, n3), (n3, n1)]
+            edge = (min(a, b), max(a, b))
             if !haskey(edge_elements, edge)
                 edge_elements[edge] = Int[]
             end
@@ -166,22 +166,24 @@ function generate_cpw_cross_section(;
         # Get actual coordinates
         idx1 = findfirst(==(n1), [node_map[t] for t in node_tags])
         idx2 = findfirst(==(n2), [node_map[t] for t in node_tags])
-        y1_coord = node_coords[3*(idx1-1)+1]  # x in Gmsh (= y in our convention)
-        z1_coord = node_coords[3*(idx1-1)+2]  # y in Gmsh (= z in our convention)
-        y2_coord = node_coords[3*(idx2-1)+1]
-        z2_coord = node_coords[3*(idx2-1)+2]
+        y1_coord = node_coords[3 * (idx1 - 1) + 1]  # x in Gmsh (= y in our convention)
+        z1_coord = node_coords[3 * (idx1 - 1) + 2]  # y in Gmsh (= z in our convention)
+        y2_coord = node_coords[3 * (idx2 - 1) + 1]
+        z2_coord = node_coords[3 * (idx2 - 1) + 2]
 
         ymid = (y1_coord + y2_coord) / 2.0
         zmid = (z1_coord + z2_coord) / 2.0
 
         is_external = length(elems) == 1
-        is_internal_interface = length(elems) == 2 &&
-            elements[elems[1]][1] != elements[elems[2]][1]  # Different domain attrs
+        is_internal_interface =
+            length(elems) == 2 && elements[elems[1]][1] != elements[elems[2]][1]  # Different domain attrs
 
         if is_external
             # External boundary
-            if abs(zmid + h_sub) < tol || abs(zmid - h_air) < tol ||
-               abs(ymid) < tol || abs(ymid - W) < tol
+            if abs(zmid + h_sub) < tol ||
+               abs(zmid - h_air) < tol ||
+               abs(ymid) < tol ||
+               abs(ymid - W) < tol
                 push!(boundary_elements, (6, n1, n2))  # Outer boundary
             end
         elseif is_internal_interface && abs(zmid) < tol
@@ -217,11 +219,11 @@ function generate_cpw_cross_section(;
         end
 
         write(f, "\nvertices\n$nv\n2\n")
-        for i in 1:nv
+        for i = 1:nv
             # Find the original tag for this index
             orig_tag = node_tags[i]
-            x = node_coords[3*(i-1)+1]
-            y = node_coords[3*(i-1)+2]
+            x = node_coords[3 * (i - 1) + 1]
+            y = node_coords[3 * (i - 1) + 2]
             write(f, "$x $y\n")
         end
     end
