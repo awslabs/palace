@@ -769,7 +769,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 
   Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
 
-  // Lumped ports are real, added at the beginning and in order.
+  // We will only scale the rows and columns corresponding to ports by orth_R(j,j). This
+  // will correctly give back the port-port block of the circuit matrices, which is
+  // independent of the HDM solutions. The normalization of the rows and columns of the HDM
+  // solutions (synthesized nodes) are not relevant for port quantities. We choose v_conc =
+  // 1.0, since for nearly degenerate vectors orth_R(j,j) could be tiny, which may lead to
+  // poor condition of the circuit matrices.
+  //
+  // Lumped ports are real, at the beginning and in order
   for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
   {
     // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
