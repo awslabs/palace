@@ -46,6 +46,27 @@ struct HybridBulkBoundaryOperator
   std::unique_ptr<ParOperator> W_inner_product_weight_bulk = {};
   std::unique_ptr<ParOperator> W_inner_product_weight_port = {};
 
+  void validate_operators_zero_bulk_tdof()
+  {
+    // We don't need to zero of PEC in the actual model, since vectors entering inner
+    // product should already have the PEC contribution removed.
+    MFEM_VERIFY(W_inner_product_weight_port,
+                "Port weight operator must be constructed before validation!");
+    if (W_inner_product_weight_bulk)
+    {
+      W_inner_product_weight_bulk->SetEssentialTrueDofs(port_tdof_list,
+                                                        Operator::DIAG_ZERO);
+      MFEM_VERIFY((W_inner_product_weight_bulk->NumCols() ==
+                   W_inner_product_weight_port->NumCols()) &&
+                      (W_inner_product_weight_bulk->NumRows() ==
+                       W_inner_product_weight_port->NumRows()),
+                  "Mismatch sizes of inner product matrices!");
+    }
+  }
+
+  HybridBulkBoundaryOperator(const SpaceOperator &space_op,
+                             DomainOrthogonalizationWeight domain_orthog_type);
+
   HybridBulkBoundaryOperator(mfem::Array<int> &&port_tdof_list_,
                              std::unique_ptr<ParOperator> &&W_inner_product_weight_bulk_,
                              std::unique_ptr<ParOperator> &&W_inner_product_weight_port_)
@@ -53,28 +74,33 @@ struct HybridBulkBoundaryOperator
       W_inner_product_weight_bulk{std::move(W_inner_product_weight_bulk_)},
       W_inner_product_weight_port{std::move(W_inner_product_weight_port_)}
   {
-    // Don't need to zero of PEC, since vectors entering inner product should already have
-    // the PEC contribution removed.
-    W_inner_product_weight_bulk->SetEssentialTrueDofs(port_tdof_list, Operator::DIAG_ZERO);
-    MFEM_VERIFY((W_inner_product_weight_bulk->NumCols() ==
-                 W_inner_product_weight_port->NumCols()) &&
-                    (W_inner_product_weight_bulk->NumRows() ==
-                     W_inner_product_weight_port->NumRows()),
-                "Mismatch sizes of inner product matrices!")
+    validate_operators_zero_bulk_tdof();
   }
 
-  auto NumCols() const { return W_inner_product_weight_bulk->NumCols(); }
+  auto NumCols() const { return W_inner_product_weight_port->NumCols(); }
 
-  auto NumRows() const { return W_inner_product_weight_bulk->NumRows(); }
+  auto NumRows() const { return W_inner_product_weight_port->NumRows(); }
 
   void Mult(const Vector &x, Vector &y) const
   {
-    W_inner_product_weight_bulk->Mult(x, y);
-    W_inner_product_weight_port->AddMult(x, y);
+    if (W_inner_product_weight_bulk)
+    {
+      W_inner_product_weight_bulk->Mult(x, y);
+      W_inner_product_weight_port->AddMult(x, y);
+    }
+    else
+    {
+      // Identify bulk matrix with port tdof removed
+      y.Set(1.0, x);
+      linalg::SetSubVector(y, port_tdof_list, 0.0);
+      W_inner_product_weight_port->AddMult(x, y);
+    }
   }
 
   double InnerProduct(const Vector &x, const Vector &y, Vector &v_workspace) const
   {
+    // TODO(future): Optimize to not use mult if InnerProduct is wrapped using our ceed
+    // operator machinery.
     v_workspace.SetSize(x.Size());
     v_workspace.UseDevice(x.UseDevice());
     Mult(x, v_workspace);
