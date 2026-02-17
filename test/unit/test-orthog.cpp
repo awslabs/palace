@@ -361,9 +361,9 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
   // Check orthogonality with respect to weight matrix
   ComplexVector WVj(3);  // Temporary workspace
   W_wrap.Mult(V[0], WVj);
-  W_wrap.Mult(V[1], WVj);
-
   auto dot0 = linalg::Dot(Mpi::World(), w, WVj);
+
+  W_wrap.Mult(V[1], WVj);
   auto dot1 = linalg::Dot(Mpi::World(), w, WVj);
 
   CHECK_THAT(dot0.real(), WithinAbs(0.0, 1e-12));
