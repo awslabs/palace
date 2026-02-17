@@ -69,8 +69,8 @@ private:
   ComplexVector v0, e0;
 
   // Communicator for processes which have elements for this port.
-  MPI_Comm port_comm;
-  int port_root;
+  MPI_Comm port_comm = MPI_COMM_NULL;
+  int port_root = 0;
 
   // Grid functions storing the last computed electric field mode on the port, and stored
   // objects for computing functions of the port modes for use as an excitation or in
@@ -81,15 +81,16 @@ private:
   // Voltage line integral configuration (optional, for impedance postprocessing).
   mfem::Vector voltage_p1, voltage_p2;
   int voltage_integration_order = 100;
+  bool has_voltage_coords_ = false;
 
 public:
-  bool has_voltage_coords = false;
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
+  [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords_; }
 
   const auto &GetAttrList() const { return attr_list; }
 
