@@ -311,13 +311,10 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
   {
     dl(d) = p2(d) - p1(d);
   }
-  const double line_length = dl.Norml2();
+  MFEM_VERIFY(dl.Norml2() > 0.0, "ComputeLineIntegral: p1 and p2 must be distinct points!");
 
-  // Use the caller-specified quadrature order on a single segment. The caller is
-  // responsible for choosing a high enough order to resolve the field variation along
-  // the line (the IntegrationOrder config parameter controls this).
-
-  // Gauss-Legendre quadrature on the segment [0, 1].
+  // Gauss-Legendre quadrature on the segment [0, 1]. The caller is responsible for
+  // choosing a high enough order to resolve the field variation along the line.
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(mfem::Geometry::SEGMENT, quad_order);
   const int npts = ir.GetNPoints();
 
@@ -337,6 +334,21 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
   const int vdim = field.VectorDim();
   mfem::Vector vals(npts * vdim);
   InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES);
+
+  // The interpolated values may be in byVDIM ordering if the source FE space uses that
+  // layout. Reorder to byNODES for uniform indexing below.
+  if (field.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
+  {
+    mfem::Vector reordered(npts * vdim);
+    for (int d = 0; d < vdim; d++)
+    {
+      for (int i = 0; i < npts; i++)
+      {
+        reordered(d * npts + i) = vals(i * vdim + d);
+      }
+    }
+    vals = reordered;
+  }
 
   // Compute the dot product F · dl at each quadrature point and sum.
   double result = 0.0;

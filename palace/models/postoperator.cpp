@@ -626,7 +626,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
-  // In-plane B (ND space): H(curl) Piola transform scales by L, then B-field units.
+  // In-plane B projected onto the ND space (not its natural H(div) space), so the
+  // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
   {
     Bt_inplane->Real() *= mesh_Lc0;
@@ -1641,7 +1642,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     }
     else if (voltage_marker.Size() > 0)
     {
-      // Boundary attribute-based: integrate Et . n on marked boundary edges.
+      // Boundary attribute-based: integrate Et . t (tangential) on marked boundary edges.
+      // For ND elements on 1D boundary edges, VectorFEBoundaryFluxLFIntegrator uses the
+      // scalar tangential basis, giving the tangential line integral.
       mfem::ConstantCoefficient one(1.0);
       mfem::ParLinearForm v_lf(&nd_fespace.Get());
       v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
