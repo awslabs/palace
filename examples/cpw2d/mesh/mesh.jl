@@ -44,6 +44,7 @@ using Gmsh: gmsh
 Generate a 2D CPW mesh with lumped ports.
 
 # Arguments
+
   - trace_w - center trace width (μm)
   - gap_s - gap between trace and ground (μm)
   - cpw_length - total CPW length (μm)
@@ -80,8 +81,13 @@ function generate_cpw2d_mesh(;
     outer = kernel.addRectangle(0.0, -half_h, 0.0, cpw_length, 2.0 * half_h)
 
     # Create the center trace rectangle (will be cut from domain)
-    trace = kernel.addRectangle(port_inset, -half_w, 0.0,
-                                 cpw_length - 2.0 * port_inset, trace_w)
+    trace = kernel.addRectangle(
+        port_inset,
+        -half_w,
+        0.0,
+        cpw_length - 2.0 * port_inset,
+        trace_w
+    )
 
     # Cut the trace from the domain
     cut_result, _ = kernel.cut([(2, outer)], [(2, trace)])
@@ -96,7 +102,8 @@ function generate_cpw2d_mesh(;
     eps = 0.1  # thin blade width
     blade1 = kernel.addRectangle(port_inset - eps / 2, -half_h, 0.0, eps, gap_s)
     blade2 = kernel.addRectangle(port_inset - eps / 2, half_w, 0.0, eps, gap_s)
-    blade3 = kernel.addRectangle(cpw_length - port_inset - eps / 2, -half_h, 0.0, eps, gap_s)
+    blade3 =
+        kernel.addRectangle(cpw_length - port_inset - eps / 2, -half_h, 0.0, eps, gap_s)
     blade4 = kernel.addRectangle(cpw_length - port_inset - eps / 2, half_w, 0.0, eps, gap_s)
 
     # Fragment the domain with the blades to create shared edges at the port locations
@@ -136,21 +143,28 @@ function generate_cpw2d_mesh(;
         is_vertical = dx < tol && dy > tol
         is_horizontal = dy < tol && dx > tol
 
-        if is_horizontal && abs(ymid - half_w) < tol && xmid > port_inset - tol &&
+        if is_horizontal &&
+           abs(ymid - half_w) < tol &&
+           xmid > port_inset - tol &&
            xmid < cpw_length - port_inset + tol
             # Top edge of trace
             push!(trace_curves, tag)
-        elseif is_horizontal && abs(ymid + half_w) < tol && xmid > port_inset - tol &&
+        elseif is_horizontal &&
+               abs(ymid + half_w) < tol &&
+               xmid > port_inset - tol &&
                xmid < cpw_length - port_inset + tol
             # Bottom edge of trace
             push!(trace_curves, tag)
-        elseif is_vertical && abs(xmid - port_inset) < tol &&
-               ymid > port_inset - tol && abs(ymid) > half_w - tol
+        elseif is_vertical &&
+               abs(xmid - port_inset) < tol &&
+               ymid > port_inset - tol &&
+               abs(ymid) > half_w - tol
             # Vertical trace end at left (part of trace boundary)
             if abs(ymid) < half_w + tol
                 push!(trace_curves, tag)
             end
-        elseif is_vertical && abs(xmid - (cpw_length - port_inset)) < tol &&
+        elseif is_vertical &&
+               abs(xmid - (cpw_length - port_inset)) < tol &&
                abs(ymid) < half_w + tol
             # Vertical trace end at right
             push!(trace_curves, tag)
@@ -172,11 +186,13 @@ function generate_cpw2d_mesh(;
         elseif is_vertical && abs(xmid - port_inset) < tol && ymid > half_w - tol
             # Port 1 top gap
             push!(port1_top_curves, tag)
-        elseif is_vertical && abs(xmid - (cpw_length - port_inset)) < tol &&
+        elseif is_vertical &&
+               abs(xmid - (cpw_length - port_inset)) < tol &&
                ymid < -half_w + tol
             # Port 2 bottom gap
             push!(port2_bot_curves, tag)
-        elseif is_vertical && abs(xmid - (cpw_length - port_inset)) < tol &&
+        elseif is_vertical &&
+               abs(xmid - (cpw_length - port_inset)) < tol &&
                ymid > half_w - tol
             # Port 2 top gap
             push!(port2_top_curves, tag)
@@ -194,20 +210,33 @@ function generate_cpw2d_mesh(;
         pec_trace_group = gmsh.model.addPhysicalGroup(1, pec_trace_curves, -1, "pec_trace")
     end
 
-    pec_ground_group = gmsh.model.addPhysicalGroup(1, unique(ground_curves), -1, "pec_ground")
+    pec_ground_group =
+        gmsh.model.addPhysicalGroup(1, unique(ground_curves), -1, "pec_ground")
     pec_ends_group = gmsh.model.addPhysicalGroup(1, unique(end_curves), -1, "pec_ends")
 
-    port1_bot_group = gmsh.model.addPhysicalGroup(1, unique(port1_bot_curves), -1, "port1_bot")
-    port1_top_group = gmsh.model.addPhysicalGroup(1, unique(port1_top_curves), -1, "port1_top")
-    port2_bot_group = gmsh.model.addPhysicalGroup(1, unique(port2_bot_curves), -1, "port2_bot")
-    port2_top_group = gmsh.model.addPhysicalGroup(1, unique(port2_top_curves), -1, "port2_top")
+    port1_bot_group =
+        gmsh.model.addPhysicalGroup(1, unique(port1_bot_curves), -1, "port1_bot")
+    port1_top_group =
+        gmsh.model.addPhysicalGroup(1, unique(port1_top_curves), -1, "port1_top")
+    port2_bot_group =
+        gmsh.model.addPhysicalGroup(1, unique(port2_bot_curves), -1, "port2_bot")
+    port2_top_group =
+        gmsh.model.addPhysicalGroup(1, unique(port2_top_curves), -1, "port2_top")
 
     # Assign any remaining boundary curves to PEC (catch-all for blade edges, etc.)
     remaining = setdiff(
         Set([t for (_, t) in all_curves]),
-        Set(vcat(trace_curves, ground_curves, end_curves,
-                 port1_bot_curves, port1_top_curves,
-                 port2_bot_curves, port2_top_curves))
+        Set(
+            vcat(
+                trace_curves,
+                ground_curves,
+                end_curves,
+                port1_bot_curves,
+                port1_top_curves,
+                port2_bot_curves,
+                port2_top_curves
+            )
+        )
     )
     if !isempty(remaining)
         # These are internal blade fragment edges — add them to trace PEC
@@ -215,7 +244,11 @@ function generate_cpw2d_mesh(;
             gmsh.model.removePhysicalGroups([(1, pec_trace_group)])
         end
         pec_trace_group = gmsh.model.addPhysicalGroup(
-            1, unique(vcat(trace_curves, collect(remaining))), -1, "pec_trace")
+            1,
+            unique(vcat(trace_curves, collect(remaining))),
+            -1,
+            "pec_trace"
+        )
     end
 
     # Mesh size control: fine in the gap, coarser away

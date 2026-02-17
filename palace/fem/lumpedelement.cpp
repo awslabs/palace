@@ -45,28 +45,24 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
       mfem::Vector n0(normals.GetColumn(0), 3);
       mfem::Vector n1(normals.GetColumn(1), 3);
       mfem::Vector n2(normals.GetColumn(2), 3);
-      Mpi::Warning(
-          "User specified direction {} does not align with either bounding "
-          "box axis up to {:.3e} degrees!\n"
-          "Axis 1: ({}) ({:.3e} degrees)\nAxis 2: ({}) ({:.3e} degrees)\n"
-          "Axis 3: ({}) ({:.3e} degrees)!\n",
-          input_dir, angle_warning_deg,
-          fmt::join(n0, ", "), deviations_deg(0),
-          fmt::join(n1, ", "), deviations_deg(1),
-          fmt::join(n2, ", "), deviations_deg(2));
+      Mpi::Warning("User specified direction {} does not align with either bounding "
+                   "box axis up to {:.3e} degrees!\n"
+                   "Axis 1: ({}) ({:.3e} degrees)\nAxis 2: ({}) ({:.3e} degrees)\n"
+                   "Axis 3: ({}) ({:.3e} degrees)!\n",
+                   input_dir, angle_warning_deg, fmt::join(n0, ", "), deviations_deg(0),
+                   fmt::join(n1, ", "), deviations_deg(1), fmt::join(n2, ", "),
+                   deviations_deg(2));
     }
     else
     {
       mfem::Vector n0(normals.GetColumn(0), 2);
       mfem::Vector n1(normals.GetColumn(1), 2);
-      Mpi::Warning(
-          "User specified direction does not align with either bounding box "
-          "axis up to {:.3e} degrees!\n"
-          "Axis 1: ({}) ({:.3e} degrees)\n"
-          "Axis 2: ({}) ({:.3e} degrees)!\n",
-          angle_warning_deg,
-          fmt::join(n0, ", "), deviations_deg(0),
-          fmt::join(n1, ", "), deviations_deg(1));
+      Mpi::Warning("User specified direction does not align with either bounding box "
+                   "axis up to {:.3e} degrees!\n"
+                   "Axis 1: ({}) ({:.3e} degrees)\n"
+                   "Axis 2: ({}) ({:.3e} degrees)!\n",
+                   angle_warning_deg, fmt::join(n0, ", "), deviations_deg(0),
+                   fmt::join(n1, ", "), deviations_deg(1));
     }
   }
   if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
@@ -108,10 +104,9 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   // edge), in which case the projected length is near zero and the check does not apply.
   {
     double proj_l = mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec);
-    MFEM_VERIFY(
-        proj_l < rel_tol * l || std::abs(l - proj_l) < rel_tol * l,
-        "Bounding box discovered length ("
-            << l << ") should match projected length (" << proj_l << "!");
+    MFEM_VERIFY(proj_l < rel_tol * l || std::abs(l - proj_l) < rel_tol * l,
+                "Bounding box discovered length ("
+                    << l << ") should match projected length (" << proj_l << "!");
   }
 
   if (sdim == 3)

@@ -306,160 +306,160 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     }
     if (!collinear)
     {
-    const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(),
-                                        [&](const auto &x, const auto &y)
-                                        {
-                                          return PerpendicularDistance({n_1}, origin, x) <
-                                                 PerpendicularDistance({n_1}, origin, y);
-                                        });
-    MFEM_VERIFY(&t_0 != &v_000 && &t_0 != &v_111, "Vertices are degenerate!");
+      const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(),
+                                          [&](const auto &x, const auto &y)
+                                          {
+                                            return PerpendicularDistance({n_1}, origin, x) <
+                                                   PerpendicularDistance({n_1}, origin, y);
+                                          });
+      MFEM_VERIFY(&t_0 != &v_000 && &t_0 != &v_111, "Vertices are degenerate!");
 
-    // Use the discovered vertex to define a second direction and thus a plane. n_1 and n_2
-    // now define a planar coordinate system intersecting the main diagonal, and two
-    // opposite edges of the cuboid.
-    const Eigen::Vector3d n_2 =
-        ((t_0 - origin) - ((t_0 - origin).dot(n_1) * n_1)).normalized();
+      // Use the discovered vertex to define a second direction and thus a plane. n_1 and
+      // n_2 now define a planar coordinate system intersecting the main diagonal, and two
+      // opposite edges of the cuboid.
+      const Eigen::Vector3d n_2 =
+          ((t_0 - origin) - ((t_0 - origin).dot(n_1) * n_1)).normalized();
 
-    // Collect the furthest point from the plane to determine if the box is planar. Look for
-    // a component that maximizes distance from the planar system: complete the axes with a
-    // cross, then use a dot product to pick the greatest deviation.
-    auto max_distance = PerpendicularDistance(
-        {n_1, n_2}, origin,
-        *std::max_element(vertices.begin(), vertices.end(),
-                          [&](const auto &x, const auto &y)
-                          {
-                            return PerpendicularDistance({n_1, n_2}, origin, x) <
-                                   PerpendicularDistance({n_1, n_2}, origin, y);
-                          }));
-    box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
+      // Collect the furthest point from the plane to determine if the box is planar. Look
+      // for a component that maximizes distance from the planar system: complete the axes
+      // with a cross, then use a dot product to pick the greatest deviation.
+      auto max_distance = PerpendicularDistance(
+          {n_1, n_2}, origin,
+          *std::max_element(vertices.begin(), vertices.end(),
+                            [&](const auto &x, const auto &y)
+                            {
+                              return PerpendicularDistance({n_1, n_2}, origin, x) <
+                                     PerpendicularDistance({n_1, n_2}, origin, y);
+                            }));
+      box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
 
-    // For the non-planar case, collect points furthest from the plane and choose the one
-    // closest to the origin as the next vertex which might be (001) or (011).
-    const auto &t_1 = [&]()
-    {
-      if (box.planar)
+      // For the non-planar case, collect points furthest from the plane and choose the one
+      // closest to the origin as the next vertex which might be (001) or (011).
+      const auto &t_1 = [&]()
       {
-        return t_0;
-      }
-      std::vector<Eigen::Vector3d> vertices_out_of_plane;
-      std::copy_if(vertices.begin(), vertices.end(),
-                   std::back_inserter(vertices_out_of_plane),
-                   [&](const auto &v)
-                   {
-                     return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
-                                     max_distance) < rel_tol * max_distance;
-                   });
-      return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
-                               [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                               { return (x - origin).norm() < (y - origin).norm(); });
-    }();
-
-    // Given candidates t_0 and t_1, the closer to origin defines v_001.
-    const bool t_0_gt_t_1 = (t_0 - origin).norm() > (t_1 - origin).norm();
-    const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
-    const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
-
-    // Compute the center as halfway along the main diagonal.
-    Eigen::Vector3d eig_center = 0.5 * (v_000 + v_111);
-
-    if constexpr (false)
-    {
-      fmt::print("eig_center {}!\n", eig_center);
-      fmt::print("v_000 {}!\n", v_000);
-      fmt::print("v_001 {}!\n", v_001);
-      fmt::print("v_011 {}!\n", v_011);
-      fmt::print("v_111 {}!\n", v_111);
-    }
-
-    // Compute the box axes. Using the 4 extremal points, we find the first two axes as the
-    // edges which are closest to perpendicular. For a perfect rectangular prism point
-    // cloud, we could instead compute the axes and length in each direction using the
-    // found edges of the cuboid, but this does not work for non-rectangular prism
-    // cross-sections or pyramid shapes.
-    Eigen::Vector3d eig_axes[3];
-    {
-      const auto [e_0, e_1] = [&v_000, &v_001, &v_011, &v_111]()
-      {
-        std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
-        Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
-        double dot_min = mfem::infinity();
-        for (int i_0 = 0; i_0 < 4; i_0++)
+        if (box.planar)
         {
-          for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
+          return t_0;
+        }
+        std::vector<Eigen::Vector3d> vertices_out_of_plane;
+        std::copy_if(vertices.begin(), vertices.end(),
+                     std::back_inserter(vertices_out_of_plane),
+                     [&](const auto &v)
+                     {
+                       return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
+                                       max_distance) < rel_tol * max_distance;
+                     });
+        return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
+                                 [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                                 { return (x - origin).norm() < (y - origin).norm(); });
+      }();
+
+      // Given candidates t_0 and t_1, the closer to origin defines v_001.
+      const bool t_0_gt_t_1 = (t_0 - origin).norm() > (t_1 - origin).norm();
+      const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
+      const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
+
+      // Compute the center as halfway along the main diagonal.
+      Eigen::Vector3d eig_center = 0.5 * (v_000 + v_111);
+
+      if constexpr (false)
+      {
+        fmt::print("eig_center {}!\n", eig_center);
+        fmt::print("v_000 {}!\n", v_000);
+        fmt::print("v_001 {}!\n", v_001);
+        fmt::print("v_011 {}!\n", v_011);
+        fmt::print("v_111 {}!\n", v_111);
+      }
+
+      // Compute the box axes. Using the 4 extremal points, we find the first two axes as
+      // the edges which are closest to perpendicular. For a perfect rectangular prism point
+      // cloud, we could instead compute the axes and length in each direction using the
+      // found edges of the cuboid, but this does not work for non-rectangular prism
+      // cross-sections or pyramid shapes.
+      Eigen::Vector3d eig_axes[3];
+      {
+        const auto [e_0, e_1] = [&v_000, &v_001, &v_011, &v_111]()
+        {
+          std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
+          Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
+          double dot_min = mfem::infinity();
+          for (int i_0 = 0; i_0 < 4; i_0++)
           {
-            for (int i_1 = 0; i_1 < 4; i_1++)
+            for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
             {
-              for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
+              for (int i_1 = 0; i_1 < 4; i_1++)
               {
-                if ((i_1 == i_0 && j_1 == j_0) || verts[i_0] == verts[j_0] ||
-                    verts[i_1] == verts[j_1])
+                for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
                 {
-                  continue;
-                }
-                const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
-                const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
-                const auto dot = std::abs(e_ij_0.dot(e_ij_1));
-                if (dot < dot_min)
-                {
-                  if constexpr (false)
+                  if ((i_1 == i_0 && j_1 == j_0) || verts[i_0] == verts[j_0] ||
+                      verts[i_1] == verts[j_1])
                   {
-                    fmt::print("i_0 {} i_1 {} j_0 {} j_1 {}\n", i_0, i_1, j_0, j_1);
-                    fmt::print("e_ij_0 {}, e_ij_1 {}!\n", e_ij_0, e_ij_1);
+                    continue;
                   }
-                  dot_min = dot;
-                  e_0 = e_ij_0;
-                  e_1 = e_ij_1;
-                  if (dot_min < rel_tol)
+                  const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
+                  const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
+                  const auto dot = std::abs(e_ij_0.dot(e_ij_1));
+                  if (dot < dot_min)
                   {
-                    return std::make_pair(e_0, e_1);
+                    if constexpr (false)
+                    {
+                      fmt::print("i_0 {} i_1 {} j_0 {} j_1 {}\n", i_0, i_1, j_0, j_1);
+                      fmt::print("e_ij_0 {}, e_ij_1 {}!\n", e_ij_0, e_ij_1);
+                    }
+                    dot_min = dot;
+                    e_0 = e_ij_0;
+                    e_1 = e_ij_1;
+                    if (dot_min < rel_tol)
+                    {
+                      return std::make_pair(e_0, e_1);
+                    }
                   }
                 }
               }
             }
           }
+          return std::make_pair(e_0, e_1);
+        }();
+
+        if constexpr (false)
+        {
+          fmt::print("e_0 {}, e_1 {}!\n", e_0, e_1);
         }
-        return std::make_pair(e_0, e_1);
-      }();
 
-      if constexpr (false)
-      {
-        fmt::print("e_0 {}, e_1 {}!\n", e_0, e_1);
+        eig_axes[0] = e_0;
+        eig_axes[1] = e_1;
+        eig_axes[2] = box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
       }
 
-      eig_axes[0] = e_0;
-      eig_axes[1] = e_1;
-      eig_axes[2] = box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
-    }
-
-    // Scale axes by length of the box in each direction.
-    std::array<double, 3> l = {0.0};
-    for (const auto &v : {v_000, v_001, v_011, v_111})
-    {
-      const auto v_0 = v - eig_center;
-      l[0] = std::max(l[0], std::abs(v_0.dot(eig_axes[0])));
-      l[1] = std::max(l[1], std::abs(v_0.dot(eig_axes[1])));
-      l[2] = std::max(l[2], std::abs(v_0.dot(eig_axes[2])));
-    }
-    eig_axes[0] *= l[0];
-    eig_axes[1] *= l[1];
-    eig_axes[2] *= l[2];
-
-    // Make sure the longest dimension comes first.
-    std::sort(std::begin(eig_axes), std::end(eig_axes),
-              [](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-              { return x.norm() > y.norm(); });
-
-    // Store results into the BoundingBox (always 3D here).
-    box.center.SetSize(3);
-    box.axes.SetSize(3, 3);
-    for (int i = 0; i < 3; i++)
-    {
-      box.center(i) = eig_center(i);
-      for (int j = 0; j < 3; j++)
+      // Scale axes by length of the box in each direction.
+      std::array<double, 3> l = {0.0};
+      for (const auto &v : {v_000, v_001, v_011, v_111})
       {
-        box.axes(j, i) = eig_axes[i](j);
+        const auto v_0 = v - eig_center;
+        l[0] = std::max(l[0], std::abs(v_0.dot(eig_axes[0])));
+        l[1] = std::max(l[1], std::abs(v_0.dot(eig_axes[1])));
+        l[2] = std::max(l[2], std::abs(v_0.dot(eig_axes[2])));
       }
-    }
+      eig_axes[0] *= l[0];
+      eig_axes[1] *= l[1];
+      eig_axes[2] *= l[2];
+
+      // Make sure the longest dimension comes first.
+      std::sort(std::begin(eig_axes), std::end(eig_axes),
+                [](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                { return x.norm() > y.norm(); });
+
+      // Store results into the BoundingBox (always 3D here).
+      box.center.SetSize(3);
+      box.axes.SetSize(3, 3);
+      for (int i = 0; i < 3; i++)
+      {
+        box.center(i) = eig_center(i);
+        for (int j = 0; j < 3; j++)
+        {
+          box.axes(j, i) = eig_axes[i](j);
+        }
+      }
     }  // if (!collinear)
   }
 
