@@ -7,6 +7,7 @@
 #include <catch2/catch_session.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
+#include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
@@ -72,6 +73,14 @@ int main(int argc, char *argv[])
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.
   hypre::Initialize();
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Initialize(argc, argv, nullptr, nullptr);
+  if (PETSC_COMM_WORLD != Mpi::World())
+  {
+    Mpi::Print(Mpi::World(), "Error: Problem during MPI initialization!\n\n");
+    return 1;
+  }
+#endif
 
   // The Palace test suite defines three key tags:
   // - [Serial], for tests that are meaningful when run on a single process
@@ -126,6 +135,11 @@ int main(int argc, char *argv[])
   Mpi::Print("{}\n", resource.str());
   result = session.run();
   ceed::Finalize();
+
+  // Finalize SLEPc/PETSc.
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Finalize();
+#endif
 
   return result;
 }
