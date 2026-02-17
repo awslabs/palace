@@ -607,7 +607,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
-  auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view node_label)
+  // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
+  // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
+  // lambda. This is done for MPI syncronization reasons. If the MFEM_VERIFY throws / aborts
+  // on one rank why others are in an inconsistent state, this could lead to MPI
+  // communication failures in the memory unwinding and global MPI hard crash (e.g. in the
+  // unit tests).
+  auto add_real_vector_to_basis = [this](const Vector &vector,
+                                         std::string_view node_label) -> bool
   {
     auto dim_V = V.size();
     MFEM_VERIFY(dim_V < V.capacity(),
@@ -633,23 +640,28 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
                           dim_V);
       orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
     }
-    MFEM_VERIFY(orth_R(dim_V, dim_V) > ORTHOG_TOL * pre_norm,
-                fmt::format("Linearly dependent vector added to PROM basis (relative "
-                            "norm {:.2e} < {:.2e}). This "
-                            "indicates a convergence issue or a code error (the "
-                            "same vector was added multiple times accidentally).",
-                            orth_R(dim_V, dim_V) / pre_norm, ORTHOG_TOL));
+
+    if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
+    {
+      return false;
+    }
+
     v *= 1.0 / orth_R(dim_V, dim_V);
     v_node_label.emplace_back(node_label);
+    return true;
   };
 
-  if (has_real)
+  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
   {
-    add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label));
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
   }
-  if (has_imag)
+  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
   {
-    add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
   }
 
   if (dim_V_new == dim_V_old)
