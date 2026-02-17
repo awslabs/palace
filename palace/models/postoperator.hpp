@@ -111,6 +111,11 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
+  // Mode analysis: normal (out-of-plane) E component on H1 space, and in-plane B field
+  // on ND space for visualization. The in-plane B is the dominant component:
+  //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+  std::unique_ptr<GridFunction> En, Bt_inplane;
+
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
@@ -231,6 +236,7 @@ protected:
 
   // Mode analysis impedance postprocessing state.
   mfem::Array<int> voltage_marker;
+  mfem::Array<int> current_marker;
   bool has_impedance_postpro = false;
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
@@ -394,10 +400,11 @@ public:
                           double J_coef)
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
-  // Mode analysis: complex E-field (tangential) eigenvector, propagation constant kn.
+  // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
+  // propagation constant kn.
   template <ProblemType U = solver_t>
-  auto MeasureAndPrintAll(int step, const ComplexVector &e, std::complex<double> kn,
-                          double omega, int num_conv)
+  auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
+                          std::complex<double> kn, double omega, int num_conv)
       -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be

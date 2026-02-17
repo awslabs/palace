@@ -1299,6 +1299,7 @@ ModeAnalysisSolverData::ModeAnalysisSolverData(const json &ma)
   freq = ma.at("Freq");  // Required
   n = ma.value("N", n);
   n_post = ma.value("Save", n_post);
+  target = ma.value("Target", target);
   tol = ma.value("Tol", tol);
   type = ma.value("Type", type);
 }
