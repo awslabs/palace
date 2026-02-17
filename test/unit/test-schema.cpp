@@ -81,7 +81,7 @@ TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
   }
 }
 
-TEST_CASE_METHOD(palace::test::TempDirFixture<>, "Schema Validation - Config with Comments",
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Config with Comments",
                  "[schema][Serial]")
 {
   // Test that preprocessing (comment stripping) works with schema validation.
@@ -336,7 +336,7 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
   }
 }
 
-TEST_CASE_METHOD(palace::test::TempDirFixture<>, "Schema Validation - Range Expansion",
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expansion",
                  "[schema][Serial]")
 {
   // Test that integer range syntax (e.g., 1-5) is expanded before validation.

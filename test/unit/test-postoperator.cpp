@@ -344,8 +344,8 @@ TEST_CASE("PostOperator - Idempotent", "[postoperator][Serial]")
   }
 }
 
-TEST_CASE_METHOD(palace::test::TempDirFixture<palace::test::TempDirMode::Shared>,
-                 "GridFunction export", "[gridfunction][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "GridFunction export",
+                 "[gridfunction][Serial][Parallel]")
 {
   // Create iodata.
   Units units(0.496, 1.453);
