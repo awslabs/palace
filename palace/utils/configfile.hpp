@@ -825,6 +825,12 @@ public:
   // Number of modes to write to disk.
   int n_post = 0;
 
+  // Target effective index for the eigenvalue solver shift-and-invert spectral
+  // transformation. When nonzero, the solver searches for modes with effective index near
+  // this value. When zero (default), the shift is computed automatically from material
+  // properties.
+  double target = 0.0;
+
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
 

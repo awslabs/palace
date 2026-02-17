@@ -6,10 +6,12 @@
 #include <complex>
 
 #include "fem/bilinearform.hpp"
+#include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
@@ -84,12 +86,42 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ModeAnalysisOperator mode_op(mat_op, nd_fespace, h1_fespace, *mesh.back(),
                                iodata.solver.order);
   PostOperator<ProblemType::MODEANALYSIS> post_op(iodata, mode_op);
+
+  // Construct RT FE space for error estimation (smooth D-field recovery) and wrap in a
+  // single-level hierarchy. For the 2D case, the curl flux estimator also needs the L2
+  // curl space (from ModeAnalysisOperator) and an H1 hierarchy.
+  auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                         mesh.back()->Dimension());
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(*mesh.back(), nd_fec.get()));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(*mesh.back(), rt_fec.get()));
+  FiniteElementSpaceHierarchy h1_fespaces_est(
+      std::make_unique<FiniteElementSpace>(*mesh.back(), h1_fec.get()));
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      mat_op, nd_fespaces, rt_fespaces, iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
+      &mode_op.GetCurlSpace(), &h1_fespaces_est);
+  ErrorIndicator indicator;
   double c_min = mat_op.GetLightSpeedMax().Min();
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light in ModeAnalysisSolver!");
-  const double mu_eps_max = 1.0 / (c_min * c_min) * 1.1;
-  const double sigma = -omega * omega * mu_eps_max;
+  double sigma;
+  if (ma_data.target > 0.0)
+  {
+    // User-specified target effective index: search for modes near n_eff = target.
+    // kn_target = n_eff * omega (nondimensional), sigma = -kn_target^2.
+    const double kn_target = ma_data.target * omega;
+    sigma = -kn_target * kn_target;
+    Mpi::Print(" Target n_eff = {:.6e}, sigma = {:.6e}\n", ma_data.target, sigma);
+  }
+  else
+  {
+    // Auto: target the light line from material properties.
+    const double mu_eps_max = 1.0 / (c_min * c_min) * 1.1;
+    sigma = -omega * omega * mu_eps_max;
+  }
 
   // Assemble block system matrices.
   MaterialPropertyCoefficient muinv_cc(mat_op.GetAttributeToMaterial(),
@@ -186,7 +218,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetNumModes(num_modes, std::max(2 * num_modes + 1, 20));
     slepc->SetTol(tol);
-    slepc->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+    slepc->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
     eigen = std::move(slepc);
   }
 #elif defined(PALACE_WITH_ARPACK)
@@ -195,7 +227,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         mesh.back()->GetComm(), iodata.problem.verbose);
     arpack->SetNumModes(num_modes, std::max(2 * num_modes + 1, 20));
     arpack->SetTol(tol);
-    arpack->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+    arpack->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
     eigen = std::move(arpack);
   }
 #else
@@ -292,28 +324,87 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
-  Mpi::Print("\nComputing mode analysis results and performing postprocessing\n\n");
+  Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
+
+  // Get the discrete curl operator for computing Bz = curl_t(Et) / (iω) on the L2 space,
+  // needed for the curl flux error estimator.
+  auto &l2_curl_fespace = mode_op.GetCurlSpace();
+  const auto &CurlOp = l2_curl_fespace.GetDiscreteInterpolator(nd_fespace);
+  const int l2_size = l2_curl_fespace.GetTrueVSize();
+
   const int n_print = std::min(num_conv, num_modes);
   for (int i = 0; i < n_print; i++)
   {
     std::complex<double> lambda = eigen->GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
 
-    // Extract the tangential E eigenvector for PostOperator (only the ND portion).
-    ComplexVector et(nd_size);
+    // Extract the tangential (ND) and normal (H1) E eigenvector components.
+    ComplexVector et(nd_size), en(h1_size);
     {
       ComplexVector e0(nd_size + h1_size);
       eigen->GetEigenvector(i, e0);
       std::copy_n(e0.Real().begin(), nd_size, et.Real().begin());
       std::copy_n(e0.Imag().begin(), nd_size, et.Imag().begin());
+      std::copy_n(e0.Real().begin() + nd_size, h1_size, en.Real().begin());
+      std::copy_n(e0.Imag().begin() + nd_size, h1_size, en.Imag().begin());
+    }
+
+    // Power-normalize eigenvector to unit transmitted Poynting power:
+    //   P = (1/2) Re{kn*/omega} * (et^H Btt et)
+    // SLEPc/ARPACK normalize to some operator norm, giving arbitrary field magnitudes.
+    // Normalizing to P = 1 (nondimensional) makes field magnitudes physically meaningful
+    // and comparable to COMSOL (which normalizes to 1 W/m transmitted power).
+    {
+      const auto *Btt = mode_op.GetBtt();
+      if (Btt)
+      {
+        Vector Btt_etr(nd_size), Btt_eti(nd_size);
+        Btt->Mult(et.Real(), Btt_etr);
+        Btt->Mult(et.Imag(), Btt_eti);
+        double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_etr);
+        double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), et.Imag(), Btt_eti);
+        double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_eti);
+        double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), et.Imag(), Btt_etr);
+        std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
+        std::complex<double> P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+        double P_abs = std::abs(P);
+        if (P_abs > 0.0)
+        {
+          double scale = 1.0 / std::sqrt(P_abs);
+          et.Real() *= scale;
+          et.Imag() *= scale;
+          en.Real() *= scale;
+          en.Imag() *= scale;
+        }
+      }
     }
 
     // PostOperator handles all measurements, printing, and CSV output.
-    post_op.MeasureAndPrintAll(i, et, kn, omega, n_print);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
+
+    // Calculate and record the error indicators. Compute Bz = curl_t(Et) / (iω) on the
+    // L2 curl space for the curl flux part of the estimator.
+    if (i < num_modes)
+    {
+      ComplexVector bz(l2_size);
+      {
+        Vector curl_etr(l2_size), curl_eti(l2_size);
+        CurlOp.Mult(et.Real(), curl_etr);
+        CurlOp.Mult(et.Imag(), curl_eti);
+        // Bz = curl(Et) / (iω) = curl(Et) * (-i/ω)
+        // Bz_r = curl(Et_i) / ω,  Bz_i = -curl(Et_r) / ω
+        bz.Real() = curl_eti;
+        bz.Real() *= 1.0 / omega;
+        bz.Imag() = curl_etr;
+        bz.Imag() *= -1.0 / omega;
+      }
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+    }
   }
   Mpi::Print("\n");
 
-  ErrorIndicator indicator;
+  post_op.MeasureFinalize(indicator);
   return {indicator, nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize()};
 }
 
