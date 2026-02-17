@@ -386,12 +386,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
+  excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (port_excitations.Size() > 1)
     {
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
-                 excitation_counter, port_excitations.Size());
+                 ++excitation_counter, port_excitations.Size());
     }
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);
