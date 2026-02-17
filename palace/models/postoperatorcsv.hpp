@@ -122,14 +122,14 @@ struct Measurement
   {
     std::complex<double> kn_dim = {0.0, 0.0};  // Dimensional propagation constant (1/m)
     std::complex<double> n_eff = {0.0, 0.0};   // Effective refractive index
-    double Z0 = 0.0;                            // Characteristic impedance (Ohm) [P-V]
-    double L_per_m = 0.0;                       // Inductance per unit length (H/m) [P-V]
-    double C_per_m = 0.0;                       // Capacitance per unit length (F/m) [P-V]
-    bool has_impedance = false;                  // Whether Z0/L/C (P-V) were computed
-    double Z_VI = 0.0;                          // V/I impedance (Ohm)
-    double L_VI_per_m = 0.0;                    // Inductance per unit length (H/m) [V-I]
-    double C_VI_per_m = 0.0;                    // Capacitance per unit length (F/m) [V-I]
-    bool has_vi_impedance = false;              // Whether Z_VI/L_VI/C_VI were computed
+    double Z0 = 0.0;                           // Characteristic impedance (Ohm) [P-V]
+    double L_per_m = 0.0;                      // Inductance per unit length (H/m) [P-V]
+    double C_per_m = 0.0;                      // Capacitance per unit length (F/m) [P-V]
+    bool has_impedance = false;                // Whether Z0/L/C (P-V) were computed
+    double Z_VI = 0.0;                         // V/I impedance (Ohm)
+    double L_VI_per_m = 0.0;                   // Inductance per unit length (H/m) [V-I]
+    double C_VI_per_m = 0.0;                   // Capacitance per unit length (F/m) [V-I]
+    bool has_vi_impedance = false;             // Whether Z_VI/L_VI/C_VI were computed
   };
 
   ModeData mode_data;

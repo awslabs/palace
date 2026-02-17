@@ -119,8 +119,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
           else if constexpr (solver_t == ProblemType::MODEANALYSIS)
           {
             // Mode analysis: E on ND space, B (Hz) on L2 curl space.
-            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
+            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
+                                      fem_op_.GetCurlSpace());
           }
           else
           {
@@ -210,12 +210,10 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
       const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
       int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
       const auto &imp = impedance_data.begin()->second;
-      voltage_marker =
-          mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+      voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
       if (!imp.current_attributes.empty())
       {
-        current_marker =
-            mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+        current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
       }
     }
   }
@@ -1506,8 +1504,7 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
   BlockTimer bt0(Timer::POSTPRO);
   // Pass nullptr for the indicator if it is empty (no AMR), so the write functions
   // skip the indicator grid function but still save the mesh and rank partition.
-  const ErrorIndicator *ind_ptr =
-      (indicator.Local().Size() > 0) ? &indicator : nullptr;
+  const ErrorIndicator *ind_ptr = (indicator.Local().Size() > 0) ? &indicator : nullptr;
   if (ind_ptr)
   {
     auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
@@ -1587,8 +1584,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     SetBGridFunction(b);
   }
 
-  // Compute full in-plane B: Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
-  // This is the dominant B component for a propagating mode. Project onto ND space.
+  // Compute full in-plane B: Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x
+  // z_hat) This is the dominant B component for a propagating mode. Project onto ND space.
   {
     ModeInPlaneBCoefficient bt_real_coeff(E->Real(), E->Imag(), En->Real(), En->Imag(),
                                           kn.real(), kn.imag(), omega, true);
@@ -1621,7 +1618,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       mfem::ConstantCoefficient one(1.0);
       mfem::ParLinearForm v_lf(&nd_fespace.Get());
       v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
-                                  voltage_marker);
+                                 voltage_marker);
       v_lf.UseFastAssembly(false);
       v_lf.Assemble();
 
@@ -1684,9 +1681,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       {
         mfem::ConstantCoefficient one(1.0);
         mfem::ParLinearForm i_lf(&nd_fespace.Get());
-        i_lf.AddBoundaryIntegrator(
-            new mfem::VectorFEBoundaryFluxLFIntegrator(one),
-            current_marker);
+        i_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                   current_marker);
         i_lf.UseFastAssembly(false);
         i_lf.Assemble();
 
