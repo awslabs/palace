@@ -50,7 +50,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   SECTION("ParOperator")
   {
     int empty = {df.empty() && f.empty()};
-    Mpi::GlobalMin(2, &empty, comm);
+    Mpi::GlobalMin(1, &empty, comm);
     REQUIRE(empty == 0);  // There must be a non-empty.
 
     BilinearForm da(nd_fes), a(nd_fes);
@@ -91,7 +91,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   SECTION("ComplexParOperator")
   {
     int empty = {df.empty() && f.empty()};
-    Mpi::GlobalMin(2, &empty, comm);
+    Mpi::GlobalMin(1, &empty, comm);
     REQUIRE(empty == 0);  // There must be a non-empty.
 
     BilinearForm dar(nd_fes), dai(nd_fes), ar(nd_fes), ai(nd_fes);
