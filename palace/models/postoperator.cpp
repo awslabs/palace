@@ -49,6 +49,53 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+// Coefficient for the in-plane B field of a waveguide mode propagating as e^{-ikn z}:
+//   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+// Evaluates the real or imaginary part at any point given grid functions for Et and Ez.
+class ModeInPlaneBCoefficient : public mfem::VectorCoefficient
+{
+  const mfem::ParGridFunction &et_r, &et_i;
+  const mfem::ParGridFunction &ez_r, &ez_i;
+  double kn_r, kn_i, inv_omega;
+  bool compute_real;
+
+public:
+  ModeInPlaneBCoefficient(const mfem::ParGridFunction &et_r,
+                          const mfem::ParGridFunction &et_i,
+                          const mfem::ParGridFunction &ez_r,
+                          const mfem::ParGridFunction &ez_i, double kn_r, double kn_i,
+                          double omega, bool compute_real)
+    : mfem::VectorCoefficient(2), et_r(et_r), et_i(et_i), ez_r(ez_r), ez_i(ez_i),
+      kn_r(kn_r), kn_i(kn_i), inv_omega(1.0 / omega), compute_real(compute_real)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector etr(2), eti(2), grad_ezr(2), grad_ezi(2);
+    et_r.GetVectorValue(T, ip, etr);
+    et_i.GetVectorValue(T, ip, eti);
+    ez_r.GetGradient(T, grad_ezr);
+    ez_i.GetGradient(T, grad_ezi);
+
+    // z_hat x (vx, vy) = (-vy, vx); grad(f) x z_hat = (df/dy, -df/dx).
+    V.SetSize(2);
+    if (compute_real)
+    {
+      // Bt_r = -(kn_r/w) z_hat x Et_r + (kn_i/w) z_hat x Et_i + (1/w) grad(Ez_i) x z_hat
+      V(0) = (kn_r * etr(1) - kn_i * eti(1) + grad_ezi(1)) * inv_omega;
+      V(1) = (-kn_r * etr(0) + kn_i * eti(0) - grad_ezi(0)) * inv_omega;
+    }
+    else
+    {
+      // Bt_i = -(kn_r/w) z_hat x Et_i - (kn_i/w) z_hat x Et_r - (1/w) grad(Ez_r) x z_hat
+      V(0) = (kn_r * eti(1) + kn_i * etr(1) - grad_ezr(1)) * inv_omega;
+      V(1) = (-kn_r * eti(0) - kn_i * etr(0) + grad_ezr(0)) * inv_omega;
+    }
+  }
+};
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -105,6 +152,13 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
                                        HasComplexGridFunction<solver_t>());
   }
 
+  // Mode analysis: create grid functions for out-of-plane E (H1) and in-plane B (ND).
+  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  {
+    En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
+    Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+  }
+
   // Add wave port boundary mode postprocessing, if available.
   if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
   {
@@ -158,6 +212,11 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
       const auto &imp = impedance_data.begin()->second;
       voltage_marker =
           mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+      if (!imp.current_attributes.empty())
+      {
+        current_marker =
+            mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+      }
     }
   }
 
@@ -378,6 +437,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       }
     }
   }
+  // In-plane B field for mode analysis (2D vector on ND space).
+  if (Bt_inplane)
+  {
+    paraview->RegisterField("Bt_real", &Bt_inplane->Real());
+    paraview->RegisterField("Bt_imag", &Bt_inplane->Imag());
+  }
   if (V)
   {
     paraview->RegisterField("V", &V->Real());
@@ -545,6 +610,15 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  // In-plane B (ND space): H(curl) Piola transform scales by L, then B-field units.
+  if (Bt_inplane)
+  {
+    Bt_inplane->Real() *= mesh_Lc0;
+    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
+    Bt_inplane->Imag() *= mesh_Lc0;
+    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+  }
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -554,6 +628,14 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+  }
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -656,6 +738,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    Bt_inplane->Real() *= mesh_Lc0;
+    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
+    Bt_inplane->Imag() *= mesh_Lc0;
+    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+  }
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -714,6 +804,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
+  if (Bt_inplane)
+  {
+    write_grid_function(Bt_inplane->Real(), "Bt_real");
+    write_grid_function(Bt_inplane->Imag(), "Bt_imag");
+  }
+
   if constexpr (HasVGridFunction<solver_t>())
   {
     if (V)
@@ -754,6 +850,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+  }
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -1400,15 +1504,22 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
-  post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
+  // Pass nullptr for the indicator if it is empty (no AMR), so the write functions
+  // skip the indicator grid function but still save the mesh and rank partition.
+  const ErrorIndicator *ind_ptr =
+      (indicator.Local().Size() > 0) ? &indicator : nullptr;
+  if (ind_ptr)
+  {
+    auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
+    post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
+  }
   if (ShouldWriteParaviewFields())
   {
-    WriteParaviewFieldsFinal(&indicator);
+    WriteParaviewFieldsFinal(ind_ptr);
   }
   if (ShouldWriteGridFunctionFields())
   {
-    WriteMFEMGridFunctionsFinal(&indicator);
+    WriteMFEMGridFunctionsFinal(ind_ptr);
   }
 }
 
@@ -1430,15 +1541,22 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
 
 template <ProblemType solver_t>
 template <ProblemType U>
-auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
+                                                const ComplexVector &en,
                                                 std::complex<double> kn, double omega,
                                                 int num_conv)
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
-  SetEGridFunction(e);
+  SetEGridFunction(et);
 
-  // Compute B = curl_t(Et) / (iω) as a scalar (Hz) on the L2 curl space.
+  // Set the normal (out-of-plane) E component on H1 space.
+  En->Real().SetFromTrueDofs(en.Real());
+  En->Imag().SetFromTrueDofs(en.Imag());
+  En->Real().ExchangeFaceNbrData();
+  En->Imag().ExchangeFaceNbrData();
+
+  // Compute Bz = curl_t(Et) / (iω) as a scalar (Hz) on the L2 curl space.
   // B_r = curl(Et_i) / ω,  B_i = -curl(Et_r) / ω  (from 1/(iω) = -i/ω).
   {
     auto &nd_fs = fem_op->GetNDSpace();
@@ -1467,6 +1585,19 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     b.Imag() *= -1.0 / omega;
 
     SetBGridFunction(b);
+  }
+
+  // Compute full in-plane B: Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+  // This is the dominant B component for a propagating mode. Project onto ND space.
+  {
+    ModeInPlaneBCoefficient bt_real_coeff(E->Real(), E->Imag(), En->Real(), En->Imag(),
+                                          kn.real(), kn.imag(), omega, true);
+    ModeInPlaneBCoefficient bt_imag_coeff(E->Real(), E->Imag(), En->Real(), En->Imag(),
+                                          kn.real(), kn.imag(), omega, false);
+    Bt_inplane->Real().ProjectCoefficient(bt_real_coeff);
+    Bt_inplane->Imag().ProjectCoefficient(bt_imag_coeff);
+    Bt_inplane->Real().ExchangeFaceNbrData();
+    Bt_inplane->Imag().ExchangeFaceNbrData();
   }
 
   measurement_cache = {};
@@ -1523,17 +1654,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
         P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
       }
 
-      // Impedance computation using the power-voltage definition.
-      //
-      // TODO: The current implementation uses the power-voltage definition:
-      //   Z0 = |V|^2 / (2P)
+      // Impedance computation using the power-voltage definition:
+      //   Z_PV = |V|^2 / (2P)
       // where V is the line integral of Et across the voltage boundary and P is the
-      // transmitted Poynting power. The V/I definition (Z0 = V/I, where I is the loop
-      // integral of H around the trace) is not yet implemented. The V/I approach requires
-      // either an open integration contour (from ground to signal) or direct H-field
-      // evaluation at boundary points, which needs different mesh topology than the closed
-      // PEC loops currently provide. The "CurrentAttributes" config field in the impedance
-      // boundary data is reserved for a future V/I implementation.
+      // transmitted Poynting power.
       if (std::abs(P) > 1e-30)
       {
         std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
@@ -1545,6 +1669,53 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
         measurement_cache.mode_data.L_per_m = L_per_m;
         measurement_cache.mode_data.C_per_m = C_per_m;
         measurement_cache.mode_data.has_impedance = true;
+      }
+    }
+
+    // V/I impedance: Z_VI = V / I where I = ∮ μ⁻¹ Bt · t dl around the trace.
+    // The current integral uses the in-plane B field (Bt_inplane) on the ND space.
+    // For ND elements on 1D boundary edges, VectorFEBoundaryFluxLFIntegrator uses
+    // CalcShape (scalar tangential basis), so ∫ f * shape_i dl when dotted with DOFs
+    // gives ∫ f * (Bt · t) dl — the tangential line integral.
+    // In nondimensional units, μ⁻¹ = 1 on vacuum boundaries.
+    if (current_marker.Size() > 0)
+    {
+      std::complex<double> I(0.0, 0.0);
+      {
+        mfem::ConstantCoefficient one(1.0);
+        mfem::ParLinearForm i_lf(&nd_fespace.Get());
+        i_lf.AddBoundaryIntegrator(
+            new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+            current_marker);
+        i_lf.UseFastAssembly(false);
+        i_lf.Assemble();
+
+        Vector i_lf_tdof(nd_size);
+        i_lf.ParallelAssemble(i_lf_tdof);
+
+        // Dot with Bt_inplane DOFs to get I = ∫ Bt · t dl.
+        // In nondimensional units this equals ∫ μ⁻¹ Bt · t dl since μ⁻¹ = 1.
+        Vector btr_tdof(nd_size), bti_tdof(nd_size);
+        Bt_inplane->Real().GetTrueDofs(btr_tdof);
+        Bt_inplane->Imag().GetTrueDofs(bti_tdof);
+        I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, btr_tdof));
+        I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, bti_tdof));
+      }
+
+      if (std::abs(I) > 1e-30)
+      {
+        // Z_VI = |V/I| (nondimensional), dimensionalize by Z0.
+        // Use magnitude since the sign depends on boundary edge tangent orientation
+        // which is mesh-dependent and not guaranteed to form a consistent loop.
+        double Z_VI_nondim = std::abs(V) / std::abs(I);
+        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
+        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
+        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
+        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
+        measurement_cache.mode_data.has_vi_impedance = true;
       }
     }
   }
@@ -1567,12 +1738,20 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
 
-  // Print Z0, L, C if computed.
+  // Print Z0, L, C if computed (power-voltage definition).
   if (measurement_cache.mode_data.has_impedance)
   {
-    Mpi::Print("  Z0 = {:.6e} Ohm, L = {:.6e} H/m, C = {:.6e} F/m\n",
+    Mpi::Print("  Z_PV = {:.6e} Ohm, L_PV = {:.6e} H/m, C_PV = {:.6e} F/m\n",
                measurement_cache.mode_data.Z0, measurement_cache.mode_data.L_per_m,
                measurement_cache.mode_data.C_per_m);
+  }
+
+  // Print Z_VI, L_VI, C_VI if computed (voltage-current definition).
+  if (measurement_cache.mode_data.has_vi_impedance)
+  {
+    Mpi::Print("  Z_VI = {:.6e} Ohm, L_VI = {:.6e} H/m, C_VI = {:.6e} F/m\n",
+               measurement_cache.mode_data.Z_VI, measurement_cache.mode_data.L_VI_per_m,
+               measurement_cache.mode_data.C_VI_per_m);
   }
 
   int print_idx = step + 1;
@@ -1625,8 +1804,8 @@ PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>
 
 template auto
 PostOperator<ProblemType::MODEANALYSIS>::MeasureAndPrintAll<ProblemType::MODEANALYSIS>(
-    int step, const ComplexVector &e, std::complex<double> kn, double omega,
-    int num_conv) -> double;
+    int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
+    double omega, int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(
