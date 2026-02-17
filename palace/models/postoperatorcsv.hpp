@@ -292,6 +292,14 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
+  // Driven: wave port impedance.
+  std::optional<TableWithCSVFile> port_Z;
+  template <ProblemType U = solver_t>
+  auto InitializePortZ(const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintPortZ() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
   // Driven + Eigenmode.
   std::optional<TableWithCSVFile> farfield_E;
   template <ProblemType U = solver_t>

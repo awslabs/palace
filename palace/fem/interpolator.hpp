@@ -52,6 +52,12 @@ void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
                          mfem::Vector &V,
                          mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
 
+// Compute the line integral V = ∫ F · dl along a straight line from p1 to p2 using GSLIB
+// interpolation. The field F is a real-valued vector ParGridFunction. Uses Gauss-Legendre
+// quadrature of the specified order on [0,1]. Returns the scalar integral value.
+double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
+                           const mfem::ParGridFunction &field, int quad_order);
+
 }  // namespace fem
 
 }  // namespace palace

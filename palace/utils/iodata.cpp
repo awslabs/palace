@@ -610,10 +610,18 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     k *= units.GetMeshLengthRelativeScale();
   }
 
-  // Wave port offset distance.
+  // Wave port offset distance and voltage coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     data.d_offset /= units.GetMeshLengthRelativeScale();
+    for (auto &v : data.voltage_p1)
+    {
+      v /= units.GetMeshLengthRelativeScale();
+    }
+    for (auto &v : data.voltage_p2)
+    {
+      v /= units.GetMeshLengthRelativeScale();
+    }
   }
 
   // Center coordinates for surface flux.
@@ -621,6 +629,19 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   {
     std::transform(data.center.begin(), data.center.end(), data.center.begin(),
                    DivideLengthScale);
+  }
+
+  // Mode impedance voltage coordinates.
+  for (auto &[idx, data] : boundaries.postpro.impedance)
+  {
+    for (auto &v : data.voltage_p1)
+    {
+      v /= units.GetMeshLengthRelativeScale();
+    }
+    for (auto &v : data.voltage_p2)
+    {
+      v /= units.GetMeshLengthRelativeScale();
+    }
   }
 
   // Dielectric interface thickness.
