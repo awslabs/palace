@@ -364,11 +364,10 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
-  // Extract s and v linear forms to check equality. Use reinterpret cast to identical layout
-  // Test structure from original structure. Done not to populate code with friend
+  // Extract s and v linear forms to check equality. Use reinterpret cast to identical
+  // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
-  const auto &port_1_test_cast =
-      reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
@@ -721,8 +720,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // Extract s and v linear forms to check equality. Use reinterpret cast to identical
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
-  const auto &port_1_test_cast =
-      reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());

@@ -24,6 +24,27 @@ using namespace palace;
 using namespace nlohmann;
 using namespace Catch::Matchers;
 
+// Assemble operators as Eigen matrices for simpler testing.
+template <typename T>
+auto toEigenMatrix(const T &op, int n)
+{
+  Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, n);
+  mfem::Vector w(n), v(n);
+  w.UseDevice(true);
+  v.UseDevice(true);
+  for (int i = 0; i < n; i++)
+  {
+    w = 0.0;
+    w[i] = 1.0;
+    op.Mult(w, v);
+    for (int j = 0; j < n; j++)
+    {
+      mat(j, i) = v(j);
+    }
+  }
+  return mat;
+}
+
 class RomOperatorTest : public RomOperator
 {
 public:
@@ -124,8 +145,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
   double L0 = 1.0e-6;
 
-  // Pick a number != 1. This should not matter but be correctly cancelled out in
-  // unit conversions.
+  // Pick a number != 1. This should not matter as it should be be correctly cancelled out
+  // in unit conversions, but we want to test this here.
   double Lc = 7.0;
 
   json setup_json;
@@ -205,31 +226,9 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   CHECK(W_bulk->NumRows() == nr_tdof_expected);
   CHECK(W_bulk->NumCols() == nr_tdof_expected);
 
-  // Assemble operators as Eigen matrices for simpler testing.
-  auto toEigenMatrix = [](const auto &op)
-  {
-    int n = op.NumRows();
-    int m = op.NumCols();
-    Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, m);
-    mfem::Vector w(n), v(n);
-    w.UseDevice(true);
-    v.UseDevice(true);
-    for (int i = 0; i < m; i++)
-    {
-      w = 0.0;
-      w[i] = 1.0;
-      op.Mult(w, v);
-      for (int j = 0; j < n; j++)
-      {
-        mat(j, i) = v(j);
-      }
-    }
-    return mat;
-  };
-
-  auto W_port_eigen = toEigenMatrix(*W_port);
-  auto W_bulk_eigen = toEigenMatrix(*W_bulk);
-  auto weight_op_eigen = toEigenMatrix(*weight_op);
+  auto W_port_eigen = toEigenMatrix(*W_port, nr_tdof_expected);
+  auto W_bulk_eigen = toEigenMatrix(*W_bulk, nr_tdof_expected);
+  auto weight_op_eigen = toEigenMatrix(*weight_op, nr_tdof_expected);
 
   // Check rows/cols where port matrix is non-zero and ensure that corresponding domain
   // matrix is zero.
@@ -437,25 +436,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   // and columns.
   if (Mpi::Size(world_comm) == 1)
   {
-    // Assemble operators as Eigen matrices for simpler testing.
-    auto toEigenMatrix = [](const auto &op, int n)
-    {
-      Eigen::MatrixXd mat = Eigen::MatrixXd::Zero(n, n);
-      mfem::Vector w(n), v(n);
-      w.UseDevice(true);
-      v.UseDevice(true);
-      for (int i = 0; i < n; i++)
-      {
-        w = 0.0;
-        w[i] = 1.0;
-        op.Mult(w, v);
-        for (int j = 0; j < n; j++)
-        {
-          mat(j, i) = v(j);
-        }
-      }
-      return mat;
-    };
 
     auto W_port_eigen = toEigenMatrix(*W_port, W_port->NumCols());
     auto W_bulk_eigen = toEigenMatrix(*W_bulk, W_port->NumCols());
@@ -494,7 +474,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
   // L_e / W_e but with Z_R = 1.0. In this case this = 1.0 for Port 2,3 and != 1.0 for Port
   // 1. See normalization tests of LumpedPort_BasicTests_1ElementPort_Cube321 in
   //    test-lumpedportintegration.cpp.
-
 
   for (const auto &[port_i, port_norm] :
        std::vector<std::pair<int, double>>{{1, 1.0}, {2, 1.}})
@@ -600,8 +579,6 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 
   // Check orthogonality with s-matrix vectors.
   const auto &rom_vectors = prom_op.GetVectors();
-  // CHECK(rom_vectors.size() == 2 * nr_random_vec + 2);  // nr_random_vec (5) complex + 2
-  // real
 
   for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
@@ -625,6 +602,8 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 {
   MPI_Comm world_comm = Mpi::World();
+
+  size_t order = GENERATE(1UL, 2UL);  // Solver order. Should not matter but set non-default
 
   auto [mesh_is_hex, mesh_path] =
       GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
@@ -658,6 +637,7 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
                                                 {"Direction", "+X"}})})}};
 
   setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Order"] = order;
   setup_json["Solver"]["Device"] = "CPU";
   setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
                                     {"MinFreq", 2.0},
