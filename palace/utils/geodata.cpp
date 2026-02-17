@@ -1136,9 +1136,7 @@ double BoundingBox::Area() const
   if (dim == 3)
   {
     return 4.0 *
-           CVector3dMap(axes.GetColumn(0))
-               .cross(CVector3dMap(axes.GetColumn(1)))
-               .norm();
+           CVector3dMap(axes.GetColumn(0)).cross(CVector3dMap(axes.GetColumn(1))).norm();
   }
   // 2D: area of the parallelogram spanned by the two axis vectors (2D cross product).
   const double *a0 = axes.GetColumn(0);
@@ -1207,11 +1205,8 @@ mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
       dot += direction(j) * col[j];
     }
     ax_norm = std::sqrt(ax_norm);
-    double cosine = (dir_norm > 0.0 && ax_norm > 0.0)
-                         ? dot / (dir_norm * ax_norm)
-                         : 0.0;
-    deviation_deg(i) =
-        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / M_PI);
+    double cosine = (dir_norm > 0.0 && ax_norm > 0.0) ? dot / (dir_norm * ax_norm) : 0.0;
+    deviation_deg(i) = std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / M_PI);
   }
   return deviation_deg;
 }
@@ -2078,8 +2073,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
                       "erroneous results, consider separating into different attributes!");
     }
     vert_to_elem.reset(orig_mesh->GetVertexToElementTable());  // Owned by caller
-    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
-                                                : orig_mesh->ElementToFaceTable());
+    const mfem::Table &elem_to_face =
+        (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                     : orig_mesh->ElementToFaceTable());
     int new_nv_dups = 0;
     for (auto be : crack_bdr_elem)
     {
@@ -2453,8 +2449,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     // also renumber the original boundary elements. To renumber the original boundary
     // elements in the mesh, we use the updated vertex connectivity from the torn elements
     // in the new mesh (done above).
-    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
-                                                : orig_mesh->ElementToFaceTable());
+    const mfem::Table &elem_to_face =
+        (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                     : orig_mesh->ElementToFaceTable());
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       // Whether on the crack or not, we renumber the boundary element vertices as needed
@@ -2481,7 +2478,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       const mfem::Element *el = new_mesh->GetElement(e1);
       for (int j = 0; j < bdr_el->GetNVertices(); j++)
       {
-        bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
+        bdr_el->GetVertices()[j] =
+            el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i)
+                                                           : el->GetFaceVertices(i))[j]];
       }
 
       // Add the duplicate boundary element for boundary elements on the crack.
@@ -2503,7 +2502,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         el = new_mesh->GetElement(e2);
         for (int j = 0; j < bdr_el->GetNVertices(); j++)
         {
-          bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
+          bdr_el->GetVertices()[j] =
+              el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i)
+                                                             : el->GetFaceVertices(i))[j]];
         }
         new_mesh->AddBdrElement(bdr_el);
       }
@@ -2516,8 +2517,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     // Some (1-based) boundary attributes may be empty since they were removed from the
     // original mesh, but to keep attributes the same as config file we don't compress the
     // list.
-    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
-                                                : orig_mesh->ElementToFaceTable());
+    const mfem::Table &elem_to_face =
+        (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                     : orig_mesh->ElementToFaceTable());
     int bdr_attr_max =
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
@@ -2567,7 +2569,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         const mfem::Element *el = new_mesh->GetElement(e1);
         for (int j = 0; j < bdr_el->GetNVertices(); j++)
         {
-          bdr_el->GetVertices()[j] = el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]];
+          bdr_el->GetVertices()[j] =
+              el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i)
+                                                             : el->GetFaceVertices(i))[j]];
         }
         new_mesh->AddBdrElement(bdr_el);
         if constexpr (false)
@@ -2627,10 +2631,12 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     mfem::Vector displacements(nv * sdim);
     displacements = 0.0;
     double h_min = mfem::infinity();
-    const mfem::Table &elem_to_face = (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
-                                                : orig_mesh->ElementToFaceTable());
-    const mfem::Table &new_elem_to_face = (new_mesh->Dimension() == 2 ? new_mesh->ElementToEdgeTable()
-                                               : new_mesh->ElementToFaceTable());
+    const mfem::Table &elem_to_face =
+        (orig_mesh->Dimension() == 2 ? orig_mesh->ElementToEdgeTable()
+                                     : orig_mesh->ElementToFaceTable());
+    const mfem::Table &new_elem_to_face =
+        (new_mesh->Dimension() == 2 ? new_mesh->ElementToEdgeTable()
+                                    : new_mesh->ElementToFaceTable());
     for (auto be : crack_bdr_elem)
     {
       // Get the neighboring elements (same indices in the old and new mesh).
@@ -2695,7 +2701,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           const mfem::Element *el = new_mesh->GetElement(e);
           for (int j = 0; j < el->GetNFaceVertices(i); j++)
           {
-            NodeUpdate(el->GetVertices()[(orig_mesh->Dimension() == 2 ? el->GetEdgeVertices(i) : el->GetFaceVertices(i))[j]]);
+            NodeUpdate(el->GetVertices()[(orig_mesh->Dimension() == 2
+                                              ? el->GetEdgeVertices(i)
+                                              : el->GetFaceVertices(i))[j]]);
           }
         }
       }
