@@ -213,14 +213,12 @@ public:
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label,
-                  double drop_degenerate_vector_norm_tol = 0.0);
+  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
 
   // Re-orthogonalize PROM basis. Take current PROM vectors V and perform additional V =
   // Q'R' decomposition, then combine R'R. Brute force approach to numerical precision
-  // issues due to almost orthogonality of basis (from convergence or otherwise). Contrast
-  // with `drop_degenerate_vector_norm_tol` in `UpdatePROM` above. Requires re-projecting
-  // high-dimensional matrices.
+  // issues due to almost orthogonality of basis (from convergence or otherwise). Requires
+  // re-projecting high-dimensional matrices.
   void ReorthogonalizePROM();
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are

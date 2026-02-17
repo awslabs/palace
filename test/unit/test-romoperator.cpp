@@ -599,8 +599,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
     vector_temp.Real().Randomize(seeds.at(2 * i));
     vector_temp.Imag().Randomize(seeds.at(2 * i + 1));
 
-    // Add tiny norm cut-off to avoid degeneracies
-    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i), 0.0);
+    prom_op.UpdatePROM(vector_temp, fmt::format("vec_{}", i));
   }
 
   // Check orthogonality with s-matrix vectors.
@@ -716,4 +715,61 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 
   CHECK_THROWS(prom_op.AddLumpedPortModesForSynthesis(),
                Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
+}
+
+// Currently all vectors being added to the PROM basis must be different. The logic of
+// dropping degenerate (or almost degenerate) vectors is not implemented. This tests checks
+// that adding the same vector twice fails.
+TEST_CASE("RomOperator-UpdatePROM-LinearDependence", "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {{"AdaptiveCircuitSynthesis", true},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
+
+  IoData iodata(std::move(setup_json));
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  std::size_t max_size_per_excitation = 100;
+
+  RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+  ComplexVector u;
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  u.Real().Randomize(42);
+  u.Imag() = 0.0;
+
+  prom_op.UpdatePROM(u, "vec_0");
+  CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
