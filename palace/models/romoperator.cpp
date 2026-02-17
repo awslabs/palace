@@ -581,10 +581,9 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view node_label)
   {
     auto dim_V = V.size();
-    MFEM_VERIFY(
-        dim_V < V.capacity(),
-        "PROM basis storage exceeded. Please increase maximum number of prom "
-        "vector per excitation using AdaptiveMaxSamples.");
+    MFEM_VERIFY(dim_V < V.capacity(),
+                "PROM basis storage exceeded. Please increase maximum number of prom "
+                "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
     double pre_norm;
     if (weight_op_W.has_value())
@@ -645,49 +644,6 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   {
     RHS1r.conservativeResize(dim_V_new);
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
-  }
-}
-
-void RomOperator::ReorthogonalizePROM()
-{
-  MPI_Comm comm = space_op.GetComm();
-
-  Eigen::MatrixXd orth_R_new;
-  orth_R_new.conservativeResizeLike(Eigen::MatrixXd::Zero(V.size(), V.size()));
-
-  for (std::size_t i = 0; i < V.size(); i++)
-  {
-    auto &v = V.at(i);
-    if (weight_op_W.has_value())
-    {
-      OrthogonalizeColumn(
-          orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(), i,
-          [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
-          { return W.InnerProduct(x, y, r.Real()); });
-      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
-      orth_R_new(i, i) = std::sqrt(std::abs(norm_sq));
-    }
-    else
-    {
-      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R_new.col(i).data(),
-                          i);
-      orth_R_new(i, i) = linalg::Norml2(space_op.GetComm(), v);
-    }
-    v *= 1.0 / orth_R_new(i, i);
-  }
-  orth_R_new *= orth_R;
-  orth_R = orth_R_new;
-
-  // Reproject PROM matrices from scratch.
-  ProjectMatInternal(comm, V, *K, Kr, r, 0);
-  if (C)
-  {
-    ProjectMatInternal(comm, V, *C, Cr, r, 0);
-  }
-  ProjectMatInternal(comm, V, *M, Mr, r, 0);
-  if (RHS1.Size())
-  {
-    ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
   }
 }
 
