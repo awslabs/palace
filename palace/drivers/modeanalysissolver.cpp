@@ -155,7 +155,10 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocessing: extract propagation constants, effective indices, and impedance.
   BlockTimer bt2(Timer::POSTPRO);
-  SaveMetadata(mode_solver.GetLinearSolver());
+  if (const auto *ksp = mode_solver.GetLinearSolver())
+  {
+    SaveMetadata(*ksp);
+  }
 
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
@@ -208,6 +211,20 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           et.Imag() *= scale;
           en.Real() *= scale;
           en.Imag() *= scale;
+        }
+        else
+        {
+          // Evanescent mode (kn purely imaginary): P = 0 since Re{kn*/omega} = 0.
+          // Normalize to unit et^H Btt et instead so field magnitudes are well-defined.
+          double norm2 = p_rr + p_ii;
+          if (norm2 > 0.0)
+          {
+            double scale = 1.0 / std::sqrt(norm2);
+            et.Real() *= scale;
+            et.Imag() *= scale;
+            en.Real() *= scale;
+            en.Imag() *= scale;
+          }
         }
       }
     }

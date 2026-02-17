@@ -907,7 +907,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
   {
     for (const auto &[idx, data] : fem_op.GetWavePortOp())
     {
-      if (data.has_voltage_coords)
+      if (data.HasVoltageCoords())
       {
         has_wave_port_voltage = true;
         break;
@@ -973,7 +973,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
     {
       for (const auto &[idx, data] : fem_op.GetWavePortOp())
       {
-        if (data.has_voltage_coords)
+        if (data.HasVoltageCoords())
         {
           tV.insert(format("re_w{}_{}", idx, ex_idx),
                     format("Re{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
@@ -1127,7 +1127,7 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
   bool has_wave_port_voltage = false;
   for (const auto &[idx, data] : fem_op.GetWavePortOp())
   {
-    if (data.has_voltage_coords)
+    if (data.HasVoltageCoords())
     {
       has_wave_port_voltage = true;
       break;
@@ -1149,7 +1149,7 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
     std::string ex_label = HasSingleExIdx() ? "" : format("[{}]", ex_idx);
     for (const auto &[idx, data] : fem_op.GetWavePortOp())
     {
-      if (data.has_voltage_coords)
+      if (data.HasVoltageCoords())
       {
         t.insert(format("re_z_{}_{}", idx, ex_idx),
                  format("Re{{Z[{}]{}}} (Ohm)", idx, ex_label), ex_idx);
@@ -1181,12 +1181,12 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
     }
     if (std::abs(data.P) > 0.0)
     {
-      // Z = V * conj(V) / (2P) — power-voltage impedance definition.
-      // The Poynting power P is signed by the port normal: positive for power flowing
-      // into the domain, negative for power flowing out. For impedance we want the
-      // magnitude of the transmitted power, so flip the sign when Re{P} < 0.
-      auto P_pos = (data.P.real() < 0.0) ? -data.P : data.P;
-      auto Z = (data.V * std::conj(data.V)) / (2.0 * P_pos);
+      // Z = |V|^2 / (2 * |P|) — power-voltage impedance magnitude.
+      // Use |P| since the Poynting power sign depends on the port normal convention
+      // (positive into domain, negative out). The impedance magnitude is independent
+      // of the normal direction.
+      double Z_real = std::norm(data.V) / (2.0 * std::abs(data.P));
+      auto Z = std::complex<double>(Z_real, 0.0);
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }
