@@ -38,6 +38,7 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
   Mesh mesh(comm, mfem_mesh);
 
   constexpr int order = 2, dim = 3;
+  fem::DefaultIntegrationOrder::p_trial = order;
   mfem::ND_FECollection nd_fec(order, dim, mfem::BasisType::GaussLobatto,
                                mfem::BasisType::GaussLegendre);
   FiniteElementSpace nd_fes(mesh, &nd_fec);
