@@ -560,8 +560,7 @@ void RomOperator::AddLumpedPortModesForSynthesis()
               "be non-zero if attributes share edges.");
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
-                             double drop_degenerate_vector_norm_tol)
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
@@ -579,13 +578,15 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
 
   orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
 
-  auto add_real_vector_to_basis = [this, drop_degenerate_vector_norm_tol](
-                                      const Vector &vector, std::string_view node_label)
+  auto add_real_vector_to_basis = [this](const Vector &vector, std::string_view node_label)
   {
     auto dim_V = V.size();
     auto &v = V.emplace_back(vector);
+    double pre_norm;
     if (weight_op_W.has_value())
     {
+      auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
+      pre_norm = std::sqrt(std::abs(pre_norm_sq));
       OrthogonalizeColumn(
           orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
           [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
@@ -595,20 +596,19 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     }
     else
     {
+      pre_norm = linalg::Norml2(space_op.GetComm(), v);
       OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
                           dim_V);
       orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
     }
-
-    // Don't add the same exact vector multiple times.
-    if (orth_R(dim_V, dim_V) < drop_degenerate_vector_norm_tol)
-    {
-      V.pop_back();
-      return false;
-    }
+    MFEM_VERIFY(orth_R(dim_V, dim_V) > ORTHOG_TOL * pre_norm,
+                fmt::format("Linearly dependent vector added to PROM basis (relative "
+                            "norm {:.2e} < {:.2e}). This "
+                            "indicates a convergence issue a code error (the "
+                            "same vector was added multiple times accidentally)!",
+                            orth_R(dim_V, dim_V) / pre_norm, ORTHOG_TOL));
     v *= 1.0 / orth_R(dim_V, dim_V);
     v_node_label.emplace_back(node_label);
-    return true;
   };
 
   if (has_real)
@@ -620,9 +620,6 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label));
   }
 
-  // Vectors might have been dropped due to orthogonality check.
-  dim_V_new = V.size();
-  orth_R.conservativeResize(dim_V_new, dim_V_new);  // Might shrink
   if (dim_V_new == dim_V_old)
   {
     return;
