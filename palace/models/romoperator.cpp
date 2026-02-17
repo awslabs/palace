@@ -554,8 +554,12 @@ void RomOperator::AddLumpedPortModesForSynthesis()
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
 
-  // Check that the ports don't have any overlap.
-  MFEM_VERIFY(orth_R.isDiagonal(),
+  // Check that the ports don't have any overlap. These should be exactly zero, if the ports
+  // are distinct. But add this here for future case where lumped ports could on same attrs.
+  // Mix orthogonalization error and reduction error.
+  auto diag_tol = std::max(ORTHOG_TOL, std::numeric_limits<double>::epsilon() *
+                                           std::sqrt(Mpi::Size(space_op.GetComm())));
+  MFEM_VERIFY(orth_R.isDiagonal(diag_tol),
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
 }
@@ -607,8 +611,8 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     MFEM_VERIFY(orth_R(dim_V, dim_V) > ORTHOG_TOL * pre_norm,
                 fmt::format("Linearly dependent vector added to PROM basis (relative "
                             "norm {:.2e} < {:.2e}). This "
-                            "indicates a convergence issue a code error (the "
-                            "same vector was added multiple times accidentally)!",
+                            "indicates a convergence issue or a code error (the "
+                            "same vector was added multiple times accidentally).",
                             orth_R(dim_V, dim_V) / pre_norm, ORTHOG_TOL));
     v *= 1.0 / orth_R(dim_V, dim_V);
     v_node_label.emplace_back(node_label);
