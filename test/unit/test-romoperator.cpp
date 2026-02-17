@@ -717,3 +717,147 @@ TEST_CASE("RomOperator-UpdatePROM-LinearDependence", "[romoperator][Serial][Para
   prom_op.UpdatePROM(u, "vec_0");
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
+
+// Verify that the ROM projection with circuit synthesis, is invariant under the choice of
+// bulk orthogonalization weight matrix. The prolongated PROM solution u = V y must be
+// identical regardless of whether the basis V is orthogonalized with Energy, SpaceOverlap,
+// or FEBasisIdentity bulk weight, since span(V) is the same and the Galerkin condition V^T
+// (A V y - b) = 0 uses the standard transpose.
+TEST_CASE("RomOperator-DomainOrthogWeight-Invariance", "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  std::size_t order = GENERATE(1UL, 2UL, 3UL);
+  auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  auto make_setup_json = [&](const std::string &domain_orthog_type)
+  {
+    json setup_json;
+    setup_json["Problem"] = {
+        {"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+    setup_json["Model"] = {{"Mesh", mesh_path},
+                           {"Refinement", json::object({})},
+                           {"CrackInternalBoundaryElements", false}};
+
+    // Use non-uniform permittivity so Energy and SpaceOverlap weights differ.
+    setup_json["Domains"] = {
+        {"Materials", json::array({json::object({{"Attributes", json::array({1, 2, 3})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 2.5},
+                                                 {"LossTan", 0.0}}),
+                                   json::object({{"Attributes", json::array({4, 5, 6})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 7.0},
+                                                 {"LossTan", 0.0}})})}};
+
+    setup_json["Boundaries"] = {
+        {"LumpedPort",
+         json::array({json::object(
+             {{"Index", 1},
+              {"R", 50.0},
+              {"Excitation", uint(1)},
+              {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                      {"Direction", "+Z"}})})}})})}};
+
+    setup_json["Solver"] = json::object();
+    setup_json["Solver"]["Order"] = order;
+    setup_json["Solver"]["Device"] = "CPU";
+    setup_json["Solver"]["Driven"] = {
+        {"AdaptiveTol", 1e-5},  // Not used but needed in config check
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisDomainOrthogonalization", domain_orthog_type},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}};
+    setup_json["Solver"]["Linear"] = {
+        {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 2000}, {"Tol", 1.0e-13}};
+
+    return setup_json;
+  };
+
+  // Test frequency for PROM solve.
+  double omega_test = 10.0;
+
+  // Random vector seeds (deterministic across weight types).
+  std::size_t nr_random_vec = 0;
+  std::seed_seq seed_gen{2 * Mpi::Rank(world_comm)};
+  std::vector<std::uint32_t> seeds(2 * nr_random_vec);
+  seed_gen.generate(seeds.begin(), seeds.end());
+
+  // Solve PROM with each domain orthogonalization weight and store the prolongated
+  // solution.
+  std::vector<ComplexVector> solutions;
+  for (const auto &orthog_name : {"Energy", "SpaceOverlap", "FEBasisIdentity"})
+  {
+    IoData iodata(make_setup_json(orthog_name));
+    auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+    SpaceOperator space_op(iodata, mesh_io);
+
+    std::size_t max_size_per_excitation = 100;
+    RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+    // Add port modes.
+    prom_op.AddLumpedPortModesForSynthesis();
+
+    // Solve HDM at one frequency to initialize has_A2/has_RHS2 and add a real solution to
+    // the basis. Use only one HDM solve to avoid a nearly-degenerate basis to avoid
+    // catastrophic cancellations.
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+
+    const auto &omega_sample = iodata.solver.driven.sample_f;
+    double omega_min = omega_sample.front();
+
+    prom_op.SolveHDM(1, omega_min, E);
+    prom_op.UpdatePROM(E, "sample_min");
+
+    // Add identical random vectors for each weight type.
+    for (std::size_t i = 0; i < nr_random_vec; i++)
+    {
+      E.Real().Randomize(seeds.at(2 * i));
+      E.Imag().Randomize(seeds.at(2 * i + 1));
+      prom_op.UpdatePROM(E, fmt::format("vec_{}", i));
+    }
+
+    // Solve PROM at test frequency and store the prolongated solution.
+    ComplexVector u;
+    u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    prom_op.SolvePROM(1, omega_test, u);
+    solutions.push_back(std::move(u));
+
+    if constexpr (false)
+    {
+      // Print orth_R diagonal and Ar condition number for debugging.
+      const auto &orth_R = prom_op.GetOrthR();
+      Mpi::Print("  {} orth_R diag:", orthog_name);
+      for (long j = 0; j < orth_R.rows(); j++)
+      {
+        Mpi::Print(" {:.6e}", orth_R(j, j));
+      }
+
+      // Reassemble Ar = Kr + iω Cr - ω² Mr at the test frequency.
+      using namespace std::complex_literals;
+      Eigen::MatrixXcd Ar_local = prom_op.GetKr();
+      Ar_local += (1i * omega_test) * prom_op.GetCr();
+      Ar_local += (-omega_test * omega_test) * prom_op.GetMr();
+      Eigen::JacobiSVD<Eigen::MatrixXcd> svd(Ar_local);
+      auto sigma = svd.singularValues();
+      double cond_Ar = sigma(0) / sigma(sigma.size() - 1);
+      Mpi::Print("  cond(Ar) = {:.6e}\n", cond_Ar);
+    }
+  }
+
+  // All three solutions must be identical (same span, same Galerkin projection).
+  REQUIRE(solutions.size() == 3);
+  auto norm_ref = linalg::Norml2(world_comm, solutions[0]);
+  REQUIRE(norm_ref > 0.0);
+
+  for (std::size_t i = 1; i < solutions.size(); i++)
+  {
+    ComplexVector diff = solutions[i];
+    linalg::AXPY(-1.0, solutions[0], diff);
+    auto rel_err = linalg::Norml2(world_comm, diff) / norm_ref;
+    CHECK_THAT(rel_err, WithinAbs(0.0, 1e-11));
+  }
+}
