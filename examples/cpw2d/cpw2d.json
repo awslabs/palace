@@ -15,7 +15,7 @@
     "Materials":
     [
       {
-        "Attributes": [1],
+        "Attributes": [1],  // Air (ground + gap regions, trace cut out)
         "Permeability": 1.0,
         "Permittivity": 1.0
       }
@@ -25,23 +25,23 @@
   {
     "PEC":
     {
-      "Attributes": [3, 4, 9]  // ground, ends, trace
+      "Attributes": [2]  // Trace boundary (from cut) + outer domain boundary
     },
     "LumpedPort":
     [
       {
         "Index": 1,
-        "R": 56.02,  // Ω
+        "R": 56.02,  // Ω (CPW characteristic impedance)
         "Excitation": true,
         "Elements":
         [
           {
-            "Attributes": [5],
-            "Direction": "+Y"
+            "Attributes": [3],  // Port 1, bottom gap edge
+            "Direction": "+X"
           },
           {
-            "Attributes": [6],
-            "Direction": "-Y"
+            "Attributes": [4],  // Port 1, top gap edge
+            "Direction": "+X"
           }
         ]
       },
@@ -51,12 +51,12 @@
         "Elements":
         [
           {
-            "Attributes": [7],
-            "Direction": "+Y"
+            "Attributes": [5],  // Port 2, bottom gap edge
+            "Direction": "-X"
           },
           {
-            "Attributes": [8],
-            "Direction": "-Y"
+            "Attributes": [6],  // Port 2, top gap edge
+            "Direction": "-X"
           }
         ]
       }
@@ -75,7 +75,7 @@
     "Linear":
     {
       "Type": "Default",
-      "KSPType": "GMRES",
+        "KSPType": "GMRES",
       "Tol": 1.0e-8,
       "MaxIts": 200
     }
