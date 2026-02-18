@@ -220,17 +220,30 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
         current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
       }
       voltage_integration_order = imp.integration_order;
-      if (!imp.voltage_p1.empty() && !imp.voltage_p2.empty())
+      if (imp.voltage_path.size() >= 2)
       {
         has_voltage_coordinates = true;
-        const int dim = imp.voltage_p1.size();
-        voltage_p1.SetSize(dim);
-        voltage_p2.SetSize(dim);
-        for (int d = 0; d < dim; d++)
+        for (const auto &pt : imp.voltage_path)
         {
-          // Coordinates are already nondimensionalized in IoData::NondimensionalizeInputs.
-          voltage_p1(d) = imp.voltage_p1[d];
-          voltage_p2(d) = imp.voltage_p2[d];
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];  // Already nondimensionalized.
+          }
+          voltage_path.push_back(std::move(p));
+        }
+      }
+      if (!imp.current_path.empty())
+      {
+        has_current_path = true;
+        for (const auto &pt : imp.current_path)
+        {
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];  // Already nondimensionalized.
+          }
+          current_path.push_back(std::move(p));
         }
       }
     }
@@ -1634,11 +1647,15 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     std::complex<double> V(0.0, 0.0);
     if (has_voltage_coordinates)
     {
-      // Coordinate-based: sample E along line from p1 to p2 via GSLIB interpolation.
-      V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E->Real(),
-                                      voltage_integration_order));
-      V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E->Imag(),
-                                      voltage_integration_order));
+      // Coordinate-based: sum line integrals along each segment of the voltage path.
+      const int quad_order = voltage_integration_order;
+      for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+      {
+        V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                                   E->Real(), quad_order));
+        V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                                   E->Imag(), quad_order));
+      }
     }
     else if (voltage_marker.Size() > 0)
     {
@@ -1699,14 +1716,41 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       }
     }
 
-    // V/I impedance: Z_VI = V / I where I = ∮ μ⁻¹ Bt · t dl around the trace.
-    // The current integral uses the in-plane B field (Bt_inplane) on the ND space.
-    // For ND elements on 1D boundary edges, VectorFEBoundaryFluxLFIntegrator uses
-    // CalcShape (scalar tangential basis), so ∫ f * shape_i dl when dotted with DOFs
-    // gives ∫ f * (Bt · t) dl — the tangential line integral.
-    // In nondimensional units, μ⁻¹ = 1 on vacuum boundaries.
-    if (current_marker.Size() > 0)
+    // V/I impedance: Z_VI = V / I where I = ∮ H · t dl around the trace.
+    // Two methods: coordinate-based (GSLIB line integrals along a closed polygon)
+    // or boundary-attribute-based (tangential ND DOF integral on marked edges).
+    if (has_current_path)
     {
+      // Coordinate-based: sum line integrals along each segment of the closed polygon.
+      // I = Σ ∫ Bt · dl from p_k to p_{k+1}, with p_{N} = p_0 (close the loop).
+      std::complex<double> I(0.0, 0.0);
+      const int quad_order = voltage_integration_order;
+      for (std::size_t k = 0; k < current_path.size(); k++)
+      {
+        const auto &pk = current_path[k];
+        const auto &pk1 = current_path[(k + 1) % current_path.size()];
+        I.real(I.real() +
+               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Real(), quad_order));
+        I.imag(I.imag() +
+               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Imag(), quad_order));
+      }
+
+      if (std::abs(I) > 1e-30)
+      {
+        double Z_VI_nondim = std::abs(V) / std::abs(I);
+        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
+        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
+        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
+        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
+        measurement_cache.mode_data.has_vi_impedance = true;
+      }
+    }
+    else if (current_marker.Size() > 0)
+    {
+      // Boundary attribute-based: ∫ Bt · t dl on marked boundary edges.
       std::complex<double> I(0.0, 0.0);
       {
         mfem::ConstantCoefficient one(1.0);
@@ -1719,8 +1763,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
         Vector i_lf_tdof(nd_size);
         i_lf.ParallelAssemble(i_lf_tdof);
 
-        // Dot with Bt_inplane DOFs to get I = ∫ Bt · t dl.
-        // In nondimensional units this equals ∫ μ⁻¹ Bt · t dl since μ⁻¹ = 1.
         Vector btr_tdof(nd_size), bti_tdof(nd_size);
         Bt_inplane->Real().GetTrueDofs(btr_tdof);
         Bt_inplane->Imag().GetTrueDofs(bti_tdof);
@@ -1730,9 +1772,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
       if (std::abs(I) > 1e-30)
       {
-        // Z_VI = |V/I| (nondimensional), dimensionalize by Z0.
-        // Use magnitude since the sign depends on boundary edge tangent orientation
-        // which is mesh-dependent and not guaranteed to form a consistent loop.
         double Z_VI_nondim = std::abs(V) / std::abs(I);
         double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
         double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
