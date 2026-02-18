@@ -586,7 +586,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Floquet periodic boundaries.
   config::Nondimensionalize(units, boundaries.periodic);
 
-  // Wave port offset distance and voltage coordinates.
+  // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     config::Nondimensionalize(units, data);
@@ -598,16 +598,22 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     config::Nondimensionalize(units, data);
   }
 
-  // Mode impedance voltage coordinates.
+  // Mode impedance voltage and current path coordinates.
   for (auto &[idx, data] : boundaries.postpro.impedance)
   {
-    for (auto &v : data.voltage_p1)
+    for (auto &pt : data.voltage_path)
     {
-      v /= units.GetMeshLengthRelativeScale();
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
     }
-    for (auto &v : data.voltage_p2)
+    for (auto &pt : data.current_path)
     {
-      v /= units.GetMeshLengthRelativeScale();
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
     }
   }
 
