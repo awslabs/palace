@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <sstream>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -130,16 +131,24 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 
 // TODO: Do some more basic RomOperator Ctor Checks
 
-// ROM without synthesis check, looking at sensitivity to mesh partitioning.
-
-TEST_CASE("RomOperator-DomainOrthogWeight-Invariance-L2", "[romoperator][Serial][Parallel]")
+// ROM without synthesis check, looking at sensitivity to mesh partitioning. Verify that the
+// reduced-order model matrices Kr, Cr, Mr and RHS1r are reproducible across independent
+// SpaceOperator constructions.
+//
+// Here we load a mesh and construct a space operator multiple times. When run multiple
+// ranks, (like mpi np 3 or non-powers of 2?), gives non-reproducible results for the ROM
+// matrices at an error level far above what would be expected and with non-deterministic
+// errors. The ROM equation is rank local (it is an Eigen matrix), and should be identical
+// for the same physical problem and set-up. This indicates some issue, perhaps with mesh
+// partitioning, parallel syncronization, or something else.
+TEST_CASE("RomOperator-RomEquation-Invariance-L2", "[romoperator][Serial][Parallel]")
 {
   MPI_Comm world_comm = Mpi::World();
 
   std::size_t order = GENERATE(1UL, 2UL, 3UL);
   auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
 
-  auto make_setup_json = [&](const std::string &domain_orthog_type)
+  auto make_setup_json = [&]()
   {
     json setup_json;
     setup_json["Problem"] = {
@@ -173,66 +182,67 @@ TEST_CASE("RomOperator-DomainOrthogWeight-Invariance-L2", "[romoperator][Serial]
                                       {"MaxFreq", 32.0},
                                       {"FreqStep", 1.0}};
     setup_json["Solver"]["Linear"] = {
-        {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-13}};
+        {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-12}};
     return setup_json;
   };
 
-  double omega_test = 10.0;
+  constexpr int nr_trials = 5;
 
-  std::vector<ComplexVector> solutions;
-  std::vector<double> error_bounds;
-  for (const auto &orthog_name : {"Energy", "SpaceOverlap", "FEBasisIdentity"})
+  std::vector<Eigen::MatrixXcd> Kr_list, Cr_list, Mr_list;
+  std::vector<Eigen::VectorXcd> RHS1r_list;
+
+  for (int trial = 0; trial < nr_trials; trial++)
   {
-    IoData iodata(make_setup_json(orthog_name));
+    IoData iodata(make_setup_json());
     auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
     SpaceOperator space_op(iodata, mesh_io);
     std::size_t max_size_per_excitation = 100;
     RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
 
-    // Solve HDM at one frequency to initialize has_A2/has_RHS2 and add a solution to the
-    // basis. Use only one HDM solve to avoid a nearly-degenerate basis.
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
     E.UseDevice(true);
     prom_op.SolveHDM(1, iodata.solver.driven.sample_f.front(), E);
     prom_op.UpdatePROM(E, "sample_min");
+    prom_op.SolveHDM(1, iodata.solver.driven.sample_f.back(), E);
+    prom_op.UpdatePROM(E, "sample_max");
 
-    ComplexVector u;
-    u.SetSize(space_op.GetNDSpace().GetTrueVSize());
-    u.UseDevice(true);
-    prom_op.SolvePROM(1, omega_test, u);
-    solutions.push_back(std::move(u));
-
-    // Error budget: κ₂(V) * κ(Ar) * eps per weight type.
-    // Reference: Higham, "Accuracy and Stability of Numerical Algorithms", 2nd ed.,
-    // Thm 20.3; Golub & Van Loan, "Matrix Computations", 4th ed., Thm 5.3.1.
-    const auto &orth_R = prom_op.GetOrthR();
-    double min_orth_R_diag = std::abs(orth_R(0, 0));
-    for (long j = 1; j < orth_R.rows(); j++)
-    {
-      min_orth_R_diag = std::min(min_orth_R_diag, std::abs(orth_R(j, j)));
-    }
-    using namespace std::complex_literals;
-    Eigen::MatrixXcd Ar_local = prom_op.GetKr();
-    Ar_local += (1i * omega_test) * prom_op.GetCr();
-    Ar_local += (-omega_test * omega_test) * prom_op.GetMr();
-    Eigen::JacobiSVD<Eigen::MatrixXcd> svd(Ar_local);
-    auto sigma = svd.singularValues();
-    double cond_Ar = sigma(0) / sigma(sigma.size() - 1);
-    error_bounds.push_back(cond_Ar / min_orth_R_diag *
-                           std::numeric_limits<double>::epsilon());
+    Kr_list.push_back(prom_op.GetKr());
+    Cr_list.push_back(prom_op.GetCr());
+    Mr_list.push_back(prom_op.GetMr());
+    RHS1r_list.push_back(prom_op.GetRHS1r());
   }
 
-  REQUIRE(solutions.size() == 3);
-  auto norm_ref = linalg::Norml2(world_comm, solutions[0]);
-  REQUIRE(norm_ref > 0.0);
-  for (std::size_t i = 1; i < solutions.size(); i++)
+  // All trials use the same configuration. Differences between trials come from rebuilding
+  // the SpaceOperator multiple times. The linear solver tolerance is 1e-12, so 1e-9 this is
+  // 3 orders of magnitude larger and therefore a problem.
+  const double abs_tol = 1e-9;
+
+  auto check = [&](const auto &mat_like, const char *name) -> double
   {
-    ComplexVector diff = solutions[i];
-    linalg::AXPY(-1.0, solutions[0], diff);
-    auto rel_err = linalg::Norml2(world_comm, diff) / norm_ref;
-    double tol = 10.0 * (error_bounds[0] + error_bounds[i]);
-    CHECK_THAT(rel_err, WithinAbs(0.0, tol));
-  }
+    // const double norm_ref = mat_like[0].norm();
+    double max_abs_err = 0.0;
+    for (int trial_i = 1; trial_i < nr_trials; trial_i++)
+    {
+      auto diff_rel = (mat_like[trial_i] - mat_like[0]).cwiseAbs();
+      max_abs_err = std::max(max_abs_err, diff_rel.maxCoeff());
+      // Print potentially anomalous matrices on all ranks.
+      usleep(100 * Mpi::Rank(world_comm));
+      if (max_abs_err > 1e-11)
+      {
+        std::ostringstream oss;
+        oss << diff_rel;
+        fmt::print("(Rank {})  {} trial {}:\n{}\n", Mpi::Rank(world_comm), name, trial_i, oss.str());
+      }
+      usleep(10000);
+    }
+    return max_abs_err;
+  };
+
+  CHECK_THAT(check(Kr_list, "Kr"), WithinAbs(0.0, abs_tol));
+  CHECK_THAT(check(Cr_list, "Cr"), WithinAbs(0.0, abs_tol));
+  CHECK_THAT(check(Mr_list, "Mr"), WithinAbs(0.0, abs_tol));
+  CHECK_THAT(check(RHS1r_list, "RHS1r"), WithinAbs(0.0, abs_tol));
+  Mpi::Barrier();
 }
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
