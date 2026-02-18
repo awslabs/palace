@@ -515,10 +515,9 @@ public:
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 
-  // Optional endpoint coordinates for voltage line integral on the port face.
-  // When non-empty, enables GetVoltage() and GetCharacteristicImpedance().
-  std::vector<double> voltage_p1 = {};
-  std::vector<double> voltage_p2 = {};
+  // Optional coordinate path for voltage line integral on the port face.
+  // When non-empty, enables GetVoltage(). List of points [x, y, z].
+  std::vector<std::vector<double>> voltage_path = {};
   int integration_order = 100;
 
   WavePortData() = default;
@@ -591,11 +590,12 @@ public:
   // Boundary attributes for the current integration loop (around the trace).
   std::vector<int> current_attributes = {};
 
-  // Optional endpoint coordinates for the voltage line integral (alternative to boundary
-  // attributes). When non-empty, V = integral of E . dl is computed via GSLIB interpolation
-  // along the straight line from voltage_p1 to voltage_p2.
-  std::vector<double> voltage_p1 = {};
-  std::vector<double> voltage_p2 = {};
+  // Optional coordinate paths for voltage and current line integrals (alternative to
+  // boundary attributes). Each is a list of points [x, y(, z)]. The voltage is integrated
+  // along the open path V = ∫ E · dl from first to last point. The current is integrated
+  // along a closed loop I = ∮ Bt · dl (last point connects back to first).
+  std::vector<std::vector<double>> voltage_path = {};
+  std::vector<std::vector<double>> current_path = {};
 
   // Quadrature order for the coordinate-based line integral. Higher values give more
   // integration points and better accuracy near field singularities at conductor edges.

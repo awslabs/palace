@@ -507,20 +507,19 @@ WavePortData::WavePortData(const config::WavePortData &data,
     port_S0t->Real().ProjectCoefficient(tfunc);
   }
 
-  // Store voltage line integral coordinates if provided.
+  // Store voltage path coordinates if provided.
   // Coordinates are already nondimensionalized in IoData::NondimensionalizeInputs.
-  MFEM_VERIFY(data.voltage_p1.empty() == data.voltage_p2.empty(),
-              "WavePort: VoltageP1 and VoltageP2 must both be provided, or both omitted!");
-  if (!data.voltage_p1.empty() && !data.voltage_p2.empty())
+  if (data.voltage_path.size() >= 2)
   {
     has_voltage_coords_ = true;
-    const int vdim = data.voltage_p1.size();
-    voltage_p1.SetSize(vdim);
-    voltage_p2.SetSize(vdim);
-    for (int d = 0; d < vdim; d++)
+    for (const auto &pt : data.voltage_path)
     {
-      voltage_p1(d) = data.voltage_p1[d];
-      voltage_p2(d) = data.voltage_p2[d];
+      mfem::Vector p(pt.size());
+      for (int d = 0; d < static_cast<int>(pt.size()); d++)
+      {
+        p(d) = pt[d];
+      }
+      voltage_path.push_back(std::move(p));
     }
     voltage_integration_order = data.integration_order;
   }
@@ -727,7 +726,7 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
 
 std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
 {
-  // Compute voltage V = integral of E . dl along the configured line from p1 to p2.
+  // Compute voltage V = ∫ E · dl along the configured path segments.
   // Uses GSLIB interpolation on the 3D parent mesh E field.
   if (!has_voltage_coords_)
   {
@@ -735,11 +734,14 @@ std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
   }
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E field in port voltage calculation!");
-  std::complex<double> V;
-  V.real(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E.Real(),
-                                  voltage_integration_order));
-  V.imag(fem::ComputeLineIntegral(voltage_p1, voltage_p2, E.Imag(),
-                                  voltage_integration_order));
+  std::complex<double> V(0.0, 0.0);
+  for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+  {
+    V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                               E.Real(), voltage_integration_order));
+    V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                               E.Imag(), voltage_integration_order));
+  }
   return V;
 }
 

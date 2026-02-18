@@ -232,9 +232,12 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // PostOperator handles all measurements, printing, and CSV output.
     auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
 
-    // Calculate and record the error indicators. Compute Bz = curl_t(Et) / (iω) on the
-    // L2 curl space for the curl flux part of the estimator.
-    if (i < num_modes)
+    // Calculate and record the error indicators only for propagating modes (real kn).
+    // Spurious/evanescent modes (large Im{kn}) have unrelated error distributions that
+    // would drive refinement to irrelevant regions.
+    const bool is_propagating =
+        std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
+    if (i < num_modes && is_propagating)
     {
       ComplexVector bz(l2_size);
       {

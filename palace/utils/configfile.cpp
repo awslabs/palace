@@ -634,13 +634,12 @@ WavePortData::WavePortData(const json &port)
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);
   verbose = port.value("Verbose", verbose);
-  if (auto it = port.find("VoltageP1"); it != port.end())
+  if (auto it = port.find("VoltagePath"); it != port.end())
   {
-    voltage_p1 = it->get<std::vector<double>>();
-  }
-  if (auto it = port.find("VoltageP2"); it != port.end())
-  {
-    voltage_p2 = it->get<std::vector<double>>();
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
   }
   integration_order = port.value("IntegrationOrder", integration_order);
 }
@@ -706,19 +705,24 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
     current_attributes = it->get<std::vector<int>>();
     std::sort(current_attributes.begin(), current_attributes.end());
   }
-  if (auto it = imp.find("VoltageP1"); it != imp.end())
+  if (auto it = imp.find("VoltagePath"); it != imp.end())
   {
-    voltage_p1 = it->get<std::vector<double>>();
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
   }
-  if (auto it = imp.find("VoltageP2"); it != imp.end())
+  if (auto it = imp.find("CurrentPath"); it != imp.end())
   {
-    voltage_p2 = it->get<std::vector<double>>();
+    for (const auto &pt : *it)
+    {
+      current_path.push_back(pt.get<std::vector<double>>());
+    }
   }
   integration_order = imp.value("IntegrationOrder", integration_order);
-  MFEM_VERIFY(!voltage_attributes.empty() ||
-                  (!voltage_p1.empty() && !voltage_p2.empty()),
-              "Impedance boundary requires either \"VoltageAttributes\" or both "
-              "\"VoltageP1\" and \"VoltageP2\" in the configuration file!");
+  MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
+              "Impedance boundary requires either \"VoltageAttributes\" or "
+              "\"VoltagePath\" in the configuration file!");
 }
 
 FarFieldPostData::FarFieldPostData(const json &farfield)
