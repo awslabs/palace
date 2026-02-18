@@ -78,8 +78,8 @@ private:
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
-  // Voltage line integral configuration (optional, for impedance postprocessing).
-  mfem::Vector voltage_p1, voltage_p2;
+  // Voltage path for line integral (optional, for impedance postprocessing).
+  std::vector<mfem::Vector> voltage_path;
   int voltage_integration_order = 100;
   bool has_voltage_coords_ = false;
 
