@@ -48,6 +48,7 @@ CTest provides automated test execution with parallel support and proper categor
 
 ```bash
 cd palace-build
+# If Palace was built with Spack: spack cd -b palace 
 ctest
 ```
 
@@ -100,8 +101,6 @@ tests are being run. When this happens, we can use directly the `unit-tests`
 executable.
 
 To run all the `Serial` tests (including the benchmarks):
->>>>>>> 7675acc5 (Use ctest, parallelize tests, report coverage)
-
 ```bash
 bin/palace-unit-tests
 ```
@@ -158,7 +157,7 @@ _tags_. When creating a test, you provide a name and a series of tags
 TEST_CASE("My name", "[MyFirstTag][MyOtherTag][Serial]"){ ... }
 ```
 
-`Catch2` tags are typically used for filtering tests. *Palace* defines four
+`Catch2` tags are typically used for filtering tests. *Palace* defines three
 special tags that control when tests execute based on the runtime environment:
 
   - `[Serial]` tests run only with a single MPI process. Use this for tests that
@@ -168,9 +167,6 @@ special tags that control when tests execute based on the runtime environment:
     inter-process communication.
   - `[GPU]` tests run only when GPU devices are available. Use this for tests that
     are meaningful and interesting on GPU hardware.
-  - `[NoConcurrent]` tests run serially without any other tests executing
-    simultaneously. Use this for tests that modify shared resources or have
-    timing-sensitive behavior that could be affected by concurrent execution.
 
 These tags are inclusive, meaning that a test can be marked with multiple
 special tags, if the test is meaningful in different contexts (e.g., if a test
@@ -195,17 +191,6 @@ supports CPU and GPU implementation at the same time). For example,
     every MPI process executes the same code that the `Serial` test would
     run (same with GPUs). Therefore, this test should only be marked as
     `[Serial]`.
-
-!!! note "Try improving your test instead of relying on `[NoConcurrent]`"
-    
-    `[NoConcurrent]` serializes tests to ensure that shared resources are not
-    being used/modified at the same time. Sometimes, this is needed (e.g.,
-    you have tests that require large amounts of memory, or that talk through
-    a socket to a GLVis server). Often times, howoever, it is possible to modify
-    the test to remove potential race conditions and ensure isolation. A common
-    case where you might be using shared resources is file-system operations. For
-    that, you can create and destory temporary directories. `TempDirFixture` in
-    `test-fixtures.hpp` helps you with that.
 
 For the other tags, we recommend grouping related tests using descriptive tag
 names like `[vector]` or `[materialoperator]` (typically named after files or
@@ -307,8 +292,7 @@ Both produce LCOV-compatible output for standardized processing and HTML
 visualization.
 
 Note that `measure-test-coverage` runs all the tests and produces only one
-coverage report, merging the results from the serial, parallel, gpu, and
-noconcurrent tests.
+coverage report, merging the results from the serial, parallel, and gpu tests.
 
 !!! note "Why two different coverage systems?"
 

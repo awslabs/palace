@@ -102,6 +102,8 @@ target_compile_definitions(
   unit-tests
   PUBLIC "PALACE_TEST_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
+          $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
+          $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
 )
 
 # Status messages for test target
@@ -169,7 +171,7 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
     TEST_SPEC "[GPU]"
-    EXTRA_ARGS --device cuda --backend /gpu/cuda/magma --skip-benchmarks
+    EXTRA_ARGS --device cuda --skip-benchmarks
     PROPERTIES
       # Don't allow one more than GPU test at the time.
       # In theory, we could allow one per GPU, but that's much harder to implement.
@@ -182,20 +184,6 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   # TODO: ADD MPI+GPU tests. This requires checking that we have enough GPUs
   # (one per rank).
 endif()
-
-# NoConcurrent tests (run serially)
-catch_discover_tests(unit-tests
-  TEST_PREFIX "noconcurrent-"
-  TEST_SPEC "[NoConcurrent]"
-  EXTRA_ARGS --skip-benchmarks
-  PROPERTIES
-    # The difference between RESOURCE_LOCK and RUN_SERIAL is that
-    # RESOURCE_LOCKed tests can run with other tests that no lock, while serial
-    # tests are forced to run on their own. Here we pick the latter, which is a
-    # more conservative choice, for test that might modify shared resources.
-    RUN_SERIAL ON
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/noconcurrent/coverage-%p.profraw>"
-)
 
 # Enable testing
 enable_testing()

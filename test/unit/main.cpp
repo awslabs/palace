@@ -73,14 +73,11 @@ int main(int argc, char *argv[])
   // TODO: Create a palace::Device class that takes care of all of this.
   hypre::Initialize();
 
-  // The Palace test suite defines four key tags:
+  // The Palace test suite defines three key tags:
 
   // - [Serial], for tests that are meaningful when run on a single process
   // - [Parallel], for tests that are meaningful when run on multiple processes
   // - [GPU], for tests that are meaningful when run on GPUs
-  // - [NoConcurrent], for tests that cannot be run in parallel with other tests
-  //                   (e.g., because they write to disk, which could cause race
-  //                    conditions)
   //
   // The tags are additive, meaning that a test can be tagged with all of them
   // (this also means that these tags cannot be used to filter out tests, only
@@ -88,9 +85,6 @@ int main(int argc, char *argv[])
   //
   // Here, we automatically add the relevant tags depending on the device/number
   // of MPI processes we detect.
-  //
-  // Concurrently is handled by ctest, so the NoConcurrent tag is handled in the
-  // cmake.
 
   auto cfg = session.configData();
   // Check if device is GPU capable, if yes, add the [GPU] tag.
@@ -133,6 +127,9 @@ int main(int argc, char *argv[])
   if (!cfg.listTests)
   {
     std::ostringstream resource(std::stringstream::out);
+#ifdef PALACE_WITH_COVERAGE
+    resource << "Built with code coverage for " << PALACE_WITH_COVERAGE << "\n";
+#endif
     device.Print(resource);
     resource << "libCEED backend: " << ceed::Print();
     Mpi::Print("{}\n", resource.str());

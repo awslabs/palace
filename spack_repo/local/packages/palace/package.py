@@ -51,6 +51,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
     )
+    variant(
+        "coverage",
+        default=False,
+        description="Measure  code coverage when running (severely impacts performance)",
+        when="@0.16:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
@@ -71,6 +77,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib+shared", when="+shared@0.14:")
     depends_on("scnlib~shared", when="~shared@0.14:")
     depends_on("eigen")
+    depends_on("lcov@1.15:", when="+coverage@0.16:")
 
     conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
 
@@ -278,6 +285,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
+            self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),

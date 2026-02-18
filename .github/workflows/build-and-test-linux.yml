@@ -474,12 +474,12 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
+          # We don't compute coverage for the entire matrix because it slows
+          # everything down.
           if [[ "${{ matrix.coverage }}" == 'true' ]]; then
-            scripts/measure-test-coverage report $(pwd)/palace-build/palace-build/test/unit/unit-tests
+            scripts/measure-test-coverage report $(pwd)/palace-build/bin/palace-unit-tests
           else
-            # We cannot support coverage for the entire matrix for a variety of
-            # reasons, including the fact that ubuntu22 ships a very old lcov.
-            ctest -j $NUM_PROC_TEST_MAX
+            ctest -j $NUM_PROC_TEST_MAX --output-on-failure
           fi
 
       - name: Deploy coverage to gh-pages

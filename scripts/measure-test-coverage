@@ -4,6 +4,25 @@ set -eu
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Colors for output.
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+log() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+# Portable nproc (works on macOS and Linux).
+num_procs() {
+    if command -v nproc >/dev/null 2>&1; then
+        nproc
+    else
+        sysctl -n hw.ncpu
+    fi
+}
+
 help()
 {
     echo "Usage: measure-test-coverage COMMAND [OPTIONS]
@@ -13,14 +32,14 @@ multiple builds.
 
 Commands:
   generate [UNIT_TEST_EXEC]        Run tests and generate coverage_filtered.info
-                                   (default: ../build/palace-build/test/unit/unit-tests)
+                                   (default: ../build/bin/palace-unit-tests)
   merge COVERAGE_FILE ...          Merge multiple coverage files into coverage_filtered.info
   report [COVERAGE_FILE|UNIT_TEST_EXEC]
                                    Generate HTML report from coverage file or by running tests
-                                   (default: ../build/palace-build/test/unit/unit-tests)
+                                   (default: ../build/bin/palace-unit-tests)
 
 Options:
-  -j NUM_PROC                      Maximum number of processes for running tests (default: $(nproc))
+  -j NUM_PROC                      Maximum number of processes for running tests (default: $(num_procs))
                                    Note: MPI tests run with 2 processes each, so -j8 allows
                                    up to 4 MPI tests to run simultaneously
   -h, --help                       Show this help message and exit
@@ -41,7 +60,7 @@ Examples:
 }
 
 # Parse arguments.
-NUM_PROC_TEST="$(nproc)"
+NUM_PROC_TEST="$(num_procs)"
 
 if [[ $# -eq 0 ]] || [[ "$1" == "-h" || "$1" == "--help" ]]; then
     help
@@ -79,10 +98,13 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PALACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# BUILD_DIR is the superbuild root (where ctest runs from).
+# PALACE_BUILD_DIR is the inner Palace build (where coverage data lives).
 case "$COMMAND" in
     generate)
-        UNIT_TEST_EXEC="${1:-$PALACE_ROOT/build/palace-build/test/unit/unit-tests}"
-        BUILD_DIR="$(dirname "$(dirname "$(dirname "$UNIT_TEST_EXEC")")")"
+        UNIT_TEST_EXEC="${1:-$PALACE_ROOT/build/bin/palace-unit-tests}"
+        BUILD_DIR="$(cd "$(dirname "$(dirname "$UNIT_TEST_EXEC")")" && pwd)"
+        PALACE_BUILD_DIR="$BUILD_DIR/palace-build"
         ;;
     merge)
         if [[ $# -eq 0 ]]; then
@@ -90,67 +112,78 @@ case "$COMMAND" in
         fi
         COVERAGE_FILES=("$@")
         BUILD_DIR="$(pwd)"
+        PALACE_BUILD_DIR="$BUILD_DIR"
         ;;
     report)
         # Will be determined in main based on whether arg is executable or file.
         BUILD_DIR="$(pwd)"
+        PALACE_BUILD_DIR="$BUILD_DIR"
         ;;
     *)
         error "Unknown command: $COMMAND. Use -h for help."
         ;;
 esac
 
-# Colors for output.
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Detect coverage type from the unit test binary.
+# Returns "llvm" or "gcc", or errors if not built with coverage.
+detect_compiler_type() {
+    # The binary prints "Built with code coverage for LLVM" or
+    # "Built with code coverage for GCC" in its startup output.
+    # Running with -h prints this info and exits without running tests.
+    local output
+    output=$("$UNIT_TEST_EXEC" -h 2>&1) || true
 
-log() { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+    local coverage_line
+    coverage_line=$(echo "$output" | grep "Built with code coverage for" || true)
+
+    if [[ -z "$coverage_line" ]]; then
+        error "Palace not built with coverage. Rebuild with -DPALACE_BUILD_WITH_COVERAGE=YES"
+    fi
+
+    if echo "$coverage_line" | grep -q "LLVM"; then
+        echo "llvm"
+    elif echo "$coverage_line" | grep -q "GCC"; then
+        echo "gcc"
+    else
+        error "Unknown coverage type in: $coverage_line"
+    fi
+}
 
 # Check prerequisites.
 check_prerequisites() {
     log "Checking prerequisites..."
-    
+
     [[ -f "$UNIT_TEST_EXEC" ]] || error "Unit tests not found at $UNIT_TEST_EXEC. Build Palace first."
     command -v lcov >/dev/null || error "lcov not found."
     command -v mpirun >/dev/null || error "mpirun not found."
-    
-    # Check if Palace was built with coverage.
-    if ! strings "$UNIT_TEST_EXEC" 2>/dev/null | grep -q "__llvm_profile\|__gcov"; then
-        error "Palace not built with coverage. Rebuild with -DPALACE_BUILD_WITH_COVERAGE=YES"
-    fi
-    
+
+    # Verify coverage support by querying the binary.
+    detect_compiler_type > /dev/null
+
     log "Prerequisites OK"
 }
 
-# Detect compiler type from build artifacts.
-detect_compiler() {
-    if strings "$UNIT_TEST_EXEC" 2>/dev/null | grep -q "clang version\|LLVM"; then
-        echo "llvm"
-    elif strings "$UNIT_TEST_EXEC" 2>/dev/null | grep -q "GCC:"; then
-        echo "gcc"
-    else
-        error "Cannot detect compiler type from unit test executable"
-    fi
-}
-
-# Clean previous coverage data.
+# Clean previous coverage data (need to clean or it will be appended).
 clean_coverage() {
     log "Cleaning previous coverage data..."
+
+    # Clean from the superbuild root.
     cd "$BUILD_DIR"
     rm -f coverage*.info coverage*.profraw coverage*.profdata coverage_llvm.json
-    find . -name "*.gcda" -delete 2>/dev/null || true
+
+    # Clean from the inner Palace build directory.
+    if [[ -d "$PALACE_BUILD_DIR" ]]; then
+        cd "$PALACE_BUILD_DIR"
+        rm -rf coverage_merged coverage.* coverage
+        find . -name "*.gcda" -delete 2>/dev/null || true
+    fi
 }
 
 # Run tests and collect coverage.
 run_tests() {
     log "Running tests via ctest with max $NUM_PROC_TEST processes..."
-    cd "$BUILD_DIR/test/unit"
-    ctest -j "$NUM_PROC_TEST" --output-on-failure
     cd "$BUILD_DIR"
+    ctest -j "$NUM_PROC_TEST" --output-on-failure
 }
 
 # Generate coverage for GCC.
@@ -170,14 +203,18 @@ generate_gcc_coverage() {
     # This solution is inspired by https://stackoverflow.com/a/70566435
 
     log "Merging GCC coverage from coverage.* directories..."
-    cd "$BUILD_DIR"
-    
-    # Iteratively merge coverage.* profiles (gcov-tool only merges two at a time).
-    local dirs=(coverage.*)
+    cd "$PALACE_BUILD_DIR"
+
+    # Collect coverage.* directories (from -fprofile-dir=coverage.%p).
+    local dirs=()
+    for d in coverage.*; do
+        [[ -d "$d" ]] && dirs+=("$d")
+    done
     if [[ ${#dirs[@]} -eq 0 ]]; then
-        error "No coverage.* directories found"
+        error "No coverage.* directories found in $PALACE_BUILD_DIR"
     fi
-    
+
+    # Iteratively merge coverage.* profiles (gcov-tool only merges two at a time).
     local merged="${dirs[0]}"
     for ((i=1; i<${#dirs[@]}; i++)); do
         local tmp="coverage_tmp_$i"
@@ -186,10 +223,10 @@ generate_gcc_coverage() {
         merged="$tmp"
         [[ "$prev" != "${dirs[0]}" && -d "$prev" ]] && rm -rf "$prev"
     done
-    
+
     mv "$merged" coverage_merged
     rm -rf coverage.*
-    
+
     # Unmangle filenames (convert #home#user#file.gcda to /home/user/file.gcda).
     log "Unmangling coverage filenames..."
     cd coverage_merged
@@ -198,49 +235,49 @@ generate_gcc_coverage() {
         mkdir -p "$(dirname "$target")"
         mv "$f" "$target"
     done
-    cd "$BUILD_DIR"
-    
+    cd "$PALACE_BUILD_DIR"
+
     # Palace is a complex codebase that involves inlined and just-in-time
     # compiled functions. This can lead to minor inconsistencies in the coverage
     # files. These are not fatal, and ignoring them still produces good reports.
     # For this reason, most `lcov` commands have the `--ignore-errors
     # inconsistent` flag.
 
-    lcov --capture --directory . --ignore-errors inconsistent --output-file coverage.info
+    lcov --capture --directory . --ignore-errors inconsistent --output-file "$BUILD_DIR/coverage.info"
 }
 
 # Generate coverage for LLVM.
 generate_llvm_coverage() {
     log "Generating LLVM coverage..."
-    cd "$BUILD_DIR"
-    
+    cd "$PALACE_BUILD_DIR"
+
     if ! ls coverage/*/*.profraw >/dev/null 2>&1; then
-        error "No LLVM coverage files found"
+        error "No LLVM coverage files found in $PALACE_BUILD_DIR/coverage/"
     fi
-    
+
     # Merge raw coverage files.
-    llvm-profdata merge -output=coverage.profdata coverage/*/*.profraw
-    
+    llvm-profdata merge -output="$BUILD_DIR/coverage.profdata" coverage/*/*.profraw
+
     # Export to JSON. We go through JSON because it is more robust than
     # converting to lcov directly from llvm.
-    llvm-cov export -format text -instr-profile coverage.profdata "$UNIT_TEST_EXEC" > coverage_llvm.json
-    
+    llvm-cov export -format text -instr-profile "$BUILD_DIR/coverage.profdata" "$UNIT_TEST_EXEC" > "$BUILD_DIR/coverage_llvm.json"
+
     # Convert to LCOV format.
-    llvm2lcov --ignore-errors inconsistent --output coverage.info coverage_llvm.json
+    llvm2lcov --ignore-errors inconsistent --output "$BUILD_DIR/coverage.info" "$BUILD_DIR/coverage_llvm.json"
 }
 
 # Filter coverage to Palace source only.
 filter_coverage() {
     log "Filtering coverage to Palace source code..."
     cd "$BUILD_DIR"
-    
+
     local input_file="${1:-coverage.info}"
-    
+
     if [[ ! -s "$input_file" ]]; then
         warn "No coverage data found in $input_file"
         return
     fi
-    
+
     lcov --extract "$input_file" \
         '*/palace/drivers/*' \
         '*/palace/fem/*' \
@@ -256,7 +293,7 @@ filter_coverage() {
 generate_html_report() {
     log "Generating HTML coverage report..."
     cd "$BUILD_DIR"
-    
+
     if [[ ! -s coverage_filtered.info ]]; then
         warn "No filtered coverage data available"
         mkdir -p coverage_html
@@ -269,18 +306,18 @@ generate_html_report() {
 EOF
         return
     fi
-    
+
     genhtml coverage_filtered.info \
         --output-directory coverage_html \
         --title "Palace Coverage Report" \
         --show-details \
         --legend \
         --ignore-errors inconsistent
-    
+
     # Print summary.
     log "Coverage Summary:"
     lcov --summary coverage_filtered.info
-    
+
     log "HTML report generated at: $BUILD_DIR/coverage_html/index.html"
 }
 
@@ -291,16 +328,17 @@ main() {
             log "Starting Palace coverage measurement..."
             log "Unit test executable: $UNIT_TEST_EXEC"
             log "Build directory: $BUILD_DIR"
-            
+            log "Palace build directory: $PALACE_BUILD_DIR"
+
             check_prerequisites
-            
+
             local compiler_type
-            compiler_type=$(detect_compiler)
-            log "Detected compiler type: $compiler_type"
-            
+            compiler_type=$(detect_compiler_type)
+            log "Detected coverage type: $compiler_type"
+
             clean_coverage
             run_tests
-            
+
             case "$compiler_type" in
                 gcc)
                     generate_gcc_coverage
@@ -312,43 +350,44 @@ main() {
                     error "Unsupported compiler type: $compiler_type"
                     ;;
             esac
-            
+
             filter_coverage
             log "Coverage data generated: $BUILD_DIR/coverage_filtered.info"
             ;;
-        
+
         merge)
             log "Merging coverage files..."
             cd "$BUILD_DIR"
-            
+
             local add_args=""
             for f in "${COVERAGE_FILES[@]}"; do
                 [[ -f "$f" ]] || error "Coverage file not found: $f"
                 add_args="$add_args --add-tracefile $f"
             done
-            
+
             lcov $add_args --ignore-errors inconsistent --output-file coverage_filtered.info
             log "Merged coverage data: $BUILD_DIR/coverage_filtered.info"
             ;;
-        
+
         report)
-            ARG="${1:-$PALACE_ROOT/build/palace-build/test/unit/unit-tests}"
-            
+            ARG="${1:-$PALACE_ROOT/build/bin/palace-unit-tests}"
+
             # Check if argument is an executable
             if [[ -x "$ARG" ]]; then
                 log "Detected executable, running generate first..."
                 UNIT_TEST_EXEC="$ARG"
-                BUILD_DIR="$(dirname "$(dirname "$(dirname "$UNIT_TEST_EXEC")")")"
-                
+                BUILD_DIR="$(cd "$(dirname "$(dirname "$UNIT_TEST_EXEC")")" && pwd)"
+                PALACE_BUILD_DIR="$BUILD_DIR/palace-build"
+
                 check_prerequisites
-                
+
                 local compiler_type
-                compiler_type=$(detect_compiler)
+                compiler_type=$(detect_compiler_type)
                 log "Detected compiler type: $compiler_type"
-                
+
                 clean_coverage
                 run_tests
-                
+
                 case "$compiler_type" in
                     gcc)
                         generate_gcc_coverage
@@ -360,26 +399,26 @@ main() {
                         error "Unsupported compiler type: $compiler_type"
                         ;;
                 esac
-                
+
                 filter_coverage
             else
                 COVERAGE_FILE="$ARG"
                 BUILD_DIR="$(pwd)"
-                
+
                 [[ -f "$COVERAGE_FILE" ]] || error "Coverage file not found: $COVERAGE_FILE"
-                
+
                 # Copy to coverage_filtered.info if different file
                 if [[ "$COVERAGE_FILE" != "coverage_filtered.info" ]]; then
                     cp "$COVERAGE_FILE" coverage_filtered.info
                 fi
             fi
-            
+
             log "Generating HTML report..."
             cd "$BUILD_DIR"
             generate_html_report
             ;;
     esac
-    
+
     log "Complete!"
 }
 
