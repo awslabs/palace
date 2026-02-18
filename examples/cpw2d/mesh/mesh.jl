@@ -4,62 +4,60 @@
 #=
 # README
 
-This Julia script uses Gmsh to create a 2D mesh for a coplanar waveguide (CPW) in top-down
-view, with two square lumped ports at each end.
+This Julia script creates a 2D CPW mesh that closely mirrors the 3D CPW example geometry
+as an x-y slice at the metal plane. The lumped ports are square patches (gap_width ×
+gap_width) in the gap region at each end of the CPW, matching the 3D port geometry.
 
-The geometry consists of a center trace (PEC) running the length of the domain, flanked by
-two gaps and ground planes (PEC boundaries at the top and bottom). The trace does not extend
-to the domain ends, leaving space for the lumped ports.
+The trace is cut from the domain (not meshed), and its boundary becomes PEC. The port
+boundary condition is applied to the edge of each square patch closest to the trace.
 
-Each port has two elements connecting the trace to the top and bottom ground planes.
-
-## Prerequisites
-
-```bash
-julia -e 'using Pkg; Pkg.add(Pkg.PackageSpec(name="Gmsh", uuid="705231aa-382f-11e9-3f0c-b7cb4346fdeb"))'
-```
+In 2D, the trace must be cut (not kept as a meshed PEC domain) because a PEC region
+fully isolates the two gaps — there is no third dimension for the field to wrap around.
 
 ## How to run
 
 ```bash
-julia -e 'include("mesh.jl"); generate_cpw2d_mesh(; filename="cpw2d.msh")'
+julia -e 'include("mesh.jl"); generate_cpw2d_square_mesh(; filename="cpw2d_square.msh")'
 ```
 =#
 
 using Gmsh: gmsh
 
 """
-    generate_cpw2d_mesh(;
+    generate_cpw2d_square_mesh(;
         filename::AbstractString,
-        trace_w::Real = 30.0,
-        gap_s::Real = 18.0,
-        cpw_length::Real = 4000.0,
-        port_inset::Real = 30.0,
+        trace_width_μm::Real = 30.0,
+        gap_width_μm::Real = 18.0,
+        ground_width_μm::Real = 800.0,
+        cpw_length_μm::Real = 4000.0,
         lc_gap::Real = 3.0,
-        lc_far::Real = 30.0,
+        lc_far::Real = 60.0,
         verbose::Integer = 5,
         gui::Bool = false
     )
 
-Generate a 2D CPW mesh with lumped ports.
+Generate a 2D CPW mesh with square lumped port patches, mirroring a horizontal slice
+of the 3D CPW example. The trace is boolean-cut from the domain so it is not meshed.
 
-# Arguments
+Layout (Y coordinates):
+y=0          : bottom of domain
+y=g          : bottom ground / bottom gap boundary
+y=g+s        : bottom gap / trace boundary (PEC, from cut)
+y=g+s+w      : trace / top gap boundary (PEC, from cut)
+y=g+2s+w     : top gap / top ground boundary
+y=2g+2s+w    : top of domain
 
-  - trace_w - center trace width (μm)
-  - gap_s - gap between trace and ground (μm)
-  - cpw_length - total CPW length (μm)
-  - port_inset - distance from domain edge to port / trace end (μm)
-  - lc_gap - mesh size in the gap region (μm)
-  - lc_far - mesh size far from the gap (μm)
+Port patches are gap_width × gap_width squares at x=0..s and x=L-s..L in each gap.
+The port edge is the horizontal side of each square closest to the trace.
 """
-function generate_cpw2d_mesh(;
+function generate_cpw2d_square_mesh(;
     filename::AbstractString,
-    trace_w::Real=30.0,
-    gap_s::Real=18.0,
-    cpw_length::Real=4000.0,
-    port_inset::Real=30.0,
+    trace_width_μm::Real=30.0,
+    gap_width_μm::Real=18.0,
+    ground_width_μm::Real=800.0,
+    cpw_length_μm::Real=4000.0,
     lc_gap::Real=3.0,
-    lc_far::Real=30.0,
+    lc_far::Real=60.0,
     verbose::Integer=5,
     gui::Bool=false
 )
@@ -67,72 +65,64 @@ function generate_cpw2d_mesh(;
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", verbose)
 
-    if "cpw2d" in gmsh.model.list()
-        gmsh.model.setCurrent("cpw2d")
+    if "cpw2d_square" in gmsh.model.list()
+        gmsh.model.setCurrent("cpw2d_square")
         gmsh.model.remove()
     end
-    gmsh.model.add("cpw2d")
+    gmsh.model.add("cpw2d_square")
 
-    # Derived dimensions
-    half_w = trace_w / 2.0
-    half_h = half_w + gap_s  # half-height of domain
+    w = trace_width_μm
+    s = gap_width_μm
+    g = ground_width_μm
+    L = cpw_length_μm
+    H = 2g + 2s + w
 
-    # Create the outer rectangle (full domain)
-    outer = kernel.addRectangle(0.0, -half_h, 0.0, cpw_length, 2.0 * half_h)
+    # 1. Create the full outer rectangle
+    outer = kernel.addRectangle(0.0, 0.0, 0.0, L, H)
 
-    # Create the center trace rectangle (will be cut from domain)
-    trace = kernel.addRectangle(
-        port_inset,
-        -half_w,
-        0.0,
-        cpw_length - 2.0 * port_inset,
-        trace_w
-    )
-
-    # Cut the trace from the domain
+    # 2. Create the trace rectangle and CUT it from the domain.
+    #    The trace boundary becomes PEC edges in the mesh.
+    trace = kernel.addRectangle(0.0, g + s, 0.0, L, w)
     cut_result, _ = kernel.cut([(2, outer)], [(2, trace)])
-    @assert length(cut_result) == 1 && cut_result[1][1] == 2
-    domain_tag = cut_result[1][2]
+    # The cut may produce multiple surfaces (top half and bottom half)
+    domain_tags_from_cut = [t for (d, t) in cut_result if d == 2]
+    @assert length(domain_tags_from_cut) >= 1
 
-    # Now we need to fragment the domain to create port edges.
-    # Create small port rectangles that will split the gap at the port locations.
-    # Port 1 (left): vertical line at x = port_inset in both gaps
-    # Port 2 (right): vertical line at x = cpw_length - port_inset in both gaps
-    # We use thin rectangles as "blades" to fragment the mesh.
-    eps = 0.1  # thin blade width
-    blade1 = kernel.addRectangle(port_inset - eps / 2, -half_h, 0.0, eps, gap_s)
-    blade2 = kernel.addRectangle(port_inset - eps / 2, half_w, 0.0, eps, gap_s)
-    blade3 =
-        kernel.addRectangle(cpw_length - port_inset - eps / 2, -half_h, 0.0, eps, gap_s)
-    blade4 = kernel.addRectangle(cpw_length - port_inset - eps / 2, half_w, 0.0, eps, gap_s)
+    # 3. Create port patch rectangles (s × s squares in each gap at each end)
+    # Bottom gap: y from g to g+s
+    p1a = kernel.addRectangle(0.0, g, 0.0, s, s)           # Port 1 bottom, left end
+    p2a = kernel.addRectangle(L - s, g, 0.0, s, s)         # Port 2 bottom, right end
+    # Top gap: y from g+s+w to g+2s+w
+    p1b = kernel.addRectangle(0.0, g + s + w, 0.0, s, s)   # Port 1 top, left end
+    p2b = kernel.addRectangle(L - s, g + s + w, 0.0, s, s) # Port 2 top, right end
 
-    # Fragment the domain with the blades to create shared edges at the port locations
+    # 4. Fragment the domain with the port patches to create conformal boundaries
     frag_result, frag_map = kernel.fragment(
-        [(2, domain_tag)],
-        [(2, blade1), (2, blade2), (2, blade3), (2, blade4)]
+        [(2, t) for t in domain_tags_from_cut],
+        [(2, p1a), (2, p2a), (2, p1b), (2, p2b)]
     )
-
     kernel.synchronize()
 
-    # Get all 2D surfaces (these form the domain)
-    all_surfaces = gmsh.model.getEntities(2)
-    domain_tags = [t for (d, t) in all_surfaces]
+    # 5. Classify surfaces — everything is domain (trace was cut out)
+    all_2d = gmsh.model.getEntities(2)
+    domain_tags = [t for (d, t) in all_2d]
 
-    # Get all 1D curves (boundaries)
-    all_curves = gmsh.model.getEntities(1)
+    # 6. Classify 1D curves
+    all_1d = gmsh.model.getEntities(1)
+    tol = 0.5
 
-    # Classify curves by location
-    tol = 1.0
-    trace_curves = Int[]
-    ground_curves = Int[]
-    end_curves = Int[]
+    trace_bot_y = g + s
+    trace_top_y = g + s + w
+
+    trace_pec_curves = Int[]    # Trace boundary from the cut
+    outer_pec_curves = Int[]    # Top/bottom/left/right domain boundary
     port1_bot_curves = Int[]
     port1_top_curves = Int[]
     port2_bot_curves = Int[]
     port2_top_curves = Int[]
     other_curves = Int[]
 
-    for (dim, tag) in all_curves
+    for (dim, tag) in all_1d
         bb = gmsh.model.getBoundingBox(dim, tag)
         xmin, ymin, _, xmax, ymax, _ = bb
         xmid = (xmin + xmax) / 2.0
@@ -140,133 +130,74 @@ function generate_cpw2d_mesh(;
         dx = xmax - xmin
         dy = ymax - ymin
 
-        is_vertical = dx < tol && dy > tol
         is_horizontal = dy < tol && dx > tol
+        is_vertical = dx < tol && dy > tol
+        is_short = dx < s + tol
 
-        if is_horizontal &&
-           abs(ymid - half_w) < tol &&
-           xmid > port_inset - tol &&
-           xmid < cpw_length - port_inset + tol
-            # Top edge of trace
-            push!(trace_curves, tag)
-        elseif is_horizontal &&
-               abs(ymid + half_w) < tol &&
-               xmid > port_inset - tol &&
-               xmid < cpw_length - port_inset + tol
-            # Bottom edge of trace
-            push!(trace_curves, tag)
-        elseif is_vertical &&
-               abs(xmid - port_inset) < tol &&
-               ymid > port_inset - tol &&
-               abs(ymid) > half_w - tol
-            # Vertical trace end at left (part of trace boundary)
-            if abs(ymid) < half_w + tol
-                push!(trace_curves, tag)
+        # Trace PEC: horizontal edges at trace_bot_y or trace_top_y
+        # Port edges are SHORT horizontal segments at the trace boundary near x=0 or x=L
+        if is_horizontal && abs(ymid - trace_bot_y) < tol
+            if is_short && xmid < s + tol
+                push!(port1_bot_curves, tag)
+            elseif is_short && xmid > L - s - tol
+                push!(port2_bot_curves, tag)
+            else
+                push!(trace_pec_curves, tag)
             end
-        elseif is_vertical &&
-               abs(xmid - (cpw_length - port_inset)) < tol &&
-               abs(ymid) < half_w + tol
-            # Vertical trace end at right
-            push!(trace_curves, tag)
-        elseif is_horizontal && abs(ymid - half_h) < tol
-            # Top boundary (ground)
-            push!(ground_curves, tag)
-        elseif is_horizontal && abs(ymid + half_h) < tol
-            # Bottom boundary (ground)
-            push!(ground_curves, tag)
-        elseif is_vertical && abs(xmid) < tol
-            # Left end
-            push!(end_curves, tag)
-        elseif is_vertical && abs(xmid - cpw_length) < tol
-            # Right end
-            push!(end_curves, tag)
-        elseif is_vertical && abs(xmid - port_inset) < tol && ymid < -half_w + tol
-            # Port 1 bottom gap
-            push!(port1_bot_curves, tag)
-        elseif is_vertical && abs(xmid - port_inset) < tol && ymid > half_w - tol
-            # Port 1 top gap
-            push!(port1_top_curves, tag)
-        elseif is_vertical &&
-               abs(xmid - (cpw_length - port_inset)) < tol &&
-               ymid < -half_w + tol
-            # Port 2 bottom gap
-            push!(port2_bot_curves, tag)
-        elseif is_vertical &&
-               abs(xmid - (cpw_length - port_inset)) < tol &&
-               ymid > half_w - tol
-            # Port 2 top gap
-            push!(port2_top_curves, tag)
+        elseif is_horizontal && abs(ymid - trace_top_y) < tol
+            if is_short && xmid < s + tol
+                push!(port1_top_curves, tag)
+            elseif is_short && xmid > L - s - tol
+                push!(port2_top_curves, tag)
+            else
+                push!(trace_pec_curves, tag)
+            end
+            # Outer boundary
+        elseif is_horizontal && (abs(ymid) < tol || abs(ymid - H) < tol)
+            push!(outer_pec_curves, tag)
+        elseif is_vertical && (abs(xmid) < tol || abs(xmid - L) < tol)
+            push!(outer_pec_curves, tag)
         else
             push!(other_curves, tag)
         end
     end
 
-    # Create physical groups
+    # Remaining interior curves (port patch edges, etc.) are left as natural BC
+    all_pec = unique(vcat(trace_pec_curves, outer_pec_curves))
+
+    # 7. Create physical groups
     domain_group = gmsh.model.addPhysicalGroup(2, domain_tags, -1, "domain")
+    pec_group = gmsh.model.addPhysicalGroup(1, all_pec, -1, "pec")
+    p1b_group = gmsh.model.addPhysicalGroup(1, unique(port1_bot_curves), -1, "port1_bot")
+    p1t_group = gmsh.model.addPhysicalGroup(1, unique(port1_top_curves), -1, "port1_top")
+    p2b_group = gmsh.model.addPhysicalGroup(1, unique(port2_bot_curves), -1, "port2_bot")
+    p2t_group = gmsh.model.addPhysicalGroup(1, unique(port2_top_curves), -1, "port2_top")
 
-    pec_trace_curves = unique(trace_curves)
-    pec_trace_group = -1
-    if !isempty(pec_trace_curves)
-        pec_trace_group = gmsh.model.addPhysicalGroup(1, pec_trace_curves, -1, "pec_trace")
-    end
-
-    pec_ground_group =
-        gmsh.model.addPhysicalGroup(1, unique(ground_curves), -1, "pec_ground")
-    pec_ends_group = gmsh.model.addPhysicalGroup(1, unique(end_curves), -1, "pec_ends")
-
-    port1_bot_group =
-        gmsh.model.addPhysicalGroup(1, unique(port1_bot_curves), -1, "port1_bot")
-    port1_top_group =
-        gmsh.model.addPhysicalGroup(1, unique(port1_top_curves), -1, "port1_top")
-    port2_bot_group =
-        gmsh.model.addPhysicalGroup(1, unique(port2_bot_curves), -1, "port2_bot")
-    port2_top_group =
-        gmsh.model.addPhysicalGroup(1, unique(port2_top_curves), -1, "port2_top")
-
-    # Assign any remaining boundary curves to PEC (catch-all for blade edges, etc.)
-    remaining = setdiff(
-        Set([t for (_, t) in all_curves]),
-        Set(
-            vcat(
-                trace_curves,
-                ground_curves,
-                end_curves,
-                port1_bot_curves,
-                port1_top_curves,
-                port2_bot_curves,
-                port2_top_curves
-            )
-        )
-    )
-    if !isempty(remaining)
-        # These are internal blade fragment edges — add them to trace PEC
-        if pec_trace_group > 0
-            gmsh.model.removePhysicalGroups([(1, pec_trace_group)])
-        end
-        pec_trace_group = gmsh.model.addPhysicalGroup(
-            1,
-            unique(vcat(trace_curves, collect(remaining))),
-            -1,
-            "pec_trace"
-        )
-    end
-
-    # Mesh size control: fine in the gap, coarser away
+    # 8. Mesh sizing
     gmsh.option.setNumber("Mesh.MeshSizeMin", lc_gap / 2.0)
     gmsh.option.setNumber("Mesh.MeshSizeMax", lc_far)
     gmsh.option.setNumber("Mesh.Algorithm", 6)
 
-    # Add mesh size field to refine near the trace
+    # Refine near trace edges
+    trace_ref_curves = unique(
+        vcat(
+            trace_pec_curves,
+            port1_bot_curves,
+            port1_top_curves,
+            port2_bot_curves,
+            port2_top_curves
+        )
+    )
     gmsh.model.mesh.field.add("Distance", 1)
-    gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(pec_trace_curves))
+    gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(trace_ref_curves))
     gmsh.model.mesh.field.setNumber(1, "Sampling", 100)
 
     gmsh.model.mesh.field.add("Threshold", 2)
     gmsh.model.mesh.field.setNumber(2, "InField", 1)
     gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_gap)
     gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
-    gmsh.model.mesh.field.setNumber(2, "DistMin", gap_s)
-    gmsh.model.mesh.field.setNumber(2, "DistMax", 5.0 * gap_s)
+    gmsh.model.mesh.field.setNumber(2, "DistMin", s)
+    gmsh.model.mesh.field.setNumber(2, "DistMax", 10.0 * s)
 
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
@@ -274,20 +205,19 @@ function generate_cpw2d_mesh(;
     gmsh.model.mesh.generate(2)
     gmsh.model.mesh.setOrder(2)
 
-    # Write mesh
+    # 9. Write
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
-    println("\nFinished generating CPW 2D mesh. Physical group tags:")
-    println("Domain: ", domain_group)
-    println("PEC trace: ", pec_trace_group)
-    println("PEC ground: ", pec_ground_group)
-    println("PEC ends: ", pec_ends_group)
-    println("Port 1 bottom: ", port1_bot_group)
-    println("Port 1 top: ", port1_top_group)
-    println("Port 2 bottom: ", port2_bot_group)
-    println("Port 2 top: ", port2_top_group)
+    println("\nFinished generating CPW 2D (square ports) mesh.")
+    println("Physical group tags:")
+    println("  Domain: ", domain_group)
+    println("  PEC (trace + outer): ", pec_group)
+    println("  Port 1 bottom: ", p1b_group)
+    println("  Port 1 top: ", p1t_group)
+    println("  Port 2 bottom: ", p2b_group)
+    println("  Port 2 top: ", p2t_group)
     println()
 
     if gui
