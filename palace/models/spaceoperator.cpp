@@ -564,8 +564,16 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
     fb_mass.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), 1.0);
   }
   BilinearForm m_bdr(nd_fespace);
-  if (!fb_mass.empty())
+  int empty_mass = fb_mass.empty();
+  Mpi::GlobalMin(1, &empty_mass, comm);
+  if (!empty_mass)
   {
+    // On ranks without port boundary elements, fb_mass has no material properties (0x0x0
+    // tensor). CEED requires valid dimensions, so add a dummy zero-valued 1x1 property.
+    if (fb_mass.empty())
+    {
+      fb_mass.AddMaterialProperty(1, 0.0);
+    }
     m_bdr.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_mass);
   }
   auto M_bdr = std::make_unique<ParOperator>(m_bdr.Assemble(false), nd_fespace);

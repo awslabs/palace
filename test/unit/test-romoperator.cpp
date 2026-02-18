@@ -57,6 +57,7 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  auto &GetRHS1r() const { return RHS1r; }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -128,6 +129,111 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
+
+// ROM without synthesis check, looking at sensitivity to mesh partitioning.
+
+TEST_CASE("RomOperator-DomainOrthogWeight-Invariance-L2", "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  std::size_t order = GENERATE(1UL, 2UL, 3UL);
+  auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  auto make_setup_json = [&](const std::string &domain_orthog_type)
+  {
+    json setup_json;
+    setup_json["Problem"] = {
+        {"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+    setup_json["Model"] = {{"Mesh", mesh_path},
+                           {"Refinement", json::object({})},
+                           {"CrackInternalBoundaryElements", false}};
+    setup_json["Domains"] = {
+        {"Materials", json::array({json::object({{"Attributes", json::array({1, 2, 3})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 2.5},
+                                                 {"LossTan", 0.0}}),
+                                   json::object({{"Attributes", json::array({4, 5, 6})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 7.0},
+                                                 {"LossTan", 0.0}})})}};
+    setup_json["Boundaries"] = {
+        {"LumpedPort",
+         json::array({json::object(
+             {{"Index", 1},
+              {"R", 50.0},
+              {"Excitation", uint(1)},
+              {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                      {"Direction", "+Z"}})})}})})}};
+    setup_json["Solver"] = json::object();
+    setup_json["Solver"]["Order"] = order;
+    setup_json["Solver"]["Device"] = "CPU";
+    setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-5},
+                                      {"AdaptiveCircuitSynthesis", false},
+                                      {"MinFreq", 2.0},
+                                      {"MaxFreq", 32.0},
+                                      {"FreqStep", 1.0}};
+    setup_json["Solver"]["Linear"] = {
+        {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-13}};
+    return setup_json;
+  };
+
+  double omega_test = 10.0;
+
+  std::vector<ComplexVector> solutions;
+  std::vector<double> error_bounds;
+  for (const auto &orthog_name : {"Energy", "SpaceOverlap", "FEBasisIdentity"})
+  {
+    IoData iodata(make_setup_json(orthog_name));
+    auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+    SpaceOperator space_op(iodata, mesh_io);
+    std::size_t max_size_per_excitation = 100;
+    RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+    // Solve HDM at one frequency to initialize has_A2/has_RHS2 and add a solution to the
+    // basis. Use only one HDM solve to avoid a nearly-degenerate basis.
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    prom_op.SolveHDM(1, iodata.solver.driven.sample_f.front(), E);
+    prom_op.UpdatePROM(E, "sample_min");
+
+    ComplexVector u;
+    u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    prom_op.SolvePROM(1, omega_test, u);
+    solutions.push_back(std::move(u));
+
+    // Error budget: κ₂(V) * κ(Ar) * eps per weight type.
+    // Reference: Higham, "Accuracy and Stability of Numerical Algorithms", 2nd ed.,
+    // Thm 20.3; Golub & Van Loan, "Matrix Computations", 4th ed., Thm 5.3.1.
+    const auto &orth_R = prom_op.GetOrthR();
+    double min_orth_R_diag = std::abs(orth_R(0, 0));
+    for (long j = 1; j < orth_R.rows(); j++)
+    {
+      min_orth_R_diag = std::min(min_orth_R_diag, std::abs(orth_R(j, j)));
+    }
+    using namespace std::complex_literals;
+    Eigen::MatrixXcd Ar_local = prom_op.GetKr();
+    Ar_local += (1i * omega_test) * prom_op.GetCr();
+    Ar_local += (-omega_test * omega_test) * prom_op.GetMr();
+    Eigen::JacobiSVD<Eigen::MatrixXcd> svd(Ar_local);
+    auto sigma = svd.singularValues();
+    double cond_Ar = sigma(0) / sigma(sigma.size() - 1);
+    error_bounds.push_back(cond_Ar / min_orth_R_diag *
+                           std::numeric_limits<double>::epsilon());
+  }
+
+  REQUIRE(solutions.size() == 3);
+  auto norm_ref = linalg::Norml2(world_comm, solutions[0]);
+  REQUIRE(norm_ref > 0.0);
+  for (std::size_t i = 1; i < solutions.size(); i++)
+  {
+    ComplexVector diff = solutions[i];
+    linalg::AXPY(-1.0, solutions[0], diff);
+    auto rel_err = linalg::Norml2(world_comm, diff) / norm_ref;
+    double tol = 10.0 * (error_bounds[0] + error_bounds[i]);
+    CHECK_THAT(rel_err, WithinAbs(0.0, tol));
+  }
+}
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
 // inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
@@ -722,4 +828,125 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
 
   prom_op.UpdatePROM(u, "vec_0");
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
+}
+
+// Verify that the ROM projection with circuit synthesis is invariant under the choice of
+// bulk orthogonalization weight matrix. The prolongated PROM solution u = V y must be
+// identical regardless of whether the basis V is orthogonalized with Energy, SpaceOverlap,
+// or FEBasisIdentity bulk weight, since span(V) is the same and the Galerkin condition
+// V^T (A V y - b) = 0 uses the standard transpose.
+TEST_CASE("RomOperator-DomainOrthogWeight-Invariance", "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  std::size_t order = GENERATE(1UL, 2UL, 3UL);
+  auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  auto make_setup_json = [&](const std::string &domain_orthog_type)
+  {
+    json setup_json;
+    setup_json["Problem"] = {
+        {"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+    setup_json["Model"] = {{"Mesh", mesh_path},
+                           {"Refinement", json::object({})},
+                           {"CrackInternalBoundaryElements", false}};
+    // Use non-uniform permittivity so Energy and SpaceOverlap weights differ.
+    setup_json["Domains"] = {
+        {"Materials", json::array({json::object({{"Attributes", json::array({1, 2, 3})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 2.5},
+                                                 {"LossTan", 0.0}}),
+                                   json::object({{"Attributes", json::array({4, 5, 6})},
+                                                 {"Permeability", 1.0},
+                                                 {"Permittivity", 7.0},
+                                                 {"LossTan", 0.0}})})}};
+    setup_json["Boundaries"] = {
+        {"LumpedPort",
+         json::array({json::object(
+             {{"Index", 1},
+              {"R", 50.0},
+              {"Excitation", uint(1)},
+              {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                      {"Direction", "+Z"}})})}})})}};
+    setup_json["Solver"] = json::object();
+    setup_json["Solver"]["Order"] = order;
+    setup_json["Solver"]["Device"] = "CPU";
+    setup_json["Solver"]["Driven"] = {
+        {"AdaptiveTol", 1e-5},
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisDomainOrthogonalization", domain_orthog_type},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}};
+    setup_json["Solver"]["Linear"] = {
+        {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 2000}, {"Tol", 1.0e-13}};
+    return setup_json;
+  };
+
+  double omega_test = 10.0;
+
+  // A single SpaceOperator is shared across all weight-type iterations to guarantee an
+  // identical mesh partition, K/C/M operators, and HDM solutions. Only
+  // HybridBulkBoundaryOperator (W) inside RomOperator varies between iterations.
+  // Separate SpaceOperator constructions on non-power-of-2 MPI ranks are non-deterministic
+  // (METIS partitioning, AMG setup), which amplifies through the near-degenerate basis.
+  IoData base_iodata(make_setup_json("Energy"));
+  auto mesh_io = LoadScaleParMesh2(base_iodata, world_comm);
+  SpaceOperator space_op(base_iodata, mesh_io);
+  std::size_t max_size_per_excitation = 100;
+  const double omega_min = base_iodata.solver.driven.sample_f.front();
+
+  std::vector<ComplexVector> solutions;
+  std::vector<double> error_bounds;
+  for (const auto &orthog_name : {"Energy", "SpaceOverlap", "FEBasisIdentity"})
+  {
+    IoData iodata(make_setup_json(orthog_name));
+    RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+
+    prom_op.AddLumpedPortModesForSynthesis();
+
+    // Solve HDM at one frequency to initialize has_A2/has_RHS2 and add a solution to the
+    // basis. Use only one HDM solve to avoid a nearly-degenerate basis.
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    prom_op.SolveHDM(1, omega_min, E);
+    prom_op.UpdatePROM(E, "sample_min");
+
+    ComplexVector u;
+    u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    prom_op.SolvePROM(1, omega_test, u);
+    solutions.push_back(std::move(u));
+
+    // Error budget: κ₂(V) * κ(Ar) * eps per weight type.
+    // Reference: Higham, "Accuracy and Stability of Numerical Algorithms", 2nd ed.,
+    // Thm 20.3; Golub & Van Loan, "Matrix Computations", 4th ed., Thm 5.3.1.
+    const auto &orth_R = prom_op.GetOrthR();
+    double min_orth_R_diag = std::abs(orth_R(0, 0));
+    for (long j = 1; j < orth_R.rows(); j++)
+    {
+      min_orth_R_diag = std::min(min_orth_R_diag, std::abs(orth_R(j, j)));
+    }
+    using namespace std::complex_literals;
+    Eigen::MatrixXcd Ar_local = prom_op.GetKr();
+    Ar_local += (1i * omega_test) * prom_op.GetCr();
+    Ar_local += (-omega_test * omega_test) * prom_op.GetMr();
+    Eigen::JacobiSVD<Eigen::MatrixXcd> svd(Ar_local);
+    auto sigma = svd.singularValues();
+    double cond_Ar = sigma(0) / sigma(sigma.size() - 1);
+    error_bounds.push_back(cond_Ar / min_orth_R_diag *
+                           std::numeric_limits<double>::epsilon());
+  }
+
+  REQUIRE(solutions.size() == 3);
+  auto norm_ref = linalg::Norml2(world_comm, solutions[0]);
+  REQUIRE(norm_ref > 0.0);
+  for (std::size_t i = 1; i < solutions.size(); i++)
+  {
+    ComplexVector diff = solutions[i];
+    linalg::AXPY(-1.0, solutions[0], diff);
+    auto rel_err = linalg::Norml2(world_comm, diff) / norm_ref;
+    double tol = 10.0 * (error_bounds[0] + error_bounds[i]);
+    CHECK_THAT(rel_err, WithinAbs(0.0, tol));
+  }
 }
