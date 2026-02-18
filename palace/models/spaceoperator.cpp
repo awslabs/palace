@@ -937,10 +937,13 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
                                                            bool zero_metal)
 {
   const auto &data = GetLumpedPortOp().GetPort(port_idx);
+  mfem::Array<int> attr_marker;
+  mfem::Array<int> attr_list;
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   for (const auto &elem : data.elems)
   {
+    attr_list.Append(elem->GetAttrList());
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Einc = std::sqrt(
         Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
@@ -953,19 +956,23 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
 
   // Broken code that should work using ParGridFunction::ProjectBdrCoefficientTangent.
   // See ProjectBdrCoefficientViaMassSolve comment above.
+  if constexpr (true)
+  {
+    const auto &mesh = GetNDSpace().GetParMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
 
-  //  mfem::Array<int> attr_marker;
-  //
-  // const auto &mesh = GetNDSpace().GetParMesh();
-  // int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  // mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-  //
-  // GridFunction rhs(GetNDSpace());
-  // rhs = 0.0;
-  // rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-
-  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
-                                    Et_primary.Real());
+    GridFunction rhs(GetNDSpace());
+    rhs = 0.0;
+    rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+    GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Et_primary.Real());
+  }
+  else
+  {
+    // Workaround
+    ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                      Et_primary.Real());
+  }
 
   if (zero_metal)
   {

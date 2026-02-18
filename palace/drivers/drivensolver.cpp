@@ -269,6 +269,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
+    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
+    MFEM_ABORT("EARLY ABORT. PROM PRINTED FOR HUGHCARS TESTING.");
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency
