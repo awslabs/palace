@@ -900,7 +900,16 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                     "COMSOL mesh file should have geometry tags for all elements!");
 
         i = 0;
-        const int geom_start = (elem_type < 4 || (elem_type > 7 && elem_type < 11)) ? 1 : 0;
+        // Boundary elements (dim < sdim) use 0-based COMSOL geometry entity indices while
+        // domain elements use 1-based. Add +1 for boundary elements to make all 1-based.
+        // This must match the text reader logic (which uses elem_dim < sdim).
+        const int elem_dim = (elem_type == 1 || elem_type == 8) ? 1
+                             : (elem_type == 15)                ? 0
+                             : (elem_type == 2 || elem_type == 3 || elem_type == 9 ||
+                                elem_type == 10 || elem_type == 16)
+                                 ? 2
+                                 : 3;
+        const int geom_start = (elem_dim < sdim) ? 1 : 0;
         int geom_tag;
         while (i < num_elem)
         {
