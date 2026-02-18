@@ -472,10 +472,11 @@ the fine levels is performed with Chebyshev smoothing.
   - `"Logarithmic"`
   - `"Linear"`
 
-`"MGCycleIts" [1]` : Number of V-cycle iterations per preconditioner application
+`"MGCycleIts" [0]` : Number of V-cycle iterations per preconditioner application
 for multigrid preconditioners (when the geometric multigrid preconditioner is
 enabled, i.e. when `MGMaxLevels` > 1, or when `"Type"` is `"AMS"` or
-`"BoomerAMG"`).
+`"BoomerAMG"`). A value less than 1 defaults to 2 for frequency domain problems
+using `"AMS"` or 1 otherwise.
 
 `"MGSmoothIts" [1]` : Number of pre- and post-smooth iterations used for
 multigrid preconditioners (when the geometric multigrid preconditioner is
@@ -543,6 +544,10 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGS"` :  Modified Gram-Schmidt
   - `"CGS"` :  Classical Gram-Schmidt
   - `"CGS2"` :  Two-step classical Gram-Schmidt with reorthogonalization
+
+`"AMSMaxIts" [0]` : Number of AMS iterations per preconditioner application when the geometric
+multigrid preconditioner is enabled (`MGMaxLevels` > 1) and `"Type"` is `"AMS"`. A value less than 1 defaults
+to the solution order given in [`config["Solver"]["Order"]`](problem.md#config%5B%22Solver%22%5D)
 
 ### Advanced linear solver options
 

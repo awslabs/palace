@@ -821,7 +821,7 @@ public:
 
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
-  int mg_cycle_it = 1;
+  int mg_cycle_it = -1;
 
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;
@@ -889,6 +889,9 @@ public:
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;
+
+  // Maximum number of iterations of the AMS solver.
+  int ams_max_it = -1;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
