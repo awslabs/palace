@@ -553,17 +553,16 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     k *= units.GetMeshLengthRelativeScale();
   }
 
-  // Wave port offset distance and voltage coordinates.
+  // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     data.d_offset /= units.GetMeshLengthRelativeScale();
-    for (auto &v : data.voltage_p1)
+    for (auto &pt : data.voltage_path)
     {
-      v /= units.GetMeshLengthRelativeScale();
-    }
-    for (auto &v : data.voltage_p2)
-    {
-      v /= units.GetMeshLengthRelativeScale();
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
     }
   }
 
@@ -574,16 +573,22 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
                    DivideLengthScale);
   }
 
-  // Mode impedance voltage coordinates.
+  // Mode impedance voltage and current path coordinates.
   for (auto &[idx, data] : boundaries.postpro.impedance)
   {
-    for (auto &v : data.voltage_p1)
+    for (auto &pt : data.voltage_path)
     {
-      v /= units.GetMeshLengthRelativeScale();
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
     }
-    for (auto &v : data.voltage_p2)
+    for (auto &pt : data.current_path)
     {
-      v /= units.GetMeshLengthRelativeScale();
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
     }
   }
 

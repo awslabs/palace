@@ -1278,13 +1278,12 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
     data.eig_tol = it->value("EigenTol", data.eig_tol);
     data.verbose = it->value("Verbose", data.verbose);
-    if (it->find("VoltageP1") != it->end())
+    if (it->find("VoltagePath") != it->end())
     {
-      data.voltage_p1 = it->at("VoltageP1").get<std::vector<double>>();
-    }
-    if (it->find("VoltageP2") != it->end())
-    {
-      data.voltage_p2 = it->at("VoltageP2").get<std::vector<double>>();
+      for (auto &pt : it->at("VoltagePath"))
+      {
+        data.voltage_path.push_back(pt.get<std::vector<double>>());
+      }
     }
     data.integration_order = it->value("IntegrationOrder", data.integration_order);
 
@@ -1300,8 +1299,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("KSPTol");
     it->erase("EigenTol");
     it->erase("Verbose");
-    it->erase("VoltageP1");
-    it->erase("VoltageP2");
+    it->erase("VoltagePath");
     it->erase("IntegrationOrder");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
@@ -1532,26 +1530,31 @@ void ModeImpedancePostData::SetUp(json &postpro)
       data.current_attributes = it->at("CurrentAttributes").get<std::vector<int>>();
       std::sort(data.current_attributes.begin(), data.current_attributes.end());
     }
-    if (it->find("VoltageP1") != it->end())
+    if (it->find("VoltagePath") != it->end())
     {
-      data.voltage_p1 = it->at("VoltageP1").get<std::vector<double>>();
+      for (auto &pt : it->at("VoltagePath"))
+      {
+        data.voltage_path.push_back(pt.get<std::vector<double>>());
+      }
     }
-    if (it->find("VoltageP2") != it->end())
+    if (it->find("CurrentPath") != it->end())
     {
-      data.voltage_p2 = it->at("VoltageP2").get<std::vector<double>>();
+      for (auto &pt : it->at("CurrentPath"))
+      {
+        data.current_path.push_back(pt.get<std::vector<double>>());
+      }
     }
     data.integration_order = it->value("IntegrationOrder", data.integration_order);
-    MFEM_VERIFY(!data.voltage_attributes.empty() ||
-                    (!data.voltage_p1.empty() && !data.voltage_p2.empty()),
-                "Impedance boundary requires either \"VoltageAttributes\" or both "
-                "\"VoltageP1\" and \"VoltageP2\" in the configuration file!");
+    MFEM_VERIFY(!data.voltage_attributes.empty() || data.voltage_path.size() >= 2,
+                "Impedance boundary requires either \"VoltageAttributes\" or "
+                "\"VoltagePath\" in the configuration file!");
 
     // Cleanup
     it->erase("Index");
     it->erase("VoltageAttributes");
     it->erase("CurrentAttributes");
-    it->erase("VoltageP1");
-    it->erase("VoltageP2");
+    it->erase("VoltagePath");
+    it->erase("CurrentPath");
     it->erase("IntegrationOrder");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Impedance\"!\n"
@@ -1563,11 +1566,8 @@ void ModeImpedancePostData::SetUp(json &postpro)
       std::cout << "Index: " << data.index << '\n';
       std::cout << "VoltageAttributes: " << data.voltage_attributes << '\n';
       std::cout << "CurrentAttributes: " << data.current_attributes << '\n';
-      if (!data.voltage_p1.empty())
-      {
-        std::cout << "VoltageP1: " << data.voltage_p1 << '\n';
-        std::cout << "VoltageP2: " << data.voltage_p2 << '\n';
-      }
+      std::cout << "VoltagePath: " << data.voltage_path.size() << " points\n";
+      std::cout << "CurrentPath: " << data.current_path.size() << " points\n";
     }
   }
 }
