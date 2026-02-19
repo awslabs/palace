@@ -317,6 +317,12 @@ runs:
           CTEST_EXCLUDE=""
         fi
 
+        # Disable OpenMPI 5.x default CPU binding so MPI processes don't starve
+        # OpenMP threads during parallel test execution. OpenMPI 5.x uses PRRTE,
+        # so we set both the PRTE and legacy OMPI MCA variables for robustness.
+        export PRTE_MCA_hwloc_default_binding_policy=none
+        export OMPI_MCA_hwloc_base_binding_policy=none
+
         ctest -j $NUM_PROC_TEST --output-on-failure $CTEST_EXCLUDE
 
         end_timer "Run Unit Tests"
