@@ -50,6 +50,7 @@ set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
 target_link_libraries(unit-tests
   PRIVATE Catch2::Catch2
           $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
+          $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
 

@@ -176,6 +176,7 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
+  - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
 
 The build step is invoked by running (for example with 4 `make` threads)
 
