@@ -198,9 +198,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 Suppose you want to compare the result of some operations with some pre-existing
 file `expected_vector.txt`. To do this, we first need to save the file in
-`unit/test/data`. Then, we can access it as
+`test/unit/data`. Then, we can access it as
 
-```cp
+```cpp
 auto path_expected_vector = fs::path(PALACE_TEST_DATA_DIR) / "expected_vector.txt"
 ```
 

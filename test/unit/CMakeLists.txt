@@ -93,7 +93,7 @@ set_property(
 # Add path for test data files. 
 target_compile_definitions(
   unit-tests
-  PUBLIC "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+  PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
 )
 
