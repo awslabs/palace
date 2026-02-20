@@ -181,7 +181,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "MyTest Print", "[myvector][Seria
   v = 1;
   {
      std::ofstream file(file_path);
-     vec.Print(file);
+     v.Print(file);
   }
   CHECK(std::filesystem::exists(file_path));
 }
