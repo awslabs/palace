@@ -38,6 +38,9 @@ The format of this changelog is based on
     when computing the average of field values on interior boundaries, causing incorrect
     results for interior trace postprocessing.
     [PR 621](https://github.com/awslabs/palace/pull/621).
+  - Fixed a bug in complex diagonal operator multiplication where the imaginary part used an
+    incorrect term in `AddMult` and `AddMultHermitianTranspose`.
+    [PR 633](https://github.com/awslabs/palace/pull/633).
 
 #### Interface Changes
 
