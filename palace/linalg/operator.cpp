@@ -539,7 +539,7 @@ void BaseDiagonalOperator<ComplexOperator>::AddMult(const ComplexVector &x,
                         const auto tr = DR[i] * XR[i] - DI[i] * XI[i];
                         const auto ti = DI[i] * XR[i] + DR[i] * XI[i];
                         YR[i] += ar * tr - ai * ti;
-                        YI[i] += ai * ti + ar * ti;
+                        YI[i] += ai * tr + ar * ti;
                       });
 }
 
@@ -589,7 +589,7 @@ void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>, ComplexOperat
                         const auto tr = DR[i] * XR[i] + DI[i] * XI[i];
                         const auto ti = -DI[i] * XR[i] + DR[i] * XI[i];
                         YR[i] += ar * tr - ai * ti;
-                        YI[i] += ai * ti + ar * ti;
+                        YI[i] += ai * tr + ar * ti;
                       });
 }
 
