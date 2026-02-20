@@ -192,6 +192,10 @@ IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(fal
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
   boundaries = config::BoundaryData(*boundaries_it);
+  {
+    std::string err = config::Validate(boundaries);
+    MFEM_VERIFY(err.empty(), "Configuration file validation failed!\n  " << err);
+  }
   if (auto solver_it = config.find("Solver"); solver_it != config.end())
   {
     solver = config::SolverData(*solver_it);
