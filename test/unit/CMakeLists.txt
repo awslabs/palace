@@ -23,6 +23,7 @@ endif()
 
 # Add executable target
 add_executable(unit-tests
+  ${CMAKE_CURRENT_SOURCE_DIR}/fixtures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
