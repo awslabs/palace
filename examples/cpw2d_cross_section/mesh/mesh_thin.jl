@@ -7,16 +7,16 @@
 import Gmsh: gmsh
 
 function generate_cpw2d_thin_mesh(;
-    w_trace::Float64 = 15.0,
+    w_trace::Float64     = 15.0,
     w_total_cpw::Float64 = 22.0,
-    w_ground::Float64 = 500.0,
+    w_ground::Float64    = 500.0,
     h_substrate::Float64 = 525.0,
-    h_vacuum::Float64 = 500.0,
-    lc_gap::Float64 = 0.1,
-    lc_far::Float64 = 50.0,
-    mesh_order::Int = 2,
-    filename::String = "cpw2d_thin.msh",
-    verbose::Int = 0
+    h_vacuum::Float64    = 500.0,
+    lc_gap::Float64      = 0.1,
+    lc_far::Float64      = 50.0,
+    mesh_order::Int      = 2,
+    filename::String     = "cpw2d_thin.msh",
+    verbose::Int         = 0
 )
     w_gap = (w_total_cpw - w_trace) / 2.0
     w_box = 2.0 * (w_gap + w_ground) + w_trace
@@ -35,18 +35,18 @@ function generate_cpw2d_thin_mesh(;
 
     # Points (counter-clockwise for substrate, then vacuum)
     # Substrate bottom: y = -h_substrate
-    p1  = gmsh.model.occ.addPoint(0.0,     -h_substrate, 0.0)
-    p2  = gmsh.model.occ.addPoint(w_box,   -h_substrate, 0.0)
+    p1 = gmsh.model.occ.addPoint(0.0, -h_substrate, 0.0)
+    p2 = gmsh.model.occ.addPoint(w_box, -h_substrate, 0.0)
     # y=0 level: split at ground/gap/trace boundaries
-    p3  = gmsh.model.occ.addPoint(w_box,   0.0, 0.0)
-    p4  = gmsh.model.occ.addPoint(x_gr,    0.0, 0.0)
-    p5  = gmsh.model.occ.addPoint(x_trace_right, 0.0, 0.0)
-    p6  = gmsh.model.occ.addPoint(x_trace_left,  0.0, 0.0)
-    p7  = gmsh.model.occ.addPoint(x_gl,    0.0, 0.0)
-    p8  = gmsh.model.occ.addPoint(0.0,     0.0, 0.0)
+    p3 = gmsh.model.occ.addPoint(w_box, 0.0, 0.0)
+    p4 = gmsh.model.occ.addPoint(x_gr, 0.0, 0.0)
+    p5 = gmsh.model.occ.addPoint(x_trace_right, 0.0, 0.0)
+    p6 = gmsh.model.occ.addPoint(x_trace_left, 0.0, 0.0)
+    p7 = gmsh.model.occ.addPoint(x_gl, 0.0, 0.0)
+    p8 = gmsh.model.occ.addPoint(0.0, 0.0, 0.0)
     # Vacuum top: y = h_vacuum
-    p9  = gmsh.model.occ.addPoint(0.0,     h_vacuum, 0.0)
-    p10 = gmsh.model.occ.addPoint(w_box,   h_vacuum, 0.0)
+    p9  = gmsh.model.occ.addPoint(0.0, h_vacuum, 0.0)
+    p10 = gmsh.model.occ.addPoint(w_box, h_vacuum, 0.0)
 
     # Lines — substrate boundary (clockwise looking from outside = CCW for interior)
     l_sub_bot   = gmsh.model.occ.addLine(p1, p2)   # Bottom
@@ -58,8 +58,16 @@ function generate_cpw2d_thin_mesh(;
     l_ground_l  = gmsh.model.occ.addLine(p7, p8)   # Left ground at y=0
     l_sub_left  = gmsh.model.occ.addLine(p8, p1)   # Left wall
 
-    cl_sub = gmsh.model.occ.addCurveLoop([l_sub_bot, l_sub_right, l_ground_r, l_gap_r,
-                                           l_trace, l_gap_l, l_ground_l, l_sub_left])
+    cl_sub = gmsh.model.occ.addCurveLoop([
+        l_sub_bot,
+        l_sub_right,
+        l_ground_r,
+        l_gap_r,
+        l_trace,
+        l_gap_l,
+        l_ground_l,
+        l_sub_left
+    ])
     s_sub = gmsh.model.occ.addPlaneSurface([cl_sub])
 
     # Vacuum boundary
@@ -69,15 +77,23 @@ function generate_cpw2d_thin_mesh(;
 
     # Vacuum uses the same y=0 lines but reversed
     cl_vac = gmsh.model.occ.addCurveLoop([
-        -l_ground_l, -l_gap_l, -l_trace, -l_gap_r, -l_ground_r,
-        l_vac_right, -l_vac_top, -l_vac_left
+        -l_ground_l,
+        -l_gap_l,
+        -l_trace,
+        -l_gap_r,
+        -l_ground_r,
+        l_vac_right,
+        -l_vac_top,
+        -l_vac_left
     ])
 
     # Wait, OCC won't let me reverse lines this way. Let me use fragment instead.
     # Actually with OCC, let me just create the vacuum rectangle separately and fragment.
 
-    gmsh.model.occ.remove([(1, l_vac_left), (1, l_vac_top), (1, l_vac_right),
-                            (2, s_sub)], true)
+    gmsh.model.occ.remove(
+        [(1, l_vac_left), (1, l_vac_top), (1, l_vac_right), (2, s_sub)],
+        true
+    )
     gmsh.model.occ.remove([(0, p9), (0, p10)], true)
 
     # Start over with a simpler approach: create substrate and vacuum as rectangles,
@@ -91,22 +107,34 @@ function generate_cpw2d_thin_mesh(;
     # This naturally splits y=0 into ground/gap/trace/gap/ground segments.
 
     # Substrate regions (y from -h_substrate to 0)
-    sub_lg   = gmsh.model.occ.addRectangle(0.0,           -h_substrate, 0.0, x_gl,           h_substrate)
-    sub_gapl = gmsh.model.occ.addRectangle(x_gl,          -h_substrate, 0.0, w_gap,          h_substrate)
-    sub_tr   = gmsh.model.occ.addRectangle(x_trace_left,  -h_substrate, 0.0, w_trace,        h_substrate)
-    sub_gapr = gmsh.model.occ.addRectangle(x_trace_right, -h_substrate, 0.0, w_gap,          h_substrate)
-    sub_rg   = gmsh.model.occ.addRectangle(x_gr,          -h_substrate, 0.0, w_box - x_gr,   h_substrate)
+    sub_lg   = gmsh.model.occ.addRectangle(0.0, -h_substrate, 0.0, x_gl, h_substrate)
+    sub_gapl = gmsh.model.occ.addRectangle(x_gl, -h_substrate, 0.0, w_gap, h_substrate)
+    sub_tr   = gmsh.model.occ.addRectangle(x_trace_left, -h_substrate, 0.0, w_trace, h_substrate)
+    sub_gapr = gmsh.model.occ.addRectangle(x_trace_right, -h_substrate, 0.0, w_gap, h_substrate)
+    sub_rg   = gmsh.model.occ.addRectangle(x_gr, -h_substrate, 0.0, w_box - x_gr, h_substrate)
 
     # Vacuum regions (y from 0 to h_vacuum)
-    vac_lg   = gmsh.model.occ.addRectangle(0.0,           0.0, 0.0, x_gl,           h_vacuum)
-    vac_gapl = gmsh.model.occ.addRectangle(x_gl,          0.0, 0.0, w_gap,          h_vacuum)
-    vac_tr   = gmsh.model.occ.addRectangle(x_trace_left,  0.0, 0.0, w_trace,        h_vacuum)
-    vac_gapr = gmsh.model.occ.addRectangle(x_trace_right, 0.0, 0.0, w_gap,          h_vacuum)
-    vac_rg   = gmsh.model.occ.addRectangle(x_gr,          0.0, 0.0, w_box - x_gr,   h_vacuum)
+    vac_lg   = gmsh.model.occ.addRectangle(0.0, 0.0, 0.0, x_gl, h_vacuum)
+    vac_gapl = gmsh.model.occ.addRectangle(x_gl, 0.0, 0.0, w_gap, h_vacuum)
+    vac_tr   = gmsh.model.occ.addRectangle(x_trace_left, 0.0, 0.0, w_trace, h_vacuum)
+    vac_gapr = gmsh.model.occ.addRectangle(x_trace_right, 0.0, 0.0, w_gap, h_vacuum)
+    vac_rg   = gmsh.model.occ.addRectangle(x_gr, 0.0, 0.0, w_box - x_gr, h_vacuum)
 
     # Fragment to merge shared boundaries
-    all_surfs = [(2, s) for s in [sub_lg, sub_gapl, sub_tr, sub_gapr, sub_rg,
-                                   vac_lg, vac_gapl, vac_tr, vac_gapr, vac_rg]]
+    all_surfs = [
+        (2, s) for s in [
+            sub_lg,
+            sub_gapl,
+            sub_tr,
+            sub_gapr,
+            sub_rg,
+            vac_lg,
+            vac_gapl,
+            vac_tr,
+            vac_gapr,
+            vac_rg
+        ]
+    ]
     _, frag_map = gmsh.model.occ.fragment(all_surfs, [])
     gmsh.model.occ.synchronize()
 
@@ -143,26 +171,31 @@ function generate_cpw2d_thin_mesh(;
 
         # Outer box
         if is_vert && (abs(xmin) < tol || abs(xmax - w_box) < tol)
-            push!(outer_curves, tag); continue
+            push!(outer_curves, tag);
+            continue
         end
         if is_horiz && (abs(ymin + h_substrate) < tol || abs(ymax - h_vacuum) < tol)
-            push!(outer_curves, tag); continue
+            push!(outer_curves, tag);
+            continue
         end
 
         # y=0 horizontal curves
         if is_horiz && abs(ymid) < tol
             # Trace
             if xmin > x_trace_left - tol && xmax < x_trace_right + tol
-                push!(pec_trace, tag); continue
+                push!(pec_trace, tag);
+                continue
             end
             # Ground
             if xmax < x_gl + tol || xmin > x_gr - tol
-                push!(pec_ground, tag); continue
+                push!(pec_ground, tag);
+                continue
             end
             # Gap
             if (xmin > x_gl - tol && xmax < x_trace_left + tol) ||
                (xmin > x_trace_right - tol && xmax < x_gr + tol)
-                push!(gap_curves, tag); continue
+                push!(gap_curves, tag);
+                continue
             end
         end
     end
@@ -223,7 +256,7 @@ function generate_cpw2d_thin_mesh(;
     println("  PEC ground: bdr attr $pec_ground_attr ($(length(pec_ground)) curves)")
     println("  Outer: bdr attr $outer_attr, Gap: bdr attr $gap_attr")
 
-    gmsh.finalize()
+    return gmsh.finalize()
 end
 
 generate_cpw2d_thin_mesh()

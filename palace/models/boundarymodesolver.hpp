@@ -17,7 +17,11 @@
 namespace palace
 {
 
+class FarfieldBoundaryOperator;
 class FiniteElementSpace;
+class MaterialOperator;
+class SurfaceConductivityOperator;
+class SurfaceImpedanceOperator;
 
 //
 // Configuration for the BoundaryModeSolver, parameterizing the differences between the
@@ -57,6 +61,25 @@ struct BoundaryModeSolverConfig
 
   // Whether the material operator reports a nonzero loss tangent.
   bool has_loss_tangent;
+
+  // Domain conductivity tensor. Used if non-null for damping contribution to Att.
+  const mfem::DenseTensor *conductivity = nullptr;
+  bool has_conductivity = false;
+
+  // London penetration depth (1/lambda_L^2 tensor). Adds a mass term to the stiffness
+  // operator: (1/lambda_L^2)(E, F). Used for superconductor modeling.
+  const mfem::DenseTensor *inv_london_depth = nullptr;
+  bool has_london_depth = false;
+
+  // Reference to MaterialOperator for ceed attribute access. Required when boundary
+  // operators are specified.
+  const MaterialOperator *mat_op = nullptr;
+
+  // Boundary operators for Robin BC contributions to Att. All optional (nullptr = none).
+  // Non-const because the Add*Coefficients methods are not const.
+  SurfaceImpedanceOperator *surf_z_op = nullptr;
+  FarfieldBoundaryOperator *farfield_op = nullptr;
+  SurfaceConductivityOperator *surf_sigma_op = nullptr;
 
   // Eigenvalue solver configuration.
   int num_modes;

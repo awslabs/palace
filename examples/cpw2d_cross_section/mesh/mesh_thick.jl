@@ -14,22 +14,22 @@ import Gmsh: gmsh
 
 function generate_cpw2d_mesh(;
     # Geometry parameters (all in μm)
-    w_trace::Float64 = 15.0,          # Trace width
+    w_trace::Float64     = 15.0,          # Trace width
     w_total_cpw::Float64 = 22.0,      # Total width of trace + 2 gaps (constant)
-    w_ground::Float64 = 500.0,        # Ground plane width on each side
-    t_metal::Float64 = 0.1,           # Metal thickness (must be > 0; use mesh_thin.jl for t=0)
+    w_ground::Float64    = 500.0,        # Ground plane width on each side
+    t_metal::Float64     = 0.1,           # Metal thickness (must be > 0; use mesh_thin.jl for t=0)
     h_substrate::Float64 = 525.0,     # Substrate thickness
-    h_vacuum::Float64 = 500.0,        # Vacuum region height above substrate
+    h_vacuum::Float64    = 500.0,        # Vacuum region height above substrate
 
     # Mesh parameters
-    lc_gap::Float64 = 0.3,            # Mesh size in the gap region
-    lc_trace::Float64 = 1.0,          # Mesh size on the trace edges
-    lc_far::Float64 = 50.0,           # Mesh size far from the trace
-    mesh_order::Int = 2,              # Mesh element order (1 or 2)
+    lc_gap::Float64=0.3,            # Mesh size in the gap region
+    lc_trace::Float64=1.0,          # Mesh size on the trace edges
+    lc_far::Float64=50.0,           # Mesh size far from the trace
+    mesh_order::Int=2,              # Mesh element order (1 or 2)
 
     # Output
-    filename::String = "cpw2d_thick.msh",
-    verbose::Int = 0
+    filename::String="cpw2d_thick.msh",
+    verbose::Int=0
 )
     # Derived dimensions
     @assert t_metal > 0 "Metal thickness must be > 0. Use mesh_thin.jl for zero-thickness PEC."
@@ -148,7 +148,8 @@ function generate_cpw2d_mesh(;
             # Ground plane PEC: top surface of ground at y = t_metal
             # Left ground: x ∈ [0, x_ground_left_inner]
             if is_horiz && abs(ymid - y_metal_top) < tol
-                if xmin < x_ground_left_inner - w_gap + tol && xmax < x_ground_left_inner + tol
+                if xmin < x_ground_left_inner - w_gap + tol &&
+                   xmax < x_ground_left_inner + tol
                     push!(pec_curves, tag)
                     continue
                 end
@@ -169,7 +170,8 @@ function generate_cpw2d_mesh(;
 
             # Ground side walls (vertical at inner edges)
             if is_vert && ymid > y_metal_bot - tol && ymid < y_metal_top + tol
-                if abs(xmid - x_ground_left_inner) < tol || abs(xmid - x_ground_right_inner) < tol
+                if abs(xmid - x_ground_left_inner) < tol ||
+                   abs(xmid - x_ground_right_inner) < tol
                     push!(pec_curves, tag)
                     continue
                 end
@@ -187,8 +189,10 @@ function generate_cpw2d_mesh(;
             # Current loop: domain interfaces forming a rectangle around the trace
             # These are at the gap domain boundaries (not PEC)
             # Left gap left edge (x = x_ground_left_inner)
-            if is_vert && abs(xmid - x_ground_left_inner) < tol &&
-               ymin > y_metal_bot - tol && ymax < y_metal_top + tol
+            if is_vert &&
+               abs(xmid - x_ground_left_inner) < tol &&
+               ymin > y_metal_bot - tol &&
+               ymax < y_metal_top + tol
                 # Already classified as PEC above
             end
             # Bottom of gap domains (y = 0)
@@ -214,18 +218,21 @@ function generate_cpw2d_mesh(;
                 end
             end
             # Left side of gap region
-            if is_vert && abs(xmid - x_ground_left_inner) < tol &&
-               ymin > y_metal_bot - tol && ymax < y_metal_top + tol
+            if is_vert &&
+               abs(xmid - x_ground_left_inner) < tol &&
+               ymin > y_metal_bot - tol &&
+               ymax < y_metal_top + tol
                 push!(current_curves, tag)
                 continue
             end
             # Right side of gap region
-            if is_vert && abs(xmid - x_ground_right_inner) < tol &&
-               ymin > y_metal_bot - tol && ymax < y_metal_top + tol
+            if is_vert &&
+               abs(xmid - x_ground_right_inner) < tol &&
+               ymin > y_metal_bot - tol &&
+               ymax < y_metal_top + tol
                 push!(current_curves, tag)
                 continue
             end
-
         end
     end
 
@@ -264,13 +271,23 @@ function generate_cpw2d_mesh(;
 
     voltage_right_attr = bdr_idx
     if !isempty(voltage_right_curves)
-        gmsh.model.addPhysicalGroup(1, voltage_right_curves, voltage_right_attr, "voltage_right")
+        gmsh.model.addPhysicalGroup(
+            1,
+            voltage_right_curves,
+            voltage_right_attr,
+            "voltage_right"
+        )
         bdr_idx += 1
     end
 
     voltage_left_attr = bdr_idx
     if !isempty(voltage_left_curves)
-        gmsh.model.addPhysicalGroup(1, voltage_left_curves, voltage_left_attr, "voltage_left")
+        gmsh.model.addPhysicalGroup(
+            1,
+            voltage_left_curves,
+            voltage_left_attr,
+            "voltage_left"
+        )
         bdr_idx += 1
     end
 
@@ -290,7 +307,8 @@ function generate_cpw2d_mesh(;
         xmid = (xmin + xmax) / 2.0
         ymid = (ymin + ymax) / 2.0
         if (abs(xmid - x_trace_left) < tol || abs(xmid - x_trace_right) < tol) &&
-           ymid > y_metal_bot - tol && ymid < y_metal_top + tol
+           ymid > y_metal_bot - tol &&
+           ymid < y_metal_top + tol
             push!(trace_edge_curves, tag)
         end
     end
@@ -341,13 +359,19 @@ function generate_cpw2d_mesh(;
     println("  PEC:            bdr attr $pec_attr  ($(length(pec_curves)) curves)")
     println("  Outer box:      bdr attr $outer_attr  ($(length(outer_curves)) curves)")
     if !isempty(voltage_right_curves)
-        println("  Voltage (R):    bdr attr $voltage_right_attr  ($(length(voltage_right_curves)) curves)")
+        println(
+            "  Voltage (R):    bdr attr $voltage_right_attr  ($(length(voltage_right_curves)) curves)"
+        )
     end
     if !isempty(voltage_left_curves)
-        println("  Voltage (L):    bdr attr $voltage_left_attr  ($(length(voltage_left_curves)) curves)")
+        println(
+            "  Voltage (L):    bdr attr $voltage_left_attr  ($(length(voltage_left_curves)) curves)"
+        )
     end
     if !isempty(current_curves)
-        println("  Current loop:   bdr attr $current_attr  ($(length(current_curves)) curves)")
+        println(
+            "  Current loop:   bdr attr $current_attr  ($(length(current_curves)) curves)"
+        )
     end
     println("  Mesh file:      $filename")
 
@@ -363,7 +387,7 @@ function generate_cpw2d_mesh(;
         "current" => !isempty(current_curves) ? current_attr : -1,
         "x_trace_right" => x_trace_right,
         "x_ground_right" => x_ground_right_inner,
-        "y_surface" => y_sub_top,
+        "y_surface" => y_sub_top
     )
 
     gmsh.finalize()
