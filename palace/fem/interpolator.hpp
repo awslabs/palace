@@ -15,6 +15,7 @@ namespace palace
 
 class GridFunction;
 class IoData;
+class Units;
 class FiniteElementSpace;
 
 //
@@ -34,7 +35,7 @@ private:
 
 public:
   InterpolationOperator(const std::map<int, config::ProbeData> &probe,
-                        FiniteElementSpace &nd_space);
+                        const Units &units, FiniteElementSpace &nd_space);
   InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
 
   auto GetVDim() const { return v_dim_fes; }

@@ -8,6 +8,7 @@
 #include "fem/gridfunction.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -21,6 +22,7 @@ constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 }  // namespace
 
 InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeData> &probe,
+                                             const Units &units,
                                              FiniteElementSpace &nd_space)
 #if defined(MFEM_USE_GSLIB)
   : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
@@ -56,11 +58,9 @@ InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeDa
   {
     if (op.GetCode()[i++] == 2)
     {
-      // Coordinates are nondimensional at this point (already scaled by
-      // NondimensionalizeInputs before operator construction).
       Mpi::Warning(
-          "Probe {:d} at ({:.3e}) could not be found!\n Using default value 0.0!\n", idx,
-          fmt::join(data.center, ", "));
+          "Probe {:d} at ({:.3e}) m could not be found!\n Using default value 0.0!\n", idx,
+          fmt::join(units.Dimensionalize<Units::ValueType::LENGTH>(data.center), ", "));
     }
   }
 }
@@ -74,7 +74,7 @@ InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeDa
 
 InterpolationOperator::InterpolationOperator(const IoData &iodata,
                                              FiniteElementSpace &nd_space)
-  : InterpolationOperator(iodata.domains.postpro.probe, nd_space)
+  : InterpolationOperator(iodata.domains.postpro.probe, iodata.units, nd_space)
 {
 }
 

@@ -75,7 +75,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
                  fem_op->GetH1Space(), fem_op->GetNDSpace()),
-    interp_op(domains.postpro.probe, fem_op->GetNDSpace())
+    interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
