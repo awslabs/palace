@@ -277,7 +277,7 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
   }
   SECTION("Empty File")
   {
-    auto no_file = fs::path(PALACE_TEST_DIR) /
+    auto no_file = fs::path(PALACE_TEST_DATA_DIR) /
                    "postoperatorcsv_restart/restart1_all/does-not-exists.csv";
     REQUIRE(!fs::exists(no_file));
     TableWithCSVFile table_w(no_file, true);
@@ -287,7 +287,7 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
   SECTION("Normal File")
   {
     auto test_file =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
     REQUIRE(fs::exists(test_file));
 
     TableWithCSVFile table_w(test_file, true);

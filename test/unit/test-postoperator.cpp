@@ -358,7 +358,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "GridFunction export",
   iodata.CheckConfiguration();                // initializes quadrature
 
   // Setup lumped port boundary data for driven and transient.
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
   auto entry = config.find("boundaries_lumped_port_X_2")->find("Boundaries");

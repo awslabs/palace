@@ -90,19 +90,10 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add unit test mesh file path definition
-set_property(
-  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
-         ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
-         ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
-         ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
-         ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_TEST_MESH_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/mesh\""
-)
-
+# Add path for test data files. 
 target_compile_definitions(
   unit-tests
-  PUBLIC "PALACE_TEST_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+  PUBLIC "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
 )
 
@@ -124,13 +115,17 @@ install(
   RUNTIME DESTINATION bin
 )
 
-# Install mesh files to share directory
+# Install test data files to share directory
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mesh
-  DESTINATION share/palace/test
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+  DESTINATION share/palace/test/
 )
 
+# Install jsons from the all the examples (used in some tests)
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mesh/
-  DESTINATION share/palace/test/mesh
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/
+  DESTINATION share/palace/test/data/examples
+  FILES_MATCHING
+    PATTERN "*.json"
+    PATTERN "*/postpro/*" EXCLUDE     # Skip palace.json files
 )
