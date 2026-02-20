@@ -1,7 +1,7 @@
 name: Build and Test (Linux)
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
@@ -223,8 +223,19 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
+        - arch: x86
+          compiler: gcc
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int64
+          with-openmp: openmp
+          with-eigensolver: slepc
+          with-solver: strumpack
+          with-coverage: true
 
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
+    # (See comment above matrix)
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
       - uses: actions/checkout@v6
@@ -248,12 +259,20 @@ jobs:
           sudo update-alternatives --install $(which gfortran) gfortran $(which gfortran-$GFORT_VERSION) ${GFORT_VERSION}0
           sudo update-alternatives --set gfortran $(which gfortran-$GFORT_VERSION)
           sudo update-alternatives --install $(which gcc) gcc $(which gcc-$GCC_VERSION) ${GCC_VERSION}0 \
-              --slave $(which g++) g++ $(which g++-$GCC_VERSION)
+              --slave $(which g++) g++ $(which g++-$GCC_VERSION) \
+              --slave $(which gcov) gcov $(which gcov-$GCC_VERSION) \
+              --slave $(which gcov-tool) gcov-tool $(which gcov-tool-$GCC_VERSION)
           sudo update-alternatives --set gcc $(which gcc-$GCC_VERSION)
 
           gfortran --version
           gcc --version
           g++ --version
+
+      - name: Configure LCOV
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        run: |
+          sudo apt-get install -y lcov
+
       - name: Configure Open MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
         run: |
@@ -417,6 +436,8 @@ jobs:
           [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
           [[ "${{ matrix.with-eigensolver }}" == 'slepc' ]] && WITH_SLEPC='ON' || WITH_SLEPC='OFF'
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
+          [[ "${{ matrix.with-coverage }}" == 'true' ]] && WITH_COVERAGE='ON' || WITH_COVERAGE='OFF'
+
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
@@ -431,6 +452,7 @@ jobs:
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
             -DPALACE_WITH_SLEPC=$WITH_SLEPC \
             -DPALACE_WITH_ARPACK=$WITH_ARPACK \
+            -DPALACE_BUILD_WITH_COVERAGE=$WITH_COVERAGE \
             -DPALACE_MFEM_USE_EXCEPTIONS=ON
           make -j$NUM_PROC_BUILD palace-tests
 
@@ -438,7 +460,7 @@ jobs:
         if: needs.filter.outputs.test == 'true'
         timeout-minutes: 5
         env:
-          NUM_PROC_TEST_MAX: '2'
+          NUM_PROC_TEST_MAX: '8'
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
@@ -461,12 +483,37 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
-          cd $(pwd)/palace-build/palace-build/test/unit
+          # We don't compute coverage for the entire matrix because it slows
+          # everything down.
+          if [[ "${{ matrix.with-coverage }}" == 'true' ]]; then
+            scripts/measure-test-coverage report $(pwd)/palace-build
+          else
+            ctest -j $NUM_PROC_TEST_MAX --output-on-failure
+          fi
 
-          # Run Serial tests
-          ./palace-unit-tests --skip-benchmarks
-          # Run Parallel tests
-          mpirun -np $NUM_PROC_TEST_MAX ./palace-unit-tests --skip-benchmarks
+      - name: Deploy coverage to gh-pages
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage && github.event_name == 'pull_request'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: palace-build/coverage_html
+          destination_dir: previews/PR${{ github.event.pull_request.number }}/coverage
+          keep_files: true
+
+      - name: Add coverage link to summary
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUM}/coverage/"
+          echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage report
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
+          path: palace-build/coverage_html/
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true'

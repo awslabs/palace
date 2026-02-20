@@ -75,7 +75,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
-          variant: "+openmp+int64~shared"
+          variant: "+openmp+int64"
           run-regression-tests: 'false'
  
   build-test-x64-llvm:
@@ -186,5 +186,5 @@ jobs:
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
-          variant: "+openmp+int64~shared"
+          variant: "+openmp+int64"
           solver: ${{ matrix.solver }}

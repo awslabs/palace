@@ -223,5 +223,14 @@ endif()
 message(STATUS "========================== Configuring Palace ==========================")
 include(ExternalPalace)
 
+# Create CTestTestfile manually (don't use enable_testing() as it gets overwritten)
+file(WRITE "${CMAKE_BINARY_DIR}/CTestTestfile.cmake" "
+# CMake generated Testfile for Palace superbuild
+set(CTEST_PROJECT_NAME \"palace\")
+
+# Include palace unit tests
+subdirs(\"palace-build/test/unit\")
+")
+
 # Finished with superbuild configuration
 message(STATUS "======================= Configure stage complete =======================")
