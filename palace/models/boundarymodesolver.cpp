@@ -14,7 +14,10 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
+#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfaceconductivityoperator.hpp"
+#include "models/surfaceimpedanceoperator.hpp"
 
 namespace palace
 {
@@ -89,8 +92,15 @@ BoundaryModeSolver::~BoundaryModeSolver()
 
 void BoundaryModeSolver::AssembleFrequencyDependent(double omega, double sigma)
 {
-  // Assemble frequency-dependent Att and build the block A matrix. This is an MPI
-  // collective on the FE space communicator (all processes sharing the mesh).
+  // Assemble frequency-dependent Att and build the block A matrix. Impedance/absorbing/
+  // conductivity boundary terms enter Att as a tangential ND mass from the et component
+  // of the impedance BC: (iω/Zs)(et·t̂, ft·t̂)_γ.
+  //
+  // The impedance BC also has an en component: (iω/Zs)(en, fn)_γ, which would enter Ann.
+  // However, with the variable substitution en_code = ikn × en_phys, this becomes
+  // (iω/Zs)/(ikn) × (en_code, fn)_γ, introducing kn-dependence (nonlinear eigenvalue).
+  // For now, Ann boundary terms are omitted and H1 Dirichlet is enforced on all conductor
+  // boundaries (en=0), which approximates the PEC condition for en.
   auto [Attr, Atti] = AssembleAtt(omega, sigma);
   auto [Ar, Ai] = BuildSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(),
                                      Antr.get(), Anti.get(), Annr.get(), Anni.get());
@@ -176,22 +186,79 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
   eps_shifted_func.AddCoefficient(*config.attr_to_material, *config.inv_permeability,
                                   -sigma);
 
-  BilinearForm att(nd_fespace);
-  att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_func);
+  // Assemble Att real part: domain + boundary contributions in a single BilinearForm,
+  // following the same pattern as SpaceOperator. Boundary impedance/absorbing terms use
+  // Palace's ceed-based BilinearForm with VectorFEMassIntegrator.
+  int max_bdr_attr = config.mat_op ? config.mat_op->MaxCeedBdrAttribute() : 0;
+  MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
 
-  // Contribution for loss tangent: eps -> eps * (1 - i tan(delta)).
-  if (!config.has_loss_tangent)
+  // Add boundary contributions from impedance, absorbing, and conductivity operators.
+  if (config.surf_z_op)
   {
-    return {ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
-            nullptr};
+    config.surf_z_op->AddStiffnessBdrCoefficients(1.0, fbr);        // Ls -> real
+    config.surf_z_op->AddDampingBdrCoefficients(omega, fbi);        // Rs -> imag (ω/Rs)
+    config.surf_z_op->AddMassBdrCoefficients(-omega * omega, fbr);  // Cs -> real (-ω²Cs)
+  }
+  if (config.farfield_op)
+  {
+    config.farfield_op->AddDampingBdrCoefficients(omega, fbi);  // 1st-order ABC
+  }
+  if (config.surf_sigma_op)
+  {
+    config.surf_sigma_op->AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   }
 
-  MaterialPropertyCoefficient negepstandelta_func(
-      *config.attr_to_material, *config.permittivity_imag, -omega * omega);
-  BilinearForm atti(nd_fespace);
-  atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
-  return {ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
-          ParOperator(atti.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble()};
+  Mpi::Print(" [BMS] Att boundary: surf_z_op={}, farfield_op={}, surf_sigma_op={}, "
+             "max_bdr_attr={}, fbr.empty={}, fbi.empty={}\n",
+             config.surf_z_op != nullptr, config.farfield_op != nullptr,
+             config.surf_sigma_op != nullptr, max_bdr_attr, fbr.empty(), fbi.empty());
+
+  BilinearForm att(nd_fespace);
+  att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_func);
+  if (!fbr.empty())
+  {
+    att.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+  }
+
+  // Assemble domain + boundary contributions via Palace's BilinearForm (libCEED).
+  auto Attr_assembled =
+      ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
+  {
+    double norm_r =
+        hypre_ParCSRMatrixFnorm(static_cast<hypre_ParCSRMatrix *>(*Attr_assembled));
+    Mpi::Print(" [BMS] Attr Frobenius norm = {:.6e}\n", norm_r);
+  }
+
+  // Assemble imaginary part: domain (loss tangent, conductivity) + boundary (Rs, ABC).
+  std::unique_ptr<mfem::HypreParMatrix> Atti_assembled;
+  {
+    bool has_imag = config.has_loss_tangent ||
+                    (config.has_conductivity && config.conductivity) || !fbi.empty();
+    if (has_imag)
+    {
+      BilinearForm atti(nd_fespace);
+      if (config.has_loss_tangent)
+      {
+        MaterialPropertyCoefficient negepstandelta_func(
+            *config.attr_to_material, *config.permittivity_imag, -omega * omega);
+        atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
+      }
+      if (config.has_conductivity && config.conductivity)
+      {
+        MaterialPropertyCoefficient fi_domain(*config.attr_to_material,
+                                              *config.conductivity, omega);
+        atti.AddDomainIntegrator<VectorFEMassIntegrator>(fi_domain);
+      }
+      if (!fbi.empty())
+      {
+        atti.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbi);
+      }
+      Atti_assembled =
+          ParOperator(atti.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
+    }
+  }
+
+  return {std::move(Attr_assembled), std::move(Atti_assembled)};
 }
 
 // Coupling matrix: Atn = -(mu^{-1} grad_t u, v).
@@ -244,11 +311,13 @@ BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAnn() cons
   BilinearForm annr(h1_fespace);
   annr.AddDomainIntegrator<MassIntegrator>(epsilon_func);
 
+  auto Annr_assembled =
+      ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
+
   // Contribution for loss tangent: eps -> eps * (1 - i tan(delta)).
   if (!config.has_loss_tangent)
   {
-    return {ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble(),
-            nullptr};
+    return {std::move(Annr_assembled), nullptr};
   }
 
   MaterialPropertyCoefficient negepstandelta_func(*config.attr_to_material,
@@ -259,7 +328,7 @@ BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAnn() cons
   }
   BilinearForm anni(h1_fespace);
   anni.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
-  return {ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble(),
+  return {std::move(Annr_assembled),
           ParOperator(anni.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble()};
 }
 
@@ -477,6 +546,13 @@ void BoundaryModeSolver::SetUpEigenSolver(MPI_Comm comm)
     eigen = std::move(slepc);
 #endif
   }
+
+  // Note: gradient null-space modes (kn = 0, et = grad phi) are separated from physical
+  // propagating modes by the shift-and-invert spectral transformation. Physical modes have
+  // large |lambda|, gradient modes have small |lambda| ~ 1/|sigma|, so LARGEST_MAGNITUDE
+  // targeting naturally skips them. A DivFreeSolver is NOT appropriate here: it would
+  // project et to tangential divergence-free and destroy physical modes whose divergence
+  // couples to en through the block equation (div_t(eps et) = eps en != 0).
 }
 
 }  // namespace palace

@@ -22,7 +22,8 @@ enum class ProblemType : char
   ELECTROSTATIC,
   MAGNETOSTATIC,
   TRANSIENT,
-  MODEANALYSIS
+  MODEANALYSIS,
+  QUADMODEANALYSIS
 };
 
 // Eigenvalue solver type.
