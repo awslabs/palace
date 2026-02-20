@@ -63,12 +63,14 @@ PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
                             {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
 
 // Helper for converting string keys to enum for ProblemType.
-PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
-                                         {ProblemType::EIGENMODE, "Eigenmode"},
-                                         {ProblemType::ELECTROSTATIC, "Electrostatic"},
-                                         {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
-                                         {ProblemType::TRANSIENT, "Transient"},
-                                         {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
+PALACE_JSON_SERIALIZE_ENUM(ProblemType,
+                           {{ProblemType::DRIVEN, "Driven"},
+                            {ProblemType::EIGENMODE, "Eigenmode"},
+                            {ProblemType::ELECTROSTATIC, "Electrostatic"},
+                            {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
+                            {ProblemType::TRANSIENT, "Transient"},
+                            {ProblemType::MODEANALYSIS, "ModeAnalysis"},
+                            {ProblemType::QUADMODEANALYSIS, "QuadModeAnalysis"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},

@@ -82,7 +82,8 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
   MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
                   iodata.problem.type == ProblemType::DRIVEN ||
-                  iodata.problem.type == ProblemType::EIGENMODE,
+                  iodata.problem.type == ProblemType::EIGENMODE ||
+                  iodata.problem.type == ProblemType::MODEANALYSIS,
               "Second-order farfield boundaries are only available for frequency "
               "domain simulations!");
   return farfield_bcs;
