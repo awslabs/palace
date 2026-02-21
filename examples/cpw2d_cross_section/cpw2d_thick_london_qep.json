@@ -1,0 +1,76 @@
+{
+  "Problem":
+  {
+    "Type": "QuadModeAnalysis",
+    "Verbose": 2,
+    "Output": "postpro/thick_london_qep"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw2d_thick_london.msh",
+    "L0": 1.0e-6,
+    "Refinement":
+    {
+        "MaxIts": 0,
+        "Nonconformal": false
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [2, 3],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [4],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LondonDepth": 0.05
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1]
+    },
+    "Postprocessing":
+    {
+      "Impedance":
+      [
+        {
+          "Index": 1,
+          "VoltagePath": [[118.5, 0.0], [122.0, 0.0]],
+          "CurrentPath": [[100.0, 0.0], [122.0, 0.0], [122.0, 0.1], [100.0, 0.1]],
+          "IntegrationOrder": 200
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "ModeAnalysis":
+    {
+      "Freq": 5.0,
+      "N": 1,
+      "Save": 1,
+      "Target": 2.5,
+      "Tol": 1.0e-8
+    },
+    "Linear":
+    {
+      "Tol": 1e-9,
+      "MGMaxLevels": 1
+    }
+  }
+}
