@@ -79,16 +79,12 @@ private:
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 
-  // Reference to scalar finite element space used for computing surface integrals (not
-  // owned).
-  mfem::ParFiniteElementSpace &h1_fespace;
+  // Reference to mesh (not owned).
+  const mfem::ParMesh &mesh;
 
   // Reference to vector finite element space used for computing far-field integrals (not
   // owned).
   mfem::ParFiniteElementSpace &nd_fespace;
-
-  double GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                 const mfem::Array<int> &attr_marker) const;
 
 public:
   // Data structures for postprocessing the surface with the given type.
@@ -97,8 +93,7 @@ public:
   FarFieldData farfield;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+                      const mfem::ParMesh &mesh, mfem::ParFiniteElementSpace &nd_fespace);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,

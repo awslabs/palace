@@ -5,6 +5,7 @@
 
 #include <set>
 #include "fem/bilinearform.hpp"
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
@@ -227,7 +228,7 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
-  mfem::ConstantCoefficient one(1.0);
+  ConstantCoefficient one(1.0);
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
 
   // Eliminate the essential BC to get the RHS vector.
