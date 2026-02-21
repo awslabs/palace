@@ -126,6 +126,9 @@ QuadModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) co
   config.has_loss_tangent = mat_op.HasLossTangent();
   config.conductivity = mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
   config.has_conductivity = mat_op.HasConductivity();
+  config.inv_london_depth =
+      mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
+  config.has_london_depth = mat_op.HasLondonDepth();
   config.mat_op = &mat_op;
   config.surf_z_op = &surf_z_op;
   config.farfield_op = &farfield_op;
