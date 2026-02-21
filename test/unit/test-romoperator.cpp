@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
@@ -131,16 +132,17 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
 // inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
 // test as hex mesh only has a single element.
-TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube111",
+                 "[romoperator][Serial]")
 {
   MPI_Comm world_comm = Mpi::World();
 
   // Generate 3 x 2 different test configuration.
   size_t order = GENERATE(1UL, 2UL, 3UL);
   auto [mesh_is_hex, mesh_path] =
-      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
                                          "lumpedport_mesh/cube_mesh_1_1_1_hex.msh"),
-               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
                                           "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"));
 
   double L0 = 1.0e-6;
@@ -150,7 +152,7 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
   double Lc = 7.0;
 
   json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
   setup_json["Model"] = {{"Mesh", mesh_path},
                          {"L0", L0},
                          {"Lc", Lc},
@@ -345,23 +347,24 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube111", "[romoperator][Serial]")
 
 // Basic ROM port construction on a more complex mesh including a composite port and and L,C
 // port. Works on a 3x2x1 cubic mesh.
-TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube321",
+                 "[romoperator][Serial][Parallel]")
 {
   MPI_Comm world_comm = Mpi::World();
 
   // Generate 3 x 2 different test configuration.
   size_t order = GENERATE(1UL, 2UL, 3UL);
   auto [mesh_is_hex, mesh_path] =
-      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
                                          "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
-               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
                                           "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
 
   const double L0 = 1.0e-6;
   const double Lc = 7.0;
 
   json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
   setup_json["Model"] = {{"Mesh", mesh_path},
                          {"L0", L0},
                          {"Lc", Lc},
@@ -601,20 +604,21 @@ TEST_CASE("RomOperator-Synthesis-Port-Cube321", "[romoperator][Serial][Parallel]
 // Checks failure mode that neighbouring ports have overlap because they share and edge
 // degree of freedom. Ports in ROM must be orthogonal for conventional scattering matrix
 // interpretation to be meaningful.
-TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-PortOrthogonality",
+                 "[romoperator][Serial]")
 {
   MPI_Comm world_comm = Mpi::World();
 
   size_t order = GENERATE(1UL, 2UL);  // Solver order. Should not matter but set non-default
 
   auto [mesh_is_hex, mesh_path] =
-      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
                                          "lumpedport_mesh/cube_mesh_1_1_1_hex.msh"),
-               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
                                           "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"));
 
   json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
   setup_json["Model"] = {{"Mesh", mesh_path},
                          {"Refinement", json::object({})},
                          {"CrackInternalBoundaryElements", false}};
@@ -663,14 +667,16 @@ TEST_CASE("RomOperator-Synthesis-PortOrthogonality", "[romoperator][Serial]")
 // Currently all vectors being added to the PROM basis must be different. The logic of
 // dropping degenerate (or almost degenerate) vectors is not implemented. This tests checks
 // that adding the same vector twice fails.
-TEST_CASE("RomOperator-UpdatePROM-LinearDependence", "[romoperator][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDependence",
+                 "[romoperator][Serial][Parallel]")
 {
   MPI_Comm world_comm = Mpi::World();
 
-  auto mesh_path = fs::path(PALACE_TEST_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
 
   json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", PALACE_TEST_DIR}};
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
   setup_json["Model"] = {{"Mesh", mesh_path},
                          {"Refinement", json::object({})},
                          {"CrackInternalBoundaryElements", false}};

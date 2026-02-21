@@ -79,9 +79,9 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // Generate 3 x 2 x 3 different test configuration.
   auto solver_order = GENERATE(1, 2, 3);
   auto [mesh_is_hex, mesh_path] =
-      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
                                          "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
-               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
                                           "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
 
   // Cases: no PEC, one where element neighboring port
@@ -439,9 +439,9 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // Generate 3 x 2 x 3 different test configuration.
   auto solver_order = GENERATE(1, 2, 3);
   auto [mesh_is_hex, mesh_path] =
-      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DIR) /
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
                                          "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
-               std::make_tuple(false, fs::path(PALACE_TEST_DIR) /
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
                                           "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
 
   // Cases: no PEC, one where element neighboring port
