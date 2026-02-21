@@ -340,10 +340,11 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
 
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
-  auto torus_path = fs::path(PALACE_TEST_MESH_DIR) / "periodic-torus-sector.msh";
+  auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";
   std::ifstream fi(torus_path.string());
   std::unique_ptr<mfem::Mesh> mesh = std::make_unique<mfem::Mesh>(fi, false, false, true);
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
   auto entry = config.find("boundaries_periodic_torus")->find("Boundaries");

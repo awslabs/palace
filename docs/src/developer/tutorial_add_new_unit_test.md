@@ -167,7 +167,7 @@ This test is useful because it checks that `Sum` is not implemented making
 assumptions on the length of the vector. This test is also meaningless when run
 with less than 2 MPI processes, so we removed the `[Serial]` tag.
 
-Sometimes, tests need to access the filesystem. In this case, it is often best
+Sometimes, tests need to write to the filesystem. In this case, it is often best
 to create temporary working directories. This can be accomplished with the
 `PerRankTempDir` fixture, which gives each MPI rank its own directory:
 
@@ -195,3 +195,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // All ranks share temp_dir.
 }
 ```
+
+Suppose you want to compare the result of some operations with some pre-existing
+file `expected_vector.txt`. To do this, we first need to save the file in
+`test/unit/data`. Then, we can access it as
+
+```cpp
+auto path_expected_vector = fs::path(PALACE_TEST_DATA_DIR) / "expected_vector.txt"
+```
+
+`path_expected_vector` points to the `expected_vector.txt` file.

@@ -18,32 +18,42 @@ namespace fs = std::filesystem;
 
 TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial]")
 {
-  // Verify embedded schemas match source files (catches stale builds).
-  std::string schema_dir = fmt::format("{}/../../scripts/schema", PALACE_TEST_DIR);
+  // Verify embedded schemas match source files (catches stale builds). This
+  // test only makes sense when PALACE_TEST_DATA_DIR is in the folder where
+  // Palace is being developed. E.g., if Palace is being built with Cmake in a
+  // palace_repo/build type of folder.
+  std::string schema_dir = fmt::format("{}/../../scripts/schema", PALACE_TEST_DATA_DIR);
 
-  for (const auto &[path, embedded_content] : schema::GetSchemaMap())
+  if (std::filesystem::exists(schema_dir) && std::filesystem::is_directory(schema_dir))
   {
-    SECTION(path)
+    for (const auto &[path, embedded_content] : schema::GetSchemaMap())
     {
-      std::string full_path = schema_dir + "/" + path;
-      std::ifstream f(full_path);
-      if (!f.is_open())
+      SECTION(path)
       {
-        SKIP("Schema source not found (installed build?): " << full_path);
+        std::string full_path = schema_dir + "/" + path;
+        std::ifstream f(full_path);
+        if (!f.is_open())
+        {
+          SKIP("Schema source not found (installed build?): " << full_path);
+        }
+        // Parse both to compare (ignores whitespace differences).
+        json embedded = json::parse(embedded_content);
+        json source = json::parse(f);
+        INFO("Schema file: " << full_path);
+        CHECK(embedded == source);
       }
-      // Parse both to compare (ignores whitespace differences).
-      json embedded = json::parse(embedded_content);
-      json source = json::parse(f);
-      INFO("Schema file: " << full_path);
-      CHECK(embedded == source);
     }
+  }
+  else
+  {
+    SKIP("Schema source not found (installed build?): " << schema_dir);
   }
 }
 
 TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
 {
   // Schema directory is relative to test source directory.
-  std::string examples_dir = fmt::format("{}/../../examples", PALACE_TEST_DIR);
+  std::string examples_dir = fmt::format("{}/examples", PALACE_TEST_DATA_DIR);
 
   // Collect JSON config files directly in example subdirectories (not in postpro/output).
   std::vector<std::string> config_files;

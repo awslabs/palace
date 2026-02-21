@@ -22,7 +22,8 @@ using namespace palace;
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
@@ -122,7 +123,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/solver_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
