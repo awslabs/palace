@@ -291,6 +291,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+strumpack"):
                 args.append(self.define("STRUMPACK_DIR", self.spec["strumpack"].prefix))
+            if self.spec.satisfies("+mumps") or self.spec.satisfies("+strumpack"):
+                args.append(
+                    self.define("SCALAPACK_ROOT", self.spec["scalapack"].prefix)
+                )
             if self.spec.satisfies("+superlu-dist"):
                 args.append(
                     self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix)
