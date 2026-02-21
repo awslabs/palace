@@ -66,6 +66,11 @@ struct BoundaryModeSolverConfig
   const mfem::DenseTensor *conductivity = nullptr;
   bool has_conductivity = false;
 
+  // London penetration depth (1/lambda_L^2 tensor). Adds a mass term to the stiffness
+  // operator: (1/lambda_L^2)(E, F). Used for superconductor modeling.
+  const mfem::DenseTensor *inv_london_depth = nullptr;
+  bool has_london_depth = false;
+
   // Reference to MaterialOperator for ceed attribute access. Required when boundary
   // operators are specified.
   const MaterialOperator *mat_op = nullptr;

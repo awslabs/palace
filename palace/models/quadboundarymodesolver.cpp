@@ -167,6 +167,11 @@ QuadBoundaryModeSolver::AssembleM0(double omega) const
   }
   MaterialPropertyCoefficient negeps_func(*config.attr_to_material,
                                           *config.permittivity_real, -omega * omega);
+  // London superconductor contribution: +(1/lambda_L^2)(et, ft).
+  if (config.has_london_depth)
+  {
+    negeps_func.AddCoefficient(*config.attr_to_material, *config.inv_london_depth, 1.0);
+  }
 
   // Boundary impedance for et: (iw/Zs)(et.t, ft.t)_gamma
   int max_bdr_attr = config.mat_op ? config.mat_op->MaxCeedBdrAttribute() : 0;
@@ -240,6 +245,21 @@ QuadBoundaryModeSolver::AssembleM0(double omega) const
   if (config.normal)
   {
     poseps_h1_func.NormalProjectedCoefficient(*config.normal);
+  }
+  // London superconductor contribution: +(1/lambda_L^2)(en, fn).
+  // In the normal curl-curl equation, the London term is +(1/lambda_L^2) En, which
+  // enters as a positive H1 mass (same sign as the omega^2 eps mass).
+  // The inv_london_depth tensor is NxN for ND; for H1 we need scalar (0,0) component.
+  if (config.has_london_depth)
+  {
+    const auto &ild = *config.inv_london_depth;
+    // Extract scalar (0,0) component from the tensor for each material.
+    mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
+    for (int k = 0; k < ild.SizeK(); k++)
+    {
+      ild_scalar(0, 0, k) = ild(0, 0, k);
+    }
+    poseps_h1_func.AddCoefficient(*config.attr_to_material, ild_scalar);
   }
 
   // Boundary impedance for en: -(iw/Zs)(en, fn)_gamma — NEGATIVE sign from the
