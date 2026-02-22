@@ -354,6 +354,41 @@ if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   )
 endif()
 
+
+# For each dependency with a git SHA, set a compile definition <DEPENDENCY>_COMMIT_SHA
+set(dependency_folders
+  STRUMPACK
+  arpack-ng
+  eigen
+  fmt
+  gslib
+  hypre
+  json
+  libCEED
+  libxsmm
+  magma
+  metis
+  mfem
+  mumps
+  parmetis
+  petsc
+  scalapack
+  scn
+  slepc
+  sundials
+  superlu_dist
+)
+foreach(dep_folder IN LISTS dependency_folders)
+  message(DEBUG "Checking dependency in folder ${dep_folder}")
+  get_dependency_git_sha("${CMAKE_BINARY_DIR}/../extern/${dep_folder}" dep_sha)
+  message(DEBUG "Git SHA for ${dep_folder}: ${dep_sha}")
+  string(REPLACE "-" "_" dep_folder_sanitized "${dep_folder}")
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "${dep_folder_sanitized}_COMMIT_SHA=\"${dep_sha}\""
+  )
+endforeach()
+
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
 if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
