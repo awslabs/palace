@@ -1,0 +1,83 @@
+{
+  "ElapsedTime": {
+    "Counts": {
+      "Adaptation": 0,
+      "CoarseSolve": 21,
+      "Construction": 1,
+      "DiskIO": 3,
+      "Div.-FreeProjection": 0,
+      "EigenvalueSolve": 0,
+      "Estimation": 2,
+      "FarFields": 0,
+      "Gridfunction": 3,
+      "Initialization": 2,
+      "LinearSolve": 2,
+      "MeshPreprocessing": 1,
+      "OperatorConstruction": 1,
+      "PROMConstruction": 0,
+      "PROMSolve": 0,
+      "Paraview": 3,
+      "Postprocessing": 6,
+      "Preconditioner": 21,
+      "Rebalancing": 0,
+      "Setup": 1,
+      "Solve": 2,
+      "TimeStepping": 0,
+      "Total": 1,
+      "WavePorts": 0
+    },
+    "Durations": {
+      "Adaptation": 0.0,
+      "CoarseSolve": 0.00987438,
+      "Construction": 3.242662725,
+      "DiskIO": 0.352818441,
+      "Div.-FreeProjection": 0.0,
+      "EigenvalueSolve": 0.0,
+      "Estimation": 0.049216986,
+      "FarFields": 0.0,
+      "Gridfunction": 3.66249058,
+      "Initialization": 0.32180334399999994,
+      "LinearSolve": 0.157673296,
+      "MeshPreprocessing": 0.449842295,
+      "OperatorConstruction": 4.598355697999999,
+      "PROMConstruction": 0.0,
+      "PROMSolve": 0.0,
+      "Paraview": 9.003704800000001,
+      "Postprocessing": 0.17854005099999995,
+      "Preconditioner": 3.7894938590000007,
+      "Rebalancing": 0.0,
+      "Setup": 2.486092014,
+      "Solve": 2.504170481,
+      "TimeStepping": 0.0,
+      "Total": 30.81952564,
+      "WavePorts": 0.0
+    }
+  },
+  "GitTag": "2639a89",
+  "LinearSolver": {
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 682.21875,
+    "Max": 682.21875,
+    "Min": 682.21875,
+    "Total": 682.21875
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 682.21875,
+    "Max": 682.21875,
+    "Min": 682.21875,
+    "Total": 682.21875
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}

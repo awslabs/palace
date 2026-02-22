@@ -1,0 +1,618 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/romoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - romoperator.cpp<span style="font-size: 80%;"> (source / <a href="romoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">199</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-02-20 21:19:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;romoperator.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;Eigen/SVD&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &quot;linalg/orthog.hpp&quot;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;utils/timer.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK</span>
+<span id="L15"><span class="lineNum">      15</span>              : // for this.</span>
+<span id="L16"><span class="lineNum">      16</span>              : extern &quot;C&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : {</span>
+<span id="L18"><span class="lineNum">      18</span>              :   void zggev_(char *, char *, int *, std::complex&lt;double&gt; *, int *, std::complex&lt;double&gt; *,</span>
+<span id="L19"><span class="lineNum">      19</span>              :               int *, std::complex&lt;double&gt; *, std::complex&lt;double&gt; *, std::complex&lt;double&gt; *,</span>
+<span id="L20"><span class="lineNum">      20</span>              :               int *, std::complex&lt;double&gt; *, int *, std::complex&lt;double&gt; *, int *, double *,</span>
+<span id="L21"><span class="lineNum">      21</span>              :               int *);</span>
+<span id="L22"><span class="lineNum">      22</span>              : }</span>
+<span id="L23"><span class="lineNum">      23</span>              : </span>
+<span id="L24"><span class="lineNum">      24</span>              : namespace palace</span>
+<span id="L25"><span class="lineNum">      25</span>              : {</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : using namespace std::complex_literals;</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              : namespace</span>
+<span id="L30"><span class="lineNum">      30</span>              : {</span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span>              : constexpr auto ORTHOG_TOL = 1.0e-12;</span>
+<span id="L33"><span class="lineNum">      33</span>              : </span>
+<span id="L34"><span class="lineNum">      34</span>              : template &lt;typename VecType, typename ScalarType&gt;</span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaUNC tlaBgUNC">           0 : inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,</span></span>
+<span id="L36"><span class="lineNum">      36</span>              :                                 const std::vector&lt;VecType&gt; &amp;V, VecType &amp;w, ScalarType *Rj,</span>
+<span id="L37"><span class="lineNum">      37</span>              :                                 int j)</span>
+<span id="L38"><span class="lineNum">      38</span>              : {</span>
+<span id="L39"><span class="lineNum">      39</span>              :   // Orthogonalize w against the leading j columns of V.</span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 :   switch (type)</span></span>
+<span id="L41"><span class="lineNum">      41</span>              :   {</span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaUNC">           0 :     case Orthogonalization::MGS:</span></span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaUNC">           0 :       linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaUNC">           0 :     case Orthogonalization::CGS:</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaUNC">           0 :       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaUNC">           0 :     case Orthogonalization::CGS2:</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaUNC">           0 :       linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L51"><span class="lineNum">      51</span>              :   }</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L53"><span class="lineNum">      53</span>              : </span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC">           0 : inline void ProjectMatInternal(MPI_Comm comm, const std::vector&lt;Vector&gt; &amp;V,</span></span>
+<span id="L55"><span class="lineNum">      55</span>              :                                const ComplexOperator &amp;A, Eigen::MatrixXcd &amp;Ar,</span>
+<span id="L56"><span class="lineNum">      56</span>              :                                ComplexVector &amp;r, int n0)</span>
+<span id="L57"><span class="lineNum">      57</span>              : {</span>
+<span id="L58"><span class="lineNum">      58</span>              :   // Update Ar = Vᴴ A V for the new basis dimension n0 -&gt; n. V is real and thus the result</span>
+<span id="L59"><span class="lineNum">      59</span>              :   // is complex symmetric if A is symmetric (which we assume is the case). Ar is replicated</span>
+<span id="L60"><span class="lineNum">      60</span>              :   // across all processes as a sequential n x n matrix.</span>
+<span id="L61"><span class="lineNum">      61</span>              :   const auto n = Ar.rows();</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(n0 &lt; n, &quot;Invalid dimensions in PROM matrix projection!&quot;);</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 :   for (int j = n0; j &lt; n; j++)</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :   {</span>
+<span id="L65"><span class="lineNum">      65</span>              :     // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product</span>
+<span id="L66"><span class="lineNum">      66</span>              :     // since the columns of V are real.</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(A.Real() || A.Imag(),</span></span>
+<span id="L68"><span class="lineNum">      68</span>              :                 &quot;Invalid zero ComplexOperator for PROM matrix projection!&quot;);</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaUNC">           0 :     if (A.Real())</span></span>
+<span id="L70"><span class="lineNum">      70</span>              :     {</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaUNC">           0 :       A.Real()-&gt;Mult(V[j], r.Real());</span></span>
+<span id="L72"><span class="lineNum">      72</span>              :     }</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaUNC">           0 :     if (A.Imag())</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :     {</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC">           0 :       A.Imag()-&gt;Mult(V[j], r.Imag());</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :     }</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; n; i++)</span></span>
+<span id="L78"><span class="lineNum">      78</span>              :     {</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC">           0 :       Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);  // Local inner product</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaUNC">           0 :       Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);</span></span>
+<span id="L81"><span class="lineNum">      81</span>              :     }</span>
+<span id="L82"><span class="lineNum">      82</span>              :   }</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaUNC">           0 :   Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);</span></span>
+<span id="L84"><span class="lineNum">      84</span>              : </span>
+<span id="L85"><span class="lineNum">      85</span>              :   // Fill lower block of Vᴴ A V = [ ____________  |  ]</span>
+<span id="L86"><span class="lineNum">      86</span>              :   //                              [ vjᴴ A V[1:n0] |  ] .</span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :   for (int j = 0; j &lt; n0; j++)</span></span>
+<span id="L88"><span class="lineNum">      88</span>              :   {</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC">           0 :     for (int i = n0; i &lt; n; i++)</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :     {</span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaUNC">           0 :       Ar(i, j) = Ar(j, i);</span></span>
+<span id="L92"><span class="lineNum">      92</span>              :     }</span>
+<span id="L93"><span class="lineNum">      93</span>              :   }</span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L95"><span class="lineNum">      95</span>              : </span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaUNC">           0 : inline void ProjectVecInternal(MPI_Comm comm, const std::vector&lt;Vector&gt; &amp;V,</span></span>
+<span id="L97"><span class="lineNum">      97</span>              :                                const ComplexVector &amp;b, Eigen::VectorXcd &amp;br, int n0)</span>
+<span id="L98"><span class="lineNum">      98</span>              : {</span>
+<span id="L99"><span class="lineNum">      99</span>              :   // Update br = Vᴴ b for the new basis dimension n0 -&gt; n. br is replicated across all</span>
+<span id="L100"><span class="lineNum">     100</span>              :   // processes as a sequential n-dimensional vector.</span>
+<span id="L101"><span class="lineNum">     101</span>              :   const auto n = br.size();</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(n0 &lt; n, &quot;Invalid dimensions in PROM vector projection!&quot;);</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaUNC">           0 :   for (int i = n0; i &lt; n; i++)</span></span>
+<span id="L104"><span class="lineNum">     104</span>              :   {</span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaUNC">           0 :     br(i).real(V[i] * b.Real());  // Local inner product</span></span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC">           0 :     br(i).imag(V[i] * b.Imag());</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :   }</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaUNC">           0 :   Mpi::GlobalSum(n - n0, br.data() + n0, comm);</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L110"><span class="lineNum">     110</span>              : </span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaUNC">           0 : inline void ComputeMRI(const Eigen::MatrixXcd &amp;R, Eigen::VectorXcd &amp;q)</span></span>
+<span id="L112"><span class="lineNum">     112</span>              : {</span>
+<span id="L113"><span class="lineNum">     113</span>              :   // Compute the coefficients of the minimal rational interpolation (MRI):</span>
+<span id="L114"><span class="lineNum">     114</span>              :   // u = [sum_i u_i q_i / (z - z_i)] / [sum_i q_i / (z - z_i)]. The coefficients are given</span>
+<span id="L115"><span class="lineNum">     115</span>              :   // by the right singular vector of R corresponding to the minimum singular value.</span>
+<span id="L116"><span class="lineNum">     116</span>              :   const auto S = R.rows();</span>
+<span id="L117"><span class="lineNum">     117</span>              :   MFEM_ASSERT(S &gt; 0 &amp;&amp; R.cols() == S, &quot;Invalid dimension mismatch when computing MRI!&quot;);</span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaUNC">           0 :   Eigen::JacobiSVD&lt;Eigen::MatrixXcd, Eigen::ComputeFullV&gt; svd;</span></span>
+<span id="L119"><span class="lineNum">     119</span>              :   svd.compute(R);</span>
+<span id="L120"><span class="lineNum">     120</span>              :   const auto &amp;sigma = svd.singularValues();</span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaUNC">           0 :   auto m = S - 1;</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC">           0 :   while (m &gt; 0 &amp;&amp; sigma[m] &lt; ORTHOG_TOL * sigma[0])</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :   {</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :     Mpi::Warning(&quot;Minimal rational interpolation encountered rank-deficient matrix: &quot;</span></span>
+<span id="L125"><span class="lineNum">     125</span>              :                  &quot;σ[{:d}] = {:.3e} (σ[0] = {:.3e})!\n&quot;,</span>
+<span id="L126"><span class="lineNum">     126</span>              :                  m, sigma[m], sigma[0]);</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaUNC">           0 :     m--;</span></span>
+<span id="L128"><span class="lineNum">     128</span>              :   }</span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaUNC">           0 :   q = svd.matrixV().col(m);</span></span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L131"><span class="lineNum">     131</span>              : </span>
+<span id="L132"><span class="lineNum">     132</span>              : template &lt;typename MatType, typename VecType&gt;</span>
+<span id="L133"><span class="lineNum">     133</span>              : inline void ZGGEV(MatType &amp;A, MatType &amp;B, VecType &amp;D, MatType &amp;VR)</span>
+<span id="L134"><span class="lineNum">     134</span>              : {</span>
+<span id="L135"><span class="lineNum">     135</span>              :   // Wrapper for LAPACK's (z)ggev. A and B are overwritten by their Schur decompositions.</span>
+<span id="L136"><span class="lineNum">     136</span>              :   MFEM_VERIFY(A.rows() == A.cols() &amp;&amp; B.rows() == B.cols() &amp;&amp; A.rows() == B.rows(),</span>
+<span id="L137"><span class="lineNum">     137</span>              :               &quot;Generalized eigenvalue problem expects A, B matrices to be square and have &quot;</span>
+<span id="L138"><span class="lineNum">     138</span>              :               &quot;same dimensions!&quot;);</span>
+<span id="L139"><span class="lineNum">     139</span>              :   char jobvl = 'N', jobvr = 'V';</span>
+<span id="L140"><span class="lineNum">     140</span>              :   int n = static_cast&lt;int&gt;(A.rows()), lwork = 2 * n;</span>
+<span id="L141"><span class="lineNum">     141</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; alpha(n), beta(n), work(lwork);</span>
+<span id="L142"><span class="lineNum">     142</span>              :   std::vector&lt;double&gt; rwork(8 * n);</span>
+<span id="L143"><span class="lineNum">     143</span>              :   MatType VL(0, 0);</span>
+<span id="L144"><span class="lineNum">     144</span>              :   VR.resize(n, n);</span>
+<span id="L145"><span class="lineNum">     145</span>              :   int info = 0;</span>
+<span id="L146"><span class="lineNum">     146</span>              : </span>
+<span id="L147"><span class="lineNum">     147</span>              :   zggev_(&amp;jobvl, &amp;jobvr, &amp;n, A.data(), &amp;n, B.data(), &amp;n, alpha.data(), beta.data(),</span>
+<span id="L148"><span class="lineNum">     148</span>              :          VL.data(), &amp;n, VR.data(), &amp;n, work.data(), &amp;lwork, rwork.data(), &amp;info);</span>
+<span id="L149"><span class="lineNum">     149</span>              :   MFEM_VERIFY(info == 0, &quot;ZGGEV failed with info = &quot; &lt;&lt; info &lt;&lt; &quot;!&quot;);</span>
+<span id="L150"><span class="lineNum">     150</span>              : </span>
+<span id="L151"><span class="lineNum">     151</span>              :   // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).</span>
+<span id="L152"><span class="lineNum">     152</span>              :   D.resize(n);</span>
+<span id="L153"><span class="lineNum">     153</span>              :   for (int i = 0; i &lt; n; i++)</span>
+<span id="L154"><span class="lineNum">     154</span>              :   {</span>
+<span id="L155"><span class="lineNum">     155</span>              :     D(i) = (beta[i] == 0.0)</span>
+<span id="L156"><span class="lineNum">     156</span>              :                ? ((alpha[i] == 0.0) ? std::numeric_limits&lt;std::complex&lt;double&gt;&gt;::quiet_NaN()</span>
+<span id="L157"><span class="lineNum">     157</span>              :                                     : mfem::infinity())</span>
+<span id="L158"><span class="lineNum">     158</span>              :                : alpha[i] / beta[i];</span>
+<span id="L159"><span class="lineNum">     159</span>              :     VR.col(i) /= VR.col(i).norm();</span>
+<span id="L160"><span class="lineNum">     160</span>              :   }</span>
+<span id="L161"><span class="lineNum">     161</span>              : }</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              : template &lt;typename VecType&gt;</span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaUNC">           0 : inline void ProlongatePROMSolution(std::size_t n, const std::vector&lt;Vector&gt; &amp;V,</span></span>
+<span id="L165"><span class="lineNum">     165</span>              :                                    const VecType &amp;y, ComplexVector &amp;u)</span>
+<span id="L166"><span class="lineNum">     166</span>              : {</span>
+<span id="L167"><span class="lineNum">     167</span>              :   u = 0.0;</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :   for (std::size_t j = 0; j &lt; n; j += 2)</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :   {</span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaUNC">           0 :     if (j + 1 &lt; n)</span></span>
+<span id="L171"><span class="lineNum">     171</span>              :     {</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :       linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :       linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());</span></span>
+<span id="L174"><span class="lineNum">     174</span>              :     }</span>
+<span id="L175"><span class="lineNum">     175</span>              :     else</span>
+<span id="L176"><span class="lineNum">     176</span>              :     {</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaUNC">           0 :       linalg::AXPY(y(j).real(), V[j], u.Real());</span></span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC">           0 :       linalg::AXPY(y(j).imag(), V[j], u.Imag());</span></span>
+<span id="L179"><span class="lineNum">     179</span>              :     }</span>
+<span id="L180"><span class="lineNum">     180</span>              :   }</span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L182"><span class="lineNum">     182</span>              : </span>
+<span id="L183"><span class="lineNum">     183</span>              : }  // namespace</span>
+<span id="L184"><span class="lineNum">     184</span>              : </span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaUNC">           0 : MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)</span></span>
+<span id="L186"><span class="lineNum">     186</span>              : {</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaUNC">           0 :   Q.resize(max_size, ComplexVector());</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L189"><span class="lineNum">     189</span>              : </span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaUNC">           0 : void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &amp;u,</span></span>
+<span id="L191"><span class="lineNum">     191</span>              :                                                      const SpaceOperator &amp;space_op,</span>
+<span id="L192"><span class="lineNum">     192</span>              :                                                      Orthogonalization orthog_type)</span>
+<span id="L193"><span class="lineNum">     193</span>              : {</span>
+<span id="L194"><span class="lineNum">     194</span>              :   MPI_Comm comm = space_op.GetComm();</span>
+<span id="L195"><span class="lineNum">     195</span>              : </span>
+<span id="L196"><span class="lineNum">     196</span>              :   // Compute the coefficients for the minimal rational interpolation of the state u used</span>
+<span id="L197"><span class="lineNum">     197</span>              :   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is</span>
+<span id="L198"><span class="lineNum">     198</span>              :   // stored by its QR decomposition.</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(dim_Q + 1 &lt;= Q.size(),</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :               &quot;Unable to increase basis storage size, increase maximum number of vectors!&quot;);</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :   {</span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaUNC">           0 :     std::vector&lt;const ComplexVector *&gt; blocks = {&amp;u, &amp;u};</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaUNC">           0 :     std::vector&lt;std::complex&lt;double&gt;&gt; s = {1.0, 1i * omega};</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaUNC">           0 :     Q[dim_Q].SetSize(2 * u.Size());</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaUNC">           0 :     Q[dim_Q].UseDevice(true);</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaUNC">           0 :     Q[dim_Q].SetBlocks(blocks, s);</span></span>
+<span id="L208"><span class="lineNum">     208</span>              :   }</span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :   OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaUNC">           0 :   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaUNC">           0 :   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :   dim_Q++;</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaUNC">           0 :   ComputeMRI(R, q);</span></span>
+<span id="L214"><span class="lineNum">     214</span>              :   if constexpr (false)</span>
+<span id="L215"><span class="lineNum">     215</span>              :   {</span>
+<span id="L216"><span class="lineNum">     216</span>              :     Mpi::Print(&quot;MRI (S = {}):\nR = {}\nq = {}&quot;, dim_Q, R, q);</span>
+<span id="L217"><span class="lineNum">     217</span>              :   }</span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :   z.push_back(omega);</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L220"><span class="lineNum">     220</span>              : </span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaUNC">           0 : std::vector&lt;double&gt; MinimalRationalInterpolation::FindMaxError(int N) const</span></span>
+<span id="L222"><span class="lineNum">     222</span>              : {</span>
+<span id="L223"><span class="lineNum">     223</span>              :   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =</span>
+<span id="L224"><span class="lineNum">     224</span>              :   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of</span>
+<span id="L225"><span class="lineNum">     225</span>              :   // Q are given analytically as the solution to an S + 1 dimensional eigenvalue problem.</span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::CONSTRUCT_PROM);</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :   const auto S = dim_Q;</span></span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(S &gt;= 2, &quot;Maximum error can only be found once two sample points have been &quot;</span></span>
+<span id="L229"><span class="lineNum">     229</span>              :                       &quot;added to the PROM to define the parameter domain!&quot;);</span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaUNC">           0 :   double start = *std::min_element(z.begin(), z.end());</span></span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaUNC">           0 :   double end = *std::max_element(z.begin(), z.end());</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :   Eigen::Map&lt;const Eigen::VectorXd&gt; z_map(z.data(), S);</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :   std::vector&lt;std::complex&lt;double&gt;&gt; z_star(N, 0.0);</span></span>
+<span id="L234"><span class="lineNum">     234</span>              : </span>
+<span id="L235"><span class="lineNum">     235</span>              :   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow</span>
+<span id="L236"><span class="lineNum">     236</span>              :   //          samples at complex-valued points (yet).</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              :   // Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);</span>
+<span id="L239"><span class="lineNum">     239</span>              :   // A.diagonal().head(S) = z_map.array();</span>
+<span id="L240"><span class="lineNum">     240</span>              :   // A.row(S).head(S) = q;</span>
+<span id="L241"><span class="lineNum">     241</span>              :   // A.col(S).head(S) = Eigen::VectorXcd::Ones(S);</span>
+<span id="L242"><span class="lineNum">     242</span>              : </span>
+<span id="L243"><span class="lineNum">     243</span>              :   // Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);</span>
+<span id="L244"><span class="lineNum">     244</span>              :   // B(S, S) = 0.0;</span>
+<span id="L245"><span class="lineNum">     245</span>              : </span>
+<span id="L246"><span class="lineNum">     246</span>              :   // Eigen::VectorXcd D;</span>
+<span id="L247"><span class="lineNum">     247</span>              :   // Eigen::MatrixXcd X;</span>
+<span id="L248"><span class="lineNum">     248</span>              :   // ZGGEV(A, B, D, X);</span>
+<span id="L249"><span class="lineNum">     249</span>              : </span>
+<span id="L250"><span class="lineNum">     250</span>              :   // // If there are multiple roots in [start, end], pick the ones furthest from the</span>
+<span id="L251"><span class="lineNum">     251</span>              :   // // existing set of samples.</span>
+<span id="L252"><span class="lineNum">     252</span>              :   // {</span>
+<span id="L253"><span class="lineNum">     253</span>              :   //   std::vector&lt;double&gt; dist_star(N, 0.0);</span>
+<span id="L254"><span class="lineNum">     254</span>              :   //   for (auto d : D)</span>
+<span id="L255"><span class="lineNum">     255</span>              :   //   {</span>
+<span id="L256"><span class="lineNum">     256</span>              :   //     if (std::real(d) &lt; start || std::real(d) &gt; end)</span>
+<span id="L257"><span class="lineNum">     257</span>              :   //     {</span>
+<span id="L258"><span class="lineNum">     258</span>              :   //       continue;</span>
+<span id="L259"><span class="lineNum">     259</span>              :   //     }</span>
+<span id="L260"><span class="lineNum">     260</span>              :   //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();</span>
+<span id="L261"><span class="lineNum">     261</span>              :   //     for (int i = 0; i &lt; N; i++)</span>
+<span id="L262"><span class="lineNum">     262</span>              :   //     {</span>
+<span id="L263"><span class="lineNum">     263</span>              :   //       if (dist &gt; dist_star[i])</span>
+<span id="L264"><span class="lineNum">     264</span>              :   //       {</span>
+<span id="L265"><span class="lineNum">     265</span>              :   //         for (int j = i + 1; j &lt; N; j++)</span>
+<span id="L266"><span class="lineNum">     266</span>              :   //         {</span>
+<span id="L267"><span class="lineNum">     267</span>              :   //           z_star[j] = z_star[j - 1];</span>
+<span id="L268"><span class="lineNum">     268</span>              :   //           dist_star[j] = dist_star[j - 1];</span>
+<span id="L269"><span class="lineNum">     269</span>              :   //         }</span>
+<span id="L270"><span class="lineNum">     270</span>              :   //         z_star[i] = start;</span>
+<span id="L271"><span class="lineNum">     271</span>              :   //         dist_star[i] = dist;</span>
+<span id="L272"><span class="lineNum">     272</span>              :   //       }</span>
+<span id="L273"><span class="lineNum">     273</span>              :   //     }</span>
+<span id="L274"><span class="lineNum">     274</span>              :   //   }</span>
+<span id="L275"><span class="lineNum">     275</span>              :   // }</span>
+<span id="L276"><span class="lineNum">     276</span>              : </span>
+<span id="L277"><span class="lineNum">     277</span>              :   // Fall back to sampling Q on discrete points if no roots exist in [start, end].</span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaUNC">           0 :   if (std::abs(z_star[0]) == 0.0)</span></span>
+<span id="L279"><span class="lineNum">     279</span>              :   {</span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaUNC">           0 :     const auto delta = (end - start) / 1.0e6;</span></span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaUNC">           0 :     std::vector&lt;double&gt; Q_star(N, mfem::infinity());</span></span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaUNC">           0 :     while (start &lt;= end)</span></span>
+<span id="L283"><span class="lineNum">     283</span>              :     {</span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaUNC">           0 :       const double Q = std::abs((q.array() / (z_map.array() - start)).sum());</span></span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaUNC">           0 :       for (int i = 0; i &lt; N; i++)</span></span>
+<span id="L286"><span class="lineNum">     286</span>              :       {</span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaUNC">           0 :         if (Q &lt; Q_star[i])</span></span>
+<span id="L288"><span class="lineNum">     288</span>              :         {</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaUNC">           0 :           for (int j = i + 1; j &lt; N; j++)</span></span>
+<span id="L290"><span class="lineNum">     290</span>              :           {</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaUNC">           0 :             z_star[j] = z_star[j - 1];</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :             Q_star[j] = Q_star[j - 1];</span></span>
+<span id="L293"><span class="lineNum">     293</span>              :           }</span>
+<span id="L294"><span class="lineNum">     294</span>              :           z_star[i] = start;</span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaUNC">           0 :           Q_star[i] = Q;</span></span>
+<span id="L296"><span class="lineNum">     296</span>              :         }</span>
+<span id="L297"><span class="lineNum">     297</span>              :       }</span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaUNC">           0 :       start += delta;</span></span>
+<span id="L299"><span class="lineNum">     299</span>              :     }</span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(</span></span>
+<span id="L301"><span class="lineNum">     301</span>              :         N == 0 || std::abs(z_star[0]) &gt; 0.0,</span>
+<span id="L302"><span class="lineNum">     302</span>              :         fmt::format(&quot;Could not locate a maximum error in the range [{}, {}]!&quot;, start, end));</span>
+<span id="L303"><span class="lineNum">     303</span>              :   }</span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :   std::vector&lt;double&gt; vals(z_star.size());</span></span>
+<span id="L305"><span class="lineNum">     305</span>              :   std::transform(z_star.begin(), z_star.end(), vals.begin(),</span>
+<span id="L306"><span class="lineNum">     306</span>              :                  [](std::complex&lt;double&gt; z) { return std::real(z); });</span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC">           0 :   return vals;</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaUNC">           0 : RomOperator::RomOperator(const IoData &amp;iodata, SpaceOperator &amp;space_op,</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaUNC">           0 :                          int max_size_per_excitation)</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaUNC">           0 :   : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)</span></span>
+<span id="L313"><span class="lineNum">     313</span>              : {</span>
+<span id="L314"><span class="lineNum">     314</span>              :   // Construct the system matrices defining the linear operator. PEC boundaries are handled</span>
+<span id="L315"><span class="lineNum">     315</span>              :   // simply by setting diagonal entries of the system matrix for the corresponding dofs.</span>
+<span id="L316"><span class="lineNum">     316</span>              :   // Because the Dirichlet BC is always homogeneous, no special elimination is required on</span>
+<span id="L317"><span class="lineNum">     317</span>              :   // the RHS. The damping matrix may be nullptr.</span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaUNC">           0 :   K = space_op.GetStiffnessMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ONE);</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaUNC">           0 :   C = space_op.GetDampingMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaUNC">           0 :   M = space_op.GetMassMatrix&lt;ComplexOperator&gt;(Operator::DIAG_ZERO);</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(K &amp;&amp; M, &quot;Invalid empty HDM matrices when constructing PROM!&quot;);</span></span>
+<span id="L322"><span class="lineNum">     322</span>              : </span>
+<span id="L323"><span class="lineNum">     323</span>              :   // Initialize working vector storage.</span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaUNC">           0 :   r.SetSize(K-&gt;Height());</span></span>
+<span id="L325"><span class="lineNum">     325</span> <span class="tlaUNC">           0 :   r.UseDevice(true);</span></span>
+<span id="L326"><span class="lineNum">     326</span>              : </span>
+<span id="L327"><span class="lineNum">     327</span>              :   // Set up the linear solver and set operators but don't set the operators yet (this will</span>
+<span id="L328"><span class="lineNum">     328</span>              :   // be done during an HDM solve at a given parameter point). The preconditioner for the</span>
+<span id="L329"><span class="lineNum">     329</span>              :   // complex linear system is constructed from a real approximation to the complex system</span>
+<span id="L330"><span class="lineNum">     330</span>              :   // matrix.</span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaUNC">           0 :   ksp = std::make_unique&lt;ComplexKspSolver&gt;(iodata, space_op.GetNDSpaces(),</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaUNC">           0 :                                            &amp;space_op.GetH1Spaces());</span></span>
+<span id="L333"><span class="lineNum">     333</span>              : </span>
+<span id="L334"><span class="lineNum">     334</span>              :   auto excitation_helper = space_op.GetPortExcitations();</span>
+<span id="L335"><span class="lineNum">     335</span>              : </span>
+<span id="L336"><span class="lineNum">     336</span>              :   // The initial PROM basis is empty. The provided maximum dimension is the number of sample</span>
+<span id="L337"><span class="lineNum">     337</span>              :   // points (2 basis vectors per point). Basis orthogonalization method is configured using</span>
+<span id="L338"><span class="lineNum">     338</span>              :   // GMRES/FGMRES settings.</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(max_size_per_excitation * excitation_helper.Size() &gt; 0,</span></span>
+<span id="L340"><span class="lineNum">     340</span>              :               &quot;Reduced order basis storage must have &gt; 0 columns!&quot;);</span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 :   V.resize(2 * max_size_per_excitation * excitation_helper.Size(), Vector());</span></span>
+<span id="L342"><span class="lineNum">     342</span>              : </span>
+<span id="L343"><span class="lineNum">     343</span>              :   // Set up MRI.</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC">           0 :   for (const auto &amp;[excitation_idx, data] : excitation_helper)</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :   {</span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaUNC">           0 :     mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));</span></span>
+<span id="L347"><span class="lineNum">     347</span>              :   }</span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L349"><span class="lineNum">     349</span>              : </span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaUNC">           0 : void RomOperator::SetExcitationIndex(int excitation_idx)</span></span>
+<span id="L351"><span class="lineNum">     351</span>              : {</span>
+<span id="L352"><span class="lineNum">     352</span>              :   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,</span>
+<span id="L353"><span class="lineNum">     353</span>              :   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaUNC">           0 :   excitation_idx_cache = excitation_idx;</span></span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaUNC">           0 :   has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);</span></span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :   if (!has_RHS1)</span></span>
+<span id="L357"><span class="lineNum">     357</span>              :   {</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :     RHS1.SetSize(0);</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :   }</span>
+<span id="L360"><span class="lineNum">     360</span>              :   else</span>
+<span id="L361"><span class="lineNum">     361</span>              :   {</span>
+<span id="L362"><span class="lineNum">     362</span>              :     // Project RHS1 to RHS1r with current PROM.</span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaUNC">           0 :     if (dim_V &gt; 0)</span></span>
+<span id="L364"><span class="lineNum">     364</span>              :     {</span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaUNC">           0 :       auto comm = space_op.GetComm();</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaUNC">           0 :       RHS1r.conservativeResize(dim_V);</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaUNC">           0 :       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);</span></span>
+<span id="L368"><span class="lineNum">     368</span>              :     }</span>
+<span id="L369"><span class="lineNum">     369</span>              :   }</span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L371"><span class="lineNum">     371</span>              : </span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaUNC">           0 : void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &amp;u)</span></span>
+<span id="L373"><span class="lineNum">     373</span>              : {</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaUNC">           0 :   if (excitation_idx_cache != excitation_idx)</span></span>
+<span id="L375"><span class="lineNum">     375</span>              :   {</span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaUNC">           0 :     SetExcitationIndex(excitation_idx);</span></span>
+<span id="L377"><span class="lineNum">     377</span>              :   }</span>
+<span id="L378"><span class="lineNum">     378</span>              :   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +</span>
+<span id="L379"><span class="lineNum">     379</span>              :   // A2(ω) is built by summing the underlying operator contributions.</span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaUNC">           0 :   A2 = space_op.GetExtraSystemMatrix&lt;ComplexOperator&gt;(omega, Operator::DIAG_ZERO);</span></span>
+<span id="L381"><span class="lineNum">     381</span> <span class="tlaUNC">           0 :   has_A2 = (A2 != nullptr);</span></span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaUNC">           0 :   auto A = space_op.GetSystemMatrix(std::complex&lt;double&gt;(1.0, 0.0), 1i * omega,</span></span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaUNC">           0 :                                     std::complex&lt;double&gt;(-omega * omega, 0.0), K.get(),</span></span>
+<span id="L384"><span class="lineNum">     384</span> <span class="tlaUNC">           0 :                                     C.get(), M.get(), A2.get());</span></span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :   auto P = space_op.GetPreconditionerMatrix&lt;ComplexOperator&gt;(1.0 + 0.0i, 1i * omega,</span></span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaUNC">           0 :                                                              -omega * omega + 0.0i, omega);</span></span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaUNC">           0 :   ksp-&gt;SetOperators(*A, *P);</span></span>
+<span id="L388"><span class="lineNum">     388</span>              : </span>
+<span id="L389"><span class="lineNum">     389</span>              :   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).</span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaUNC">           0 :   if (has_RHS2)</span></span>
+<span id="L392"><span class="lineNum">     392</span>              :   {</span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaUNC">           0 :     has_RHS2 = space_op.GetExcitationVector2(excitation_idx, omega, r);</span></span>
+<span id="L394"><span class="lineNum">     394</span>              :   }</span>
+<span id="L395"><span class="lineNum">     395</span>              :   else</span>
+<span id="L396"><span class="lineNum">     396</span>              :   {</span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaUNC">           0 :     r = 0.0;</span></span>
+<span id="L398"><span class="lineNum">     398</span>              :   }</span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaUNC">           0 :   if (has_RHS1)</span></span>
+<span id="L400"><span class="lineNum">     400</span>              :   {</span>
+<span id="L401"><span class="lineNum">     401</span> <span class="tlaUNC">           0 :     r.Add(1i * omega, RHS1);</span></span>
+<span id="L402"><span class="lineNum">     402</span>              :   }</span>
+<span id="L403"><span class="lineNum">     403</span>              : </span>
+<span id="L404"><span class="lineNum">     404</span>              :   // Solve the linear system.</span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaUNC">           0 :   ksp-&gt;Mult(r, u);</span></span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L407"><span class="lineNum">     407</span>              : </span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaUNC">           0 : void RomOperator::UpdatePROM(const ComplexVector &amp;u)</span></span>
+<span id="L409"><span class="lineNum">     409</span>              : {</span>
+<span id="L410"><span class="lineNum">     410</span>              : </span>
+<span id="L411"><span class="lineNum">     411</span>              :   // Update V. The basis is always real (each complex solution adds two basis vectors if it</span>
+<span id="L412"><span class="lineNum">     412</span>              :   // has a nonzero real and imaginary parts).</span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::CONSTRUCT_PROM);</span></span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaUNC">           0 :   MPI_Comm comm = space_op.GetComm();</span></span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaUNC">           0 :   const double normr = linalg::Norml2(comm, u.Real());</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaUNC">           0 :   const double normi = linalg::Norml2(comm, u.Imag());</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaUNC">           0 :   const bool has_real = (normr &gt; ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));</span></span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaUNC">           0 :   const bool has_imag = (normi &gt; ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));</span></span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(dim_V + has_real + has_imag &lt;= V.size(),</span></span>
+<span id="L420"><span class="lineNum">     420</span>              :               &quot;Unable to increase basis storage size, increase maximum number of vectors!&quot;);</span>
+<span id="L421"><span class="lineNum">     421</span>              :   const std::size_t dim_V0 = dim_V;</span>
+<span id="L422"><span class="lineNum">     422</span>              :   std::vector&lt;double&gt; H(dim_V + static_cast&lt;std::size_t&gt;(has_real) +</span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaUNC">           0 :                         static_cast&lt;std::size_t&gt;(has_imag));</span></span>
+<span id="L424"><span class="lineNum">     424</span> <span class="tlaUNC">           0 :   if (has_real)</span></span>
+<span id="L425"><span class="lineNum">     425</span>              :   {</span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaUNC">           0 :     V[dim_V] = u.Real();</span></span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaUNC">           0 :     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaUNC">           0 :     H[dim_V] = linalg::Norml2(comm, V[dim_V]);</span></span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaUNC">           0 :     V[dim_V] *= 1.0 / H[dim_V];</span></span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaUNC">           0 :     dim_V++;</span></span>
+<span id="L431"><span class="lineNum">     431</span>              :   }</span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaUNC">           0 :   if (has_imag)</span></span>
+<span id="L433"><span class="lineNum">     433</span>              :   {</span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaUNC">           0 :     V[dim_V] = u.Imag();</span></span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :     OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);</span></span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC">           0 :     H[dim_V] = linalg::Norml2(comm, V[dim_V]);</span></span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaUNC">           0 :     V[dim_V] *= 1.0 / H[dim_V];</span></span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaUNC">           0 :     dim_V++;</span></span>
+<span id="L439"><span class="lineNum">     439</span>              :   }</span>
+<span id="L440"><span class="lineNum">     440</span>              : </span>
+<span id="L441"><span class="lineNum">     441</span>              :   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each</span>
+<span id="L442"><span class="lineNum">     442</span>              :   // matrix and first dim0 entries of each vector and the projection uses the values</span>
+<span id="L443"><span class="lineNum">     443</span>              :   // computed for the unchanged basis vectors.</span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaUNC">           0 :   Kr.conservativeResize(dim_V, dim_V);</span></span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaUNC">           0 :   ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaUNC">           0 :   if (C)</span></span>
+<span id="L447"><span class="lineNum">     447</span>              :   {</span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaUNC">           0 :     Cr.conservativeResize(dim_V, dim_V);</span></span>
+<span id="L449"><span class="lineNum">     449</span> <span class="tlaUNC">           0 :     ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);</span></span>
+<span id="L450"><span class="lineNum">     450</span>              :   }</span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC">           0 :   Mr.conservativeResize(dim_V, dim_V);</span></span>
+<span id="L452"><span class="lineNum">     452</span> <span class="tlaUNC">           0 :   ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);</span></span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :   Ar.resize(dim_V, dim_V);</span></span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaUNC">           0 :   if (RHS1.Size())</span></span>
+<span id="L455"><span class="lineNum">     455</span>              :   {</span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaUNC">           0 :     RHS1r.conservativeResize(dim_V);</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaUNC">           0 :     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :   }</span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaUNC">           0 :   RHSr.resize(dim_V);</span></span>
+<span id="L460"><span class="lineNum">     460</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L461"><span class="lineNum">     461</span>              : </span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaUNC">           0 : void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &amp;u)</span></span>
+<span id="L463"><span class="lineNum">     463</span>              : {</span>
+<span id="L464"><span class="lineNum">     464</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::CONSTRUCT_PROM);</span></span>
+<span id="L465"><span class="lineNum">     465</span> <span class="tlaUNC">           0 :   mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);</span></span>
+<span id="L466"><span class="lineNum">     466</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L467"><span class="lineNum">     467</span>              : </span>
+<span id="L468"><span class="lineNum">     468</span> <span class="tlaUNC">           0 : void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &amp;u)</span></span>
+<span id="L469"><span class="lineNum">     469</span>              : {</span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaUNC">           0 :   if (excitation_idx_cache != excitation_idx)</span></span>
+<span id="L471"><span class="lineNum">     471</span>              :   {</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaUNC">           0 :     SetExcitationIndex(excitation_idx);</span></span>
+<span id="L473"><span class="lineNum">     473</span>              :   }</span>
+<span id="L474"><span class="lineNum">     474</span>              : </span>
+<span id="L475"><span class="lineNum">     475</span>              :   // Assemble the PROM linear system at the given frequency. The PROM system is defined by</span>
+<span id="L476"><span class="lineNum">     476</span>              :   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =</span>
+<span id="L477"><span class="lineNum">     477</span>              :   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are</span>
+<span id="L478"><span class="lineNum">     478</span>              :   // only nonzero on boundaries, will be empty if not needed.</span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaUNC">           0 :   if (has_A2 &amp;&amp; Ar.rows() &gt; 0)</span></span>
+<span id="L480"><span class="lineNum">     480</span>              :   {</span>
+<span id="L481"><span class="lineNum">     481</span> <span class="tlaUNC">           0 :     A2 = space_op.GetExtraSystemMatrix&lt;ComplexOperator&gt;(omega, Operator::DIAG_ZERO);</span></span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaUNC">           0 :     ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);</span></span>
+<span id="L483"><span class="lineNum">     483</span>              :   }</span>
+<span id="L484"><span class="lineNum">     484</span>              :   else</span>
+<span id="L485"><span class="lineNum">     485</span>              :   {</span>
+<span id="L486"><span class="lineNum">     486</span> <span class="tlaUNC">           0 :     Ar.setZero();</span></span>
+<span id="L487"><span class="lineNum">     487</span>              :   }</span>
+<span id="L488"><span class="lineNum">     488</span> <span class="tlaUNC">           0 :   Ar += Kr;</span></span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaUNC">           0 :   if (C)</span></span>
+<span id="L490"><span class="lineNum">     490</span>              :   {</span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaUNC">           0 :     Ar += (1i * omega) * Cr;</span></span>
+<span id="L492"><span class="lineNum">     492</span>              :   }</span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC">           0 :   Ar += (-omega * omega) * Mr;</span></span>
+<span id="L494"><span class="lineNum">     494</span>              : </span>
+<span id="L495"><span class="lineNum">     495</span> <span class="tlaUNC">           0 :   if (has_RHS2 &amp;&amp; RHSr.size() &gt; 0)</span></span>
+<span id="L496"><span class="lineNum">     496</span>              :   {</span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaUNC">           0 :     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);</span></span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaUNC">           0 :     ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);</span></span>
+<span id="L499"><span class="lineNum">     499</span>              :   }</span>
+<span id="L500"><span class="lineNum">     500</span>              :   else</span>
+<span id="L501"><span class="lineNum">     501</span>              :   {</span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaUNC">           0 :     RHSr.setZero();</span></span>
+<span id="L503"><span class="lineNum">     503</span>              :   }</span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaUNC">           0 :   if (has_RHS1)</span></span>
+<span id="L505"><span class="lineNum">     505</span>              :   {</span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaUNC">           0 :     RHSr += (1i * omega) * RHS1r;</span></span>
+<span id="L507"><span class="lineNum">     507</span>              :   }</span>
+<span id="L508"><span class="lineNum">     508</span>              : </span>
+<span id="L509"><span class="lineNum">     509</span>              :   // Compute PROM solution at the given frequency and expand into high-dimensional space.</span>
+<span id="L510"><span class="lineNum">     510</span>              :   // The PROM is solved on every process so the matrix-vector product for vector expansion</span>
+<span id="L511"><span class="lineNum">     511</span>              :   // does not require communication.</span>
+<span id="L512"><span class="lineNum">     512</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::SOLVE_PROM);</span></span>
+<span id="L513"><span class="lineNum">     513</span>              :   if constexpr (false)</span>
+<span id="L514"><span class="lineNum">     514</span>              :   {</span>
+<span id="L515"><span class="lineNum">     515</span>              :     // LDLT solve.</span>
+<span id="L516"><span class="lineNum">     516</span>              :     RHSr = Ar.ldlt().solve(RHSr);</span>
+<span id="L517"><span class="lineNum">     517</span>              :     RHSr = Ar.selfadjointView&lt;Eigen::Lower&gt;().ldlt().solve(RHSr);</span>
+<span id="L518"><span class="lineNum">     518</span>              :   }</span>
+<span id="L519"><span class="lineNum">     519</span>              :   else</span>
+<span id="L520"><span class="lineNum">     520</span>              :   {</span>
+<span id="L521"><span class="lineNum">     521</span>              :     // LU solve.</span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaUNC">           0 :     RHSr = Ar.partialPivLu().solve(RHSr);</span></span>
+<span id="L523"><span class="lineNum">     523</span>              :   }</span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaUNC">           0 :   ProlongatePROMSolution(dim_V, V, RHSr, u);</span></span>
+<span id="L525"><span class="lineNum">     525</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L526"><span class="lineNum">     526</span>              : </span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaUNC">           0 : std::vector&lt;std::complex&lt;double&gt;&gt; RomOperator::ComputeEigenvalueEstimates() const</span></span>
+<span id="L528"><span class="lineNum">     528</span>              : {</span>
+<span id="L529"><span class="lineNum">     529</span>              :   // XX TODO: Not yet implemented</span>
+<span id="L530"><span class="lineNum">     530</span> <span class="tlaUNC">           0 :   MFEM_ABORT(&quot;Eigenvalue estimates for PROM operators are not yet implemented!&quot;);</span></span>
+<span id="L531"><span class="lineNum">     531</span>              :   return {};</span>
+<span id="L532"><span class="lineNum">     532</span>              : }</span>
+<span id="L533"><span class="lineNum">     533</span>              : </span>
+<span id="L534"><span class="lineNum">     534</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
