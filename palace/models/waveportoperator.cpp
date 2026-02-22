@@ -713,8 +713,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
           {
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
-                port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
-                0.0, true, data.verbose - 1);
+                port_comm, MatrixSymmetry::UNSYMMETRIC, SymbolicFactorization::DEFAULT, 0.0,
+                true, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
@@ -1041,21 +1041,32 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
   return dot;
 }
 
+WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
+                                   const config::SolverData &solver,
+                                   ProblemType problem_type, const Units &units,
+                                   const MaterialOperator &mat_op,
+                                   mfem::ParFiniteElementSpace &nd_fespace,
+                                   mfem::ParFiniteElementSpace &h1_fespace)
+  : suppress_output(false), fc(units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
+    kc(1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
+{
+  MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
+              "Mesh mismatch in WavePortOperator FE spaces!");
+  SetUpBoundaryProperties(boundaries, solver, problem_type, mat_op, nd_fespace, h1_fespace);
+  PrintBoundaryInfo(units, *nd_fespace.GetParMesh());
+}
+
 WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                    mfem::ParFiniteElementSpace &nd_fespace,
                                    mfem::ParFiniteElementSpace &h1_fespace)
-  : suppress_output(false),
-    fc(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
-    kc(1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
+  : WavePortOperator(iodata.boundaries, iodata.solver, iodata.problem.type, iodata.units,
+                     mat_op, nd_fespace, h1_fespace)
 {
-  // Set up wave port boundary conditions.
-  MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
-              "Mesh mismatch in WavePortOperator FE spaces!");
-  SetUpBoundaryProperties(iodata, mat_op, nd_fespace, h1_fespace);
-  PrintBoundaryInfo(iodata, *nd_fespace.GetParMesh());
 }
 
-void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
+void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &boundaries,
+                                               const config::SolverData &solver,
+                                               ProblemType problem_type,
                                                const MaterialOperator &mat_op,
                                                mfem::ParFiniteElementSpace &nd_fespace,
                                                mfem::ParFiniteElementSpace &h1_fespace)
@@ -1063,7 +1074,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Check that wave port boundary attributes have been specified correctly.
   const auto &mesh = *nd_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  if (!iodata.boundaries.waveport.empty())
+  if (!boundaries.waveport.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -1072,7 +1083,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    for (const auto &[idx, data] : iodata.boundaries.waveport)
+    for (const auto &[idx, data] : boundaries.waveport)
     {
       for (auto attr : data.attributes)
       {
@@ -1089,52 +1100,46 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // List of all boundaries which will be marked as essential for the purposes of computing
-  // wave port modes. This includes all PEC surfaces, but may also include others like when
-  // a kinetic inductance or other BC is applied for the 3D simulation but should be
-  // considered as PEC for the 2D problem. In addition, we mark as Dirichlet boundaries all
-  // wave ports other than the wave port being currently considered, in case two wave ports
-  // are touching and share one or more edges.
+  // wave port modes.
   mfem::Array<int> dbc_bcs;
-  dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
-                                   iodata.boundaries.auxpec.attributes.size() +
-                                   iodata.boundaries.conductivity.size()));
-  for (auto attr : iodata.boundaries.pec.attributes)
+  dbc_bcs.Reserve(static_cast<int>(boundaries.pec.attributes.size() +
+                                   boundaries.auxpec.attributes.size() +
+                                   boundaries.conductivity.size()));
+  for (auto attr : boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
     {
-      continue;  // Can just ignore if wrong
+      continue;
     }
     dbc_bcs.Append(attr);
   }
-  for (auto attr : iodata.boundaries.auxpec.attributes)
+  for (auto attr : boundaries.auxpec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
     {
-      continue;  // Can just ignore if wrong
+      continue;
     }
     dbc_bcs.Append(attr);
   }
-  for (const auto &data : iodata.boundaries.conductivity)
+  for (const auto &data : boundaries.conductivity)
   {
     for (auto attr : data.attributes)
     {
       if (attr <= 0 || attr > bdr_attr_max)
       {
-        continue;  // Can just ignore if wrong
+        continue;
       }
       dbc_bcs.Append(attr);
     }
   }
-  // If user accidentally specifies a surface as both "PEC" and "WavePortPEC", this is fine
-  // so allow for duplicates in the attribute list.
   dbc_bcs.Sort();
   dbc_bcs.Unique();
 
   // Set up wave port data structures.
-  for (const auto &[idx, data] : iodata.boundaries.waveport)
+  for (const auto &[idx, data] : boundaries.waveport)
   {
     mfem::Array<int> port_dbc_bcs(dbc_bcs);
-    for (const auto &[other_idx, other_data] : iodata.boundaries.waveport)
+    for (const auto &[other_idx, other_data] : boundaries.waveport)
     {
       if (other_idx == idx || !other_data.active)
       {
@@ -1151,16 +1156,15 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
-    ports.try_emplace(idx, data, iodata.solver, mat_op, nd_fespace, h1_fespace,
-                      port_dbc_bcs);
+    ports.try_emplace(idx, data, solver, mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
   }
   MFEM_VERIFY(
-      ports.empty() || iodata.problem.type == ProblemType::DRIVEN ||
-          iodata.problem.type == ProblemType::EIGENMODE,
+      ports.empty() || problem_type == ProblemType::DRIVEN ||
+          problem_type == ProblemType::EIGENMODE,
       "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 
-void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
+void WavePortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh)
 {
   if (ports.empty())
   {
@@ -1180,8 +1184,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     for (auto attr : data.GetAttrList())
     {
       to(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr, idx,
-         data.mode_idx,
-         iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
+         data.mode_idx, units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
          fmt::join(data.port_normal, ","));
     }
   }

@@ -19,6 +19,18 @@ namespace palace
 class IoData;
 class Mesh;
 
+namespace config
+{
+
+struct BoundaryData;
+struct MaterialData;
+struct PecBoundaryData;
+struct SolverData;
+
+}  // namespace config
+
+enum class ProblemType : char;
+
 //
 // A class handling discretization of curl-curl problems for magnetostatics.
 //
@@ -47,10 +59,15 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
+                                           const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
 public:
+  CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
+                   const std::vector<config::MaterialData> &materials,
+                   ProblemType problem_type,
+                   const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.

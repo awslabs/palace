@@ -6,6 +6,7 @@
 
 #include <array>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -861,6 +862,10 @@ public:
   // (makes the preconditioner matrix SPD).
   int pc_mat_shifted = -1;
 
+  // Matrix symmetry type for sparse direct solvers (computed from problem type and
+  // boundary conditions).
+  MatrixSymmetry pc_mat_sym = MatrixSymmetry::UNSYMMETRIC;
+
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.
   bool complex_coarse_solve = false;
@@ -969,6 +974,38 @@ int GetNumSteps(double start, double end, double delta);
 // Parse a string as a direction vector, returning the direction and coordinate system.
 std::pair<std::array<double, 3>, CoordinateSystem>
 ParseStringAsDirection(std::string str, bool required = true);
+
+// Validation functions for cross-field checks. Return empty string if valid, otherwise
+// return all error messages concatenated.
+std::optional<std::string> Validate(const BoundaryData &boundaries);
+
+}  // namespace palace::config
+
+// Forward declare Units for Nondimensionalize functions.
+namespace palace
+{
+class Units;
+}  // namespace palace
+
+namespace palace::config
+{
+
+// Nondimensionalization functions. Each function nondimensionalizes the fields of the
+// given struct using the provided Units.
+void Nondimensionalize(const Units &units, RefinementData &data);
+void Nondimensionalize(const Units &units, MaterialData &data);
+void Nondimensionalize(const Units &units, ProbeData &data);
+void Nondimensionalize(const Units &units, CurrentDipoleData &data);
+void Nondimensionalize(const Units &units, ConductivityData &data);
+void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, LumpedPortData &data);
+void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
+void Nondimensionalize(const Units &units, WavePortData &data);
+void Nondimensionalize(const Units &units, SurfaceFluxData &data);
+void Nondimensionalize(const Units &units, InterfaceDielectricData &data);
+void Nondimensionalize(const Units &units, EigenSolverData &data);
+void Nondimensionalize(const Units &units, DrivenSolverData &data);
+void Nondimensionalize(const Units &units, TransientSolverData &data);
 
 }  // namespace palace::config
 

@@ -1316,7 +1316,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
 }
 
 template <ProblemType solver_t>
-PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
+PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
+                                           const config::SolverData &solver,
+                                           const config::BoundaryData &boundaries,
+                                           const Units &units,
                                            const fem_op_t<solver_t> &fem_op)
 {
   if (!Mpi::Root(fem_op.GetComm()))
@@ -1324,7 +1327,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
     return;
   }
 
-  post_dir = iodata.problem.output;
+  post_dir = problem.output;
 
   // Initialize multi-excitation column group index. Only driven or transient support
   // excitations; for other solvers this is default to a single idx=0.
@@ -1344,33 +1347,40 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
   // Driven solver: can have non-trivial restart.
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
-    nr_expected_measurement_rows = iodata.solver.driven.sample_f.size();
-    reload_table = (iodata.solver.driven.restart != 1);
+    nr_expected_measurement_rows = solver.driven.sample_f.size();
+    reload_table = (solver.driven.restart != 1);
 
-    row_i = (iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
-    ex_idx_i = (iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;
+    row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
+    ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
   }
 
   // Non-driven solver: get nr_expected_measurement_rows to reserve table space.
   if (solver_t == ProblemType::EIGENMODE)
   {
-    nr_expected_measurement_rows = iodata.solver.eigenmode.n;
+    nr_expected_measurement_rows = solver.eigenmode.n;
   }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
-    nr_expected_measurement_rows = iodata.solver.electrostatic.n_post;
+    nr_expected_measurement_rows = solver.electrostatic.n_post;
   }
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
-    nr_expected_measurement_rows = iodata.solver.magnetostatic.n_post;
+    nr_expected_measurement_rows = solver.magnetostatic.n_post;
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
     // Estimate number for fixed (linear) stepping.
     nr_expected_measurement_rows =
-        std::size_t(iodata.solver.transient.max_t / iodata.solver.transient.delta_t) + 1;
+        std::size_t(solver.transient.max_t / solver.transient.delta_t) + 1;
   }
+}
+
+template <ProblemType solver_t>
+PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
+                                           const fem_op_t<solver_t> &fem_op)
+  : PostOperatorCSV(iodata.problem, iodata.solver, iodata.boundaries, iodata.units, fem_op)
+{
 }
 
 // Explicit template instantiation.
