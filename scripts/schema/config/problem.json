@@ -9,7 +9,7 @@
     "Type":
     {
       "type": "string",
-      "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic", "ModeAnalysis", "QuadModeAnalysis"]
+      "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic", "ModeAnalysis", "QuadModeAnalysis", "NewModeAnalysis"]
     },
     "Verbose": { "type": "integer", "minimum": 0 },
     "Output": { "type": "string" },

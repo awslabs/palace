@@ -10,6 +10,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/boundarymodesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/quadboundarymodesolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/newboundarymodesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/currentdipoleoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/farfieldboundaryoperator.cpp
