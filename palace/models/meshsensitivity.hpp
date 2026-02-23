@@ -17,19 +17,15 @@ class IoData;
 class SpaceOperator;
 
 //
-// Computes mesh sensitivities dJ/dx for boundary nodes via finite differences.
+// Computes mesh sensitivities df/dx for mesh nodes.
 //
-// For a system matrix A(x) = K(x) + i*omega*C(x) - omega^2*M(x) that depends on mesh
-// node positions x through the geometry (Jacobians, determinants), the sensitivity of a
-// scalar objective J = v^H * A(x) * u with respect to boundary node position x_i in
-// direction d is approximated by forward finite differences:
+// For the linear eigenvalue problem (lossless), analytic differentiation via Enzyme AD or
+// forward-mode dual numbers produces exact mesh sensitivities in a single CeedOperator
+// pass — same cost as one K*u evaluation. The differentiation mechanism (Enzyme vs dual
+// numbers) is selected at compile time and encapsulated in the QFunction layer.
 //
-//   dJ/dx_{i,d} = (v^H * A(x + h*e_{i,d}) * u - v^H * A(x) * u) / h
-//
-// where e_{i,d} is the unit perturbation of node i in spatial direction d.
-//
-// This is O(3 * num_bdr_nodes) operator reassemblies — expensive but correct. It serves
-// as the reference implementation for verifying future analytic QFunction differentiation.
+// For the quadratic EVP (lossy) and driven problems, a finite difference fallback is
+// provided until the analytic path supports the damping term C.
 //
 class MeshSensitivity
 {

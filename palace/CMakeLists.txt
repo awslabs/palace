@@ -35,6 +35,7 @@ set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
+set(PALACE_WITH_ENZYME OFF CACHE BOOL "Build with Enzyme AD for analytic mesh sensitivity (requires Clang)")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -611,6 +612,31 @@ target_link_libraries(
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB
+  )
+endif()
+if(PALACE_WITH_ENZYME)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|IntelLLVM")
+    message(FATAL_ERROR "PALACE_WITH_ENZYME requires a Clang-based compiler (detected: ${CMAKE_CXX_COMPILER_ID})")
+  endif()
+  set(ENZYME_PLUGIN_PATH "" CACHE STRING "Path to ClangEnzyme shared library (auto-detected if empty)")
+  if("${ENZYME_PLUGIN_PATH}" STREQUAL "")
+    # Auto-detect from Homebrew (macOS) or standard locations.
+    find_file(ENZYME_PLUGIN_PATH_FOUND
+      NAMES ClangEnzyme-21.dylib ClangEnzyme-20.dylib ClangEnzyme-19.dylib
+            ClangEnzyme-21.so ClangEnzyme-20.so ClangEnzyme-19.so
+      PATHS /opt/homebrew/opt/enzyme/lib /usr/lib/enzyme /usr/local/lib/enzyme
+      NO_DEFAULT_PATH
+    )
+    if(ENZYME_PLUGIN_PATH_FOUND)
+      set(ENZYME_PLUGIN_PATH "${ENZYME_PLUGIN_PATH_FOUND}")
+    else()
+      message(FATAL_ERROR "PALACE_WITH_ENZYME is ON but Enzyme plugin not found. "
+                          "Set ENZYME_PLUGIN_PATH or install Enzyme.")
+    endif()
+  endif()
+  message(STATUS "Enzyme AD plugin: ${ENZYME_PLUGIN_PATH}")
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_ENZYME
   )
 endif()
 if(PALACE_WITH_GPU_AWARE_MPI)

@@ -27,6 +27,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedveccurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/meshsensitivity.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/vecfemass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/basis.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/ceed.cpp
@@ -35,6 +36,15 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/restriction.cpp
 )
+
+# Apply Enzyme plugin flag to sensitivity sources only (the QFunction header uses
+# __enzyme_autodiff which requires the compiler plugin at translation time).
+if(PALACE_WITH_ENZYME)
+  set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/integ/meshsensitivity.cpp
+    PROPERTIES COMPILE_OPTIONS "-fplugin=${ENZYME_PLUGIN_PATH}"
+  )
+endif()
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE

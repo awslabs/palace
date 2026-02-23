@@ -8,8 +8,10 @@
 #include <fstream>
 #include <limits>
 #include <set>
+#include "fem/integ/meshsensitivity.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -217,22 +219,117 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
                                const ComplexVector &u, std::complex<double> omega,
                                bool has_damping, double perturbation)
 {
-  // For the eigenvalue problem, the adjoint vector is the eigenvector itself.
-  // The FD loop computes u^H (dA/dx) u = numerator of dmu/dx or dlambda/dx.
-  // We must convert to df/dx by applying the denominator and frequency conversion.
-  auto result = ComputeFDSensitivities(iodata, space_op, u, u, omega, has_damping,
-                                       perturbation, "eigenvalue");
-
-  // Compute the denominator for the eigenvalue sensitivity formula.
   MPI_Comm comm = space_op.GetComm();
   const int n = u.Size();
-  ComplexVector Au(n);
-  Au.UseDevice(true);
 
-  if (!has_damping)
+  const auto &mat = space_op.GetMaterialOp();
+  if (!has_damping && !mat.HasLondonDepth())
   {
-    // Linear EVP: mu = omega^2. dmu/dx = numerator / (u^H M u).
-    // Then df/dx = dmu/dx / (2*omega) / (2*pi).
+    // Linear EVP (lossless, no London superconductors): analytic sensitivity via a single
+    // CeedOperator pass.
+    // The sensitivity QFunction differentiates the integrand f = f_K - lambda * f_M
+    // w.r.t. the Jacobian J at each quadrature point, using Enzyme AD or dual numbers.
+    //
+    // The raw output is df/dx_nodes (L-vector on the mesh nodal FE space). The
+    // CeedOperator's element restriction transpose handles DOF assembly (summing
+    // contributions from elements sharing a node). We index into the L-vector directly
+    // via DofToVDof, then apply the eigenvalue-to-frequency conversion factor.
+
+    const double lambda_val = (omega * omega).real();
+    auto &mesh = space_op.GetNDSpace().GetMesh();
+    const auto &nd_fespace = space_op.GetNDSpace();
+    const mfem::ParMesh &pmesh = mesh.Get();
+    const mfem::GridFunction &mesh_nodes = *pmesh.GetNodes();
+    const int sdim = pmesh.SpaceDimension();
+
+    // The analytic sensitivity path currently only supports single-process runs.
+    // In parallel, shared boundary vertices need MPI reduction and the local-to-serial
+    // vertex mapping in WriteSensitivitySolb needs proper handling.
+    MFEM_VERIFY(Mpi::Size(comm) == 1,
+                "Analytic mesh sensitivity currently requires single-process execution. "
+                "Use the FD fallback for multi-process runs.");
+
+    // For a lossless eigenvalue problem, the eigenvector is real up to a global phase
+    // factor: u = e^{iθ} * u_real. Rotate the eigenvector to maximize the real part by
+    // finding θ = arg(u^T u) and multiplying by e^{-iθ/2}. This makes u effectively real
+    // so that the real-part-only QFunction captures the full sensitivity.
+    ComplexVector u_rotated(u);
+    {
+      // Compute the "phase angle" via u^T u (not u^H u, which is always real).
+      // u^T u = |u_r|^2 - |u_i|^2 + 2i*(u_r · u_i). The angle of this complex number
+      // is 2θ where θ is the global phase. Rotating by -θ aligns u with the real axis.
+      double ur_dot_ur = 0.0, ui_dot_ui = 0.0, ur_dot_ui = 0.0;
+      const mfem::Vector &ur = u.Real(), &ui = u.Imag();
+      for (int i = 0; i < ur.Size(); i++)
+      {
+        ur_dot_ur += ur(i) * ur(i);
+        ui_dot_ui += ui(i) * ui(i);
+        ur_dot_ui += ur(i) * ui(i);
+      }
+      double two_theta = std::atan2(2.0 * ur_dot_ui, ur_dot_ur - ui_dot_ui);
+      double theta = two_theta / 2.0;
+      double cos_t = std::cos(theta), sin_t = std::sin(theta);
+
+      // u_rotated = u * e^{-iθ} = (u_r + i*u_i)(cos(-θ) + i*sin(-θ))
+      //           = (u_r*cosθ + u_i*sinθ) + i*(-u_r*sinθ + u_i*cosθ)
+      for (int i = 0; i < ur.Size(); i++)
+      {
+        u_rotated.Real()(i) = ur(i) * cos_t + ui(i) * sin_t;
+        u_rotated.Imag()(i) = -ur(i) * sin_t + ui(i) * cos_t;
+      }
+
+      double new_imag_norm = u_rotated.Imag().Norml2();
+      double new_real_norm = u_rotated.Real().Norml2();
+      Mpi::Print(" Eigenvector phase rotation: theta = {:.4f} rad, "
+                 "|Im|/|Re| before = {:.2e}, after = {:.2e}\n",
+                 theta, ui.Norml2() / ur.Norml2(), new_imag_norm / new_real_norm);
+
+      if (new_real_norm > 0.0 && new_imag_norm / new_real_norm > 0.01)
+      {
+        Mpi::Warning("Eigenvector imaginary component remains significant after phase "
+                     "rotation (|Im|/|Re| = {:.2e}). This indicates a truly degenerate "
+                     "mode. Mesh sensitivity for degenerate modes requires handling both "
+                     "real and imaginary components.\n",
+                     new_imag_norm / new_real_norm);
+      }
+    }
+
+    Mpi::Print("\nComputing mesh sensitivities via analytic differentiation (eigenvalue)\n"
+               " lambda = omega^2 = {:.6e}, method = "
+#ifdef PALACE_WITH_ENZYME
+               "Enzyme reverse-mode AD"
+#else
+               "forward-mode dual numbers"
+#endif
+               "\n",
+               lambda_val);
+
+    // Extract real part of the phase-rotated eigenvector for the integrator.
+    const mfem::Vector &u_real = u_rotated.Real();
+
+    // Build material coefficients matching what SpaceOperator uses for K and M.
+    // Stiffness (curl-curl): mu_inv (inverse permeability).
+    // Mass (H(curl) Piola): eps (real permittivity).
+    // London superconductor term is excluded here (gated by HasLondonDepth check above)
+    // because it enters the stiffness matrix as a vector-mass coefficient (adjJt/detJ
+    // Piola), not a curl-curl coefficient. Supporting it requires a three-coefficient
+    // QFunction context.
+    MaterialPropertyCoefficient Q_stiff(mat.MaxCeedAttribute());
+    Q_stiff.AddCoefficient(mat.GetAttributeToMaterial(), mat.GetInvPermeability());
+    MaterialPropertyCoefficient Q_mass(mat.MaxCeedAttribute());
+    Q_mass.AddCoefficient(mat.GetAttributeToMaterial(), mat.GetPermittivityReal());
+
+    // Apply the sensitivity CeedOperator: mesh_nodes → raw sensitivity (L-vector).
+    // The CeedOperator element restriction transpose sums contributions from elements
+    // sharing a DOF. The output is an L-vector indexed by DofToVDof.
+    const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
+    mfem::Vector raw_sens(mesh_fespace.GetVSize());
+    MeshSensitivityIntegrator::Apply(mesh, nd_fespace, &Q_mass, &Q_stiff, lambda_val,
+                                     u_real, raw_sens);
+
+    // Compute u^H M u for the eigenvalue-to-frequency conversion factor.
+    ComplexVector Au(n);
+    Au.UseDevice(true);
     auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     std::complex<double> uMu = 1.0;
     if (M)
@@ -240,25 +337,58 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
       M->Mult(u, Au);
       uMu = linalg::Dot(comm, Au, u);
     }
-    // Conversion factor: raw -> df in GHz.
-    // raw = u^H dA/dx u (eigenvalue-scale per mesh-length)
-    // dmu/dx = raw / uMu
-    // domega/dx = dmu/dx / (2*omega)
-    // df/dx = domega/dx / (2*pi)
-    std::complex<double> factor = 1.0 / (uMu * 2.0 * omega * 2.0 * M_PI);
+    // Conversion chain:
+    //   raw = d(lambda_nondim)/d(x_nondim)  [from CeedOperator]
+    //   d(lambda_nondim)/d(x_mesh) = raw / Lc0   [since x_nondim = x_mesh / Lc0]
+    //   d(f_GHz)/d(x_mesh) = d(lambda_nondim)/d(x_mesh) * freq_scale / (uMu * 2*omega * 2*pi)
+    // where freq_scale = 1/tc converts nondim freq to GHz, and Lc0 = Lc/L0 converts
+    // nondimensional mesh coordinates to mesh file units.
+    const double freq_scale =
+        iodata.units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    const double Lc0 = iodata.units.GetMeshLengthRelativeScale();
+    std::complex<double> factor =
+        freq_scale / (Lc0 * uMu * 2.0 * omega * 2.0 * M_PI);
     Mpi::Print(" Eigenvalue conversion: u^H M u = ({:.6e}, {:.6e}), omega = ({:.6e}, "
-               "{:.6e})\n",
-               uMu.real(), uMu.imag(), omega.real(), omega.imag());
-    const int sdim = space_op.GetNDSpace().GetMesh().Get().SpaceDimension();
-    for (int i = 0; i < result.num_bdr_nodes * sdim; i++)
+               "{:.6e})\n"
+               " Unit scaling: freq_scale = {:.6e} GHz, Lc0 = {:.6e}\n",
+               uMu.real(), uMu.imag(), omega.real(), omega.imag(), freq_scale, Lc0);
+
+    // Build result with ALL vertex sensitivities (not just boundary). The full-mesh
+    // sensitivity is needed for the chain contraction dJ/dp = (dJ/dx) · (dx/dp), where
+    // dx/dp includes interior mesh deformation that follows the boundary motion.
+    SensitivityResult result;
+    const int nv = pmesh.GetNV();
+    result.num_bdr_nodes = nv;  // All vertices, despite the field name
+    result.bdr_node_indices.resize(nv);
+    result.dJ_dx.SetSize(sdim * nv);
+
+    for (int vi = 0; vi < nv; vi++)
     {
-      result.dJ_dx(i) *= factor.real();
+      result.bdr_node_indices[vi] = vi;
+      for (int d = 0; d < sdim; d++)
+      {
+        const int vdof = mesh_fespace.DofToVDof(vi, d);
+        result.dJ_dx(vi * sdim + d) = raw_sens(vdof) * factor.real();
+      }
     }
+    Mpi::Print(" Full-mesh sensitivity: {:d} vertices, L2 norm = {:.6e} GHz/cm\n",
+               nv, result.dJ_dx.Norml2());
+
+    return result;
   }
   else
   {
-    // Quadratic EVP: lambda = i*omega. dlambda/dx = -numerator / (u^H(C+2*lambda*M)u).
-    // Then df/dx = (-i/(2*pi)) * dlambda/dx.
+    // Quadratic EVP (lossy) or London superconductors: analytic sensitivity not yet
+    // implemented for the damping term C or the London depth vector-mass contribution.
+    // Fall back to finite differences.
+    Mpi::Warning("Analytic mesh sensitivity not yet supported for this configuration "
+                 "(quadratic EVP or London depth), falling back to finite differences\n");
+    auto result = ComputeFDSensitivities(iodata, space_op, u, u, omega, has_damping,
+                                         perturbation, "eigenvalue (FD fallback)");
+
+    // Apply the eigenvalue-to-frequency conversion for quadratic EVP.
+    ComplexVector Au(n);
+    Au.UseDevice(true);
     std::complex<double> lambda = std::complex<double>(0.0, 1.0) * omega;
     auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -273,7 +403,6 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
       M->Mult(u, Au);
       denom += 2.0 * lambda * linalg::Dot(comm, Au, u);
     }
-    // factor = -1/denom * (-i/(2*pi)) = i / (denom * 2*pi)
     std::complex<double> factor =
         std::complex<double>(0.0, 1.0) / (denom * 2.0 * M_PI);
     const int sdim = space_op.GetNDSpace().GetMesh().Get().SpaceDimension();
@@ -281,9 +410,9 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
     {
       result.dJ_dx(i) *= factor.real();
     }
-  }
 
-  return result;
+    return result;
+  }
 }
 
 MeshSensitivity::SensitivityResult

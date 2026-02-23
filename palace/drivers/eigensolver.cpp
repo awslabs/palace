@@ -457,7 +457,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.WriteSensitivity(sens);
   }
 
-  // Compute mesh sensitivities via FD if requested.
+  // Compute mesh sensitivities if requested. For the linear EVP (lossless), analytic
+  // differentiation via Enzyme AD or dual numbers is used. For the quadratic EVP (lossy),
+  // a finite difference fallback is used until the analytic path supports damping.
   if (iodata.solver.eigenmode.mesh_sensitivity)
   {
     const bool is_quadratic = (C != nullptr) || has_A2;
