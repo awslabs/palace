@@ -467,9 +467,16 @@ endif()
 
 # Find ScaLAPACK early (needed for MUMPS/STRUMPACK CMake configs)
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-  find_package(scalapack QUIET)
+  if(NOT SCALAPACK_ROOT)
+    find_package(scalapack QUIET)
+  endif()
   if(NOT TARGET SCALAPACK::SCALAPACK AND NOT TARGET scalapack)
-    find_library(SCALAPACK_LIBRARY NAMES scalapack mkl_scalapack_lp64 mkl_scalapack_ilp64
+    if(PALACE_WITH_64BIT_INT)
+      set(_scalapack_mkl_name mkl_scalapack_ilp64)
+    else()
+      set(_scalapack_mkl_name mkl_scalapack_lp64)
+    endif()
+    find_library(SCALAPACK_LIBRARY NAMES scalapack ${_scalapack_mkl_name}
       HINTS ${SCALAPACK_ROOT}/lib ${CMAKE_INSTALL_PREFIX}/lib REQUIRED)
     add_library(SCALAPACK::SCALAPACK UNKNOWN IMPORTED)
     set_target_properties(SCALAPACK::SCALAPACK PROPERTIES
