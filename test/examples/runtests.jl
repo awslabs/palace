@@ -73,8 +73,8 @@ arg_configs = [
         default=[
             "spheres",
             "rings",
-            # "transmon/coarse", # not included by default because of its cost
-            # "transmon/amr", # not included by default because of its cost
+            # "transmon/transmon_coarse", # not included by default because of its cost
+            # "transmon/transmon_amr", # not included by default because of its cost
             "antenna/antenna_halfwave_dipole",
             "antenna/antenna_short_dipole",
             "cylinder/cavity_pec",
@@ -153,7 +153,7 @@ end
 
 reltol = 1.0e-2
 
-if "transmon/coarse" in cases
+if "transmon/transmon_coarse" in cases
     @info "Testing single transmon coarse..."
     @time testcase(
         "transmon",
@@ -187,8 +187,8 @@ if "transmon/coarse" in cases
     )
 end
 
-if "transmon/amr" in cases
-    @info "Testing single transmon arm..."
+if "transmon/transmon_amr" in cases
+    @info "Testing single transmon amr..."
     @time testcase(
         "transmon",
         "transmon_amr.json",

@@ -111,6 +111,7 @@ jobs:
           test-cases: nightly
 
       - name: Get PR head SHA
+        if: always()
         id: pr-sha
         run: |
           SHA=$(gh pr view ${{ matrix.pr }} --repo ${{ github.repository }} --json headRefOid -q .headRefOid)

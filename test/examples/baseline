@@ -100,8 +100,8 @@ spheres
 rings
 antenna/antenna_halfwave_dipole
 antenna/antenna_short_dipole
-transmon/coarse
-transmon/amr
+transmon/transmon_coarse
+transmon/transmon_amr
 cylinder/cavity_pec
 cylinder/cavity_impedance
 cylinder/waveguide
@@ -147,5 +147,10 @@ for TEST_DIR in $TEST_DIRS; do
     REF_DIR=$SCRIPT_DIR/ref/$TEST/$POSTPRO
     rm -rf $REF_DIR
     mkdir -p $REF_DIR
-    cp $EXAMPLE_DIR/*.csv $REF_DIR
+    cd $EXAMPLE_DIR
+    find . -name "*.csv" | while read -r CSV; do
+        mkdir -p "$REF_DIR/$(dirname "$CSV")"
+        cp "$CSV" "$REF_DIR/$CSV"
+    done
+    cd -
 done

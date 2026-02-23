@@ -30,7 +30,7 @@ inputs:
     required: false
     default: 'default'
   additional-test-cases:
-    description: 'Additional test cases to run after test-cases (space-separataed list)'
+    description: 'Additional test cases to run after test-cases (space-separated list)'
     required: false
     default: ''
 
@@ -95,7 +95,7 @@ runs:
 
         TEST_CASES="${{ inputs.test-cases }}"
         if [[ "$TEST_CASES" == "nightly" ]]; then
-          TEST_CASES="transmon/amr"
+          TEST_CASES="transmon/transmon_amr"
         elif [[ "$TEST_CASES" == "default" ]]; then
           TEST_CASES=""
         fi

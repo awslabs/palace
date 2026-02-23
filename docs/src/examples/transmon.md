@@ -220,7 +220,7 @@ participation ratios for inductive lumped elements (the Josephson junction). The
 the sapphire substrate, enabling comprehensive analysis of loss mechanisms
 throughout the device.
 
-#### Balancing Speed and Accuracy: Solver Order Considerations and
+#### Balancing Speed and Accuracy: Solver Order Considerations
 
 While this simulation provides accurate results, computational time can be
 significantly reduced by adjusting the finite element order. Changing from
