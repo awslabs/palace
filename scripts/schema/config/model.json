@@ -37,6 +37,7 @@
         "MaximumImbalance": {"type": "number", "minimum": 1.0},
         "SaveAdaptIterations": {"type": "boolean"},
         "SaveAdaptMesh": {"type": "boolean"},
+        "MetricOutput": {"type": "boolean"},
         "UniformLevels": { "type": "integer", "minimum": 0 },
         "SerialUniformLevels": { "type": "integer", "minimum": 0 },
         "Boxes":

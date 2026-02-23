@@ -1206,6 +1206,63 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
 }
 
 template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintEigenSensitivity(
+    const EigenSensitivity::SensitivityResult &sens, const Units &units)
+    -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+{
+  const int num_modes = static_cast<int>(sens.df_d_epsilon.size());
+  const int num_domains = static_cast<int>(sens.domain_attrs.size());
+  if (num_modes <= 0 || num_domains <= 0)
+  {
+    return;
+  }
+
+  eig_sens = TableWithCSVFile(post_dir / "eig-sensitivity.csv");
+  const int num_cols = 3 + 6;  // m, domain, attr + 3 complex sensitivities (re/im each)
+  const int num_rows = num_modes * num_domains;
+  eig_sens->table.reserve(num_rows, num_cols);
+
+  eig_sens->table.insert("m", "m", -1, 0, 2, "");
+  eig_sens->table.insert("d_attr", "Domain Attr", -1, 0, 2, "");
+  eig_sens->table.insert("d_idx", "Domain Idx", -1, 0, 2, "");
+  eig_sens->table.insert("df_deps_re", "Re{df/d(eps_r)} (GHz)");
+  eig_sens->table.insert("df_deps_im", "Im{df/d(eps_r)} (GHz)");
+  eig_sens->table.insert("df_dmuinv_re", "Re{df/d(mu_inv_r)} (GHz)");
+  eig_sens->table.insert("df_dmuinv_im", "Im{df/d(mu_inv_r)} (GHz)");
+  eig_sens->table.insert("df_dsigma_re", "Re{df/d(sigma)} (GHz/(S/m))");
+  eig_sens->table.insert("df_dsigma_im", "Im{df/d(sigma)} (GHz/(S/m))");
+
+  // Dimensionalize sensitivities: the computation in EigenSensitivity::Compute produces
+  // df/dp = domega/dp / (2*pi) in internal units. To get GHz, we need to multiply by the
+  // frequency scale factor (internal angular freq -> GHz angular), which is 1/tc_ns.
+  // The 1/(2*pi) is already included in the computed sensitivity.
+  const double freq_scale = units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+
+  for (int i = 0; i < num_modes; i++)
+  {
+    for (int d = 0; d < num_domains; d++)
+    {
+      eig_sens->table["m"] << static_cast<double>(i + 1);
+      eig_sens->table["d_attr"] << static_cast<double>(sens.domain_attrs[d]);
+      eig_sens->table["d_idx"] << static_cast<double>(d + 1);
+
+      auto df_eps = sens.df_d_epsilon[i][d] * freq_scale;
+      auto df_muinv = sens.df_d_muinv[i][d] * freq_scale;
+      auto df_sigma = sens.df_d_sigma[i][d] * freq_scale;
+
+      eig_sens->table["df_deps_re"] << df_eps.real();
+      eig_sens->table["df_deps_im"] << df_eps.imag();
+      eig_sens->table["df_dmuinv_re"] << df_muinv.real();
+      eig_sens->table["df_dmuinv_im"] << df_muinv.imag();
+      eig_sens->table["df_dsigma_re"] << df_sigma.real();
+      eig_sens->table["df_dsigma_im"] << df_sigma.imag();
+    }
+  }
+  eig_sens->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintErrorIndicator(
     bool is_root, const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
@@ -1373,6 +1430,71 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
   }
 }
 
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintDrivenSensitivity(
+    const DrivenSensitivity::SensitivityResult &sens, int excitation_idx, double omega,
+    const Units &units)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  const int num_ports = static_cast<int>(sens.port_indices.size());
+  const int num_domains = static_cast<int>(sens.domain_attrs.size());
+  if (num_ports <= 0 || num_domains <= 0)
+  {
+    return;
+  }
+
+  // Lazy initialization of the driven sensitivity CSV table on first call.
+  if (!driven_sens)
+  {
+    driven_sens = TableWithCSVFile(post_dir / "driven-sensitivity.csv");
+    // Columns: freq, excitation_port, observation_port, domain_attr, domain_idx,
+    //          + 3 complex sensitivities (re/im each) = 11 total.
+    const int num_cols = 11;
+    driven_sens->table.reserve(0, num_cols);
+
+    driven_sens->table.insert("f", "f (GHz)", -1, 0, 8, "");
+    driven_sens->table.insert("ex_port", "Excitation Port", -1, 0, 2, "");
+    driven_sens->table.insert("obs_port", "Observation Port", -1, 0, 2, "");
+    driven_sens->table.insert("d_attr", "Domain Attr", -1, 0, 2, "");
+    driven_sens->table.insert("d_idx", "Domain Idx", -1, 0, 2, "");
+    driven_sens->table.insert("dS_deps_re", "Re{dS/d(eps_r)}");
+    driven_sens->table.insert("dS_deps_im", "Im{dS/d(eps_r)}");
+    driven_sens->table.insert("dS_dmuinv_re", "Re{dS/d(mu_inv_r)}");
+    driven_sens->table.insert("dS_dmuinv_im", "Im{dS/d(mu_inv_r)}");
+    driven_sens->table.insert("dS_dsigma_re", "Re{dS/d(sigma)} (1/(S/m))");
+    driven_sens->table.insert("dS_dsigma_im", "Im{dS/d(sigma)} (1/(S/m))");
+    driven_sens->WriteFullTableTrunc();
+  }
+
+  // Dimensionalize frequency: omega (internal) -> f (GHz).
+  const double f_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+
+  // Write one row per (observation_port, domain) combination at this frequency.
+  for (int j = 0; j < num_ports; j++)
+  {
+    for (int d = 0; d < num_domains; d++)
+    {
+      driven_sens->table["f"] << f_GHz;
+      driven_sens->table["ex_port"] << static_cast<double>(excitation_idx);
+      driven_sens->table["obs_port"] << static_cast<double>(sens.port_indices[j]);
+      driven_sens->table["d_attr"] << static_cast<double>(sens.domain_attrs[d]);
+      driven_sens->table["d_idx"] << static_cast<double>(d + 1);
+
+      // S-parameters are dimensionless, so the sensitivities dS/d(eps_r) and
+      // dS/d(mu_inv_r) are also dimensionless. dS/d(sigma) has units of 1/(S/m).
+      driven_sens->table["dS_deps_re"] << sens.dS_d_epsilon[j][d].real();
+      driven_sens->table["dS_deps_im"] << sens.dS_d_epsilon[j][d].imag();
+      driven_sens->table["dS_dmuinv_re"] << sens.dS_d_muinv[j][d].real();
+      driven_sens->table["dS_dmuinv_im"] << sens.dS_d_muinv[j][d].imag();
+      driven_sens->table["dS_dsigma_re"] << sens.dS_d_sigma[j][d].real();
+      driven_sens->table["dS_dsigma_im"] << sens.dS_d_sigma[j][d].imag();
+    }
+  }
+  driven_sens->WriteFullTableTrunc();
+}
+
 // Explicit template instantiation.
 template class PostOperatorCSV<ProblemType::DRIVEN>;
 template class PostOperatorCSV<ProblemType::EIGENMODE>;
@@ -1385,5 +1507,13 @@ template class PostOperatorCSV<ProblemType::TRANSIENT>;
 
 template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(
     const SpaceOperator &fem_op) -> void;
+
+template auto
+PostOperatorCSV<ProblemType::EIGENMODE>::PrintEigenSensitivity<ProblemType::EIGENMODE>(
+    const EigenSensitivity::SensitivityResult &, const Units &) -> void;
+
+template auto
+PostOperatorCSV<ProblemType::DRIVEN>::PrintDrivenSensitivity<ProblemType::DRIVEN>(
+    const DrivenSensitivity::SensitivityResult &, int, double, const Units &) -> void;
 
 }  // namespace palace

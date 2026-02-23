@@ -1002,6 +1002,46 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   }
 }
 
+void SpaceOperator::GetSParameterAdjointRHS(int port_idx, ComplexVector &rhs)
+{
+  const auto &data = lumped_port_op.GetPort(port_idx);
+
+  // Assemble the same linear form coefficient as LumpedPortData::InitializeLinearForms
+  // for the S-parameter: (E x H_inc) . n = E . (E_inc / Z_s), with
+  //   Hinc = 1/sqrt(Rs * W * L * n_elems)  where Rs = R * (W/L).
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  mfem::Array<int> attr_list;
+  for (const auto &elem : data.elems)
+  {
+    const double Rs = data.R * data.GetToSquare(*elem);
+    const double Hinc = (std::abs(Rs) > 0.0)
+                            ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                              elem->GetGeometryLength() * data.elems.size())
+                            : 0.0;
+    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+    attr_list.Append(elem->GetAttrList());
+  }
+
+  const auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+
+  // Assemble the linear form on the local FE space.
+  mfem::LinearForm lf(&GetNDSpace().Get());
+  lf.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
+  lf.UseFastAssembly(false);
+  lf.UseDevice(false);
+  lf.Assemble();
+  lf.UseDevice(true);
+
+  // Map to true-DOF space: rhs = P^T * lf.
+  rhs.SetSize(GetNDSpace().GetTrueVSize());
+  rhs.UseDevice(true);
+  rhs = 0.0;
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(lf, rhs.Real());
+  linalg::SetSubVector(rhs, nd_dbc_tdof_lists.back(), 0.0);
+}
+
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
@@ -1122,6 +1162,153 @@ void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
   linalg::SetSubVector(v, nd_dbc_tdof_lists.back(), 0.0);
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetStiffnessMatrixDomain(int attr, Operator::DiagonalPolicy diag_policy)
+{
+  // Assemble the stiffness bilinear form restricted to elements with the given global mesh
+  // attribute. This gives dK/d(mu_inv) for that domain: the curl-curl form with IDENTITY
+  // coefficient on the target domain. Since K = mu_inv * curl-curl, the derivative w.r.t.
+  // mu_inv is the curl-curl form itself (with coefficient = I, not mu_inv).
+  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute());
+  auto ceed_attrs = mat_op.GetCeedAttributes(attr);
+  if (ceed_attrs.Size() == 0)
+  {
+    return {};
+  }
+
+  // Build an identity coefficient on the target domain (dK/d(mu_inv) = curl-curl with I).
+  const int sdim = mat_op.SpaceDimension();
+  mfem::DenseMatrix identity(sdim);
+  identity = 0.0;
+  for (int i = 0; i < sdim; i++)
+  {
+    identity(i, i) = 1.0;
+  }
+  df.AddMaterialProperty(ceed_attrs, identity);
+
+  int empty = df.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto kr =
+      AssembleOperator(GetNDSpace(), &df, nullptr, nullptr, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto K =
+        std::make_unique<ComplexParOperator>(std::move(kr), nullptr, GetNDSpace());
+    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return K;
+  }
+  else
+  {
+    auto K = std::make_unique<ParOperator>(std::move(kr), GetNDSpace());
+    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return K;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetDampingMatrixDomain(int attr, Operator::DiagonalPolicy diag_policy)
+{
+  // Assemble the damping bilinear form restricted to elements with the given global mesh
+  // attribute. This gives dC/d(sigma) for that domain.
+  if (!mat_op.HasConductivity())
+  {
+    return {};
+  }
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  auto ceed_attrs = mat_op.GetCeedAttributes(attr);
+  if (ceed_attrs.Size() == 0)
+  {
+    return {};
+  }
+
+  // Use identity coefficient: dC/d(sigma) = mass form with I, not sigma.
+  const int sdim_c = mat_op.SpaceDimension();
+  mfem::DenseMatrix identity_c(sdim_c);
+  identity_c = 0.0;
+  for (int i = 0; i < sdim_c; i++)
+  {
+    identity_c(i, i) = 1.0;
+  }
+  f.AddMaterialProperty(ceed_attrs, identity_c);
+
+  int empty = f.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto c =
+      AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
+    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return C;
+  }
+  else
+  {
+    auto C = std::make_unique<ParOperator>(std::move(c), GetNDSpace());
+    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return C;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetMassMatrixDomain(int attr, Operator::DiagonalPolicy diag_policy)
+{
+  // Assemble the mass bilinear form restricted to elements with the given global mesh
+  // attribute. This gives dM/d(epsilon_r) for that domain: the mass form with IDENTITY
+  // coefficient. Since M = eps_r * mass, dM/d(eps_r) = mass with coefficient I.
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  auto ceed_attrs = mat_op.GetCeedAttributes(attr);
+  if (ceed_attrs.Size() == 0)
+  {
+    return {};
+  }
+
+  // Use identity coefficient: dM/d(eps_r) = mass form with I, not eps_r.
+  const int sdim_m = mat_op.SpaceDimension();
+  mfem::DenseMatrix identity_m(sdim_m);
+  identity_m = 0.0;
+  for (int i = 0; i < sdim_m; i++)
+  {
+    identity_m(i, i) = 1.0;
+  }
+  f.AddMaterialProperty(ceed_attrs, identity_m);
+
+  int empty = f.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto mr =
+      AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M =
+        std::make_unique<ComplexParOperator>(std::move(mr), nullptr, GetNDSpace());
+    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+  else
+  {
+    auto M = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
+    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M;
+  }
+}
+
 template std::unique_ptr<Operator>
     SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
@@ -1156,5 +1343,20 @@ SpaceOperator::GetPreconditionerMatrix<Operator, double>(double, double, double,
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>, double);
+
+template std::unique_ptr<Operator>
+    SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+    SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+    SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
 
 }  // namespace palace

@@ -17,6 +17,8 @@
 #include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
+#include "models/eigensensitivity.hpp"
+#include "models/meshsensitivity.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -444,6 +446,44 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       post_op.MeasureFinalize(indicator);
     }
   }
+  // Compute eigenvalue sensitivities with respect to material properties if requested.
+  // The quadratic EVP regime applies when C or A2 is present, mirroring the eigenvalue
+  // interpretation logic above (line 406).
+  if (iodata.solver.eigenmode.sensitivity)
+  {
+    const bool is_quadratic = (C != nullptr) || has_A2;
+    auto sens = EigenSensitivity::Compute(iodata, space_op, *eigen, num_conv, is_quadratic,
+                                          C.get(), M.get());
+    post_op.WriteSensitivity(sens);
+  }
+
+  // Compute mesh sensitivities via FD if requested.
+  if (iodata.solver.eigenmode.mesh_sensitivity)
+  {
+    const bool is_quadratic = (C != nullptr) || has_A2;
+    // Use the first converged eigenvector for mesh sensitivity.
+    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    eigen->GetEigenvector(0, u);
+    auto eig_raw = eigen->GetEigenvalue(0);
+    std::complex<double> omega;
+    if (!is_quadratic)
+    {
+      omega = std::sqrt(eig_raw);
+    }
+    else
+    {
+      auto lambda = eig_raw;
+      omega = lambda / std::complex<double>(0.0, 1.0);
+    }
+    double h = iodata.solver.eigenmode.mesh_sensitivity_h;
+    auto mesh_sens = MeshSensitivity::ComputeEigen(iodata, space_op, u, omega,
+                                                    is_quadratic, h);
+    MeshSensitivity::WriteSensitivitySolb(
+        iodata.problem.output + "/mesh_sensitivity.solb", mesh_sens,
+        space_op.GetNDSpace().GetParMesh(), space_op.GetComm());
+  }
+
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
                                                          << num_conv << " modes when "
                                                          << iodata.solver.eigenmode.n

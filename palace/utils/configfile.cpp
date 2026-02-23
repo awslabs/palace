@@ -323,6 +323,20 @@ RefinementData::RefinementData(const json &refinement)
   maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
   save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
   save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
+  metric_output = refinement.value("MetricOutput", metric_output);
+
+  // Options for external mesh adaptation.
+  external_adapter = refinement.value("ExternalAdapter", external_adapter);
+  adapter_path = refinement.value("AdapterPath", adapter_path);
+  geometry_file = refinement.value("GeometryFile", geometry_file);
+  adapt_iterations = refinement.value("AdaptIterations", adapt_iterations);
+  target_degree = refinement.value("TargetDegree", target_degree);
+
+  // When an external adapter is configured, metric output is required.
+  if (!external_adapter.empty())
+  {
+    metric_output = true;
+  }
 
   // Options for a priori refinement.
   uniform_ref_levels = refinement.value("UniformLevels", uniform_ref_levels);
@@ -1065,6 +1079,9 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
+  sensitivity = driven.value("Sensitivity", sensitivity);
+  mesh_sensitivity = driven.value("MeshSensitivity", mesh_sensitivity);
+  mesh_sensitivity_h = driven.value("MeshSensitivityH", mesh_sensitivity_h);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
@@ -1231,6 +1248,9 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  sensitivity = eigenmode.value("Sensitivity", sensitivity);
+  mesh_sensitivity = eigenmode.value("MeshSensitivity", mesh_sensitivity);
+  mesh_sensitivity_h = eigenmode.value("MeshSensitivityH", mesh_sensitivity_h);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

@@ -24,6 +24,10 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
 void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
                         bool remove_curvature = false);
 
+// Convert an ASCII libMeshb (.mesh) format to Gmsh v2.2.
+void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
+                      bool remove_curvature = false);
+
 }  // namespace palace::mesh
 
 #endif  // PALACE_UTILS_MESH_IO_HPP

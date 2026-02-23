@@ -445,6 +445,30 @@ public:
   // Expose MPI communicator from fem_op for electrostatic & magnetostatic matrix processing
   // (see above).
   auto GetComm() const { return fem_op->GetComm(); }
+
+  // Write eigenvalue sensitivity results to CSV file. Only active for eigenmode problems.
+  template <ProblemType U = solver_t>
+  auto WriteSensitivity(const EigenSensitivity::SensitivityResult &sens)
+      -> std::enable_if_t<U == ProblemType::EIGENMODE, void>
+  {
+    if (Mpi::Root(fem_op->GetComm()))
+    {
+      post_op_csv.PrintEigenSensitivity(sens, units);
+    }
+  }
+
+  // Write driven S-parameter sensitivity results to CSV file. Only active for driven
+  // problems. Called at each frequency point after the adjoint solve.
+  template <ProblemType U = solver_t>
+  auto WriteDrivenSensitivity(const DrivenSensitivity::SensitivityResult &sens,
+                              int excitation_idx, double omega)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+  {
+    if (Mpi::Root(fem_op->GetComm()))
+    {
+      post_op_csv.PrintDrivenSensitivity(sens, excitation_idx, omega, units);
+    }
+  }
 };
 
 }  // namespace palace

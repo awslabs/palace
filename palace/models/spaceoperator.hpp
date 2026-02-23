@@ -169,6 +169,20 @@ public:
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // Construct bilinear form operators restricted to a single material domain, for use in
+  // eigenvalue sensitivity calculations. The domain is specified by its global mesh
+  // attribute. These compute the derivative of the system matrices with respect to the
+  // material property: dK/d(mu_inv) restricted to the given domain, etc.
+  template <typename OperType>
+  std::unique_ptr<OperType> GetStiffnessMatrixDomain(int attr,
+                                                     Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetDampingMatrixDomain(int attr,
+                                                   Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetMassMatrixDomain(int attr,
+                                                Operator::DiagonalPolicy diag_policy);
   template <typename OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
@@ -235,6 +249,12 @@ public:
   // proportional to each other.
   void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
                                                 bool zero_metal);
+
+  // Assemble the S-parameter adjoint RHS for lumped port observation. This is the
+  // true-DOF representation of the S-parameter linear form s_j for port port_idx,
+  // suitable for use as the RHS of the adjoint system A^H v = g. The linear form uses
+  // the same coefficient as LumpedPortData::InitializeLinearForms (the Hinc field).
+  void GetSParameterAdjointRHS(int port_idx, ComplexVector &rhs);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

@@ -207,6 +207,15 @@ constexpr int NasHex20[] = {0,  1, 2,  3,  4,  5,  6,  7,  8,  11,
 constexpr int NasWdg15[] = {0, 1, 2, 3, 4, 5, 6, 9, 7, 8, 10, 11, 12, 14, 13};
 constexpr int NasPyr13[] = {0, 1, 2, 3, 4, 5, 8, 10, 6, 7, 9, 11, 12};
 
+// libMeshb (INRIA Gamma mesh format) node ordering for high-order elements. libMeshb
+// numbers edge midpoints in lexicographic order of their endpoint indices, while Gmsh
+// uses a different traversal. For tri6: libMeshb = [v1,v2,v3, e12,e13,e23], Gmsh type 9
+// = [v1,v2,v3, mid12,mid23,mid13]. Permutation maps input position j → Gmsh position p[j].
+constexpr int MshbTri6[] = {0, 1, 2, 3, 5, 4};
+// For tet10: libMeshb = [v1,v2,v3,v4, e12,e13,e14,e23,e24,e34], Gmsh type 11 =
+// [v1,v2,v3,v4, mid12,mid23,mid13,mid14,mid24,mid34].
+constexpr int MshbTet10[] = {0, 1, 2, 3, 4, 6, 7, 5, 8, 9};
+
 constexpr const int *ElemNodesComsol[] = {SkipElem, Msh3,     MphQuad4, Msh4,     MphHex8,
                                           Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
                                           MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
@@ -215,6 +224,13 @@ constexpr const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,  
                                            Msh6,     Msh5,     SkipElem, Msh6,     Msh9,
                                            NasTet10, SkipElem, SkipElem, SkipElem, SkipElem,
                                            Msh8,     NasHex20, NasWdg15, NasPyr13};
+// libMeshb supports P1 and P2 elements. P1 ordering matches Gmsh exactly. P2 requires
+// permutation. SkipElem for element types not produced by standard libMeshb tools.
+// Edges (type 1) are skipped: they carry curve/ridge data only, not needed by MFEM FEM.
+constexpr const int *ElemNodesMeshb[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
+                                         Msh6,     Msh5,     SkipElem, MshbTri6, SkipElem,
+                                         MshbTet10, SkipElem, SkipElem, SkipElem, SkipElem,
+                                         SkipElem, SkipElem, SkipElem, SkipElem};
 
 // Get line, strip comments, leading/trailing whitespace. Should not be called if end of
 // file is expected.
@@ -1120,6 +1136,244 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   // Finalize input, write the Gmsh mesh.
   input.close();
   WriteGmsh(buffer, node_coords, node_tags, elem_nodes, remove_curvature);
+}
+
+void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
+                      bool remove_curvature)
+{
+  // Read an ASCII libMeshb (INRIA Gamma) format mesh. The format is keyword-based:
+  // each section opens with a keyword on its own line, followed by a count, then the
+  // data rows. Keywords not relevant to FEM topology (Corners, Ridges, etc.) are skipped
+  // by reading and discarding their data block.
+  MFEM_VERIFY(!filename.compare(filename.length() - 5, 5, ".mesh") ||
+                  !filename.compare(filename.length() - 5, 5, ".MESH") ||
+                  !filename.compare(filename.length() - 6, 6, ".meshb") ||
+                  !filename.compare(filename.length() - 6, 6, ".MESHB"),
+              "Invalid file extension for libMeshb mesh format conversion!");
+  std::ifstream input(filename);
+  if (!input.is_open())
+  {
+    MFEM_ABORT("Unable to open mesh file \"" << filename << "\"!");
+  }
+
+  // Parse nodes and elements. Store for each element type: [geometry tag, [node tags]].
+  std::vector<double> node_coords;
+  std::unordered_map<int, std::vector<int>> elem_nodes;
+
+  // Helper: get next non-empty, non-comment line from the input stream. Returns false
+  // on EOF.
+  auto GetLineMeshb = [](std::ifstream &in, std::string &line) -> bool
+  {
+    while (std::getline(in, line))
+    {
+      // Strip Windows line endings and leading/trailing whitespace.
+      line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
+      const auto start = line.find_first_not_of(" \t");
+      if (start == std::string::npos)
+      {
+        continue;  // Skip blank lines.
+      }
+      line = line.substr(start, line.find_last_not_of(" \t") - start + 1);
+      if (!line.empty() && line[0] == '#')
+      {
+        continue;  // Skip comment lines.
+      }
+      return true;
+    }
+    return false;
+  };
+
+  // Helper: read a single integer count from the next non-empty line.
+  auto ReadCount = [&](int &count)
+  {
+    std::string line;
+    MFEM_VERIFY(GetLineMeshb(input, line), "Unexpected EOF reading libMeshb count!");
+    std::istringstream ss(line);
+    ss >> count;
+    MFEM_VERIFY(!ss.fail() && count >= 0,
+                "Invalid element count in libMeshb file: \"" << line << "\"!");
+  };
+
+  // Keywords that introduce a data block with a count followed by that many data rows.
+  // The count field is on the line after the keyword (or may appear on the same line for
+  // some writers — we always read it on the next non-empty line for simplicity).
+  // Non-FEM keywords (Corners, Ridges, RequiredVertices, etc.) map to gmsh_type = -1 so
+  // we skip their data without storing it.
+  auto KeywordToGmshType = [](const std::string &kw) -> int
+  {
+    // Skip curve/geometric tagging keywords that carry no FEM topology. These all follow
+    // the standard count + data-rows pattern. Note: BezierBasis is NOT included here
+    // because it stores a scalar parameter, not a count + rows block; it falls through to
+    // the gmsh_type=0 path and is harmlessly skipped line by line.
+    if (!kw.compare("Corners") || !kw.compare("Ridges") ||
+        !kw.compare("RequiredVertices") || !kw.compare("RequiredEdges") ||
+        !kw.compare("RequiredTriangles") || !kw.compare("RequiredTetrahedra") ||
+        !kw.compare("VerticesOnGeometricVertices") ||
+        !kw.compare("VerticesOnGeometricEdges") ||
+        !kw.compare("VerticesOnGeometricTriangles") ||
+        !kw.compare("EdgesOnGeometricEdges") ||
+        !kw.compare("TrianglesOnGeometricTriangles") ||
+        !kw.compare("EdgesP2Ordering") || !kw.compare("TrianglesP2Ordering") ||
+        !kw.compare("TetrahedraP2Ordering") ||
+        !kw.compare("Normals") || !kw.compare("NormalAtVertices") ||
+        !kw.compare("Tangents") || !kw.compare("TangentAtEdges"))
+    {
+      return -1;  // Has a count block; read and discard.
+    }
+    // Elements that produce mesh topology, mapped to Gmsh type IDs.
+    if (!kw.compare("Edges"))          { return 1;  }  // 2-node line (skipped, see below)
+    if (!kw.compare("Triangles"))      { return 2;  }  // 3-node triangle
+    if (!kw.compare("Quadrilaterals")) { return 3;  }  // 4-node quadrilateral
+    if (!kw.compare("Tetrahedra"))     { return 4;  }  // 4-node tetrahedron
+    if (!kw.compare("Hexahedra"))      { return 5;  }  // 8-node hexahedron
+    if (!kw.compare("Prisms"))         { return 6;  }  // 6-node prism
+    if (!kw.compare("Pyramids"))       { return 7;  }  // 5-node pyramid
+    if (!kw.compare("TrianglesP2"))    { return 9;  }  // 6-node triangle
+    if (!kw.compare("TetrahedraP2"))   { return 11; }  // 10-node tetrahedron
+    return 0;  // Unknown keyword, no data block (e.g. MeshVersionFormatted, End).
+  };
+
+  std::string line;
+  int sdim = 3;  // Default spatial dimension; updated by "Dimension" keyword.
+  while (GetLineMeshb(input, line))
+  {
+    std::istringstream sline(line);
+    std::string keyword;
+    sline >> keyword;
+
+    if (!keyword.compare("End"))
+    {
+      break;
+    }
+    if (!keyword.compare("MeshVersionFormatted"))
+    {
+      // Version may appear on the same line or the next; either is fine to ignore.
+      continue;
+    }
+    if (!keyword.compare("Dimension"))
+    {
+      // Dimension may be on same line or the next line.
+      int dim_val = -1;
+      if (!(sline >> dim_val))
+      {
+        // Not on this line — read the next non-empty line.
+        std::string dline;
+        MFEM_VERIFY(GetLineMeshb(input, dline), "Unexpected EOF reading Dimension!");
+        std::istringstream ds(dline);
+        ds >> dim_val;
+        MFEM_VERIFY(!ds.fail(), "Invalid Dimension value in libMeshb file!");
+      }
+      sdim = dim_val;
+      continue;
+    }
+    if (!keyword.compare("Vertices"))
+    {
+      int num_nodes = 0;
+      ReadCount(num_nodes);
+      node_coords.reserve(3 * num_nodes);
+      for (int i = 0; i < num_nodes; i++)
+      {
+        std::string vline;
+        MFEM_VERIFY(GetLineMeshb(input, vline), "Unexpected EOF reading Vertices!");
+        std::istringstream vs(vline);
+        double x = 0.0, y = 0.0, z = 0.0;
+        int ref = 0;
+        vs >> x >> y;
+        if (sdim == 3)
+        {
+          vs >> z;
+        }
+        vs >> ref;
+        MFEM_VERIFY(!vs.fail(),
+                    "Failed to parse vertex " << i + 1 << " in libMeshb file!");
+        // Always store 3D coordinates (Gmsh v2.2 requires it).
+        node_coords.insert(node_coords.end(), {x, y, z});
+      }
+      continue;
+    }
+
+    // Check if this keyword introduces a mesh element block.
+    const int gmsh_type = KeywordToGmshType(keyword);
+    if (gmsh_type == 0)
+    {
+      // Unrecognised keyword that has no data block; skip.
+      continue;
+    }
+
+    // All remaining recognised keywords have a count followed by data rows.
+    int num_elem = 0;
+    ReadCount(num_elem);
+    if (num_elem == 0)
+    {
+      continue;
+    }
+
+    if (gmsh_type == -1)
+    {
+      // Non-FEM keyword: discard all data rows.
+      for (int i = 0; i < num_elem; i++)
+      {
+        std::string dummy;
+        MFEM_VERIFY(GetLineMeshb(input, dummy),
+                    "Unexpected EOF skipping section \"" << keyword << "\"!");
+      }
+      continue;
+    }
+
+    // ElemNodesMeshb is indexed by gmsh_type - 1.
+    const int *perm = ElemNodesMeshb[gmsh_type - 1];
+    if (perm == SkipElem)
+    {
+      // Element type not supported (e.g. Edges in 3D): discard rows.
+      for (int i = 0; i < num_elem; i++)
+      {
+        std::string dummy;
+        MFEM_VERIFY(GetLineMeshb(input, dummy),
+                    "Unexpected EOF skipping element type " << gmsh_type << "!");
+      }
+      continue;
+    }
+
+    const int num_elem_nodes = ElemNumNodes[gmsh_type - 1];
+    MFEM_VERIFY(num_elem_nodes > 0,
+                "Unsupported Gmsh element type " << gmsh_type << " in libMeshb converter!");
+    std::vector<int> &data = elem_nodes[gmsh_type];
+    const int prev_size = (int)data.size();
+    data.resize(prev_size + num_elem * (num_elem_nodes + 1));
+
+    for (int i = 0; i < num_elem; i++)
+    {
+      std::string eline;
+      MFEM_VERIFY(GetLineMeshb(input, eline),
+                  "Unexpected EOF reading elements of type " << gmsh_type << "!");
+      std::istringstream es(eline);
+      // Each data row: node1 node2 ... nodeN ref
+      std::vector<int> raw_nodes(num_elem_nodes);
+      for (int j = 0; j < num_elem_nodes; j++)
+      {
+        es >> raw_nodes[j];
+      }
+      int geom_tag = 0;
+      es >> geom_tag;
+      MFEM_VERIFY(!es.fail(),
+                  "Failed to parse element row for type " << gmsh_type << "!");
+      const int base = prev_size + i * (num_elem_nodes + 1);
+      data[base] = geom_tag;
+      for (int j = 0; j < num_elem_nodes; j++)
+      {
+        // Apply permutation from libMeshb ordering to Gmsh ordering.
+        data[base + 1 + perm[j]] = raw_nodes[j];
+      }
+    }
+  }
+
+  MFEM_VERIFY(!node_coords.empty(), "No vertices found in libMeshb file \"" << filename
+                                                                             << "\"!");
+
+  // Finalize input, write the Gmsh mesh.
+  input.close();
+  std::vector<int> dummy;
+  WriteGmsh(buffer, node_coords, dummy, elem_nodes, remove_curvature);
 }
 
 }  // namespace mesh

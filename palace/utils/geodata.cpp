@@ -1437,8 +1437,41 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   constexpr bool generate_edges = false, refine = false, fix_orientation = true;
   std::unique_ptr<mfem::Mesh> mesh;
   fs::path mesh_path(mesh_file);
+
+  // Disambiguate .mesh/.meshb: MFEM's native format also uses .mesh, and libMeshb uses
+  // both .mesh and .meshb. Peek at the first non-empty line to decide which loader to use
+  // for .mesh files; .meshb files are assumed to be ASCII libMeshb format.
+  bool is_libmeshb = false;
+  if (mesh_path.extension() == ".meshb" || mesh_path.extension() == ".MESHB")
+  {
+    is_libmeshb = true;
+  }
+  else if (mesh_path.extension() == ".mesh" || mesh_path.extension() == ".MESH")
+  {
+    std::ifstream probe(mesh_file);
+    if (!probe.good())
+    {
+      MFEM_ABORT("Unable to open mesh file \"" << mesh_file << "\"!");
+    }
+    std::string probe_line;
+    while (std::getline(probe, probe_line))
+    {
+      const auto start = probe_line.find_first_not_of(" \t\r\n");
+      if (start != std::string::npos)
+      {
+        probe_line = probe_line.substr(start);
+        break;
+      }
+    }
+    if (probe_line.compare(0, 20, "MeshVersionFormatted") == 0)
+    {
+      is_libmeshb = true;
+    }
+    // If the first line starts with "MFEM", fall through to the MFEM native loader below.
+  }
+
   if (mesh_path.extension() == ".mphtxt" || mesh_path.extension() == ".mphbin" ||
-      mesh_path.extension() == ".nas" || mesh_path.extension() == ".bdf")
+      mesh_path.extension() == ".nas" || mesh_path.extension() == ".bdf" || is_libmeshb)
   {
     // Put translated mesh in temporary string buffer.
     std::stringstream fi(std::stringstream::in | std::stringstream::out);
@@ -1449,6 +1482,10 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
     {
       mesh::ConvertMeshComsol(mesh_file, fi, remove_curvature);
       // mesh::ConvertMeshComsol(mesh_file, fo, remove_curvature);
+    }
+    else if (is_libmeshb)
+    {
+      mesh::ConvertMeshMeshb(mesh_file, fi, remove_curvature);
     }
     else
     {

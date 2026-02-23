@@ -16,6 +16,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/drivensensitivity.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
@@ -197,6 +198,14 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+
+      // Compute S-parameter sensitivities via adjoint method if requested.
+      if (iodata.solver.driven.sensitivity)
+      {
+        auto sens = DrivenSensitivity::Compute(iodata, space_op, ksp, *A, *P, E,
+                                               excitation_idx, omega);
+        post_op.WriteDrivenSensitivity(sens, excitation_idx, omega);
+      }
     }
 
     // Final postprocessing & printing.

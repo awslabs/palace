@@ -6,10 +6,12 @@
 #include <array>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "drivers/adaptdriver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fem/metricfield.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -144,6 +146,40 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   auto [indicators, ntdof] = Solve(mesh);
   double err = indicators.Norml2(comm);
 
+  // Optionally write metric tensor field and companion mesh for external adaptation tools.
+  // Returns the paths written (empty if metric output is disabled).
+  struct MetricPaths
+  {
+    std::string solb, meshb;
+  };
+  auto WriteMetricField = [&](const auto &indicators, const auto &mesh_ref,
+                              int step) -> MetricPaths
+  {
+    if (!refinement.metric_output)
+    {
+      return {};
+    }
+    mfem::ParMesh &pmesh = mesh_ref.back()->Get();
+    const int dim = pmesh.Dimension();
+    const int order = iodata.solver.order;
+    const auto solb_path = post_dir / fmt::format("metric{:04d}.solb", step);
+    const auto meshb_path = post_dir / fmt::format("metric{:04d}.meshb", step);
+
+    auto metric_vec = metric::ComputeIsotropicMetric(pmesh, indicators, order);
+
+    if (Mpi::Root(comm))
+    {
+      const int nv = metric_vec.Size() / ((dim == 2) ? 3 : 6);
+      metric::WriteSolb(solb_path.string(), metric_vec, nv, dim);
+    }
+    metric::WriteMeshMeshb(meshb_path.string(), pmesh);
+    Mpi::Print(" Wrote metric field to {} and mesh to {}\n", solb_path.string(),
+               meshb_path.string());
+    return {solb_path.string(), meshb_path.string()};
+  };
+  auto metric_paths = WriteMetricField(indicators, mesh, 0);
+  const bool use_external_adapter = !refinement.external_adapter.empty();
+
   // Collection of all tests that might exhaust resources.
   auto ExhaustedResources = [&refinement](auto it, auto ntdof)
   {
@@ -186,54 +222,90 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                     1 + static_cast<int>(std::log10(refinement.max_it)));
     }
 
-    // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    if (use_external_adapter)
     {
-      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
-      const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
-      Mpi::Print(
-          " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
-          glob_marked_elements, glob_elements, 100 * marked_error,
-          refinement.update_fraction);
-      return marked_elements;
-    }(indicators);
+      // External adaptation path: invoke an external tool (Metris/refine) on the metric
+      // and mesh files written after the previous solve, then reload the adapted mesh.
+      // This is a cold-start approach: no solution transfer between meshes.
+      MFEM_VERIFY(!metric_paths.solb.empty() && !metric_paths.meshb.empty(),
+                  "Metric output files required for external adaptation!");
 
-    // Refine.
-    {
-      mfem::ParMesh &fine_mesh = *mesh.back();
-      const auto initial_elem_count = fine_mesh.GetGlobalNE();
-      fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-      const auto final_elem_count = fine_mesh.GetGlobalNE();
-      Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
-                 fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
-                 final_elem_count - initial_elem_count, initial_elem_count,
-                 final_elem_count);
+      const auto adapted_path = ExternalAdaptationDriver::Adapt(
+          metric_paths.meshb, metric_paths.solb, refinement.geometry_file, iodata, comm);
+
+      // Reload the adapted mesh through the standard mesh loading pipeline. Temporarily
+      // override the mesh path in iodata to point to the adapted file.
+      IoData &mutable_iodata = const_cast<IoData &>(iodata);
+      const auto original_mesh_path = mutable_iodata.model.mesh;
+      mutable_iodata.model.mesh = adapted_path;
+      auto adapted_pmesh = mesh::ReadMesh(mutable_iodata, comm);
+      mutable_iodata.model.mesh = original_mesh_path;
+
+      const auto initial_elem_count = mesh.back()->Get().GetGlobalNE();
+      const auto final_elem_count = adapted_pmesh->GetGlobalNE();
+
+      // Replace the mesh in the sequence with the adapted version.
+      mesh.clear();
+      mesh.push_back(std::make_unique<Mesh>(std::move(adapted_pmesh)));
+
+      Mpi::Print(" External adaptation: {:d} elements (initial = {:d}, adapted = {:d})\n",
+                 final_elem_count, initial_elem_count, final_elem_count);
     }
-
-    // Optionally rebalance and write the adapted mesh to file.
+    else
     {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
-      if (ratio_pre > refinement.maximum_imbalance)
+      // Internal refinement path: mark elements and refine in-process.
+
+      // Mark.
+      const auto marked_elements = [&comm, &refinement](const auto &indicators)
       {
-        int min_elem, max_elem;
-        min_elem = max_elem = mesh.back()->GetNE();
-        Mpi::GlobalMin(1, &min_elem, comm);
-        Mpi::GlobalMax(1, &max_elem, comm);
-        const auto ratio_post = double(max_elem) / min_elem;
-        Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
-                   "(new ratio = {:.3f})\n",
-                   ratio_pre, refinement.maximum_imbalance, ratio_post);
+        const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
+            comm, indicators.Local(), refinement.update_fraction);
+        const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+        const auto [glob_marked_elements, glob_elements] =
+            linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+        Mpi::Print(
+            " Marked {:d}/{:d} elements for refinement"
+            " ({:.2f}% of the error, \xce\xb8 = {:.2f})\n",
+            glob_marked_elements, glob_elements, 100 * marked_error,
+            refinement.update_fraction);
+        return marked_elements;
+      }(indicators);
+
+      // Refine.
+      {
+        mfem::ParMesh &fine_mesh = *mesh.back();
+        const auto initial_elem_count = fine_mesh.GetGlobalNE();
+        fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+        const auto final_elem_count = fine_mesh.GetGlobalNE();
+        Mpi::Print(
+            " {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
+            fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
+            final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
       }
-      mesh.back()->Update();
+
+      // Optionally rebalance and write the adapted mesh to file.
+      {
+        const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
+        if (ratio_pre > refinement.maximum_imbalance)
+        {
+          int min_elem, max_elem;
+          min_elem = max_elem = mesh.back()->GetNE();
+          Mpi::GlobalMin(1, &min_elem, comm);
+          Mpi::GlobalMax(1, &max_elem, comm);
+          const auto ratio_post = double(max_elem) / min_elem;
+          Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
+                     "(new ratio = {:.3f})\n",
+                     ratio_pre, refinement.maximum_imbalance, ratio_post);
+        }
+        mesh.back()->Update();
+      }
     }
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
     err = indicators.Norml2(comm);
+    metric_paths = WriteMetricField(indicators, mesh, it);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"

@@ -4,10 +4,13 @@
 #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP
 #define PALACE_MODELS_POST_OPERATOR_CSV_HPP
 
+#include <complex>
 #include <memory>
 #include <optional>
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/drivensensitivity.hpp"
+#include "models/eigensensitivity.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/configfile.hpp"
@@ -301,7 +304,25 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
+  // Eigenvalue sensitivity CSV output.
+  std::optional<TableWithCSVFile> eig_sens;
+
+  // Driven sensitivity CSV output.
+  std::optional<TableWithCSVFile> driven_sens;
+
 public:
+  // Write eigenvalue sensitivity results to CSV. Called once after all modes are processed.
+  template <ProblemType U = solver_t>
+  auto PrintEigenSensitivity(const EigenSensitivity::SensitivityResult &sens,
+                             const Units &units)
+      -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
+
+  // Write driven S-parameter sensitivity results to CSV. Called at each frequency point.
+  template <ProblemType U = solver_t>
+  auto PrintDrivenSensitivity(const DrivenSensitivity::SensitivityResult &sens,
+                              int excitation_idx, double omega, const Units &units)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
   // Print all data from nondim_measurement_cache.
   void PrintAllCSVData(const PostOperator<solver_t> &post_op,
                        const Measurement &nondim_measurement_cache,

@@ -37,7 +37,10 @@
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "MaxRestart": { "type" : "integer", "minimum": 0 },
+        "Sensitivity": { "type": "boolean" },
+        "MeshSensitivity": { "type": "boolean" },
+        "MeshSensitivityH": { "type": "number", "exclusiveMinimum": 0.0 }
       }
     },
     "Driven":
@@ -102,7 +105,10 @@
         "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
         "AdaptiveCircuitSynthesis": { "type": "boolean" },
-        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] },
+        "Sensitivity": { "type": "boolean" },
+        "MeshSensitivity": { "type": "boolean" },
+        "MeshSensitivityH": { "type": "number", "exclusiveMinimum": 0.0 }
       }
     },
     "Transient":

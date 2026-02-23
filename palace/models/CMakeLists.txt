@@ -10,10 +10,13 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/currentdipoleoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivensensitivity.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/eigensensitivity.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/farfieldboundaryoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/laplaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/meshsensitivity.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/portexcitations.cpp

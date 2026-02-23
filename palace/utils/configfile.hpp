@@ -128,6 +128,28 @@ public:
   // Whether to write a (serial) mesh to file after mesh modification during AMR.
   bool save_adapt_mesh = false;
 
+  // Whether to write metric tensor field (.solb) and companion mesh (.meshb) for external
+  // mesh adaptation tools (Metris, refine). Written after each error estimation step.
+  bool metric_output = false;
+
+  // External mesh adaptation tool name: "metris", "refine", or "" (disabled, use MFEM's
+  // internal GeneralRefinement). When set, the AMR loop writes metric + mesh files and
+  // invokes the adapter as a subprocess instead of performing in-process refinement.
+  std::string external_adapter = "";
+
+  // Path to the external adapter binary. If empty, the adapter name is used directly
+  // (assumes it is on PATH).
+  std::string adapter_path = "";
+
+  // Path to the CAD geometry file (.egads) for surface projection during adaptation.
+  std::string geometry_file = "";
+
+  // Number of adaptation iterations passed to the external adapter.
+  int adapt_iterations = 10;
+
+  // Target polynomial degree for the adapted mesh (1 = linear, 2 = quadratic).
+  int target_degree = 1;
+
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
 
@@ -672,6 +694,17 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
+  // Compute S-parameter sensitivities with respect to material properties.
+  bool sensitivity = false;
+
+  // Compute mesh sensitivities (dJ/dx) with respect to boundary node positions via
+  // finite differences.
+  bool mesh_sensitivity = false;
+
+  // Finite-difference perturbation size for mesh sensitivity (relative to characteristic
+  // length). A value <= 0 uses the default.
+  double mesh_sensitivity_h = -1.0;
+
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };
@@ -739,6 +772,17 @@ public:
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.
   int max_restart = 2;
+
+  // Compute eigenvalue sensitivities with respect to material properties.
+  bool sensitivity = false;
+
+  // Compute mesh sensitivities (dJ/dx) with respect to boundary node positions via
+  // finite differences.
+  bool mesh_sensitivity = false;
+
+  // Finite-difference perturbation size for mesh sensitivity (relative to characteristic
+  // length). A value <= 0 uses the default.
+  double mesh_sensitivity_h = -1.0;
 
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
