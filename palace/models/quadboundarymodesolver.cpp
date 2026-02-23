@@ -519,6 +519,7 @@ void QuadBoundaryModeSolver::SetUpLinearSolver(MPI_Comm comm)
       }());
   pc->SetSaveAssembled(false);
   pc->SetDropSmallEntries(false);
+  pc->SetComplexMatrix(linear.complex_coarse_solve);
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 
