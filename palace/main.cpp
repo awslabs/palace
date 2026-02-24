@@ -13,8 +13,6 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/modeanalysissolver.hpp"
-#include "drivers/newmodeanalysissolver.hpp"
-#include "drivers/quadmodeanalysissolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -278,12 +276,6 @@ int main(int argc, char *argv[])
       case ProblemType::MODEANALYSIS:
         return std::make_unique<ModeAnalysisSolver>(iodata, world_root, world_size,
                                                     omp_threads, GetPalaceGitTag());
-      case ProblemType::QUADMODEANALYSIS:
-        return std::make_unique<QuadModeAnalysisSolver>(iodata, world_root, world_size,
-                                                        omp_threads, GetPalaceGitTag());
-      case ProblemType::NEWMODEANALYSIS:
-        return std::make_unique<NewModeAnalysisSolver>(iodata, world_root, world_size,
-                                                       omp_threads, GetPalaceGitTag());
     }
     return nullptr;
   }();
