@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MODELS_NEW_BOUNDARY_MODE_SOLVER_HPP
-#define PALACE_MODELS_NEW_BOUNDARY_MODE_SOLVER_HPP
+#ifndef PALACE_MODELS_BOUNDARY_MODE_OPERATOR_HPP
+#define PALACE_MODELS_BOUNDARY_MODE_OPERATOR_HPP
 
 #include <complex>
 #include <memory>
@@ -11,12 +11,89 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "models/boundarymodesolver.hpp"
+#include "utils/configfile.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
 
+class FarfieldBoundaryOperator;
 class FiniteElementSpace;
+class MaterialOperator;
+class SurfaceConductivityOperator;
+class SurfaceImpedanceOperator;
+
+//
+// Configuration for the BoundaryModeOperator, parameterizing the differences between the
+// 2D mode analysis (ModeAnalysisSolver) and 3D wave port (WavePortOperator) eigenvalue
+// problems.
+//
+struct BoundaryModeOperatorConfig
+{
+  // Material property mappings. For mode analysis, these come from
+  // GetAttributeToMaterial() (volume attrs). For wave ports, from
+  // GetBdrAttributeToMaterial() (boundary attrs).
+  const mfem::Array<int> *attr_to_material;
+
+  // Inverse permeability tensor. Used for Atn, Ant, and Btt bilinear forms.
+  const mfem::DenseTensor *inv_permeability;
+
+  // Curl-curl inverse permeability. In 2D mode analysis this is the scalar mu_inv
+  // (GetCurlCurlInvPermeability); for 3D wave ports it is the full tensor
+  // (GetInvPermeability), with subsequent normal projection.
+  const mfem::DenseTensor *curlcurl_inv_permeability;
+
+  // Real part of permittivity tensor. Used for Att, Ant bilinear forms.
+  const mfem::DenseTensor *permittivity_real;
+
+  // Scalar permittivity for the Ann mass matrix. In 2D mode analysis this is
+  // GetPermittivityScalar(); for 3D wave ports it is GetPermittivityReal() with
+  // subsequent normal projection.
+  const mfem::DenseTensor *permittivity_scalar;
+
+  // Imaginary part of permittivity (loss tangent contribution). Set to nullptr when
+  // there is no loss tangent.
+  const mfem::DenseTensor *permittivity_imag;
+
+  // Surface normal vector for 3D wave port boundaries. Set to nullptr for 2D domain
+  // meshes (mode analysis), which do not need normal projection.
+  const mfem::Vector *normal;
+
+  // Whether the material operator reports a nonzero loss tangent.
+  bool has_loss_tangent;
+
+  // Domain conductivity tensor. Used if non-null for damping contribution to Att.
+  const mfem::DenseTensor *conductivity = nullptr;
+  bool has_conductivity = false;
+
+  // London penetration depth (1/lambda_L^2 tensor). Adds a mass term to the stiffness
+  // operator: (1/lambda_L^2)(E, F). Used for superconductor modeling.
+  const mfem::DenseTensor *inv_london_depth = nullptr;
+  bool has_london_depth = false;
+
+  // Reference to MaterialOperator for ceed attribute access. Required when boundary
+  // operators are specified.
+  const MaterialOperator *mat_op = nullptr;
+
+  // Boundary operators for Robin BC contributions to Att. All optional (nullptr = none).
+  // Non-const because the Add*Coefficients methods are not const.
+  SurfaceImpedanceOperator *surf_z_op = nullptr;
+  FarfieldBoundaryOperator *farfield_op = nullptr;
+  SurfaceConductivityOperator *surf_sigma_op = nullptr;
+
+  // Eigenvalue solver configuration.
+  int num_modes;
+  int num_vec;
+  double eig_tol;
+  EigenvalueSolver::WhichType which_eig;
+
+  // Linear solver configuration.
+  const config::LinearSolverData *linear;
+  EigenSolverBackend eigen_backend;
+
+  // Verbosity level for solvers.
+  int verbose;
+};
 
 //
 // Linear eigenvalue solver for 2D boundary mode computation using a direct linearization
@@ -29,12 +106,12 @@ class FiniteElementSpace;
 //   [ 0   Ann] [en] = lambda  [ 0    0 ] [en]
 //
 // where:
-//   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2(eps u, v) + BC-t  [same as BMS]
-//   Atn = -(mu^{-1} grad_t u, v)                                      [same as BMS]
-//   Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n        [NEW: H1 stiffness
-//          + mass + impedance boundary]
-//   Btt = -(mu^{-1} u, v)                                              [same as BMS]
-//   Btn = -(mu^{-1} u, grad v) = Atn^T                                 [NEW: transpose]
+//   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2(eps u, v) + BC-t
+//   Atn = -(mu^{-1} grad_t u, v)
+//   Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n (H1 stiffness + mass +
+//          impedance boundary)
+//   Btt = -(mu^{-1} u, v)
+//   Btn = -(mu^{-1} u, grad v) = Atn^T (transpose coupling from Equation 2)
 //
 // The A matrix is upper block-triangular (Ant = 0). The B matrix has Btn coupling from
 // Equation 2 and Bnn = 0. This is a standard GEP with shift-and-invert.
@@ -42,7 +119,7 @@ class FiniteElementSpace;
 // The eigenvector contains [e_t; e_n_tilde] where e_n_tilde = i*kn*E_n. Recovery of
 // E_n = e_n_tilde / (i*kn) is performed in the driver, not here.
 //
-class NewBoundaryModeSolver
+class BoundaryModeOperator
 {
 public:
   struct SolveResult
@@ -56,13 +133,13 @@ public:
   // are assembled at solve time via AssembleFrequencyDependent(). Matrix assembly uses
   // the FE space communicator (all processes). If solver_comm != MPI_COMM_NULL, the
   // linear and eigenvalue solvers are configured on that communicator.
-  NewBoundaryModeSolver(const BoundaryModeSolverConfig &config,
-                        const FiniteElementSpace &nd_fespace,
-                        const FiniteElementSpace &h1_fespace,
-                        const mfem::Array<int> &dbc_tdof_list,
-                        MPI_Comm solver_comm = MPI_COMM_NULL);
+  BoundaryModeOperator(const BoundaryModeOperatorConfig &config,
+                     const FiniteElementSpace &nd_fespace,
+                     const FiniteElementSpace &h1_fespace,
+                     const mfem::Array<int> &dbc_tdof_list,
+                     MPI_Comm solver_comm = MPI_COMM_NULL);
 
-  ~NewBoundaryModeSolver();
+  ~BoundaryModeOperator();
 
   // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
   // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
@@ -94,7 +171,7 @@ public:
 
 private:
   // Configuration (stored for Solve-time assembly).
-  BoundaryModeSolverConfig config;
+  BoundaryModeOperatorConfig config;
 
   // References to FE spaces (not owned).
   const FiniteElementSpace &nd_fespace;
@@ -130,17 +207,17 @@ private:
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
                                            std::unique_ptr<mfem::HypreParMatrix>>;
 
-  // Att: same as BoundaryModeSolver (curl-curl + mass + BC-t).
+  // Att: curl-curl + mass + BC-t.
   ComplexHypreParMatrix AssembleAtt(double omega, double sigma) const;
 
-  // Atn: gradient coupling -(mu^{-1} grad_t u, v), same as BoundaryModeSolver.
+  // Atn: gradient coupling -(mu^{-1} grad_t u, v).
   ComplexHypreParMatrix AssembleAtn() const;
 
-  // Ann: H1 stiffness + mass + BC-n (NEW formulation).
+  // Ann: H1 stiffness + mass + BC-n.
   // Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n impedance.
   ComplexHypreParMatrix AssembleAnn(double omega) const;
 
-  // Btt: ND mass -(mu^{-1} u, v), same as BoundaryModeSolver.
+  // Btt: ND mass -(mu^{-1} u, v).
   ComplexHypreParMatrix AssembleBtt() const;
 
   // Build the 2x2 block A matrix. The (1,0) block is -sigma * Btn from the
@@ -167,4 +244,4 @@ private:
 
 }  // namespace palace
 
-#endif  // PALACE_MODELS_NEW_BOUNDARY_MODE_SOLVER_HPP
+#endif  // PALACE_MODELS_BOUNDARY_MODE_OPERATOR_HPP
