@@ -236,17 +236,27 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
                     (config.has_conductivity && config.conductivity) || !fbi.empty();
     if (has_imag)
     {
-      BilinearForm atti(nd_fespace);
+      // Coefficients must outlive the BilinearForm since integrators store raw
+      // pointers to the MaterialPropertyCoefficient (not copies).
+      int n_attr = config.attr_to_material->Size();
+      MaterialPropertyCoefficient negepstandelta_func(n_attr);
+      MaterialPropertyCoefficient fi_domain(n_attr);
       if (config.has_loss_tangent)
       {
-        MaterialPropertyCoefficient negepstandelta_func(
-            *config.attr_to_material, *config.permittivity_imag, -omega * omega);
-        atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
+        negepstandelta_func.AddCoefficient(*config.attr_to_material,
+                                           *config.permittivity_imag, -omega * omega);
       }
       if (config.has_conductivity && config.conductivity)
       {
-        MaterialPropertyCoefficient fi_domain(*config.attr_to_material,
-                                              *config.conductivity, omega);
+        fi_domain.AddCoefficient(*config.attr_to_material, *config.conductivity, omega);
+      }
+      BilinearForm atti(nd_fespace);
+      if (!negepstandelta_func.empty())
+      {
+        atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
+      }
+      if (!fi_domain.empty())
+      {
         atti.AddDomainIntegrator<VectorFEMassIntegrator>(fi_domain);
       }
       if (!fbi.empty())
