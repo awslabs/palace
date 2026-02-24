@@ -13,7 +13,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
-#include "models/boundarymodesolver.hpp"
+#include "models/newboundarymodesolver.hpp"
 
 namespace palace
 {
@@ -65,7 +65,7 @@ private:
   double mu_eps_max;
 
   // Boundary mode eigenvalue problem solver.
-  std::unique_ptr<BoundaryModeSolver> mode_solver;
+  std::unique_ptr<NewBoundaryModeSolver> mode_solver;
   ComplexVector v0, e0;
 
   // Communicator for processes which have elements for this port.

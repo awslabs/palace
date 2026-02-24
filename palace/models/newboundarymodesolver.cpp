@@ -263,17 +263,26 @@ NewBoundaryModeSolver::AssembleAtt(double omega, double sigma) const
                     (config.has_conductivity && config.conductivity) || !fbi.empty();
     if (has_imag)
     {
-      BilinearForm atti(nd_fespace);
+      // Coefficients must outlive the BilinearForm (integrators store raw pointers).
+      int n_attr = config.attr_to_material->Size();
+      MaterialPropertyCoefficient negepstandelta_func(n_attr);
+      MaterialPropertyCoefficient fi_domain(n_attr);
       if (config.has_loss_tangent)
       {
-        MaterialPropertyCoefficient negepstandelta_func(
-            *config.attr_to_material, *config.permittivity_imag, -omega * omega);
-        atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
+        negepstandelta_func.AddCoefficient(*config.attr_to_material,
+                                           *config.permittivity_imag, -omega * omega);
       }
       if (config.has_conductivity && config.conductivity)
       {
-        MaterialPropertyCoefficient fi_domain(*config.attr_to_material,
-                                              *config.conductivity, omega);
+        fi_domain.AddCoefficient(*config.attr_to_material, *config.conductivity, omega);
+      }
+      BilinearForm atti(nd_fespace);
+      if (!negepstandelta_func.empty())
+      {
+        atti.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
+      }
+      if (!fi_domain.empty())
+      {
         atti.AddDomainIntegrator<VectorFEMassIntegrator>(fi_domain);
       }
       if (!fbi.empty())
@@ -414,16 +423,21 @@ NewBoundaryModeSolver::AssembleAnn(double omega) const
     bool has_imag = config.has_loss_tangent || !nn_fbi.empty();
     if (has_imag)
     {
-      BilinearForm anni(h1_fespace);
+      // Coefficient must outlive the BilinearForm (integrators store raw pointers).
+      int n_attr = config.attr_to_material->Size();
+      MaterialPropertyCoefficient posepsi_h1_func(n_attr);
       if (config.has_loss_tangent)
       {
-        // Loss tangent contribution: +omega^2 * eps_imag (same positive sign as real mass).
-        MaterialPropertyCoefficient posepsi_h1_func(
-            *config.attr_to_material, *config.permittivity_imag, omega * omega);
+        posepsi_h1_func.AddCoefficient(*config.attr_to_material,
+                                       *config.permittivity_imag, omega * omega);
         if (config.normal)
         {
           posepsi_h1_func.NormalProjectedCoefficient(*config.normal);
         }
+      }
+      BilinearForm anni(h1_fespace);
+      if (!posepsi_h1_func.empty())
+      {
         anni.AddDomainIntegrator<MassIntegrator>(posepsi_h1_func);
       }
       if (!nn_fbi.empty())

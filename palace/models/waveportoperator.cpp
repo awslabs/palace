@@ -455,7 +455,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     config.eigen_backend = data.eigen_solver;
     config.verbose = data.verbose;
 
-    mode_solver = std::make_unique<BoundaryModeSolver>(
+    mode_solver = std::make_unique<NewBoundaryModeSolver>(
         config, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, port_comm);
   }
 
