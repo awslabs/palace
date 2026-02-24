@@ -1337,12 +1337,14 @@ auto PostOperatorCSV<solver_t>::InitializeModeKn()
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
   mode_kn = TableWithCSVFile(post_dir / "mode-kn.csv");
-  mode_kn->table.reserve(nr_expected_measurement_rows, 5);
+  mode_kn->table.reserve(nr_expected_measurement_rows, 7);
   mode_kn->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   mode_kn->table.insert("kn_re", "Re{kn} (1/m)");
   mode_kn->table.insert("kn_im", "Im{kn} (1/m)");
   mode_kn->table.insert("neff_re", "Re{n_eff}");
   mode_kn->table.insert("neff_im", "Im{n_eff}");
+  mode_kn->table.insert("err_back", "Error (Bkwd.)");
+  mode_kn->table.insert("err_abs", "Error (Abs.)");
   mode_kn->WriteFullTableTrunc();
 }
 
@@ -1360,6 +1362,8 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
   mode_kn->table["kn_im"] << measurement_cache.mode_data.kn_dim.imag();
   mode_kn->table["neff_re"] << measurement_cache.mode_data.n_eff.real();
   mode_kn->table["neff_im"] << measurement_cache.mode_data.n_eff.imag();
+  mode_kn->table["err_back"] << measurement_cache.error_bkwd;
+  mode_kn->table["err_abs"] << measurement_cache.error_abs;
   mode_kn->WriteFullTableTrunc();
 }
 

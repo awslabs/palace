@@ -78,6 +78,9 @@ public:
   std::complex<double> GetEigenvalue(int i) const;
   void GetEigenvector(int i, ComplexVector &x) const;
 
+  // Get the eigenpair error for the i-th converged eigenvalue.
+  double GetError(int i, EigenvalueSolver::ErrorType type) const;
+
   // Access the assembled Btt matrix (needed for impedance postprocessing).
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
 

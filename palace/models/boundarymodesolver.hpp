@@ -149,6 +149,9 @@ public:
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 
+  // Get the eigenpair error for the i-th converged eigenvalue.
+  double GetError(int i, EigenvalueSolver::ErrorType type) const;
+
   // Access the linear solver (for metadata reporting). Returns nullptr if this process
   // does not have a solver configured (non-port process in wave port mode).
   const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
