@@ -1572,6 +1572,7 @@ template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
                                                 const ComplexVector &en,
                                                 std::complex<double> kn, double omega,
+                                                double error_abs, double error_bkwd,
                                                 int num_conv)
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>
 {
@@ -1629,6 +1630,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   }
 
   measurement_cache = {};
+  measurement_cache.error_abs = error_abs;
+  measurement_cache.error_bkwd = error_bkwd;
 
   // Dimensionalization constants.
   const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
@@ -1799,6 +1802,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("kn_im", "Im{kn} (1/m)") << kn_dim.imag());
     table.insert(Column("neff_re", "Re{n_eff}") << n_eff.real());
     table.insert(Column("neff_im", "Im{n_eff}") << n_eff.imag());
+    table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
+    table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
@@ -1870,7 +1875,7 @@ PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>
 template auto
 PostOperator<ProblemType::MODEANALYSIS>::MeasureAndPrintAll<ProblemType::MODEANALYSIS>(
     int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
-    double omega, int num_conv) -> double;
+    double omega, double error_abs, double error_bkwd, int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(
