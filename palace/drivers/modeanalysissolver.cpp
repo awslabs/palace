@@ -247,6 +247,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     std::complex<double> lambda = mode_solver.GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
     // Extract the tangential (ND) and normal (H1) E eigenvector components.
     ComplexVector et(nd_size), en(h1_size);
@@ -304,7 +306,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     // PostOperator handles all measurements, printing, and CSV output.
-    auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
     // Calculate and record the error indicators only for propagating modes (real kn).
     // Spurious/evanescent modes (large Im{kn}) have unrelated error distributions that

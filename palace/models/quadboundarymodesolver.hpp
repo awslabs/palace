@@ -64,6 +64,9 @@ public:
   // Convenience: get kn = -i * lambda from the i-th eigenvalue.
   std::complex<double> GetKn(int i) const;
 
+  // Get the eigenpair error for the i-th converged eigenvalue.
+  double GetError(int i, EigenvalueSolver::ErrorType type) const;
+
   // Get the true vector sizes for the ND and H1 FE spaces.
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }

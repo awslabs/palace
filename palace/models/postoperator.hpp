@@ -406,10 +406,11 @@ public:
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
-  // propagation constant kn.
+  // propagation constant kn, and eigensolver error estimates.
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
-                          std::complex<double> kn, double omega, int num_conv)
+                          std::complex<double> kn, double omega, double error_abs,
+                          double error_bkwd, int num_conv)
       -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
