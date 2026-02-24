@@ -198,6 +198,8 @@ NewModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) con
     // Recover kn from eigenvalue (shift-and-invert recovery).
     std::complex<double> lambda = mode_solver.GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
     // Extract et (ND) and en_tilde (H1) from eigenvector.
     // The eigenvector contains [et; en_tilde] where en_tilde = ikn * En.
@@ -250,7 +252,8 @@ NewModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) con
       }
     }
 
-    auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
     const bool is_propagating =
         std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
