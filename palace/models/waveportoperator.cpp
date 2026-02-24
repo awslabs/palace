@@ -437,7 +437,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
     port_bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
-    BoundaryModeSolverConfig config;
+    BoundaryModeOperatorConfig config;
     config.attr_to_material = &port_bdr_attr_mat;
     config.inv_permeability = &mat_op.GetInvPermeability();
     config.curlcurl_inv_permeability = &mat_op.GetInvPermeability();
@@ -455,7 +455,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     config.eigen_backend = data.eigen_solver;
     config.verbose = data.verbose;
 
-    mode_solver = std::make_unique<NewBoundaryModeSolver>(
+    mode_solver = std::make_unique<BoundaryModeOperator>(
         config, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, port_comm);
   }
 
@@ -543,7 +543,7 @@ void WavePortData::Initialize(double omega)
   }
 
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
-  // BoundaryModeSolver. Frequency-independent matrices were assembled in the constructor.
+  // BoundaryModeOperator. Frequency-independent matrices were assembled in the constructor.
   const double sigma = -omega * omega * mu_eps_max;
   std::complex<double> lambda;
   {

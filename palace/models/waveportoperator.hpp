@@ -13,7 +13,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
-#include "models/newboundarymodesolver.hpp"
+#include "models/boundarymodeoperator.hpp"
 
 namespace palace
 {
@@ -61,11 +61,11 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  mfem::Array<int> port_bdr_attr_mat;  // Cached copy for BoundaryModeSolver config
+  mfem::Array<int> port_bdr_attr_mat;  // Cached copy for BoundaryModeOperator config
   double mu_eps_max;
 
   // Boundary mode eigenvalue problem solver.
-  std::unique_ptr<NewBoundaryModeSolver> mode_solver;
+  std::unique_ptr<BoundaryModeOperator> mode_solver;
   ComplexVector v0, e0;
 
   // Communicator for processes which have elements for this port.
