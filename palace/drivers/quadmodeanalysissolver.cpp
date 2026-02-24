@@ -193,6 +193,8 @@ QuadModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) co
   for (int i = 0; i < n_print; i++)
   {
     std::complex<double> kn = mode_solver.GetKn(i);
+    double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
     // Extract et (ND) and en (H1) from eigenvector.
     ComplexVector et(nd_size), en(h1_size);
@@ -243,7 +245,8 @@ QuadModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) co
       }
     }
 
-    auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, omega, n_print);
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
     const bool is_propagating =
         std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
