@@ -163,6 +163,11 @@ std::complex<double> BoundaryModeSolver::GetEigenvalue(int i) const
   return eigen->GetEigenvalue(i);
 }
 
+double BoundaryModeSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
+{
+  return eigen->GetError(i, type);
+}
+
 void BoundaryModeSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   eigen->GetEigenvector(i, x);
