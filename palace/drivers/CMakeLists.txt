@@ -14,6 +14,4 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/magnetostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/transientsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/modeanalysissolver.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/quadmodeanalysissolver.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/newmodeanalysissolver.cpp
 )

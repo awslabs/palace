@@ -69,9 +69,7 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType,
                             {ProblemType::ELECTROSTATIC, "Electrostatic"},
                             {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
                             {ProblemType::TRANSIENT, "Transient"},
-                            {ProblemType::MODEANALYSIS, "ModeAnalysis"},
-                            {ProblemType::QUADMODEANALYSIS, "QuadModeAnalysis"},
-                            {ProblemType::NEWMODEANALYSIS, "NewModeAnalysis"}})
+                            {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
