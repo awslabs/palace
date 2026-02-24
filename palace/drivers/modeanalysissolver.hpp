@@ -10,10 +10,10 @@ namespace palace
 {
 
 //
-// Driver class for 2D waveguide mode analysis. Solves for propagation modes of a
-// waveguide cross-section at fixed frequency, computing propagation constant (kn),
-// effective index (n_eff), characteristic impedance (Z0), and per-unit-length
-// inductance and capacitance.
+// Driver class for 2D waveguide mode analysis using a linear eigenvalue formulation
+// (Eq 1 + Eq 2 with VD substitution). This formulation supports full impedance BC
+// handling (both BC-t and BC-n) while maintaining a standard generalized eigenvalue
+// problem in kn^2 (no quadratic linearization).
 //
 class ModeAnalysisSolver : public BaseSolver
 {

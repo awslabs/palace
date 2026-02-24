@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "boundarymodesolver.hpp"
+#include "boundarymodeoperator.hpp"
 
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
@@ -29,11 +29,11 @@ constexpr bool skip_zeros = false;
 
 }  // namespace
 
-BoundaryModeSolver::BoundaryModeSolver(const BoundaryModeSolverConfig &config,
-                                       const FiniteElementSpace &nd_fespace,
-                                       const FiniteElementSpace &h1_fespace,
-                                       const mfem::Array<int> &dbc_tdof_list,
-                                       MPI_Comm solver_comm)
+BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &config,
+                                             const FiniteElementSpace &nd_fespace,
+                                             const FiniteElementSpace &h1_fespace,
+                                             const mfem::Array<int> &dbc_tdof_list,
+                                             MPI_Comm solver_comm)
   : config(config), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
     dbc_tdof_list(dbc_tdof_list)
 {
@@ -42,11 +42,21 @@ BoundaryModeSolver::BoundaryModeSolver(const BoundaryModeSolverConfig &config,
 
   // Assemble frequency-independent matrices. These use the FE space communicator
   // (all processes that share the mesh), NOT solver_comm.
+  //
+  // Atn: gradient coupling -(mu^{-1} grad_t u, v), same as BoundaryModeOperator.
   std::tie(Atnr, Atni) = AssembleAtn();
-  std::tie(Antr, Anti) = AssembleAnt();
-  std::tie(Annr, Anni) = AssembleAnn();
 
-  // Assemble Btt and build the block B matrix.
+  // Btn: NEGATED transpose of Atn. Atn = -(mu^{-1} grad ·, ·), so Atn^T = -(mu^{-1} ·, grad·).
+  // But the physical Btn from Eq 2 is +(mu^{-1} ·, grad·) (positive), so Btn = -Atn^T.
+  Btnr.reset(Atnr->Transpose());
+  *Btnr *= -1.0;
+  if (Atni)
+  {
+    Btni.reset(Atni->Transpose());
+    *Btni *= -1.0;
+  }
+
+  // Assemble Btt (negative mu^{-1} ND mass) and build the block B matrix.
   {
     auto [bttr, btti] = AssembleBtt();
     Bttr = std::make_unique<mfem::HypreParMatrix>(*bttr);  // Keep a copy for external use
@@ -60,15 +70,16 @@ BoundaryModeSolver::BoundaryModeSolver(const BoundaryModeSolverConfig &config,
         h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
         h1_fespace.Get().GetTrueDofOffsets(), &diag);
 
-    auto [Br, Bi] = BuildSystemMatrixB(bttr.get(), btti.get(), Dnn.get());
+    auto [Br, Bi] = BuildSystemMatrixB(bttr.get(), btti.get(), Btnr.get(), Btni.get(),
+                                       Dnn.get());
     opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
   // Configure linear and eigenvalue solvers.
-  // - ModeAnalysis: solver_comm == MPI_COMM_NULL → use FE space communicator (all procs).
-  // - WavePort on port procs: solver_comm is a valid subset communicator → use it.
+  // - ModeAnalysis: solver_comm == MPI_COMM_NULL -> use FE space communicator (all procs).
+  // - WavePort on port procs: solver_comm is a valid subset communicator -> use it.
   // - WavePort on non-port procs: solver_comm == MPI_COMM_NULL but FE space has no local
-  //   DOFs → skip solver setup (ksp and eigen remain null).
+  //   DOFs -> skip solver setup (ksp and eigen remain null).
   if (solver_comm != MPI_COMM_NULL)
   {
     SetUpLinearSolver(solver_comm);
@@ -80,45 +91,53 @@ BoundaryModeSolver::BoundaryModeSolver(const BoundaryModeSolverConfig &config,
     SetUpLinearSolver(nd_fespace.GetComm());
     SetUpEigenSolver(nd_fespace.GetComm());
   }
-  // else: non-port process with empty FE space — no solvers needed.
+  // else: non-port process with empty FE space -- no solvers needed.
 }
 
-BoundaryModeSolver::~BoundaryModeSolver()
+BoundaryModeOperator::~BoundaryModeOperator()
 {
   // Free the solvers before any communicator they depend on is freed externally.
   ksp.reset();
   eigen.reset();
 }
 
-void BoundaryModeSolver::AssembleFrequencyDependent(double omega, double sigma)
+void BoundaryModeOperator::AssembleFrequencyDependent(double omega, double sigma)
 {
-  // Assemble frequency-dependent Att and build the block A matrix. Impedance/absorbing/
-  // conductivity boundary terms enter Att as a tangential ND mass from the et component
-  // of the impedance BC: (iω/Zs)(et·t̂, ft·t̂)_γ.
-  //
-  // The impedance BC also has an en component: (iω/Zs)(en, fn)_γ, which would enter Ann.
-  // However, with the variable substitution en_code = ikn × en_phys, this becomes
-  // (iω/Zs)/(ikn) × (en_code, fn)_γ, introducing kn-dependence (nonlinear eigenvalue).
-  // For now, Ann boundary terms are omitted and H1 Dirichlet is enforced on all conductor
-  // boundaries (en=0), which approximates the PEC condition for en.
+  // Assemble frequency-dependent Att (same as BoundaryModeOperator) and Ann (NEW: H1
+  // stiffness + omega^2 eps mass + BC-n impedance), then build the block A matrix.
+  // The shift-and-invert transformation requires A_shifted = A - sigma * B. Since B has
+  // an off-diagonal Btn block, the shifted A has a (2,1) block: -sigma * Btn.
+  // The Att shift is handled inside AssembleAtt (via the sigma parameter).
   auto [Attr, Atti] = AssembleAtt(omega, sigma);
+  auto [Annr_local, Anni_local] = AssembleAnn(omega);
+
+  // Compute the shifted (2,1) block: -sigma * Btn_r. For sigma = -kn_target^2, this
+  // gives +kn_target^2 * Btn_r. Btn is real-only (no imaginary part).
+  std::unique_ptr<mfem::HypreParMatrix> shifted_Btnr;
+  if (Btnr && std::abs(sigma) > 0.0)
+  {
+    shifted_Btnr.reset(mfem::Add(-sigma, *Btnr, 0.0, *Btnr));
+  }
+
   auto [Ar, Ai] = BuildSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(),
-                                     Antr.get(), Anti.get(), Annr.get(), Anni.get());
+                                     Annr_local.get(), Anni_local.get(),
+                                     shifted_Btnr.get());
   opA = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
 }
 
-BoundaryModeSolver::SolveResult
-BoundaryModeSolver::Solve(double omega, double sigma, const ComplexVector *initial_space)
+BoundaryModeOperator::SolveResult
+BoundaryModeOperator::Solve(double omega, double sigma, const ComplexVector *initial_space)
 {
   // Assemble frequency-dependent matrices (MPI collective on FE space communicator).
   AssembleFrequencyDependent(omega, sigma);
 
   // Solve the eigenvalue problem. All processes must have solvers for this path.
   MFEM_VERIFY(ksp && eigen,
-              "BoundaryModeSolver::Solve called on process without solvers! "
+              "BoundaryModeOperator::Solve called on process without solvers! "
               "Use SolveSplit() for wave port mode where only a subset has solvers.");
   ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
   ksp->SetOperators(*opA, opP);
+
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
   if (initial_space)
@@ -131,9 +150,9 @@ BoundaryModeSolver::Solve(double omega, double sigma, const ComplexVector *initi
   return {num_conv, sigma};
 }
 
-BoundaryModeSolver::SolveResult
-BoundaryModeSolver::SolveSplit(double omega, double sigma, bool has_solver,
-                               const ComplexVector *initial_space)
+BoundaryModeOperator::SolveResult
+BoundaryModeOperator::SolveSplit(double omega, double sigma, bool has_solver,
+                                  const ComplexVector *initial_space)
 {
   // Assemble frequency-dependent matrices (MPI collective on all processes).
   AssembleFrequencyDependent(omega, sigma);
@@ -158,26 +177,28 @@ BoundaryModeSolver::SolveSplit(double omega, double sigma, bool has_solver,
   return {num_conv, sigma};
 }
 
-std::complex<double> BoundaryModeSolver::GetEigenvalue(int i) const
+std::complex<double> BoundaryModeOperator::GetEigenvalue(int i) const
 {
   return eigen->GetEigenvalue(i);
 }
 
-double BoundaryModeSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
+double BoundaryModeOperator::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
   return eigen->GetError(i, type);
 }
 
-void BoundaryModeSolver::GetEigenvector(int i, ComplexVector &x) const
+void BoundaryModeOperator::GetEigenvector(int i, ComplexVector &x) const
 {
   eigen->GetEigenvector(i, x);
 }
 
 // Stiffness matrix (shifted): Att = (mu_cc^{-1} curl_t x u, curl_t x v)
 //                                   - omega^2 (eps u, v)
-//                                   - sigma (mu^{-1} u, v).
-BoundaryModeSolver::ComplexHypreParMatrix
-BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
+//                                   - sigma (mu^{-1} u, v)
+//                                   + BC-t impedance/absorbing/conductivity.
+// SAME as BoundaryModeOperator::AssembleAtt.
+BoundaryModeOperator::ComplexHypreParMatrix
+BoundaryModeOperator::AssembleAtt(double omega, double sigma) const
 {
   MaterialPropertyCoefficient muinv_cc_func(*config.attr_to_material,
                                             *config.curlcurl_inv_permeability);
@@ -190,6 +211,12 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
                                                *config.permittivity_real, -omega * omega);
   eps_shifted_func.AddCoefficient(*config.attr_to_material, *config.inv_permeability,
                                   -sigma);
+  // London superconductor contribution: +(1/lambda_L^2)(et, ft).
+  if (config.has_london_depth)
+  {
+    eps_shifted_func.AddCoefficient(*config.attr_to_material, *config.inv_london_depth,
+                                    1.0);
+  }
 
   // Assemble Att real part: domain + boundary contributions in a single BilinearForm,
   // following the same pattern as SpaceOperator. Boundary impedance/absorbing terms use
@@ -201,8 +228,8 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
   if (config.surf_z_op)
   {
     config.surf_z_op->AddStiffnessBdrCoefficients(1.0, fbr);        // Ls -> real
-    config.surf_z_op->AddDampingBdrCoefficients(omega, fbi);        // Rs -> imag (ω/Rs)
-    config.surf_z_op->AddMassBdrCoefficients(-omega * omega, fbr);  // Cs -> real (-ω²Cs)
+    config.surf_z_op->AddDampingBdrCoefficients(omega, fbi);        // Rs -> imag
+    config.surf_z_op->AddMassBdrCoefficients(-omega * omega, fbr);  // Cs -> real
   }
   if (config.farfield_op)
   {
@@ -212,11 +239,6 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
   {
     config.surf_sigma_op->AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   }
-
-  Mpi::Print(" [BMS] Att boundary: surf_z_op={}, farfield_op={}, surf_sigma_op={}, "
-             "max_bdr_attr={}, fbr.empty={}, fbi.empty={}\n",
-             config.surf_z_op != nullptr, config.farfield_op != nullptr,
-             config.surf_sigma_op != nullptr, max_bdr_attr, fbr.empty(), fbi.empty());
 
   BilinearForm att(nd_fespace);
   att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_func);
@@ -228,12 +250,6 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
   // Assemble domain + boundary contributions via Palace's BilinearForm (libCEED).
   auto Attr_assembled =
       ParOperator(att.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
-  {
-    double norm_r =
-        hypre_ParCSRMatrixFnorm(static_cast<hypre_ParCSRMatrix *>(*Attr_assembled));
-    Mpi::Print(" [BMS] Attr Frobenius norm = {:.6e}\n", norm_r);
-  }
-
   // Assemble imaginary part: domain (loss tangent, conductivity) + boundary (Rs, ABC).
   std::unique_ptr<mfem::HypreParMatrix> Atti_assembled;
   {
@@ -241,8 +257,7 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
                     (config.has_conductivity && config.conductivity) || !fbi.empty();
     if (has_imag)
     {
-      // Coefficients must outlive the BilinearForm since integrators store raw
-      // pointers to the MaterialPropertyCoefficient (not copies).
+      // Coefficients must outlive the BilinearForm (integrators store raw pointers).
       int n_attr = config.attr_to_material->Size();
       MaterialPropertyCoefficient negepstandelta_func(n_attr);
       MaterialPropertyCoefficient fi_domain(n_attr);
@@ -277,7 +292,8 @@ BoundaryModeSolver::AssembleAtt(double omega, double sigma) const
 }
 
 // Coupling matrix: Atn = -(mu^{-1} grad_t u, v).
-BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAtn() const
+// SAME as BoundaryModeOperator::AssembleAtn.
+BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::AssembleAtn() const
 {
   MaterialPropertyCoefficient muinv_func(*config.attr_to_material, *config.inv_permeability,
                                          -1.0);
@@ -288,67 +304,150 @@ BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAtn() cons
           nullptr};
 }
 
-// Coupling matrix: Ant = -(eps u, grad_t v).
-BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAnt() const
+// H1 block: Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n impedance.
+//
+// This replaces BoundaryModeOperator's Ann (which is just -eps mass) with the full normal
+// curl-curl equation from Equation 2. The stiffness (diffusion) is NEGATIVE (IBP of
+// Laplacian), the mass is POSITIVE (+omega^2 eps), and impedance boundary terms use
+// NEGATED signs relative to the tangential Att terms (from the double cross product
+// in the impedance BC: [n x (n x E)]_z = -En).
+BoundaryModeOperator::ComplexHypreParMatrix
+BoundaryModeOperator::AssembleAnn(double omega) const
 {
-  MaterialPropertyCoefficient epsilon_func(*config.attr_to_material,
-                                           *config.permittivity_real, 1.0);
-  BilinearForm antr(nd_fespace, h1_fespace);
-  antr.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
-
-  // Contribution for loss tangent: eps -> eps * (1 - i tan(delta)).
-  if (!config.has_loss_tangent)
-  {
-    return {ParOperator(antr.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-                .StealParallelAssemble(),
-            nullptr};
-  }
-
-  MaterialPropertyCoefficient negepstandelta_func(*config.attr_to_material,
-                                                  *config.permittivity_imag, 1.0);
-  BilinearForm anti(nd_fespace, h1_fespace);
-  anti.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(negepstandelta_func);
-  return {ParOperator(antr.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-              .StealParallelAssemble(),
-          ParOperator(anti.FullAssemble(skip_zeros), nd_fespace, h1_fespace, false)
-              .StealParallelAssemble()};
-}
-
-// Mass matrix: Ann = -(eps u, v), with optional normal projection for 3D boundaries.
-BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleAnn() const
-{
-  MaterialPropertyCoefficient epsilon_func(*config.attr_to_material,
-                                           *config.permittivity_scalar, -1.0);
+  // H1 stiffness: -(mu^{-1} grad u, grad v) -- negative sign from IBP of Laplacian.
+  MaterialPropertyCoefficient neg_muinv_func(*config.attr_to_material,
+                                             *config.inv_permeability, -1.0);
   if (config.normal)
   {
-    epsilon_func.NormalProjectedCoefficient(*config.normal);
+    neg_muinv_func.NormalProjectedCoefficient(*config.normal);
   }
-  BilinearForm annr(h1_fespace);
-  annr.AddDomainIntegrator<MassIntegrator>(epsilon_func);
 
+  // H1 mass: +omega^2(eps u, v) -- positive sign in the normal equation.
+  MaterialPropertyCoefficient poseps_h1_func(*config.attr_to_material,
+                                             *config.permittivity_scalar, omega * omega);
+  if (config.normal)
+  {
+    poseps_h1_func.NormalProjectedCoefficient(*config.normal);
+  }
+
+  // London superconductor contribution: +(1/lambda_L^2)(en, fn).
+  // In the normal curl-curl equation, the London term is +(1/lambda_L^2) En, which
+  // enters as a positive H1 mass (same sign as the omega^2 eps mass).
+  // The inv_london_depth tensor is NxN for ND; for H1 we need scalar (0,0) component.
+  if (config.has_london_depth)
+  {
+    const auto &ild = *config.inv_london_depth;
+    mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
+    for (int k = 0; k < ild.SizeK(); k++)
+    {
+      ild_scalar(0, 0, k) = ild(0, 0, k);
+    }
+    poseps_h1_func.AddCoefficient(*config.attr_to_material, ild_scalar);
+  }
+
+  // Boundary impedance for en: -(iw/Zs)(en, fn)_gamma -- NEGATIVE sign from the
+  // double cross product in the impedance BC: [n x (n x E)]_z = -En, giving
+  // -(iw/Zs)(En, fn) on the boundary. Note: opposite sign from et boundary term.
+  // This follows the same pattern as the quadratic formulation's M0(2,2) assembly.
+  int max_bdr_attr = config.mat_op ? config.mat_op->MaxCeedBdrAttribute() : 0;
+  MaterialPropertyCoefficient nn_fbr(max_bdr_attr), nn_fbi(max_bdr_attr);
+  if (config.surf_z_op)
+  {
+    config.surf_z_op->AddStiffnessBdrCoefficients(-1.0, nn_fbr);
+    config.surf_z_op->AddDampingBdrCoefficients(-omega, nn_fbi);
+    config.surf_z_op->AddMassBdrCoefficients(omega * omega, nn_fbr);
+  }
+  if (config.farfield_op && config.farfield_op->GetAttrList().Size() > 0)
+  {
+    // The farfield operator's AddDampingBdrCoefficients adds a tensor-valued inverse
+    // impedance (for VectorFEMassIntegrator on ND). For the scalar H1 MassIntegrator,
+    // we need the scalar inverse impedance sqrt(eps/mu). Extract the (0,0) component
+    // of the tensor for each boundary material and add as scalar coefficients.
+    const auto &farfield_attrs = config.farfield_op->GetAttrList();
+    const auto &inv_z = config.mat_op->GetInvImpedance();
+    const auto &bdr_attr_to_mat = config.mat_op->GetBdrAttributeToMaterial();
+    for (auto attr : farfield_attrs)
+    {
+      int mat_idx =
+          (attr > 0 && attr <= bdr_attr_to_mat.Size()) ? bdr_attr_to_mat[attr - 1] : -1;
+      double inv_z0_scalar = (mat_idx >= 0) ? inv_z(0, 0, mat_idx) : 1.0;
+      auto ceed_attrs = config.mat_op->GetCeedBdrAttributes(attr);
+      if (ceed_attrs.Size() > 0)
+      {
+        nn_fbi.AddMaterialProperty(ceed_attrs, inv_z0_scalar, -omega);
+      }
+    }
+  }
+  if (config.surf_sigma_op)
+  {
+    // For conductivity: negate the coefficients (opposite sign from et boundary term).
+    MaterialPropertyCoefficient cond_r(max_bdr_attr), cond_i(max_bdr_attr);
+    config.surf_sigma_op->AddExtraSystemBdrCoefficients(omega, cond_r, cond_i);
+    if (!cond_r.empty())
+    {
+      cond_r *= -1.0;
+      nn_fbr.AddCoefficient(cond_r.GetAttributeToMaterial(),
+                            cond_r.GetMaterialProperties());
+    }
+    if (!cond_i.empty())
+    {
+      cond_i *= -1.0;
+      nn_fbi.AddCoefficient(cond_i.GetAttributeToMaterial(),
+                            cond_i.GetMaterialProperties());
+    }
+  }
+
+
+
+  // Assemble Ann real: H1 stiffness (negative Laplacian) + mass (positive) + boundary.
+  // Use DiffusionMassIntegrator to combine stiffness and mass in a single form.
+  BilinearForm annr(h1_fespace);
+  annr.AddDomainIntegrator<DiffusionMassIntegrator>(neg_muinv_func, poseps_h1_func);
+  if (!nn_fbr.empty())
+  {
+    annr.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
+  }
   auto Annr_assembled =
       ParOperator(annr.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
 
-  // Contribution for loss tangent: eps -> eps * (1 - i tan(delta)).
-  if (!config.has_loss_tangent)
+  // Assemble Ann imaginary: loss tangent + boundary impedance.
+  std::unique_ptr<mfem::HypreParMatrix> Anni_assembled;
   {
-    return {std::move(Annr_assembled), nullptr};
+    bool has_imag = config.has_loss_tangent || !nn_fbi.empty();
+    if (has_imag)
+    {
+      // Coefficient must outlive the BilinearForm (integrators store raw pointers).
+      int n_attr = config.attr_to_material->Size();
+      MaterialPropertyCoefficient posepsi_h1_func(n_attr);
+      if (config.has_loss_tangent)
+      {
+        posepsi_h1_func.AddCoefficient(*config.attr_to_material,
+                                       *config.permittivity_imag, omega * omega);
+        if (config.normal)
+        {
+          posepsi_h1_func.NormalProjectedCoefficient(*config.normal);
+        }
+      }
+      BilinearForm anni(h1_fespace);
+      if (!posepsi_h1_func.empty())
+      {
+        anni.AddDomainIntegrator<MassIntegrator>(posepsi_h1_func);
+      }
+      if (!nn_fbi.empty())
+      {
+        anni.AddBoundaryIntegrator<MassIntegrator>(nn_fbi);
+      }
+      Anni_assembled =
+          ParOperator(anni.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble();
+    }
   }
 
-  MaterialPropertyCoefficient negepstandelta_func(*config.attr_to_material,
-                                                  *config.permittivity_imag, -1.0);
-  if (config.normal)
-  {
-    negepstandelta_func.NormalProjectedCoefficient(*config.normal);
-  }
-  BilinearForm anni(h1_fespace);
-  anni.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
-  return {std::move(Annr_assembled),
-          ParOperator(anni.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble()};
+  return {std::move(Annr_assembled), std::move(Anni_assembled)};
 }
 
-// Mass matrix: Btt = (mu^{-1} u, v).
-BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleBtt() const
+// Mass matrix: Btt = -(mu^{-1} u, v).
+// SAME as BoundaryModeOperator::AssembleBtt.
+BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::AssembleBtt() const
 {
   MaterialPropertyCoefficient muinv_func(*config.attr_to_material,
                                          *config.inv_permeability);
@@ -358,26 +457,28 @@ BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::AssembleBtt() cons
           nullptr};
 }
 
-BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::BuildSystemMatrixA(
+BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::BuildSystemMatrixA(
     const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-    const mfem::HypreParMatrix *Antr, const mfem::HypreParMatrix *Anti,
-    const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni) const
+    const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
+    const mfem::HypreParMatrix *shifted_Btnr) const
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.
+  // The (1,0) block is -sigma * Btn from the shift-and-invert transformation.
+  // Without shift (sigma=0), this block is zero (upper block-triangular).
   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
   blocks(0, 0) = Attr;
   blocks(0, 1) = Atnr;
-  blocks(1, 0) = Antr;
+  blocks(1, 0) = shifted_Btnr;  // -sigma * Btn (nullptr when sigma=0)
   blocks(1, 1) = Annr;
   std::unique_ptr<mfem::HypreParMatrix> Ar(mfem::HypreParMatrixFromBlocks(blocks));
 
   std::unique_ptr<mfem::HypreParMatrix> Ai;
-  if (Atti)
+  if (Atti || Atni || Anni)
   {
     blocks(0, 0) = Atti;
     blocks(0, 1) = Atni;
-    blocks(1, 0) = Anti;
+    blocks(1, 0) = nullptr;  // Shifted Btn is real-only
     blocks(1, 1) = Anni;
     Ai.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
@@ -392,23 +493,29 @@ BoundaryModeSolver::ComplexHypreParMatrix BoundaryModeSolver::BuildSystemMatrixA
   return {std::move(Ar), std::move(Ai)};
 }
 
-BoundaryModeSolver::ComplexHypreParMatrix
-BoundaryModeSolver::BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,
-                                       const mfem::HypreParMatrix *Btti,
-                                       const mfem::HypreParMatrix *Dnn) const
+BoundaryModeOperator::ComplexHypreParMatrix
+BoundaryModeOperator::BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,
+                                          const mfem::HypreParMatrix *Btti,
+                                          const mfem::HypreParMatrix *Btnr,
+                                          const mfem::HypreParMatrix *Btni,
+                                          const mfem::HypreParMatrix *Dnn) const
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.
+  // B = [Btt, 0; Btn, Dnn] where Btn = Atn^T and Dnn is the zero diagonal.
   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
   blocks(0, 0) = Bttr;
   blocks(0, 1) = nullptr;
-  blocks(1, 0) = nullptr;
+  blocks(1, 0) = Btnr;
   blocks(1, 1) = Dnn;
   std::unique_ptr<mfem::HypreParMatrix> Br(mfem::HypreParMatrixFromBlocks(blocks));
 
   std::unique_ptr<mfem::HypreParMatrix> Bi;
-  if (Btti)
+  if (Btti || Btni)
   {
     blocks(0, 0) = Btti;
+    blocks(0, 1) = nullptr;
+    blocks(1, 0) = Btni;
+    blocks(1, 1) = nullptr;
     Bi.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
 
@@ -422,7 +529,7 @@ BoundaryModeSolver::BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,
   return {std::move(Br), std::move(Bi)};
 }
 
-void BoundaryModeSolver::SetUpLinearSolver(MPI_Comm comm)
+void BoundaryModeOperator::SetUpLinearSolver(MPI_Comm comm)
 {
   // GMRES iterative solver preconditioned with a sparse direct solver.
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, config.verbose);
@@ -444,7 +551,7 @@ void BoundaryModeSolver::SetUpLinearSolver(MPI_Comm comm)
 #elif defined(MFEM_USE_MUMPS)
     pc_type = LinearSolver::MUMPS;
 #else
-    MFEM_ABORT("Boundary mode solver requires building with SuperLU_DIST, STRUMPACK, "
+    MFEM_ABORT("BoundaryModeOperator requires building with SuperLU_DIST, STRUMPACK, "
                "or MUMPS!");
 #endif
   }
@@ -507,7 +614,7 @@ void BoundaryModeSolver::SetUpLinearSolver(MPI_Comm comm)
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 
-void BoundaryModeSolver::SetUpEigenSolver(MPI_Comm comm)
+void BoundaryModeOperator::SetUpEigenSolver(MPI_Comm comm)
 {
   constexpr int print = 0;
   EigenSolverBackend type = config.eigen_backend;
@@ -533,7 +640,7 @@ void BoundaryModeSolver::SetUpEigenSolver(MPI_Comm comm)
 #elif defined(PALACE_WITH_ARPACK)
     type = EigenSolverBackend::ARPACK;
 #else
-#error "Boundary mode solver requires building with ARPACK or SLEPc!"
+#error "BoundaryModeOperator requires building with ARPACK or SLEPc!"
 #endif
   }
 
@@ -561,13 +668,6 @@ void BoundaryModeSolver::SetUpEigenSolver(MPI_Comm comm)
     eigen = std::move(slepc);
 #endif
   }
-
-  // Note: gradient null-space modes (kn = 0, et = grad phi) are separated from physical
-  // propagating modes by the shift-and-invert spectral transformation. Physical modes have
-  // large |lambda|, gradient modes have small |lambda| ~ 1/|sigma|, so LARGEST_MAGNITUDE
-  // targeting naturally skips them. A DivFreeSolver is NOT appropriate here: it would
-  // project et to tangential divergence-free and destroy physical modes whose divergence
-  // couples to en through the block equation (div_t(eps et) = eps en != 0).
 }
 
 }  // namespace palace
