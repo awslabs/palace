@@ -1335,6 +1335,11 @@ ModeAnalysisSolverData::ModeAnalysisSolverData(const json &ma)
   target = ma.value("Target", target);
   tol = ma.value("Tol", tol);
   type = ma.value("Type", type);
+  if (auto it = ma.find("Attributes"); it != ma.end())
+  {
+    attributes = it->get<std::vector<int>>();
+    std::sort(attributes.begin(), attributes.end());
+  }
 }
 
 LinearSolverData::LinearSolverData(const json &linear)

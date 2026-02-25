@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -119,27 +120,43 @@ MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mes
 void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
                                                const mfem::ParMesh &mesh)
 {
-  // Check that material attributes have been specified correctly. The mesh attributes may
-  // be non-contiguous and when no material attribute is specified the elements are deleted
-  // from the mesh so as to not cause problems.
+  // Check that material attributes have been specified correctly. Use the libCEED attribute
+  // map (which includes ghost elements from shared faces) rather than the local
+  // mesh.attributes array, since some ranks may not own elements of every material.
   MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
+  const auto &loc_attr_check = this->mesh.GetCeedAttributes();
   {
-    int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
-    mfem::Array<int> attr_marker(attr_max);
-    attr_marker = 0;
-    for (auto attr : mesh.attributes)
+    // Gather all locally known attributes (includes ghost elements).
+    std::unordered_set<int> known_attrs;
+    for (const auto &[attr, _] : loc_attr_check)
     {
-      attr_marker[attr - 1] = 1;
+      known_attrs.insert(attr);
     }
+    // Collect globally known attributes across all MPI ranks.
+    int n_local = static_cast<int>(known_attrs.size());
+    std::vector<int> local_attrs(known_attrs.begin(), known_attrs.end());
+    int n_global = 0;
+    MPI_Allreduce(&n_local, &n_global, 1, MPI_INT, MPI_SUM, mesh.GetComm());
+    std::vector<int> all_attrs(n_global);
+    std::vector<int> recv_counts(Mpi::Size(mesh.GetComm()));
+    MPI_Allgather(&n_local, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, mesh.GetComm());
+    std::vector<int> displs(Mpi::Size(mesh.GetComm()), 0);
+    for (int i = 1; i < static_cast<int>(displs.size()); i++)
+    {
+      displs[i] = displs[i - 1] + recv_counts[i - 1];
+    }
+    MPI_Allgatherv(local_attrs.data(), n_local, MPI_INT, all_attrs.data(),
+                   recv_counts.data(), displs.data(), MPI_INT, mesh.GetComm());
+    std::unordered_set<int> global_attrs(all_attrs.begin(), all_attrs.end());
+
     for (const auto &data : iodata.domains.materials)
     {
       for (auto attr : data.attributes)
       {
-        MFEM_VERIFY(
-            attr > 0 && attr <= attr_max,
-            "Material attribute tags must be non-negative and correspond to attributes "
-            "in the mesh!");
-        MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
+        MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
+        MFEM_VERIFY(global_attrs.count(attr),
+                    "Unknown material attribute "
+                        << attr << " not found in mesh domain attributes!");
       }
     }
   }
@@ -175,6 +192,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   {
     mat_muinv_scalar.SetSize(1, 1, nmats);
     mat_epsilon_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
   }
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
@@ -282,6 +300,10 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       // Similarly, store the z-z permittivity for the normal component in mode analysis.
       mfem::DenseMatrix mat_eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
       mat_epsilon_scalar(count)(0, 0) = mat_eps_3d(2, 2);
+
+      // Scalar imaginary permittivity: -eps_zz * tandelta_zz for out-of-plane component.
+      mfem::DenseMatrix mat_td_3d = internal::mat::ToDenseMatrix(data.tandelta);
+      mat_epsilon_imag_scalar(count)(0, 0) = -mat_eps_3d(2, 2) * mat_td_3d(2, 2);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
@@ -424,6 +446,143 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
     }
   }
   return bdr_attr_mat;
+}
+
+void MaterialOperator::RotateMaterialTensors(const IoData &iodata, const mfem::Vector &e1,
+                                             const mfem::Vector &e2,
+                                             const mfem::Vector &normal)
+{
+  MFEM_VERIFY(mat_muinv.SizeI() == 2,
+              "RotateMaterialTensors should only be called on a 2D MaterialOperator!");
+
+  // Build the 3x2 rotation matrix R = [e1 | e2] mapping local 2D to global 3D.
+  mfem::DenseMatrix R(3, 2);
+  for (int d = 0; d < 3; d++)
+  {
+    R(d, 0) = e1(d);
+    R(d, 1) = e2(d);
+  }
+
+  // Helper: rotate a 3x3 symmetric tensor to 2x2 in-plane via R^T M R and store directly
+  // into a DenseTensor slice. We avoid DenseMatrix::operator= on the non-owning view
+  // returned by DenseTensor::operator()(k), which may not copy data correctly.
+  auto RotateInto = [&R](const mfem::DenseMatrix &M3, mfem::DenseTensor &dst, int k)
+  {
+    mfem::DenseMatrix temp(3, 2), result(2, 2);
+    Mult(M3, R, temp);
+    MultAtB(R, temp, result);
+    for (int di = 0; di < 2; di++)
+    {
+      for (int dj = 0; dj < 2; dj++)
+      {
+        dst(di, dj, k) = result(di, dj);
+      }
+    }
+  };
+
+  // Helper: compute scalar out-of-plane component n^T M n.
+  auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
+  {
+    return M3.InnerProduct(normal, normal);
+  };
+
+  const auto &loc_attr = mesh.GetCeedAttributes();
+  int count = 0;
+  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  {
+    const auto &data = iodata.domains.materials[i];
+    bool has_local = false;
+    for (auto attr : data.attributes)
+    {
+      if (loc_attr.find(attr) != loc_attr.end())
+      {
+        has_local = true;
+        break;
+      }
+    }
+    if (!has_local)
+    {
+      continue;
+    }
+
+    // Reconstruct full 3x3 base tensors from config.
+    mfem::DenseMatrix mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
+    mfem::DenseMatrix muinv_3d(3, 3);
+    mfem::DenseMatrixInverse(mu_3d, true).GetInverseMatrix(muinv_3d);
+    mfem::DenseMatrix eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
+    mfem::DenseMatrix tandelta_3d = internal::mat::ToDenseMatrix(data.tandelta);
+    mfem::DenseMatrix sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
+
+    // In-plane inverse permeability: R^T μ^{-1}_{3x3} R.
+    RotateInto(muinv_3d, mat_muinv, count);
+
+    // Scalar μ^{-1} for curl-curl (out-of-plane): n^T μ^{-1}_{3x3} n.
+    mat_muinv_scalar(count)(0, 0) = ProjectNormal(muinv_3d);
+
+    // In-plane permittivity: R^T ε_{3x3} R.
+    RotateInto(eps_3d, mat_epsilon, count);
+
+    // Scalar ε for normal component: n^T ε_{3x3} n.
+    mat_epsilon_scalar(count)(0, 0) = ProjectNormal(eps_3d);
+
+    // Scalar Im{ε} for normal component: -n^T (ε tan(δ))_{3x3} n.
+    {
+      mfem::DenseMatrix epstd(3, 3);
+      Mult(eps_3d, tandelta_3d, epstd);
+      mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd);
+    }
+
+    // Im{ε} = -ε tan(δ), rotated.
+    {
+      mfem::DenseMatrix T(3, 3);
+      Mult(eps_3d, tandelta_3d, T);
+      T *= -1.0;
+      RotateInto(T, mat_epsilon_imag, count);
+    }
+
+    // |ε| = ε √(I + tan(δ) tan(δ)^T), rotated.
+    {
+      mfem::DenseMatrix T(3, 3);
+      MultAAt(tandelta_3d, T);
+      for (int d = 0; d < 3; d++)
+      {
+        T(d, d) += 1.0;
+      }
+      mfem::DenseMatrix eps_abs_3d(3, 3);
+      Mult(eps_3d, linalg::MatrixSqrt(T), eps_abs_3d);
+      RotateInto(eps_abs_3d, mat_epsilon_abs, count);
+    }
+
+    // Z_0^{-1} = √(μ^{-1} ε), rotated.
+    {
+      mfem::DenseMatrix T(3, 3);
+      Mult(muinv_3d, eps_3d, T);
+      RotateInto(linalg::MatrixSqrt(T), mat_invz0, count);
+    }
+
+    // c_0 = √((μ ε)^{-1}), rotated.
+    {
+      mfem::DenseMatrix T(3, 3);
+      Mult(mu_3d, eps_3d, T);
+      RotateInto(linalg::MatrixPow(T, -0.5), mat_c0, count);
+      mat_c0_min[count] = linalg::SingularValueMin(mat_c0(count));
+      mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
+    }
+
+    // Electrical conductivity σ, rotated.
+    RotateInto(sigma_3d, mat_sigma, count);
+
+    // London depth: λ^{-2} μ^{-1}, rotated.
+    {
+      double invL2 =
+          std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+      mfem::DenseMatrix london_3d(muinv_3d);
+      london_3d *= invL2;
+      RotateInto(london_3d, mat_invLondon, count);
+    }
+
+    count++;
+  }
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(int attr_max)
