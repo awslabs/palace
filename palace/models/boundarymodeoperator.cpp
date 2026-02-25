@@ -103,11 +103,6 @@ BoundaryModeOperator::~BoundaryModeOperator()
 
 void BoundaryModeOperator::AssembleFrequencyDependent(double omega, double sigma)
 {
-  // Assemble frequency-dependent Att (same as BoundaryModeOperator) and Ann (NEW: H1
-  // stiffness + omega^2 eps mass + BC-n impedance), then build the block A matrix.
-  // The shift-and-invert transformation requires A_shifted = A - sigma * B. Since B has
-  // an off-diagonal Btn block, the shifted A has a (2,1) block: -sigma * Btn.
-  // The Att shift is handled inside AssembleAtt (via the sigma parameter).
   auto [Attr, Atti] = AssembleAtt(omega, sigma);
   auto [Annr_local, Anni_local] = AssembleAnn(omega);
 
@@ -421,11 +416,19 @@ BoundaryModeOperator::AssembleAnn(double omega) const
       MaterialPropertyCoefficient posepsi_h1_func(n_attr);
       if (config.has_loss_tangent)
       {
-        posepsi_h1_func.AddCoefficient(*config.attr_to_material,
-                                       *config.permittivity_imag, omega * omega);
         if (config.normal)
         {
+          // 3D wave port: project the full tensor using the surface normal.
+          posepsi_h1_func.AddCoefficient(*config.attr_to_material,
+                                         *config.permittivity_imag, omega * omega);
           posepsi_h1_func.NormalProjectedCoefficient(*config.normal);
+        }
+        else if (config.permittivity_imag_scalar)
+        {
+          // 2D mode analysis: use pre-computed scalar imaginary permittivity.
+          posepsi_h1_func.AddCoefficient(*config.attr_to_material,
+                                         *config.permittivity_imag_scalar,
+                                         omega * omega);
         }
       }
       BilinearForm anni(h1_fespace);

@@ -462,6 +462,10 @@ public:
   // Whether impedance postprocessing is configured (mode analysis).
   bool HasImpedancePostprocessing() const { return has_impedance_postpro; }
 
+  // Project 3D impedance path coordinates to 2D local frame (mode analysis submesh).
+  void ProjectImpedancePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
+                             const mfem::Vector &e2);
+
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
 

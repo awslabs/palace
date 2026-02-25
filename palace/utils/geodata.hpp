@@ -218,6 +218,44 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
+// Remap domain element attributes of a boundary ParSubMesh from parent boundary face
+// attributes to the neighboring domain element attributes in the parent mesh. After this
+// call, each submesh element has the attribute of its adjacent domain element in the parent
+// mesh, matching the material definitions in the config. This enables creating a
+// MaterialOperator directly on the submesh.
+void RemapSubMeshAttributes(mfem::ParSubMesh &submesh);
+
+// Remap boundary element attributes of a boundary ParSubMesh. By default, MFEM assigns
+// all submesh boundary elements the same attribute. This function traces each submesh
+// boundary edge back to the parent 3D mesh to find which parent boundary face contains it,
+// and assigns that face's attribute. After this call, the submesh boundary attributes match
+// the parent mesh's boundary conditions (PEC, absorbing, wave port, etc.).
+void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
+                               const mfem::Array<int> &surface_attrs);
+
+// Project a planar 2D submesh (with 3D ambient coordinates from ParSubMesh) to true 2D
+// coordinates. Computes the surface normal and tangent frame from the mesh, then replaces
+// each node coordinate with its projection onto the tangent plane. After this call, the
+// mesh has SpaceDimension() == 2 and all downstream 2D infrastructure (FE spaces, GSLIB)
+// works as for a native 2D mesh. Returns the surface normal (3D) for use in material
+// tensor projection (BoundaryModeOperator). The optional centroid and tangent vectors
+// (e1, e2) are output parameters for transforming additional 3D coordinates (e.g.,
+// voltage/current path points) to the same 2D frame.
+mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *centroid = nullptr,
+                                mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
+
+// Project a 3D point to 2D local coordinates using a previously computed tangent frame.
+inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
+                                  const mfem::Vector &e1, const mfem::Vector &e2)
+{
+  mfem::Vector p2d(2);
+  p2d(0) = (p3d(0) - centroid(0)) * e1(0) + (p3d(1) - centroid(1)) * e1(1) +
+           (p3d(2) - centroid(2)) * e1(2);
+  p2d(1) = (p3d(0) - centroid(0)) * e2(0) + (p3d(1) - centroid(1)) * e2(1) +
+           (p3d(2) - centroid(2)) * e2(2);
+  return p2d;
+}
+
 // Helper functions to compute the volume or area for all domain or boundary elements with
 // the given attributes.
 double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);

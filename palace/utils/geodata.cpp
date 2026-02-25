@@ -16,6 +16,7 @@
 #include <utility>
 #include <Eigen/Dense>
 #include <fmt/ranges.h>
+#include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
@@ -1386,6 +1387,266 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   if constexpr (false)
   {
     Mpi::Print(comm, " Surface normal = ({:+.3e})", fmt::join(normal, ", "));
+  }
+  return normal;
+}
+
+void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
+{
+  MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
+              "RemapSubMeshAttributes requires a boundary ParSubMesh!");
+
+  const auto &parent = *submesh.GetParent();
+  const mfem::Array<int> &parent_elem_map = submesh.GetParentElementIDMap();
+
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  for (int i = 0; i < submesh.GetNE(); i++)
+  {
+    int parent_bdr_elem = parent_elem_map[i];
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+        parent_bdr_elem, parent, FET, T1, T2);
+    // Use the neighboring domain element's attribute. For internal boundaries, use the
+    // element with the lower attribute (same convention as Palace's mesh.cpp).
+    int nbr_attr = FET.Elem1->Attribute;
+    if (FET.Elem2 && FET.Elem2->Attribute < nbr_attr)
+    {
+      nbr_attr = FET.Elem2->Attribute;
+    }
+    submesh.SetAttribute(i, nbr_attr);
+  }
+}
+
+void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
+                               const mfem::Array<int> &surface_attrs)
+{
+  MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
+              "RemapSubMeshBdrAttributes requires a boundary ParSubMesh!");
+
+  const auto &parent = *submesh.GetParent();
+
+  // Build a set of surface attributes for quick lookup.
+  std::unordered_set<int> surface_attr_set;
+  for (int i = 0; i < surface_attrs.Size(); i++)
+  {
+    surface_attr_set.insert(surface_attrs[i]);
+  }
+
+  // Build a map from parent edge index to parent boundary face attribute. For edges shared
+  // by multiple parent boundary faces, prefer the face that is NOT part of the mode
+  // analysis surface (since the submesh boundary lies at the intersection of the surface
+  // with adjacent boundaries, and we want the adjacent boundary's attribute).
+  std::unordered_map<int, int> edge_to_bdr_attr;
+  mfem::Array<int> edges, orientations;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    int attr = parent.GetBdrAttribute(be);
+    parent.GetBdrElementEdges(be, edges, orientations);
+    bool is_surface = (surface_attr_set.count(attr) > 0);
+    for (int j = 0; j < edges.Size(); j++)
+    {
+      auto it = edge_to_bdr_attr.find(edges[j]);
+      if (it == edge_to_bdr_attr.end())
+      {
+        edge_to_bdr_attr[edges[j]] = attr;
+      }
+      else if (!is_surface)
+      {
+        // Prefer the non-surface attribute (adjacent boundary's attribute).
+        it->second = attr;
+      }
+    }
+  }
+
+  // For each submesh boundary element (a 1D edge on the 2D submesh), trace back to the
+  // parent edge and assign the corresponding boundary attribute.
+  const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
+    MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
+                "Submesh boundary edge index out of parent edge map range!");
+    int parent_edge = parent_edge_map[submesh_edge];
+    auto it = edge_to_bdr_attr.find(parent_edge);
+    if (it != edge_to_bdr_attr.end())
+    {
+      submesh.SetBdrAttribute(sbe, it->second);
+    }
+    // If not found, the edge has no parent boundary face (unlikely for a boundary submesh
+    // but possible for internal edges). Leave the default attribute.
+  }
+
+  // Rebuild the bdr_attributes array to reflect the new attribute values.
+  submesh.SetAttributes();
+}
+
+mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centroid,
+                                mfem::Vector *out_e1, mfem::Vector *out_e2)
+{
+  MFEM_VERIFY(submesh.Dimension() == 2 && submesh.SpaceDimension() == 3,
+              "ProjectSubmeshTo2D requires a 2D submesh with 3D ambient coordinates!");
+
+  // Compute the surface normal from all domain elements of the submesh.
+  mfem::Vector normal = GetSurfaceNormal(submesh);
+
+  // Build an orthonormal tangent frame (e1, e2) perpendicular to the normal.
+  // Choose e1 as the cross product of normal with the axis most perpendicular to it.
+  mfem::Vector e1(3), e2(3);
+  {
+    // Pick the coordinate axis least aligned with the normal.
+    int min_idx = 0;
+    double min_val = std::abs(normal(0));
+    for (int d = 1; d < 3; d++)
+    {
+      if (std::abs(normal(d)) < min_val)
+      {
+        min_val = std::abs(normal(d));
+        min_idx = d;
+      }
+    }
+    mfem::Vector axis(3);
+    axis = 0.0;
+    axis(min_idx) = 1.0;
+
+    // e1 = normalize(axis x normal)
+    e1(0) = axis(1) * normal(2) - axis(2) * normal(1);
+    e1(1) = axis(2) * normal(0) - axis(0) * normal(2);
+    e1(2) = axis(0) * normal(1) - axis(1) * normal(0);
+    e1 /= e1.Norml2();
+
+    // e2 = normal x e1
+    e2(0) = normal(1) * e1(2) - normal(2) * e1(1);
+    e2(1) = normal(2) * e1(0) - normal(0) * e1(2);
+    e2(2) = normal(0) * e1(1) - normal(1) * e1(0);
+    e2 /= e2.Norml2();
+  }
+
+  // Compute the centroid of all submesh vertices (using local vertices, then averaging
+  // across MPI ranks).
+  mfem::Vector centroid(3);
+  centroid = 0.0;
+  int nv_local = submesh.GetNV();
+  for (int i = 0; i < nv_local; i++)
+  {
+    const double *v = submesh.GetVertex(i);
+    for (int d = 0; d < 3; d++)
+    {
+      centroid(d) += v[d];
+    }
+  }
+  int nv_global = nv_local;
+  MPI_Comm comm = submesh.GetComm();
+  Mpi::GlobalSum(3, centroid.HostReadWrite(), comm);
+  Mpi::GlobalSum(1, &nv_global, comm);
+  if (nv_global > 0)
+  {
+    centroid /= nv_global;
+  }
+
+  // Read the 3D node coordinates, project to 2D, then rebuild the mesh with 2D nodes.
+  // We read all coordinates first, then use SetCurvature to rebuild with SpaceDim=2.
+  {
+    // Determine the mesh curvature order from the existing nodes. On empty partitions
+    // (zero elements), GetMaxElementOrder() may fail, so use MPI reduction.
+    int mesh_order = 0;
+    if (submesh.GetNodes() && submesh.GetNE() > 0)
+    {
+      mesh_order = submesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    }
+    Mpi::GlobalMax(1, &mesh_order, comm);
+    if (mesh_order < 1)
+    {
+      mesh_order = 1;
+    }
+
+    // Read all 3D node coordinates. For high-order meshes, nodes includes interior DOFs;
+    // for linear meshes with nodes, it's just vertices.
+    mfem::GridFunction *nodes3d = submesh.GetNodes();
+    const int sdim = submesh.SpaceDimension();
+    std::vector<std::array<double, 2>> projected;
+
+    if (nodes3d)
+    {
+      const int npts = nodes3d->Size() / sdim;
+      projected.resize(npts);
+      for (int i = 0; i < npts; i++)
+      {
+        double coords[3] = {0.0, 0.0, 0.0};
+        for (int d = 0; d < sdim; d++)
+        {
+          // Handle both byNODES and byVDIM ordering.
+          int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
+                        ? d * npts + i
+                        : i * sdim + d;
+          coords[d] = (*nodes3d)(idx);
+        }
+        double dx = coords[0] - centroid(0);
+        double dy = coords[1] - centroid(1);
+        double dz = coords[2] - centroid(2);
+        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
+      }
+    }
+    else
+    {
+      projected.resize(nv_local);
+      for (int i = 0; i < nv_local; i++)
+      {
+        const double *v = submesh.GetVertex(i);
+        double dx = v[0] - centroid(0);
+        double dy = v[1] - centroid(1);
+        double dz = v[2] - centroid(2);
+        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
+      }
+    }
+
+    // Rebuild the mesh with 2D coordinates. SetCurvature creates a new Nodes
+    // GridFunction with the specified vdim (SpaceDim), replacing the old 3D one.
+    if (submesh.GetNE() > 0)
+    {
+      submesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+      mfem::GridFunction *nodes2d = submesh.GetNodes();
+      const int npts = static_cast<int>(projected.size());
+      MFEM_VERIFY(nodes2d->Size() == 2 * npts,
+                  "ProjectSubmeshTo2D: mismatch between projected points ("
+                      << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+      for (int i = 0; i < npts; i++)
+      {
+        (*nodes2d)(0 * npts + i) = projected[i][0];
+        (*nodes2d)(1 * npts + i) = projected[i][1];
+      }
+    }
+    else
+    {
+      // Empty partition: SetCurvature calls GetTypicalElementGeometry() which fails with
+      // zero elements. Manually create an empty Nodes GridFunction with vdim=2 to set
+      // SpaceDimension to 2.
+      auto *fec =
+          new mfem::H1_FECollection(mesh_order, submesh.Dimension());
+      auto *fes = new mfem::FiniteElementSpace(&submesh, fec, 2,
+                                                mfem::Ordering::byNODES);
+      auto *nodes = new mfem::GridFunction(fes);
+      nodes->MakeOwner(fec);
+      submesh.NewNodes(*nodes, true);
+    }
+  }
+
+  MFEM_VERIFY(submesh.SpaceDimension() == 2,
+              "ProjectSubmeshTo2D: SpaceDimension should be 2 after projection!");
+
+  // Output the transform parameters for projecting additional coordinates.
+  if (out_centroid)
+  {
+    *out_centroid = centroid;
+  }
+  if (out_e1)
+  {
+    *out_e1 = e1;
+  }
+  if (out_e2)
+  {
+    *out_e2 = e2;
   }
   return normal;
 }
