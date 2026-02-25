@@ -200,26 +200,19 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.ProjectImpedancePaths(submesh_centroid, submesh_e1, submesh_e2);
   }
 
-  // Error estimator setup (skip for submesh for now).
-  std::unique_ptr<mfem::RT_FECollection> rt_fec;
-  std::unique_ptr<FiniteElementSpaceHierarchy> nd_fespaces_h, rt_fespaces_h,
-      h1_fespaces_est;
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator;
-  if (!use_submesh)
-  {
-    rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                     solve_mesh->Dimension());
-    nd_fespaces_h = std::make_unique<FiniteElementSpaceHierarchy>(
-        std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fec.get()));
-    rt_fespaces_h = std::make_unique<FiniteElementSpaceHierarchy>(
-        std::make_unique<FiniteElementSpace>(*solve_mesh, rt_fec.get()));
-    h1_fespaces_est = std::make_unique<FiniteElementSpaceHierarchy>(
-        std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fec.get()));
-    estimator = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        mat_op, *nd_fespaces_h, *rt_fespaces_h, iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
-        &mode_op.GetCurlSpace(), h1_fespaces_est.get());
-  }
+  // Error estimator setup.
+  auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                        solve_mesh->Dimension());
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fec.get()));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(*solve_mesh, rt_fec.get()));
+  FiniteElementSpaceHierarchy h1_fespaces_est(
+      std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fec.get()));
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      mat_op, nd_fespaces, rt_fespaces, iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
+      &mode_op.GetCurlSpace(), &h1_fespaces_est);
   ErrorIndicator indicator;
 
   // Determine kn_target from user-specified n_eff target or material properties.
@@ -397,7 +390,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     const bool is_propagating =
         std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
-    if (i < num_modes && is_propagating && estimator)
+    if (i < num_modes && is_propagating)
     {
       ComplexVector bz(l2_size);
       {
@@ -409,7 +402,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         bz.Imag() = curl_etr;
         bz.Imag() *= -1.0 / omega;
       }
-      estimator->AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
     }
   }
   Mpi::Print("\n");
