@@ -3,7 +3,9 @@
 
 #include "modeanalysissolver.hpp"
 
+#include <algorithm>
 #include <complex>
+#include <vector>
 
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -28,10 +30,21 @@ namespace palace
 std::pair<ErrorIndicator, long long int>
 ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
-  MFEM_VERIFY(mesh.back()->Dimension() == 2,
-              "ModeAnalysis solver requires a 2D mesh (waveguide cross-section)!");
-
   const auto &ma_data = iodata.solver.mode_analysis;
+  const bool use_submesh = !ma_data.attributes.empty();
+
+  if (use_submesh)
+  {
+    MFEM_VERIFY(mesh.back()->Dimension() == 3,
+                "ModeAnalysis with \"Attributes\" requires a 3D mesh!");
+  }
+  else
+  {
+    MFEM_VERIFY(mesh.back()->Dimension() == 2,
+                "ModeAnalysis solver requires a 2D mesh (waveguide cross-section), "
+                "or a 3D mesh with \"Attributes\" specifying the cross-section boundary!");
+  }
+
   const double freq_GHz = ma_data.freq;
   const int num_modes = ma_data.n;
   const double tol = ma_data.tol;
@@ -42,25 +55,138 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
   BlockTimer bt0(Timer::CONSTRUCT);
+
+  std::unique_ptr<Mesh> submesh_holder;
+  std::unique_ptr<MaterialOperator> owned_mat_op;
+  mfem::Vector submesh_centroid, submesh_e1, submesh_e2;
+  Mesh *solve_mesh;
+
+  if (use_submesh)
+  {
+    Mpi::Print(" Extracting 2D submesh from 3D boundary attributes...\n");
+    const auto &parent_mesh = mesh.back()->Get();
+    MPI_Comm comm = parent_mesh.GetComm();
+    mfem::Array<int> attr_list;
+    attr_list.Append(ma_data.attributes.data(), ma_data.attributes.size());
+
+    // Collect all boundary attributes that need internal boundary elements on the
+    // cross-section. This includes PEC, AuxPEC, impedance, conductivity, and absorbing
+    // BCs — any 3D boundary face whose edges should become boundary elements in the 2D mesh.
+    std::vector<int> internal_bdr_attrs;
+    for (auto a : iodata.boundaries.pec.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+    for (auto a : iodata.boundaries.auxpec.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+    for (const auto &d : iodata.boundaries.impedance)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
+    }
+    for (const auto &d : iodata.boundaries.conductivity)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
+    }
+    for (auto a : iodata.boundaries.farfield.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+
+    // Extract a standalone 2D serial mesh from the 3D boundary, with proper domain
+    // attributes, boundary attributes, internal boundary edges, and 2D projection.
+    mfem::Vector surface_normal;
+    auto serial_mesh = mesh::ExtractStandalone2DSubmesh(
+        parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,
+        submesh_e1, submesh_e2);
+
+    // Repartition across all MPI ranks and construct a distributed ParMesh.
+    int nprocs = Mpi::Size(comm);
+    auto *partitioning = serial_mesh->GeneratePartitioning(nprocs);
+    auto mesh_2d = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning);
+    delete[] partitioning;
+
+    submesh_holder = std::make_unique<Mesh>(std::move(mesh_2d));
+    solve_mesh = submesh_holder.get();
+
+    // Construct MaterialOperator from the standalone 2D mesh.
+    owned_mat_op = std::make_unique<MaterialOperator>(iodata, *solve_mesh);
+
+    // Rotate material tensors from global frame to the local tangent frame.
+    owned_mat_op->RotateMaterialTensors(iodata, submesh_e1, submesh_e2, surface_normal);
+  }
+  else
+  {
+    solve_mesh = mesh.back().get();
+    owned_mat_op = std::make_unique<MaterialOperator>(iodata, *mesh.back());
+  }
+  MaterialOperator &mat_op = *owned_mat_op;
+
+  // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
   auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
-                                                        mesh.back()->Dimension());
+                                                        solve_mesh->Dimension());
   auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
-                                                        mesh.back()->Dimension());
-  FiniteElementSpace nd_fespace(*mesh.back(), nd_fec.get());
-  FiniteElementSpace h1_fespace(*mesh.back(), h1_fec.get());
+                                                        solve_mesh->Dimension());
+  FiniteElementSpace nd_fespace(*solve_mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace(*solve_mesh, h1_fec.get());
 
-  // Essential (Dirichlet) BCs: PEC boundaries get Dirichlet on both ND and H1.
-  // Impedance/absorbing/conductivity boundaries: NO Dirichlet.
-  const auto &pmesh = mesh.back()->Get();
-  int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-
-  mfem::Array<int> dbc_marker =
-      palace::mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
+  // Essential (Dirichlet) BCs: PEC + AuxPEC boundaries. For native 2D meshes,
+  // conductivity is also treated as PEC (handled by the 3D solver separately). For submesh
+  // mode analysis, conductivity uses SurfaceConductivityOperator instead, and other wave
+  // port boundaries on the cross-section are treated as PEC.
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
-  nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  {
+    const auto &pmesh = solve_mesh->Get();
+    int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> dbc_bcs;
+    for (auto attr : iodata.boundaries.pec.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        dbc_bcs.Append(attr);
+      }
+    }
+    for (auto attr : iodata.boundaries.auxpec.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        dbc_bcs.Append(attr);
+      }
+    }
+    if (use_submesh)
+    {
+      // Other wave port boundaries become PEC on this cross-section.
+      for (const auto &[idx, data] : iodata.boundaries.waveport)
+      {
+        for (auto attr : data.attributes)
+        {
+          if (std::find(ma_data.attributes.begin(), ma_data.attributes.end(), attr) !=
+              ma_data.attributes.end())
+          {
+            continue;
+          }
+          if (attr > 0 && attr <= bdr_attr_max)
+          {
+            dbc_bcs.Append(attr);
+          }
+        }
+      }
+    }
+    dbc_bcs.Sort();
+    dbc_bcs.Unique();
+
+    auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
+    nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+    h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  }
 
   const int nd_size = nd_fespace.GetTrueVSize();
   const int h1_size = h1_fespace.GetTrueVSize();
@@ -69,20 +195,26 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());
 
   // Material operator and PostOperator.
-  MaterialOperator mat_op(iodata, *mesh.back());
-  ModeAnalysisOperator mode_op(mat_op, nd_fespace, h1_fespace, *mesh.back(),
+  ModeAnalysisOperator mode_op(mat_op, nd_fespace, h1_fespace, *solve_mesh,
                                iodata.solver.order);
   PostOperator<ProblemType::MODEANALYSIS> post_op(iodata, mode_op);
 
+  // Project impedance/voltage path coordinates from 3D to the 2D local frame.
+  if (use_submesh)
+  {
+    post_op.ProjectImpedancePaths(submesh_centroid, submesh_e1, submesh_e2);
+    post_op.ProjectVoltagePaths(submesh_centroid, submesh_e1, submesh_e2);
+  }
+
   // Error estimator setup.
   auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                        mesh.back()->Dimension());
+                                                        solve_mesh->Dimension());
   FiniteElementSpaceHierarchy nd_fespaces(
-      std::make_unique<FiniteElementSpace>(*mesh.back(), nd_fec.get()));
+      std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fec.get()));
   FiniteElementSpaceHierarchy rt_fespaces(
-      std::make_unique<FiniteElementSpace>(*mesh.back(), rt_fec.get()));
+      std::make_unique<FiniteElementSpace>(*solve_mesh, rt_fec.get()));
   FiniteElementSpaceHierarchy h1_fespaces_est(
-      std::make_unique<FiniteElementSpace>(*mesh.back(), h1_fec.get()));
+      std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fec.get()));
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(
       mat_op, nd_fespaces, rt_fespaces, iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
@@ -102,14 +234,14 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
     MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
                 "Invalid material speed of light!");
-    kn_target = omega / c_min * 1.05;
+    kn_target = omega / c_min * std::sqrt(1.1);
     Mpi::Print(" Auto kn_target = {:.6e} (from c_min = {:.6e})\n", kn_target, c_min);
   }
 
   // Construct boundary operators for impedance, absorbing, and conductivity BCs.
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, *mesh.back());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, *mesh.back());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, *mesh.back());
+  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, *solve_mesh);
+  FarfieldBoundaryOperator farfield_op(iodata, mat_op, *solve_mesh);
+  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, *solve_mesh);
 
   // Configure solver.
   BoundaryModeOperatorConfig config;
@@ -118,8 +250,11 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.curlcurl_inv_permeability = &mat_op.GetCurlCurlInvPermeability();
   config.permittivity_real = &mat_op.GetPermittivityReal();
   config.permittivity_scalar = &mat_op.GetPermittivityScalar();
+  config.normal = nullptr;  // 2D domain mesh (projected for submesh case)
   config.permittivity_imag =
       mat_op.HasLossTangent() ? &mat_op.GetPermittivityImag() : nullptr;
+  config.permittivity_imag_scalar =
+      mat_op.HasLossTangent() ? &mat_op.GetPermittivityImagScalar() : nullptr;
   config.has_loss_tangent = mat_op.HasLossTangent();
   config.conductivity = mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
   config.has_conductivity = mat_op.HasConductivity();
@@ -130,11 +265,12 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.surf_z_op = &surf_z_op;
   config.farfield_op = &farfield_op;
   config.surf_sigma_op = &surf_sigma_op;
-  config.normal = nullptr;  // 2D domain mesh
   config.num_modes = num_modes;
-  config.num_vec = std::max(2 * num_modes + 1, 20);
+  config.num_vec = ma_data.max_size;
   config.eig_tol = tol;
-  config.which_eig = EigenvalueSolver::WhichType::LARGEST_MAGNITUDE;
+  config.which_eig = (ma_data.target > 0.0)
+                         ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
+                         : EigenvalueSolver::WhichType::LARGEST_REAL;
   config.linear = &iodata.solver.linear;
   config.eigen_backend = ma_data.type;
   config.verbose = iodata.problem.verbose;
@@ -149,7 +285,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Construct the boundary mode solver.
   BoundaryModeOperator mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,
-                                    mesh.back()->GetComm());
+                                   solve_mesh->GetComm());
 
   // Store Btt for impedance postprocessing.
   mode_op.SetBttMatrix(std::make_unique<mfem::HypreParMatrix>(*mode_solver.GetBtt()));
@@ -171,11 +307,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     std::complex<double> lambda = mode_solver.GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
-    double neff_r = kn.real() / omega;
-    double neff_i = kn.imag() / omega;
-    Mpi::Print(" eig {:d}: lambda = {:.6e}{:+.6e}i, kn = {:.6e}{:+.6e}i, "
-               "n_eff = {:.6e}{:+.6e}i\n",
-               i, lambda.real(), lambda.imag(), kn.real(), kn.imag(), neff_r, neff_i);
+    Mpi::Print(" eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n", i,
+               kn.real(), kn.imag(), kn.real() / omega, kn.imag() / omega);
   }
 
   // Postprocessing.
@@ -184,7 +317,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     SaveMetadata(*ksp);
   }
-
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
   auto &l2_curl_fespace = mode_op.GetCurlSpace();
@@ -201,8 +333,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
     // Extract et (ND) and en_tilde (H1) from eigenvector.
-    // The eigenvector contains [et; en_tilde] where en_tilde = ikn * En.
-    // The postprocessor handles the substituted variable directly (same as ModeAnalysis).
     ComplexVector et(nd_size), en(h1_size);
     {
       ComplexVector e0(nd_size + h1_size);

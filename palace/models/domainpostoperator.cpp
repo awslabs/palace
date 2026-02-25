@@ -47,6 +47,8 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     // In 3D, B is a vector (RT space) so use vector FE mass integrator.
     if (curl_map == mfem::FiniteElement::INTEGRAL)
     {
+      // Scalar curl (2D): need scalar μ⁻¹ (z-z component).
+      // GetCurlCurlInvPermeability() returns 1x1 for 2D MaterialOperator.
       MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(rt_fespace);
@@ -228,8 +230,6 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
     Mpi::GlobalSum(1, &dot, E.GetComm());
     return 0.5 * dot;
   }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for electric field energy calculation!");
   return 0.0;
 }
 
@@ -247,8 +247,6 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
     Mpi::GlobalSum(1, &dot, B.GetComm());
     return 0.5 * dot;
   }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for magnetic field energy calculation!");
   return 0.0;
 }
 

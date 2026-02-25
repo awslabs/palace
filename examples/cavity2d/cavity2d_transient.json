@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cavity2d.mesh",
+    "Mesh": "mesh/cavity2d.msh",
     "L0": 1.0  // m
   },
   "Domains":
@@ -37,7 +37,7 @@
         [
           {
             "Attributes": [2],
-            "Direction": "+Y"
+            "Direction": "+X"
           }
         ]
       }
@@ -53,7 +53,7 @@
       "Excitation": "ModulatedGaussian",
       "ExcitationFreq": 0.15,  // GHz
       "ExcitationWidth": 2.0,  // ns
-      "MaxTime": 40.0,  // ns
+      "MaxTime": 20.0,  // ns
       "TimeStep": 0.1,  // ns
       "SaveStep": 10
     },

@@ -513,6 +513,9 @@ public:
   // Tolerance for eigenvalue solver.
   double eig_tol = 1e-6;
 
+  // Eigenvalue solver subspace dimension or maximum dimension before restart.
+  int max_size = -1;
+
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 
@@ -607,6 +610,27 @@ public:
   ModeImpedanceData(const json &imp);
 };
 
+struct ModeVoltageData
+{
+public:
+  // Index of this voltage computation.
+  int index = -1;
+
+  // Boundary attributes for the voltage integration path.
+  std::vector<int> voltage_attributes = {};
+
+  // Optional coordinate path for the voltage line integral (alternative to boundary
+  // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
+  // path V = integral of E . dl from first to last point.
+  std::vector<std::vector<double>> voltage_path = {};
+
+  // Quadrature order for the coordinate-based line integral.
+  int integration_order = 100;
+
+  ModeVoltageData() = default;
+  ModeVoltageData(const json &volt);
+};
+
 struct FarFieldPostData
 {
 public:
@@ -633,6 +657,7 @@ public:
   std::map<int, SurfaceFluxData> flux = {};
   std::map<int, InterfaceDielectricData> dielectric = {};
   std::map<int, ModeImpedanceData> impedance = {};
+  std::map<int, ModeVoltageData> voltage = {};
   FarFieldPostData farfield = {};
 
   BoundaryPostData() = default;
@@ -852,8 +877,16 @@ public:
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
 
+  // Eigenvalue solver subspace dimension or maximum dimension before restart.
+  int max_size = -1;
+
   // Eigenvalue solver type.
   EigenSolverBackend type = EigenSolverBackend::DEFAULT;
+
+  // Boundary attributes for extracting a 2D cross-section from a 3D mesh. When specified,
+  // the mesh must be 3D and a 2D submesh is extracted from these boundary faces. When
+  // empty, the mesh must be 2D (current behavior).
+  std::vector<int> attributes = {};
 
   ModeAnalysisSolverData() = default;
   ModeAnalysisSolverData(const json &ma);

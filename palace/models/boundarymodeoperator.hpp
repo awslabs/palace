@@ -54,6 +54,8 @@ struct BoundaryModeOperatorConfig
   // Imaginary part of permittivity (loss tangent contribution). Set to nullptr when
   // there is no loss tangent.
   const mfem::DenseTensor *permittivity_imag;
+  // Scalar (1x1) imaginary permittivity for H1 mass in 2D. Set to nullptr for 3D.
+  const mfem::DenseTensor *permittivity_imag_scalar;
 
   // Surface normal vector for 3D wave port boundaries. Set to nullptr for 2D domain
   // meshes (mode analysis), which do not need normal projection.
