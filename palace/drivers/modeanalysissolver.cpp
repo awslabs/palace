@@ -70,29 +70,42 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     mfem::Array<int> attr_list;
     attr_list.Append(ma_data.attributes.data(), ma_data.attributes.size());
 
-    // Collect PEC-related boundary attributes from config.
-    std::vector<int> pec_bdr_attrs;
+    // Collect all boundary attributes that need internal boundary elements on the
+    // cross-section. This includes PEC, AuxPEC, impedance, conductivity, and absorbing
+    // BCs — any 3D boundary face whose edges should become boundary elements in the 2D mesh.
+    std::vector<int> internal_bdr_attrs;
     for (auto a : iodata.boundaries.pec.attributes)
     {
-      pec_bdr_attrs.push_back(a);
+      internal_bdr_attrs.push_back(a);
     }
     for (auto a : iodata.boundaries.auxpec.attributes)
     {
-      pec_bdr_attrs.push_back(a);
+      internal_bdr_attrs.push_back(a);
+    }
+    for (const auto &d : iodata.boundaries.impedance)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
     }
     for (const auto &d : iodata.boundaries.conductivity)
     {
       for (auto a : d.attributes)
       {
-        pec_bdr_attrs.push_back(a);
+        internal_bdr_attrs.push_back(a);
       }
+    }
+    for (auto a : iodata.boundaries.farfield.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
     }
 
     // Extract a standalone 2D serial mesh from the 3D boundary, with proper domain
-    // attributes, boundary attributes, PEC internal edges, and 2D projection.
+    // attributes, boundary attributes, internal boundary edges, and 2D projection.
     mfem::Vector surface_normal;
     auto serial_mesh = mesh::ExtractStandalone2DSubmesh(
-        parent_mesh, attr_list, pec_bdr_attrs, surface_normal, submesh_centroid,
+        parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,
         submesh_e1, submesh_e2);
 
     // Repartition across all MPI ranks and construct a distributed ParMesh.
@@ -125,8 +138,10 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   FiniteElementSpace nd_fespace(*solve_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(*solve_mesh, h1_fec.get());
 
-  // Essential (Dirichlet) BCs: PEC + AuxPEC + conductivity boundaries. For submesh mode
-  // analysis, other wave port boundaries on the cross-section are also treated as PEC.
+  // Essential (Dirichlet) BCs: PEC + AuxPEC boundaries. For native 2D meshes,
+  // conductivity is also treated as PEC (handled by the 3D solver separately). For submesh
+  // mode analysis, conductivity uses SurfaceConductivityOperator instead, and other wave
+  // port boundaries on the cross-section are treated as PEC.
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
     const auto &pmesh = solve_mesh->Get();
@@ -146,13 +161,18 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         dbc_bcs.Append(attr);
       }
     }
-    for (const auto &data : iodata.boundaries.conductivity)
+    if (!use_submesh)
     {
-      for (auto attr : data.attributes)
+      // For native 2D meshes, conductivity is treated as PEC (matching the original
+      // behavior where the conductivity BC is handled by the 3D solver).
+      for (const auto &data : iodata.boundaries.conductivity)
       {
-        if (attr > 0 && attr <= bdr_attr_max)
+        for (auto attr : data.attributes)
         {
-          dbc_bcs.Append(attr);
+          if (attr > 0 && attr <= bdr_attr_max)
+          {
+            dbc_bcs.Append(attr);
+          }
         }
       }
     }
@@ -233,19 +253,9 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Construct boundary operators for impedance, absorbing, and conductivity BCs.
-  // For submesh mode analysis, these operators can't be constructed on 1D boundary edges
-  // with 2D material tensors. The BoundaryModeOperator handles impedance/absorbing BCs
-  // internally through material coefficients instead.
-  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
-  if (!use_submesh)
-  {
-    surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, mat_op, *solve_mesh);
-    farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, mat_op, *solve_mesh);
-    surf_sigma_op =
-        std::make_unique<SurfaceConductivityOperator>(iodata, mat_op, *solve_mesh);
-  }
+  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, *solve_mesh);
+  FarfieldBoundaryOperator farfield_op(iodata, mat_op, *solve_mesh);
+  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, *solve_mesh);
 
   // Configure solver.
   BoundaryModeOperatorConfig config;
@@ -266,9 +276,9 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
   config.has_london_depth = mat_op.HasLondonDepth();
   config.mat_op = &mat_op;
-  config.surf_z_op = surf_z_op.get();
-  config.farfield_op = farfield_op.get();
-  config.surf_sigma_op = surf_sigma_op.get();
+  config.surf_z_op = &surf_z_op;
+  config.farfield_op = &farfield_op;
+  config.surf_sigma_op = &surf_sigma_op;
   config.num_modes = num_modes;
   config.num_vec = -1;
   config.eig_tol = tol;
