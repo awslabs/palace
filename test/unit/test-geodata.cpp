@@ -174,12 +174,12 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
   CHECK_THAT(lengths[2], WithinRel(0.0));
 
   auto normals = box.Normals();
-  CHECK_THAT(normals[0][0], WithinAbs(ax0[0], 1e-4));
-  CHECK_THAT(normals[0][1], WithinAbs(ax0[1], 1e-4));
-  CHECK_THAT(normals[0][2], WithinAbs(ax0[2], 1e-4));
-  CHECK_THAT(normals[1][0], WithinAbs(ax1[0], 1e-4));
-  CHECK_THAT(normals[1][1], WithinAbs(ax1[1], 1e-4));
-  CHECK_THAT(normals[1][2], WithinAbs(ax1[2], 1e-4));
+  CHECK_THAT(normals(0, 0), WithinAbs(ax0[0], 1e-4));
+  CHECK_THAT(normals(1, 0), WithinAbs(ax0[1], 1e-4));
+  CHECK_THAT(normals(2, 0), WithinAbs(ax0[2], 1e-4));
+  CHECK_THAT(normals(0, 1), WithinAbs(ax1[0], 1e-4));
+  CHECK_THAT(normals(1, 1), WithinAbs(ax1[1], 1e-4));
+  CHECK_THAT(normals(2, 1), WithinAbs(ax1[2], 1e-4));
   CHECK(box.planar);
 }
 
