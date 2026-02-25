@@ -161,21 +161,6 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         dbc_bcs.Append(attr);
       }
     }
-    if (!use_submesh)
-    {
-      // For native 2D meshes, conductivity is treated as PEC (matching the original
-      // behavior where the conductivity BC is handled by the 3D solver).
-      for (const auto &data : iodata.boundaries.conductivity)
-      {
-        for (auto attr : data.attributes)
-        {
-          if (attr > 0 && attr <= bdr_attr_max)
-          {
-            dbc_bcs.Append(attr);
-          }
-        }
-      }
-    }
     if (use_submesh)
     {
       // Other wave port boundaries become PEC on this cross-section.
