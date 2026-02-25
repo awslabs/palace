@@ -82,6 +82,11 @@ int main(int argc, char *argv[])
   }
 #endif
 
+  // Initialize SLEPc/PETSc (needed for eigenvalue solver tests).
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Initialize();
+#endif
+
   // The Palace test suite defines three key tags:
   // - [Serial], for tests that are meaningful when run on a single process
   // - [Parallel], for tests that are meaningful when run on multiple processes
@@ -134,6 +139,9 @@ int main(int argc, char *argv[])
   resource << "libCEED backend: " << ceed::Print();
   Mpi::Print("{}\n", resource.str());
   result = session.run();
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Finalize();
+#endif
   ceed::Finalize();
 
   // Finalize SLEPc/PETSc.
