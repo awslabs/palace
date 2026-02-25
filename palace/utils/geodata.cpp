@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <map>
+#include <set>
 #include <numeric>
 #include <queue>
 #include <sstream>
@@ -1389,6 +1391,322 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
     Mpi::Print(comm, " Surface normal = ({:+.3e})", fmt::join(normal, ", "));
   }
   return normal;
+}
+
+std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
+    const mfem::ParMesh &parent_mesh, const mfem::Array<int> &surface_attrs,
+    const std::vector<int> &pec_bdr_attrs, mfem::Vector &surface_normal,
+    mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2)
+{
+  MPI_Comm comm = parent_mesh.GetComm();
+  const int nprocs = Mpi::Size(comm);
+
+  // Step 1: Extract ParSubMesh from 3D boundary.
+  auto par_submesh = mfem::ParSubMesh::CreateFromBoundary(parent_mesh, surface_attrs);
+
+  // Step 2: Compute surface normal (MPI collective).
+  surface_normal = GetSurfaceNormal(par_submesh);
+  Mpi::Print(" Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})\n", surface_normal(0),
+             surface_normal(1), surface_normal(2));
+
+  // Step 3: Remap domain and boundary attributes.
+  RemapSubMeshAttributes(par_submesh);
+  RemapSubMeshBdrAttributes(par_submesh, surface_attrs);
+
+  // Step 4: Collect PEC internal edges via global vertex matching across all ranks.
+  // PEC boundary faces in the 3D parent are distributed; each rank contributes its
+  // local PEC edges, gathered to rank 0 for matching against submesh edges.
+  std::vector<std::array<int, 3>> pec_internal_edges;  // {v1, v2, attr}
+  {
+    // Global vertex numbering (collective MPI operation).
+    mfem::Array<HYPRE_BigInt> pvert_gi;
+    parent_mesh.GetGlobalVertexIndices(pvert_gi);
+
+    // Each rank: collect PEC edges as global vertex pairs.
+    std::vector<int> local_pec_flat;
+    {
+      mfem::Array<int> edges, orientations, ev;
+      for (int be = 0; be < parent_mesh.GetNBE(); be++)
+      {
+        int attr = parent_mesh.GetBdrAttribute(be);
+        if (std::find(pec_bdr_attrs.begin(), pec_bdr_attrs.end(), attr) ==
+            pec_bdr_attrs.end())
+        {
+          continue;
+        }
+        parent_mesh.GetBdrElementEdges(be, edges, orientations);
+        for (int j = 0; j < edges.Size(); j++)
+        {
+          parent_mesh.GetEdgeVertices(edges[j], ev);
+          int gv0 = static_cast<int>(pvert_gi[ev[0]]);
+          int gv1 = static_cast<int>(pvert_gi[ev[1]]);
+          local_pec_flat.insert(local_pec_flat.end(),
+                                {std::min(gv0, gv1), std::max(gv0, gv1), attr});
+        }
+      }
+    }
+
+    // Each rank: collect submesh edge → global vertex pair mappings.
+    std::vector<int> local_sub_flat;
+    {
+      const auto &parent_edge_map = par_submesh.GetParentEdgeIDMap();
+      for (int i = 0; i < parent_edge_map.Size(); i++)
+      {
+        mfem::Array<int> pev, sev;
+        parent_mesh.GetEdgeVertices(parent_edge_map[i], pev);
+        par_submesh.GetEdgeVertices(i, sev);
+        int gv0 = static_cast<int>(pvert_gi[pev[0]]);
+        int gv1 = static_cast<int>(pvert_gi[pev[1]]);
+        local_sub_flat.insert(local_sub_flat.end(),
+                              {std::min(gv0, gv1), std::max(gv0, gv1), sev[0], sev[1]});
+      }
+    }
+
+    // Gather both sets on rank 0.
+    auto GatherFlat = [&](const std::vector<int> &local, int stride) -> std::vector<int>
+    {
+      int local_n = static_cast<int>(local.size()) / stride;
+      std::vector<int> counts(nprocs);
+      MPI_Gather(&local_n, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+
+      std::vector<int> fcounts(nprocs), fdispls(nprocs);
+      int total = 0;
+      for (int i = 0; i < nprocs; i++)
+      {
+        fdispls[i] = total * stride;
+        fcounts[i] = counts[i] * stride;
+        total += counts[i];
+      }
+      std::vector<int> result;
+      if (Mpi::Root(comm))
+      {
+        result.resize(total * stride);
+      }
+      MPI_Gatherv(local.data(), local_n * stride, MPI_INT, result.data(), fcounts.data(),
+                  fdispls.data(), MPI_INT, 0, comm);
+      return result;
+    };
+
+    auto all_pec = GatherFlat(local_pec_flat, 3);
+    auto all_sub = GatherFlat(local_sub_flat, 4);
+
+    // Rank 0: match PEC edges against submesh edges.
+    if (Mpi::Root(comm))
+    {
+      std::map<std::pair<int, int>, std::pair<int, int>> gvpair_to_sub;
+      for (std::size_t i = 0; i < all_sub.size() / 4; i++)
+      {
+        gvpair_to_sub[{all_sub[4 * i], all_sub[4 * i + 1]}] = {all_sub[4 * i + 2],
+                                                                  all_sub[4 * i + 3]};
+      }
+      std::set<std::pair<int, int>> seen;
+      for (std::size_t i = 0; i < all_pec.size() / 3; i++)
+      {
+        auto key = std::make_pair(all_pec[3 * i], all_pec[3 * i + 1]);
+        auto it = gvpair_to_sub.find(key);
+        if (it != gvpair_to_sub.end())
+        {
+          auto [sv0, sv1] = it->second;
+          if (seen.insert({std::min(sv0, sv1), std::max(sv0, sv1)}).second)
+          {
+            pec_internal_edges.push_back({sv0, sv1, all_pec[3 * i + 2]});
+          }
+        }
+      }
+    }
+
+    // Broadcast PEC edges to all ranks.
+    int n_pec = static_cast<int>(pec_internal_edges.size());
+    MPI_Bcast(&n_pec, 1, MPI_INT, 0, comm);
+    pec_internal_edges.resize(n_pec);
+    MPI_Bcast(pec_internal_edges.data(), n_pec * 3, MPI_INT, 0, comm);
+
+    Mpi::Print(" Found {:d} PEC internal edges on the cross-section\n", n_pec);
+  }
+
+  // Step 5: Gather parallel submesh as serial mesh. PrintAsOne replaces domain element
+  // attributes with (rank + 1), so we gather the real attributes separately.
+  std::vector<int> global_elem_attrs, global_bdr_attrs;
+  {
+    auto GatherAttrs = [&](int n_local, auto get_attr) -> std::vector<int>
+    {
+      std::vector<int> local(n_local);
+      for (int i = 0; i < n_local; i++)
+      {
+        local[i] = get_attr(i);
+      }
+      std::vector<int> counts(nprocs);
+      MPI_Gather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+      int total = 0;
+      std::vector<int> displs(nprocs);
+      for (int i = 0; i < nprocs; i++)
+      {
+        displs[i] = total;
+        total += counts[i];
+      }
+      std::vector<int> result(total);
+      MPI_Gatherv(local.data(), n_local, MPI_INT, result.data(), counts.data(),
+                  displs.data(), MPI_INT, 0, comm);
+      // Broadcast to all ranks.
+      MPI_Bcast(&total, 1, MPI_INT, 0, comm);
+      result.resize(total);
+      MPI_Bcast(result.data(), total, MPI_INT, 0, comm);
+      return result;
+    };
+
+    global_elem_attrs = GatherAttrs(par_submesh.GetNE(),
+                                    [&](int i) { return par_submesh.GetAttribute(i); });
+    global_bdr_attrs = GatherAttrs(par_submesh.GetNBE(),
+                                   [&](int i) { return par_submesh.GetBdrAttribute(i); });
+  }
+
+  // PrintAsOne (collective) + broadcast serial mesh string.
+  std::string serial_str;
+  {
+    std::ostringstream oss;
+    par_submesh.PrintAsOne(oss);
+    serial_str = oss.str();
+  }
+  int str_size = static_cast<int>(serial_str.size());
+  MPI_Bcast(&str_size, 1, MPI_INT, 0, comm);
+  serial_str.resize(str_size);
+  MPI_Bcast(serial_str.data(), str_size, MPI_CHAR, 0, comm);
+
+  // Read serial mesh and restore correct attributes.
+  std::istringstream iss(serial_str);
+  auto serial_mesh = std::make_unique<mfem::Mesh>(iss);
+  int ne_total = static_cast<int>(global_elem_attrs.size());
+  MFEM_VERIFY(serial_mesh->GetNE() == ne_total, "PrintAsOne element count mismatch!");
+  for (int i = 0; i < ne_total; i++)
+  {
+    serial_mesh->SetAttribute(i, global_elem_attrs[i]);
+  }
+  int nbe_total = static_cast<int>(global_bdr_attrs.size());
+  for (int i = 0; i < std::min(nbe_total, serial_mesh->GetNBE()); i++)
+  {
+    serial_mesh->SetBdrAttribute(i, global_bdr_attrs[i]);
+  }
+  serial_mesh->SetAttributes();
+
+  // Step 6: Add PEC internal edges as boundary elements.
+  if (!pec_internal_edges.empty())
+  {
+    int dim_s = serial_mesh->Dimension();
+    int sdim_s = serial_mesh->SpaceDimension();
+    int nv_s = serial_mesh->GetNV();
+    int ne_s = serial_mesh->GetNE();
+    int nbe_s = serial_mesh->GetNBE();
+    int n_pec = static_cast<int>(pec_internal_edges.size());
+
+    auto new_mesh =
+        std::make_unique<mfem::Mesh>(dim_s, nv_s, ne_s, nbe_s + n_pec, sdim_s);
+    for (int v = 0; v < nv_s; v++)
+    {
+      new_mesh->AddVertex(serial_mesh->GetVertex(v));
+    }
+    for (int e = 0; e < ne_s; e++)
+    {
+      new_mesh->AddElement(serial_mesh->GetElement(e)->Duplicate(new_mesh.get()));
+    }
+    for (int be = 0; be < nbe_s; be++)
+    {
+      new_mesh->AddBdrElement(serial_mesh->GetBdrElement(be)->Duplicate(new_mesh.get()));
+    }
+    for (const auto &edge : pec_internal_edges)
+    {
+      int vs[2] = {edge[0], edge[1]};
+      new_mesh->AddBdrSegment(vs, edge[2]);
+    }
+    new_mesh->FinalizeTopology();
+    new_mesh->EnsureNodes();
+    serial_mesh = std::move(new_mesh);
+  }
+
+  // Step 7: Project from 3D to 2D coordinates.
+  {
+    // Build orthonormal tangent frame from the surface normal.
+    e1.SetSize(3);
+    e2.SetSize(3);
+    {
+      int min_idx = 0;
+      double min_val = std::abs(surface_normal(0));
+      for (int d = 1; d < 3; d++)
+      {
+        if (std::abs(surface_normal(d)) < min_val)
+        {
+          min_val = std::abs(surface_normal(d));
+          min_idx = d;
+        }
+      }
+      mfem::Vector axis(3);
+      axis = 0.0;
+      axis(min_idx) = 1.0;
+      e1(0) = axis(1) * surface_normal(2) - axis(2) * surface_normal(1);
+      e1(1) = axis(2) * surface_normal(0) - axis(0) * surface_normal(2);
+      e1(2) = axis(0) * surface_normal(1) - axis(1) * surface_normal(0);
+      e1 /= e1.Norml2();
+      e2(0) = surface_normal(1) * e1(2) - surface_normal(2) * e1(1);
+      e2(1) = surface_normal(2) * e1(0) - surface_normal(0) * e1(2);
+      e2(2) = surface_normal(0) * e1(1) - surface_normal(1) * e1(0);
+      e2 /= e2.Norml2();
+    }
+
+    // Compute centroid.
+    centroid.SetSize(3);
+    centroid = 0.0;
+    int nv = serial_mesh->GetNV();
+    for (int i = 0; i < nv; i++)
+    {
+      const double *v = serial_mesh->GetVertex(i);
+      for (int d = 0; d < 3; d++)
+      {
+        centroid(d) += v[d];
+      }
+    }
+    if (nv > 0)
+    {
+      centroid /= nv;
+    }
+
+    // Project node coordinates to 2D.
+    int mesh_order = 1;
+    if (serial_mesh->GetNodes())
+    {
+      mesh_order = serial_mesh->GetNodes()->FESpace()->GetMaxElementOrder();
+    }
+    mfem::GridFunction *nodes3d = serial_mesh->GetNodes();
+    const int sdim = serial_mesh->SpaceDimension();
+    if (nodes3d)
+    {
+      const int npts = nodes3d->Size() / sdim;
+      std::vector<std::array<double, 2>> projected(npts);
+      for (int i = 0; i < npts; i++)
+      {
+        double coords[3] = {0.0, 0.0, 0.0};
+        for (int d = 0; d < sdim; d++)
+        {
+          int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
+                        ? d * npts + i
+                        : i * sdim + d;
+          coords[d] = (*nodes3d)(idx);
+        }
+        double dx = coords[0] - centroid(0);
+        double dy = coords[1] - centroid(1);
+        double dz = coords[2] - centroid(2);
+        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
+      }
+      serial_mesh->SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+      mfem::GridFunction *nodes2d = serial_mesh->GetNodes();
+      for (int i = 0; i < npts; i++)
+      {
+        (*nodes2d)(0 * npts + i) = projected[i][0];
+        (*nodes2d)(1 * npts + i) = projected[i][1];
+      }
+    }
+  }
+
+  return serial_mesh;
 }
 
 void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
