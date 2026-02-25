@@ -29,8 +29,8 @@ private:
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
   mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
-      mat_epsilon_imag, mat_epsilon_abs, mat_invz0, mat_c0, mat_sigma, mat_invLondon,
-      mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+      mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
+      mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
@@ -85,6 +85,8 @@ public:
   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
   // Scalar (1x1) permittivity for the out-of-plane component in 2D mode analysis.
   const auto &GetPermittivityScalar() const { return mat_epsilon_scalar; }
+  // Scalar (1x1) imaginary permittivity for the out-of-plane component in 2D.
+  const auto &GetPermittivityImagScalar() const { return mat_epsilon_imag_scalar; }
   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
   auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
   auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
@@ -126,6 +128,13 @@ public:
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
+
+  // Re-compute all material tensors by rotating the 3x3 config-file material properties
+  // into the local tangent frame (e1, e2) of a 2D cross-section. This corrects the default
+  // 2x2 truncation (leading submatrix) when the cross-section is not aligned with the
+  // xy-plane. The normal vector is used for scalar out-of-plane quantities.
+  void RotateMaterialTensors(const IoData &iodata, const mfem::Vector &e1,
+                             const mfem::Vector &e2, const mfem::Vector &normal);
 
   template <typename T>
   auto GetCeedAttributes(const T &attr_list) const

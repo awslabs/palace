@@ -313,10 +313,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
-    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
-
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
@@ -1837,6 +1835,27 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
   return measurement_cache.domain_E_field_energy_all;
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::ProjectImpedancePaths(const mfem::Vector &centroid,
+                                                   const mfem::Vector &e1,
+                                                   const mfem::Vector &e2)
+{
+  for (auto &p : voltage_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+  for (auto &p : current_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
 }
 
 // Explicit template instantiation.
