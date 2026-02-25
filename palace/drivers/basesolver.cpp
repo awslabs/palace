@@ -8,6 +8,7 @@
 #include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "drivers/modeanalysissolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -131,6 +132,14 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
     }
+    if (refinement.max_it > 0 &&
+        dynamic_cast<const ModeAnalysisSolver *>(this) != nullptr &&
+        !iodata.solver.mode_analysis.attributes.empty())
+    {
+      Mpi::Warning("AMR is not currently supported for mode analysis on 3D mesh "
+                   "cross-sections (ModeAnalysis with Attributes)!\n");
+      return false;
+    }
     return (refinement.max_it > 0);
   }();
   if (use_amr && mesh.size() > 1)
@@ -158,7 +167,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Main AMR loop.
   int it = 0;
-  while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
     Mpi::Print("\nCumulative timing statistics:\n");
