@@ -218,6 +218,21 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
+// Extract a standalone 2D serial mesh from a 3D parallel mesh boundary. Performs:
+//   1. ParSubMesh extraction from the given boundary attributes
+//   2. Domain attribute remapping (from neighboring 3D elements)
+//   3. Boundary attribute remapping (from parent boundary faces)
+//   4. PEC internal edge detection (metal traces at material interfaces)
+//   5. Serialization via PrintAsOne with attribute preservation
+//   6. PEC edge insertion as boundary elements
+//   7. Projection to true 2D coordinates
+// Returns a serial Mesh (replicated on all ranks) ready for METIS repartitioning.
+// The surface normal, centroid, and tangent frame (e1, e2) are output parameters.
+std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
+    const mfem::ParMesh &parent_mesh, const mfem::Array<int> &surface_attrs,
+    const std::vector<int> &pec_bdr_attrs, mfem::Vector &surface_normal,
+    mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2);
+
 // Remap domain element attributes of a boundary ParSubMesh from parent boundary face
 // attributes to the neighboring domain element attributes in the parent mesh. After this
 // call, each submesh element has the attribute of its adjacent domain element in the parent
