@@ -7,6 +7,7 @@
 #include <catch2/catch_session.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
+#include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
@@ -73,6 +74,11 @@ int main(int argc, char *argv[])
   // TODO: Create a palace::Device class that takes care of all of this.
   hypre::Initialize();
 
+  // Initialize SLEPc/PETSc (needed for eigenvalue solver tests).
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Initialize();
+#endif
+
   // The Palace test suite defines three key tags:
   // - [Serial], for tests that are meaningful when run on a single process
   // - [Parallel], for tests that are meaningful when run on multiple processes
@@ -125,6 +131,9 @@ int main(int argc, char *argv[])
   resource << "libCEED backend: " << ceed::Print();
   Mpi::Print("{}\n", resource.str());
   result = session.run();
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Finalize();
+#endif
   ceed::Finalize();
 
   return result;
