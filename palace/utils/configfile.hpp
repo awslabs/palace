@@ -903,6 +903,11 @@ public:
   // Eigenvalue solver type.
   EigenSolverBackend type = EigenSolverBackend::DEFAULT;
 
+  // Boundary attributes for extracting a 2D cross-section from a 3D mesh. When specified,
+  // the mesh must be 3D and a 2D submesh is extracted from these boundary faces. When
+  // empty, the mesh must be 2D (current behavior).
+  std::vector<int> attributes = {};
+
   void SetUp(json &solver);
 };
 

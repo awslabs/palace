@@ -2425,6 +2425,11 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   target = ma->value("Target", target);
   tol = ma->value("Tol", tol);
   type = ma->value("Type", type);
+  if (ma->find("Attributes") != ma->end())
+  {
+    attributes = ma->at("Attributes").get<std::vector<int>>();
+    std::sort(attributes.begin(), attributes.end());
+  }
   // Cleanup
   ma->erase("Freq");
   ma->erase("N");
@@ -2432,6 +2437,7 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   ma->erase("Target");
   ma->erase("Tol");
   ma->erase("Type");
+  ma->erase("Attributes");
   MFEM_VERIFY(ma->empty(),
               "Found an unsupported configuration file keyword under \"ModeAnalysis\"!\n"
                   << ma->dump(2));

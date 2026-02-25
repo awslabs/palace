@@ -133,7 +133,14 @@
         "Save": { "type": "integer", "minimum": 0 },
         "Target": { "type": "number", "minimum": 0.0 },
         "Tol": { "type": "number", "exclusiveMinimum": 0.0 },
-        "Type": { "type": "string" }
+        "Type": { "type": "string" },
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer" },
+          "minItems": 1
+        }
       }
     },
     "Electrostatic":
