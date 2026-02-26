@@ -154,3 +154,43 @@ respectively, in the directory specified by
 inductance matrix which has the same form as the mutual capacitance matrix (its entries are
 based on current differences between ports rather than absolute currents) is computed and
 written to `terminal-Mm.csv` in the same directory.
+
+## Mode analysis problems
+
+For mode analysis simulations,
+[`config["Problem"]["Type"]: "ModeAnalysis"`](../config/problem.md#config%5B%22Problem%22%5D),
+*Palace* computes the propagation constants and field profiles of guided electromagnetic
+modes on a 2D waveguide cross-section at a specified operating frequency. This is useful for
+characterizing transmission line parameters such as effective index, characteristic
+impedance, and per-unit-length inductance and capacitance.
+
+The mode analysis solver accepts either a native 2D mesh or extracts a 2D cross-section
+submesh from a 3D mesh. In the latter case, the user specifies
+[`config["Solver"]["ModeAnalysis"]["Attributes"]`](../config/solver.md#solver%5B%22ModeAnalysis%22%5D)
+to identify the 3D boundary faces from which the 2D submesh is extracted. Boundary
+conditions from the parent 3D problem (PEC, impedance, conductivity, absorbing) are
+automatically transferred to the submesh.
+
+The user specifies an operating frequency and optionally a target effective index under
+[`config["Solver"]["ModeAnalysis"]`](../config/solver.md#solver%5B%22ModeAnalysis%22%5D).
+When the target is zero, it is computed automatically from the material properties. The
+eigenvalue solver uses a shift-and-invert spectral transformation to find modes near the
+target.
+
+The computed propagation constants ``k_n`` and effective indices ``n_\text{eff} = k_n /
+\omega`` are written to an ASCII file named `mode-kn.csv`, in the directory specified by
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Both
+backward and absolute error estimates are included for each eigenvalue.
+
+When impedance postprocessing boundaries are specified under
+[`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Impedance%22%5D),
+the characteristic impedance is computed using the power-voltage definition
+``Z_\text{PV} = |V|^2 / P`` and, when a current path is also specified, the voltage-current
+definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance are derived
+from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
+postprocessing boundaries are specified under
+[`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Voltage%22%5D),
+the mode voltage magnitudes are written to `mode-V.csv`.
+
+Domain energy postprocessing for energy participation ratios is also available, as described
+in [Domain postprocessing](postprocessing.md#Domain-postprocessing).

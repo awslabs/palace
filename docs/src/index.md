@@ -30,6 +30,9 @@ the frequency or time domain, using the
   - Lumped capacitance and inductance matrix extraction via
     [electrostatic](guide/problem.md#Electrostatic-problems) and
     [magnetostatic](guide/problem.md#Magnetostatic-problems) problem formulations.
+  - [2D waveguide mode analysis](guide/problem.md#Mode-analysis-problems) for computing
+    propagation constants, effective indices, and characteristic impedance on cross-sections,
+    with support for native 2D meshes or submesh extraction from 3D boundaries.
   - Support for a wide range of [mesh file formats](guide/model.md#Supported-mesh-formats)
     for structured and unstructured meshes, with built-in uniform or region-based parallel
     [mesh refinement](guide/model.md#Mesh-refinement).
