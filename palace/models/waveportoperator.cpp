@@ -511,7 +511,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // Coordinates are already nondimensionalized in IoData::NondimensionalizeInputs.
   if (data.voltage_path.size() >= 2)
   {
-    has_voltage_coords_ = true;
+    has_voltage_coords = true;
     for (const auto &pt : data.voltage_path)
     {
       mfem::Vector p(pt.size());
@@ -548,8 +548,7 @@ void WavePortData::Initialize(double omega)
   std::complex<double> lambda;
   {
     bool has_solver = (port_comm != MPI_COMM_NULL);
-    auto result =
-        mode_solver->SolveSplit(omega, sigma, has_solver, has_solver ? &v0 : nullptr);
+    auto result = mode_solver->Solve(omega, sigma, has_solver, has_solver ? &v0 : nullptr);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
@@ -728,7 +727,7 @@ std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
 {
   // Compute voltage V = ∫ E · dl along the configured path segments.
   // Uses GSLIB interpolation on the 3D parent mesh E field.
-  if (!has_voltage_coords_)
+  if (!has_voltage_coords)
   {
     return 0.0;
   }
@@ -750,6 +749,7 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   // TODO: The port mode field (port_E0t) lives on the 2D port submesh, and GSLIB cannot
   // find 3D points on a 2D submesh. To implement this, the port mode field must first be
   // transferred back to the 3D parent mesh before calling ComputeLineIntegral.
+  Mpi::Warning("GetExcitationVoltage is not yet implemented for wave port boundaries!\n");
   return 0.0;
 }
 
@@ -757,6 +757,8 @@ std::complex<double> WavePortData::GetCharacteristicImpedance() const
 {
   // TODO: Same limitation as GetExcitationVoltage — the port mode field lives on the 2D
   // submesh. Requires transfer to parent mesh before GSLIB interpolation can work.
+  Mpi::Warning(
+      "GetCharacteristicImpedance is not yet implemented for wave port boundaries!\n");
   return 0.0;
 }
 

@@ -6,7 +6,6 @@
 #include <array>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
-#include "drivers/modeanalysissolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -131,8 +130,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
     }
-    if (refinement.max_it > 0 &&
-        dynamic_cast<const ModeAnalysisSolver *>(this) != nullptr &&
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::MODEANALYSIS &&
         !iodata.solver.mode_analysis.attributes.empty())
     {
       Mpi::Warning("AMR is not currently supported for mode analysis on 3D mesh "

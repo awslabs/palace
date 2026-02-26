@@ -72,7 +72,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Collect all boundary attributes that need internal boundary elements on the
     // cross-section. This includes PEC, AuxPEC, impedance, conductivity, and absorbing
-    // BCs — any 3D boundary face whose edges should become boundary elements in the 2D mesh.
+    // BCs — any 3D boundary face whose edges should become boundary elements in the 2D
+    // mesh.
     std::vector<int> internal_bdr_attrs;
     for (auto a : iodata.boundaries.pec.attributes)
     {
@@ -110,9 +111,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Repartition across all MPI ranks and construct a distributed ParMesh.
     int nprocs = Mpi::Size(comm);
-    auto *partitioning = serial_mesh->GeneratePartitioning(nprocs);
-    auto mesh_2d = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning);
-    delete[] partitioning;
+    std::unique_ptr<int[]> partitioning(serial_mesh->GeneratePartitioning(nprocs));
+    auto mesh_2d = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning.get());
 
     submesh_holder = std::make_unique<Mesh>(std::move(mesh_2d));
     solve_mesh = submesh_holder.get();
@@ -131,10 +131,10 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MaterialOperator &mat_op = *owned_mat_op;
 
   // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
-  auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
-                                                        solve_mesh->Dimension());
-  auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
-                                                        solve_mesh->Dimension());
+  auto nd_fec =
+      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, solve_mesh->Dimension());
+  auto h1_fec =
+      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, solve_mesh->Dimension());
   FiniteElementSpace nd_fespace(*solve_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(*solve_mesh, h1_fec.get());
 
@@ -258,8 +258,9 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.has_loss_tangent = mat_op.HasLossTangent();
   config.conductivity = mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
   config.has_conductivity = mat_op.HasConductivity();
-  config.inv_london_depth =
-      mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
+  config.inv_london_depth = mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
+  config.inv_london_depth_scalar =
+      mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepthScalar() : nullptr;
   config.has_london_depth = mat_op.HasLondonDepth();
   config.mat_op = &mat_op;
   config.surf_z_op = &surf_z_op;
@@ -268,9 +269,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.num_modes = num_modes;
   config.num_vec = ma_data.max_size;
   config.eig_tol = tol;
-  config.which_eig = (ma_data.target > 0.0)
-                         ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
-                         : EigenvalueSolver::WhichType::LARGEST_REAL;
+  config.which_eig = (ma_data.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
+                                            : EigenvalueSolver::WhichType::LARGEST_REAL;
   config.linear = &iodata.solver.linear;
   config.eigen_backend = ma_data.type;
   config.verbose = iodata.problem.verbose;
@@ -307,8 +307,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     std::complex<double> lambda = mode_solver.GetEigenvalue(i);
     std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
-    Mpi::Print(" eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n", i,
-               kn.real(), kn.imag(), kn.real() / omega, kn.imag() / omega);
+    Mpi::Print(" eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n", i, kn.real(),
+               kn.imag(), kn.real() / omega, kn.imag() / omega);
   }
 
   // Postprocessing.

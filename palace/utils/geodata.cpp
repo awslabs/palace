@@ -8,9 +8,9 @@
 #include <array>
 #include <limits>
 #include <map>
-#include <set>
 #include <numeric>
 #include <queue>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -1497,7 +1497,7 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
       for (std::size_t i = 0; i < all_sub.size() / 4; i++)
       {
         gvpair_to_sub[{all_sub[4 * i], all_sub[4 * i + 1]}] = {all_sub[4 * i + 2],
-                                                                  all_sub[4 * i + 3]};
+                                                               all_sub[4 * i + 3]};
       }
       std::set<std::pair<int, int>> seen;
       for (std::size_t i = 0; i < all_pec.size() / 3; i++)
@@ -1598,8 +1598,7 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     int nbe_s = serial_mesh->GetNBE();
     int n_pec = static_cast<int>(pec_internal_edges.size());
 
-    auto new_mesh =
-        std::make_unique<mfem::Mesh>(dim_s, nv_s, ne_s, nbe_s + n_pec, sdim_s);
+    auto new_mesh = std::make_unique<mfem::Mesh>(dim_s, nv_s, ne_s, nbe_s + n_pec, sdim_s);
     for (int v = 0; v < nv_s; v++)
     {
       new_mesh->AddVertex(serial_mesh->GetVertex(v));
@@ -1722,8 +1721,8 @@ void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
   for (int i = 0; i < submesh.GetNE(); i++)
   {
     int parent_bdr_elem = parent_elem_map[i];
-    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-        parent_bdr_elem, parent, FET, T1, T2);
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(parent_bdr_elem,
+                                                                     parent, FET, T1, T2);
     // Use the neighboring domain element's attribute. For internal boundaries, use the
     // element with the lower attribute (same convention as Palace's mesh.cpp).
     int nbr_attr = FET.Elem1->Attribute;
@@ -1940,10 +1939,8 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
       // Empty partition: SetCurvature calls GetTypicalElementGeometry() which fails with
       // zero elements. Manually create an empty Nodes GridFunction with vdim=2 to set
       // SpaceDimension to 2.
-      auto *fec =
-          new mfem::H1_FECollection(mesh_order, submesh.Dimension());
-      auto *fes = new mfem::FiniteElementSpace(&submesh, fec, 2,
-                                                mfem::Ordering::byNODES);
+      auto *fec = new mfem::H1_FECollection(mesh_order, submesh.Dimension());
+      auto *fes = new mfem::FiniteElementSpace(&submesh, fec, 2, mfem::Ordering::byNODES);
       auto *nodes = new mfem::GridFunction(fes);
       nodes->MakeOwner(fec);
       submesh.NewNodes(*nodes, true);

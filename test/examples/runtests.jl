@@ -667,9 +667,13 @@ if "cpw2d/thin" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=[
-            "Maximum", "Minimum", "Mean",
-            "Error (Bkwd.)", "Error (Abs.)",
-            "Im{kn} (1/m)", "Im{n_eff}"
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Im{kn} (1/m)",
+            "Im{n_eff}"
         ],
         paraview_fields=false,
         skip_rowcount=true,
@@ -690,9 +694,13 @@ if "cpw2d/thick_impedance" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=[
-            "Maximum", "Minimum", "Mean",
-            "Error (Bkwd.)", "Error (Abs.)",
-            "Im{kn} (1/m)", "Im{n_eff}"
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Im{kn} (1/m)",
+            "Im{n_eff}"
         ],
         paraview_fields=false,
         skip_rowcount=true,

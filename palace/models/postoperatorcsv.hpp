@@ -130,8 +130,8 @@ struct Measurement
     double L_VI_per_m = 0.0;                   // Inductance per unit length (H/m) [V-I]
     double C_VI_per_m = 0.0;                   // Capacitance per unit length (F/m) [V-I]
     bool has_vi_impedance = false;             // Whether Z_VI/L_VI/C_VI were computed
-    std::complex<double> V = {0.0, 0.0};    // Complex voltage from voltage postprocessing
-    bool has_voltage = false;                // Whether V was computed
+    std::complex<double> V = {0.0, 0.0};  // Complex voltage from voltage postprocessing
+    bool has_voltage = false;             // Whether V was computed
   };
 
   ModeData mode_data;

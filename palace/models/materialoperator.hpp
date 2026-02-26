@@ -30,7 +30,8 @@ private:
   // vector).
   mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
       mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
-      mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+      mat_sigma, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv, mat_muinvkx,
+      mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
@@ -114,6 +115,8 @@ public:
   const auto &GetLightSpeed() const { return mat_c0; }
   const auto &GetConductivity() const { return mat_sigma; }
   const auto &GetInvLondonDepth() const { return mat_invLondon; }
+  // Scalar (1x1) out-of-plane London depth for the H1 Ann mass in 2D mode analysis.
+  const auto &GetInvLondonDepthScalar() const { return mat_invLondon_scalar; }
   const auto &GetFloquetCurl() const { return mat_muinvkx; }
   const auto &GetFloquetMass() const { return mat_kxTmuinvkx; }
   const auto &GetFloquetCross() const { return mat_kx; }

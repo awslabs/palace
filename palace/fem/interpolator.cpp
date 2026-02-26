@@ -332,32 +332,23 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
 
   // Interpolate the vector field at the quadrature points.
   const int vdim = field.VectorDim();
+  const bool by_vdim = (field.FESpace()->GetOrdering() == mfem::Ordering::byVDIM);
   mfem::Vector vals(npts * vdim);
   InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES);
 
-  // The interpolated values may be in byVDIM ordering if the source FE space uses that
-  // layout. Reorder to byNODES for uniform indexing below.
-  if (field.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
-  {
-    mfem::Vector reordered(npts * vdim);
-    for (int d = 0; d < vdim; d++)
-    {
-      for (int i = 0; i < npts; i++)
-      {
-        reordered(d * npts + i) = vals(i * vdim + d);
-      }
-    }
-    vals = reordered;
-  }
-
-  // Compute the dot product F · dl at each quadrature point and sum.
+  // Compute the dot product F · dl at each quadrature point and sum. Only the first
+  // min(vdim, dim) components contribute; higher components (if vdim > dim) are ignored
+  // since dl has length dim.
+  const int ndot = std::min(vdim, dim);
   double result = 0.0;
   for (int i = 0; i < npts; i++)
   {
     double dot = 0.0;
-    for (int d = 0; d < vdim && d < dim; d++)
+    for (int d = 0; d < ndot; d++)
     {
-      dot += vals(d * npts + i) * dl(d);
+      // Access with correct stride depending on the output ordering.
+      double val = by_vdim ? vals(i * vdim + d) : vals(d * npts + i);
+      dot += val * dl(d);
     }
     result += ir.IntPoint(i).weight * dot;
   }
