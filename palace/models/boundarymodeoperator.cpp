@@ -30,10 +30,10 @@ constexpr bool skip_zeros = false;
 }  // namespace
 
 BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &config,
-                                             const FiniteElementSpace &nd_fespace,
-                                             const FiniteElementSpace &h1_fespace,
-                                             const mfem::Array<int> &dbc_tdof_list,
-                                             MPI_Comm solver_comm)
+                                           const FiniteElementSpace &nd_fespace,
+                                           const FiniteElementSpace &h1_fespace,
+                                           const mfem::Array<int> &dbc_tdof_list,
+                                           MPI_Comm solver_comm)
   : config(config), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
     dbc_tdof_list(dbc_tdof_list)
 {
@@ -43,11 +43,11 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
   // Assemble frequency-independent matrices. These use the FE space communicator
   // (all processes that share the mesh), NOT solver_comm.
   //
-  // Atn: gradient coupling -(mu^{-1} grad_t u, v), same as BoundaryModeOperator.
+  // Atn: gradient coupling -(mu^{-1} grad_t u, v).
   std::tie(Atnr, Atni) = AssembleAtn();
 
-  // Btn: NEGATED transpose of Atn. Atn = -(mu^{-1} grad ·, ·), so Atn^T = -(mu^{-1} ·, grad·).
-  // But the physical Btn from Eq 2 is +(mu^{-1} ·, grad·) (positive), so Btn = -Atn^T.
+  // Btn: NEGATED transpose of Atn. Atn = -(mu^{-1} grad ·, ·), so Atn^T = -(mu^{-1} ·,
+  // grad·). The physical Btn from Eq 2 is +(mu^{-1} ·, grad·) (positive), so Btn = -Atn^T.
   Btnr.reset(Atnr->Transpose());
   *Btnr *= -1.0;
   if (Atni)
@@ -70,8 +70,8 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
         h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
         h1_fespace.Get().GetTrueDofOffsets(), &diag);
 
-    auto [Br, Bi] = BuildSystemMatrixB(bttr.get(), btti.get(), Btnr.get(), Btni.get(),
-                                       Dnn.get());
+    auto [Br, Bi] =
+        BuildSystemMatrixB(bttr.get(), btti.get(), Btnr.get(), Btni.get(), Dnn.get());
     opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
@@ -111,54 +111,34 @@ void BoundaryModeOperator::AssembleFrequencyDependent(double omega, double sigma
   std::unique_ptr<mfem::HypreParMatrix> shifted_Btnr;
   if (Btnr && std::abs(sigma) > 0.0)
   {
-    shifted_Btnr.reset(mfem::Add(-sigma, *Btnr, 0.0, *Btnr));
+    shifted_Btnr = std::make_unique<mfem::HypreParMatrix>(*Btnr);
+    *shifted_Btnr *= -sigma;
   }
 
-  auto [Ar, Ai] = BuildSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(),
-                                     Annr_local.get(), Anni_local.get(),
-                                     shifted_Btnr.get());
+  auto [Ar, Ai] =
+      BuildSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(), Annr_local.get(),
+                         Anni_local.get(), shifted_Btnr.get());
   opA = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
 }
 
 BoundaryModeOperator::SolveResult
-BoundaryModeOperator::Solve(double omega, double sigma, const ComplexVector *initial_space)
+BoundaryModeOperator::Solve(double omega, double sigma, bool has_solver,
+                            const ComplexVector *initial_space)
 {
   // Assemble frequency-dependent matrices (MPI collective on FE space communicator).
   AssembleFrequencyDependent(omega, sigma);
 
-  // Solve the eigenvalue problem. All processes must have solvers for this path.
-  MFEM_VERIFY(ksp && eigen,
-              "BoundaryModeOperator::Solve called on process without solvers! "
-              "Use SolveSplit() for wave port mode where only a subset has solvers.");
-  ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
-  ksp->SetOperators(*opA, opP);
-
-  eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
-
-  if (initial_space)
-  {
-    eigen->SetInitialSpace(*initial_space);
-  }
-
-  int num_conv = eigen->Solve();
-
-  return {num_conv, sigma};
-}
-
-BoundaryModeOperator::SolveResult
-BoundaryModeOperator::SolveSplit(double omega, double sigma, bool has_solver,
-                                  const ComplexVector *initial_space)
-{
-  // Assemble frequency-dependent matrices (MPI collective on all processes).
-  AssembleFrequencyDependent(omega, sigma);
-
-  // Only processes with solvers (port_comm) do the eigenvalue solve.
+  // Only processes with solvers participate in the eigenvalue solve. For ModeAnalysis
+  // (has_solver=true on all processes) all processes solve. For WavePort, only port
+  // processes solve while non-port processes skip.
   if (!has_solver)
   {
     return {0, sigma};
   }
 
-  ComplexWrapperOperator opP(opA->Real(), nullptr);
+  MFEM_VERIFY(ksp && eigen,
+              "BoundaryModeOperator::Solve called on process without solvers!");
+  ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
   ksp->SetOperators(*opA, opP);
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
@@ -191,7 +171,6 @@ void BoundaryModeOperator::GetEigenvector(int i, ComplexVector &x) const
 //                                   - omega^2 (eps u, v)
 //                                   - sigma (mu^{-1} u, v)
 //                                   + BC-t impedance/absorbing/conductivity.
-// SAME as BoundaryModeOperator::AssembleAtt.
 BoundaryModeOperator::ComplexHypreParMatrix
 BoundaryModeOperator::AssembleAtt(double omega, double sigma) const
 {
@@ -287,7 +266,6 @@ BoundaryModeOperator::AssembleAtt(double omega, double sigma) const
 }
 
 // Coupling matrix: Atn = -(mu^{-1} grad_t u, v).
-// SAME as BoundaryModeOperator::AssembleAtn.
 BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::AssembleAtn() const
 {
   MaterialPropertyCoefficient muinv_func(*config.attr_to_material, *config.inv_permeability,
@@ -328,16 +306,27 @@ BoundaryModeOperator::AssembleAnn(double omega) const
   // London superconductor contribution: +(1/lambda_L^2)(en, fn).
   // In the normal curl-curl equation, the London term is +(1/lambda_L^2) En, which
   // enters as a positive H1 mass (same sign as the omega^2 eps mass).
-  // The inv_london_depth tensor is NxN for ND; for H1 we need scalar (0,0) component.
   if (config.has_london_depth)
   {
-    const auto &ild = *config.inv_london_depth;
-    mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
-    for (int k = 0; k < ild.SizeK(); k++)
+    if (config.inv_london_depth_scalar)
     {
-      ild_scalar(0, 0, k) = ild(0, 0, k);
+      // 2D mode analysis: use pre-computed scalar out-of-plane London depth.
+      poseps_h1_func.AddCoefficient(*config.attr_to_material,
+                                    *config.inv_london_depth_scalar);
     }
-    poseps_h1_func.AddCoefficient(*config.attr_to_material, ild_scalar);
+    else if (config.inv_london_depth && config.normal)
+    {
+      // 3D wave port: use normal projection of the full tensor (handled by caller via
+      // NormalProjectedCoefficient on the assembled form).
+      const auto &ild = *config.inv_london_depth;
+      mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
+      for (int k = 0; k < ild.SizeK(); k++)
+      {
+        ild_scalar(0, 0, k) = ild(0, 0, k);
+      }
+      poseps_h1_func.AddCoefficient(*config.attr_to_material, ild_scalar);
+      poseps_h1_func.NormalProjectedCoefficient(*config.normal);
+    }
   }
 
   // Boundary impedance for en: -(iw/Zs)(en, fn)_gamma -- NEGATIVE sign from the
@@ -392,8 +381,6 @@ BoundaryModeOperator::AssembleAnn(double omega) const
     }
   }
 
-
-
   // Assemble Ann real: H1 stiffness (negative Laplacian) + mass (positive) + boundary.
   // Use DiffusionMassIntegrator to combine stiffness and mass in a single form.
   BilinearForm annr(h1_fespace);
@@ -427,8 +414,7 @@ BoundaryModeOperator::AssembleAnn(double omega) const
         {
           // 2D mode analysis: use pre-computed scalar imaginary permittivity.
           posepsi_h1_func.AddCoefficient(*config.attr_to_material,
-                                         *config.permittivity_imag_scalar,
-                                         omega * omega);
+                                         *config.permittivity_imag_scalar, omega * omega);
         }
       }
       BilinearForm anni(h1_fespace);
@@ -448,8 +434,7 @@ BoundaryModeOperator::AssembleAnn(double omega) const
   return {std::move(Annr_assembled), std::move(Anni_assembled)};
 }
 
-// Mass matrix: Btt = -(mu^{-1} u, v).
-// SAME as BoundaryModeOperator::AssembleBtt.
+// Mass matrix: Btt = (mu^{-1} u, v).
 BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::AssembleBtt() const
 {
   MaterialPropertyCoefficient muinv_func(*config.attr_to_material,
@@ -496,12 +481,10 @@ BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::BuildSystemMat
   return {std::move(Ar), std::move(Ai)};
 }
 
-BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,
-                                          const mfem::HypreParMatrix *Btti,
-                                          const mfem::HypreParMatrix *Btnr,
-                                          const mfem::HypreParMatrix *Btni,
-                                          const mfem::HypreParMatrix *Dnn) const
+BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::BuildSystemMatrixB(
+    const mfem::HypreParMatrix *Bttr, const mfem::HypreParMatrix *Btti,
+    const mfem::HypreParMatrix *Btnr, const mfem::HypreParMatrix *Btni,
+    const mfem::HypreParMatrix *Dnn) const
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.
   // B = [Btt, 0; Btn, Dnn] where Btn = Atn^T and Dnn is the zero diagonal.

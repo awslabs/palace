@@ -34,6 +34,10 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
+    "ModeAnalysis":
+    {
+        ...
+    },
     "Linear":
     {
         ...
@@ -89,6 +93,10 @@ Thus, this object is only relevant for
 `"Magnetostatic"` :  Top-level object for configuring the magnetostatic simulation type.
 Thus, this object is only relevant for
 [`config["Problem"]["Type"]: "Magnetostatic"`](problem.md#config%5B%22Problem%22%5D).
+
+`"ModeAnalysis"` :  Top-level object for configuring the mode analysis simulation type.
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "ModeAnalysis"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
@@ -405,6 +413,51 @@ with
 entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+## `solver["ModeAnalysis"]`
+
+```json
+"ModeAnalysis":
+{
+    "Freq": <float>,
+    "N": <int>,
+    "Save": <int>,
+    "Target": <float>,
+    "Tol": <float>,
+    "MaxSize": <int>,
+    "Type": <string>,
+    "Attributes": [<int array>]
+}
+```
+
+with
+
+`"Freq" [None]` :  Operating frequency for the mode analysis, GHz.
+
+`"N" [1]` :  Number of modes to compute.
+
+`"Save" [0]` :  Number of computed field modes to save to disk for
+[visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in
+the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+`"Target" [0.0]` :  Target effective index for the eigenvalue solver shift-and-invert
+spectral transformation. When nonzero, the solver searches for modes with effective index
+near this value. When zero (default), the shift is computed automatically from the material
+properties.
+
+`"Tol" [1.0e-6]` :  Relative convergence tolerance for the eigenvalue solver.
+
+`"MaxSize" [0]` :  Maximum subspace dimension for the eigenvalue solver. For values less
+than 1, the solver uses a default subspace dimension.
+
+`"Type" ["Default"]` :  Specifies the eigenvalue solver to be used for the mode analysis.
+See [`config["Solver"]["Eigenmode"]["Type"]`](#solver%5B%22Eigenmode%22%5D).
+
+`"Attributes" [None]` :  Integer array of 3D mesh boundary attributes from which to extract
+a 2D cross-section submesh for the mode analysis. When specified, the input mesh must be 3D
+and a standalone 2D submesh is extracted from these boundary faces. When not specified, the
+input mesh is used directly and must be 2D.
 
 ## `solver["Linear"]`
 

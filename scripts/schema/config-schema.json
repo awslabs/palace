@@ -58,6 +58,21 @@
           "Solver": { "required": ["Transient"] }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "Problem": {
+            "properties": { "Type": { "const": "ModeAnalysis" } },
+            "required": ["Type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "Solver": { "required": ["ModeAnalysis"] }
+        }
+      }
     }
   ]
 }

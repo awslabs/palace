@@ -31,6 +31,8 @@ with
     for a set of voltage terminals.
   - `"Magnetostatic"` :  Perform a magnetostatic analysis to compute the inductance matrix
     for a set of current sources.
+  - `"ModeAnalysis"` :  Perform a 2D waveguide mode analysis to compute propagation
+    constants on a cross-section.
 
 `"Verbose" [1]` :  Controls the level of log file printing.
 

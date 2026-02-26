@@ -262,8 +262,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       const auto &vol = voltage_data.begin()->second;
       if (!vol.voltage_attributes.empty())
       {
-        voltage_postpro_marker =
-            mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
+        voltage_postpro_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
       }
       voltage_postpro_integration_order = vol.integration_order;
       if (vol.voltage_path.size() >= 2)
@@ -1864,12 +1863,12 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       {
         V_postpro.real(V_postpro.real() +
                        fem::ComputeLineIntegral(voltage_postpro_path[k],
-                                                voltage_postpro_path[k + 1],
-                                                E->Real(), quad_order));
+                                                voltage_postpro_path[k + 1], E->Real(),
+                                                quad_order));
         V_postpro.imag(V_postpro.imag() +
                        fem::ComputeLineIntegral(voltage_postpro_path[k],
-                                                voltage_postpro_path[k + 1],
-                                                E->Imag(), quad_order));
+                                                voltage_postpro_path[k + 1], E->Imag(),
+                                                quad_order));
       }
     }
     else if (voltage_postpro_marker.Size() > 0)

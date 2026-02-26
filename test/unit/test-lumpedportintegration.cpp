@@ -174,9 +174,11 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // Can do exact equals below as axis alignment of port means that there should be
     // strictly no double rounding.
 
-    CHECK(bbox.Lengths().size() == 3);
-    std::array<double, 3> bbox_lengths_out = {length_dx_m, length_dx_m, 0.0};
-    CHECK(bbox.Lengths() == bbox_lengths_out);
+    auto bbox_lengths = bbox.Lengths();
+    CHECK(bbox_lengths.Size() == 3);
+    CHECK(bbox_lengths(0) == length_dx_m);
+    CHECK(bbox_lengths(1) == length_dx_m);
+    CHECK(bbox_lengths(2) == 0.0);
   }
 
   mfem::Array<int> attr_marker_loc;
