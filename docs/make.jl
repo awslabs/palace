@@ -98,7 +98,8 @@ makedocs(
             "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
-            "examples/cpw.md"
+            "examples/cpw.md",
+            "examples/cpw2d.md"
         ],
         "faq.md",
         "For Developers" => Any[
