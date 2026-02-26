@@ -46,14 +46,22 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
     const auto &a = M(0, 0), &b = M(1, 1);
     const auto &d = M(0, 1);
     const bool d_non_zero = std::abs(d) > tol;
-    if (!d_non_zero)
+    if (!d_non_zero || std::abs(a - b) < tol)
     {
-      // a 0
-      // 0 b
-      for (int i = 0; i < 2; i++)
+      // Diagonal or degenerate (nearly equal eigenvalues): apply f directly.
+      if (!d_non_zero)
       {
-        Mout(i, i) = functor(M(i, i));
+        for (int i = 0; i < 2; i++)
+        {
+          Mout(i, i) = functor(M(i, i));
+        }
+        return Mout;
       }
+      // Degenerate: lambda1 ≈ lambda2, eigenvectors become parallel.
+      // M ≈ lambda * I + off-diagonal correction; apply functor to mean eigenvalue.
+      const double lambda_avg = (a + b) / 2.0;
+      Mout(0, 0) = functor(lambda_avg);
+      Mout(1, 1) = functor(lambda_avg);
       return Mout;
     }
     // a d

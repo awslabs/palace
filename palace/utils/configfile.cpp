@@ -66,13 +66,12 @@ PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
                             {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
 
 // Helper for converting string keys to enum for ProblemType.
-PALACE_JSON_SERIALIZE_ENUM(ProblemType,
-                           {{ProblemType::DRIVEN, "Driven"},
-                            {ProblemType::EIGENMODE, "Eigenmode"},
-                            {ProblemType::ELECTROSTATIC, "Electrostatic"},
-                            {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
-                            {ProblemType::TRANSIENT, "Transient"},
-                            {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
+PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
+                                         {ProblemType::EIGENMODE, "Eigenmode"},
+                                         {ProblemType::ELECTROSTATIC, "Electrostatic"},
+                                         {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
+                                         {ProblemType::TRANSIENT, "Transient"},
+                                         {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
@@ -869,10 +868,9 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
       ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
   dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
                                                          "\"Dielectric\" boundary");
-  impedance = ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance",
-                                                   "\"Impedance\" boundary");
-  voltage = ParseOptionalMap<ModeVoltageData>(postpro, "Voltage",
-                                               "\"Voltage\" boundary");
+  impedance =
+      ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance", "\"Impedance\" boundary");
+  voltage = ParseOptionalMap<ModeVoltageData>(postpro, "Voltage", "\"Voltage\" boundary");
   farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.

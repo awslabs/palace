@@ -15,6 +15,25 @@ namespace palace
 namespace
 {
 
+// Return the topological dimension of a COMSOL element type (1-based internal indexing).
+inline int ElemDimComsol(int elem_type)
+{
+  if (elem_type == 1 || elem_type == 8)
+  {
+    return 1;  // 2-node or 3-node edge
+  }
+  if (elem_type == 15)
+  {
+    return 0;  // 1-node point
+  }
+  if (elem_type == 2 || elem_type == 3 || elem_type == 9 || elem_type == 10 ||
+      elem_type == 16)
+  {
+    return 2;  // triangle, quad, and their 2nd-order variants
+  }
+  return 3;  // tet, hex, prism, pyramid and their 2nd-order variants
+}
+
 inline int ElemTypeComsol(const std::string &type)
 {
   if (!type.compare("edg"))  // 2-node edge (1D boundary element)
@@ -817,13 +836,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
             // dimensional than the mesh: edges in 2D, faces in 3D) and 1-based for
             // domain elements. Gmsh requires 1-based, so add +1 for boundary elements.
             int i = 0;
-            const int elem_dim = (elem_type == 1 || elem_type == 8) ? 1
-                                 : (elem_type == 15)                ? 0
-                                 : (elem_type == 2 || elem_type == 3 || elem_type == 9 ||
-                                    elem_type == 10 || elem_type == 16)
-                                     ? 2
-                                     : 3;
-            const int geom_start = (elem_dim < sdim) ? 1 : 0;
+            const int geom_start = (ElemDimComsol(elem_type) < sdim) ? 1 : 0;
             while (i < num_elem)
             {
               line = GetLineComsol(input);
@@ -903,13 +916,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
         // Boundary elements (dim < sdim) use 0-based COMSOL geometry entity indices while
         // domain elements use 1-based. Add +1 for boundary elements to make all 1-based.
         // This must match the text reader logic (which uses elem_dim < sdim).
-        const int elem_dim = (elem_type == 1 || elem_type == 8) ? 1
-                             : (elem_type == 15)                ? 0
-                             : (elem_type == 2 || elem_type == 3 || elem_type == 9 ||
-                                elem_type == 10 || elem_type == 16)
-                                 ? 2
-                                 : 3;
-        const int geom_start = (elem_dim < sdim) ? 1 : 0;
+        const int geom_start = (ElemDimComsol(elem_type) < sdim) ? 1 : 0;
         int geom_tag;
         while (i < num_elem)
         {
