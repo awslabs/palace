@@ -90,15 +90,14 @@ arg_configs = [
             "cpw/lumped_eigen",
             "cpw/wave_eigen",
             "adapter/hybrid",
-            "disc2d",
             "cavity2d/eigenmode",
-            "cavity2d/pmc",
-            "cavity2d/impedance",
-            "cavity2d/absorbing",
-            "cavity2d/conductivity",
-            "cavity2d/periodic",
+            "cavity2d/driven",
+            "cavity2d/electrostatic",
             "cavity2d/magnetostatic",
-            "cavity2d/transient"
+            "cavity2d/transient",
+            "cpw2d/thin",
+            "cpw2d/thick_impedance",
+            "cpw/wave_2dmode"
         ],
         description="Test cases to run",
         parser=s -> String.(split(s, ' '))
@@ -561,23 +560,6 @@ end
 reltol = 1.0e-4
 abstol = 1.0e-16
 
-if "disc2d" in cases
-    @info "Testing disc2d (2D electrostatic)..."
-    @time testcase(
-        "disc2d",
-        "disc2d.json",
-        "";
-        palace=palace,
-        np=numprocs,
-        rtol=reltol,
-        atol=abstol,
-        excluded_columns=["Maximum", "Minimum"],
-        device=device,
-        linear_solver=solver,
-        eigen_solver=eigensolver
-    )
-end
-
 if "cavity2d/eigenmode" in cases
     @info "Testing cavity2d/eigenmode (2D eigenmode)..."
     @time testcase(
@@ -597,71 +579,14 @@ if "cavity2d/eigenmode" in cases
     )
 end
 
-if "cavity2d/pmc" in cases
-    @info "Testing cavity2d/pmc (2D eigenmode with PMC BC)..."
+reltol = 1.0e-2
+
+if "cavity2d/driven" in cases
+    @info "Testing cavity2d/driven (2D driven)..."
     @time testcase(
         "cavity2d",
-        "cavity2d_pmc.json",
-        "pmc";
-        palace=palace,
-        np=numprocs,
-        rtol=reltol,
-        atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
-        skip_rowcount=true,
-        device=device,
-        linear_solver="Default",
-        eigen_solver=eigensolver
-    )
-end
-
-if "cavity2d/impedance" in cases
-    @info "Testing cavity2d/impedance (2D eigenmode with impedance BC)..."
-    @time testcase(
-        "cavity2d",
-        "cavity2d_impedance.json",
-        "impedance";
-        palace=palace,
-        np=numprocs,
-        rtol=reltol,
-        atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
-        skip_rowcount=true,
-        device=device,
-        linear_solver="Default",
-        eigen_solver=eigensolver
-    )
-end
-
-if "cavity2d/absorbing" in cases
-    @info "Testing cavity2d/absorbing (2D eigenmode with absorbing BC)..."
-    @time testcase(
-        "cavity2d",
-        "cavity2d_absorbing.json",
-        "absorbing";
-        palace=palace,
-        np=numprocs,
-        rtol=reltol,
-        atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
-        skip_rowcount=true,
-        device=device,
-        linear_solver="Default",
-        eigen_solver=eigensolver
-    )
-end
-
-reltol = 2.0e-2
-
-if "cavity2d/conductivity" in cases
-    @info "Testing cavity2d/conductivity (2D driven with conductivity BC)..."
-    @time testcase(
-        "cavity2d",
-        "cavity2d_conductivity.json",
-        "conductivity";
+        "cavity2d_driven.json",
+        "driven";
         palace=palace,
         np=numprocs,
         rtol=reltol,
@@ -676,29 +601,19 @@ end
 
 reltol = 1.0e-4
 
-if "cavity2d/periodic" in cases
-    @info "Testing cavity2d/periodic (2D eigenmode with periodic BC)..."
+if "cavity2d/electrostatic" in cases
+    @info "Testing cavity2d/electrostatic (2D electrostatic)..."
     @time testcase(
         "cavity2d",
-        "cavity2d_periodic.json",
-        "periodic";
+        "cavity2d_electrostatic.json",
+        "electrostatic";
         palace=palace,
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=[
-            "Maximum",
-            "Minimum",
-            "Mean",
-            "Error (Bkwd.)",
-            "Error (Abs.)",
-            "Q",
-            "Im{f} (GHz)"
-        ],
-        paraview_fields=false,
-        skip_rowcount=true,
+        excluded_columns=["Maximum", "Minimum"],
         device=device,
-        linear_solver="Default",
+        linear_solver=solver,
         eigen_solver=eigensolver
     )
 end
@@ -721,8 +636,6 @@ if "cavity2d/magnetostatic" in cases
     )
 end
 
-reltol = 2.0e-2
-
 if "cavity2d/transient" in cases
     @info "Testing cavity2d/transient (2D transient)..."
     @time testcase(
@@ -735,6 +648,75 @@ if "cavity2d/transient" in cases
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
         paraview_fields=false,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-2
+
+if "cpw2d/thin" in cases
+    @info "Testing cpw2d/thin (2D mode analysis, thin PEC)..."
+    @time testcase(
+        "cpw2d",
+        "cpw2d_thin.json",
+        "thin";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum", "Minimum", "Mean",
+            "Error (Bkwd.)", "Error (Abs.)",
+            "Im{kn} (1/m)", "Im{n_eff}"
+        ],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cpw2d/thick_impedance" in cases
+    @info "Testing cpw2d/thick_impedance (2D mode analysis, thick impedance)..."
+    @time testcase(
+        "cpw2d",
+        "cpw2d_thick_impedance.json",
+        "thick_impedance";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum", "Minimum", "Mean",
+            "Error (Bkwd.)", "Error (Abs.)",
+            "Im{kn} (1/m)", "Im{n_eff}"
+        ],
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+
+if "cpw/wave_2dmode" in cases
+    @info "Testing cpw/wave_2dmode (2D mode analysis from 3D mesh)..."
+    @time testcase(
+        "cpw",
+        "cpw_wave_2dmode.json",
+        "wave_2dmode";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        paraview_fields=false,
+        skip_rowcount=true,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver

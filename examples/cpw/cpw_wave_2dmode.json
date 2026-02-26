@@ -3,7 +3,7 @@
   {
     "Type": "ModeAnalysis",
     "Verbose": 2,
-    "Output": "postpro/mode2d"
+    "Output": "postpro/wave_2dmode"
   },
   "Model":
   {
@@ -99,9 +99,9 @@
     "ModeAnalysis":
     {
       "Freq": 17.0,
-        "N": 2,
+        "N": 1,
         "Attributes": [4],
-      "Save": 2,
+      "Save": 1,
       "Tol": 1.0e-8
     },
     "Linear":
