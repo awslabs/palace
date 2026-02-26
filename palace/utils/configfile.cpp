@@ -634,6 +634,7 @@ WavePortData::WavePortData(const json &port)
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);
+  max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
   if (auto it = port.find("VoltagePath"); it != port.end())
   {
@@ -723,6 +724,26 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
   integration_order = imp.value("IntegrationOrder", integration_order);
   MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
               "Impedance boundary requires either \"VoltageAttributes\" or "
+              "\"VoltagePath\" in the configuration file!");
+}
+
+ModeVoltageData::ModeVoltageData(const json &volt)
+{
+  if (auto it = volt.find("VoltageAttributes"); it != volt.end())
+  {
+    voltage_attributes = it->get<std::vector<int>>();
+    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+  }
+  if (auto it = volt.find("VoltagePath"); it != volt.end())
+  {
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
+  }
+  integration_order = volt.value("IntegrationOrder", integration_order);
+  MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
+              "Voltage boundary requires either \"VoltageAttributes\" or "
               "\"VoltagePath\" in the configuration file!");
 }
 
@@ -878,6 +899,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
                                                          "\"Dielectric\" boundary");
   impedance = ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance",
                                                    "\"Impedance\" boundary");
+  voltage = ParseOptionalMap<ModeVoltageData>(postpro, "Voltage",
+                                               "\"Voltage\" boundary");
   farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
@@ -1334,6 +1357,7 @@ ModeAnalysisSolverData::ModeAnalysisSolverData(const json &ma)
   n_post = ma.value("Save", n_post);
   target = ma.value("Target", target);
   tol = ma.value("Tol", tol);
+  max_size = ma.value("MaxSize", max_size);
   type = ma.value("Type", type);
   if (auto it = ma.find("Attributes"); it != ma.end())
   {

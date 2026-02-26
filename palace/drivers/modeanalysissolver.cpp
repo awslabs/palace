@@ -199,10 +199,11 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                iodata.solver.order);
   PostOperator<ProblemType::MODEANALYSIS> post_op(iodata, mode_op);
 
-  // Project impedance path coordinates from 3D to the 2D local frame.
+  // Project impedance/voltage path coordinates from 3D to the 2D local frame.
   if (use_submesh)
   {
     post_op.ProjectImpedancePaths(submesh_centroid, submesh_e1, submesh_e2);
+    post_op.ProjectVoltagePaths(submesh_centroid, submesh_e1, submesh_e2);
   }
 
   // Error estimator setup.
@@ -265,7 +266,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.farfield_op = &farfield_op;
   config.surf_sigma_op = &surf_sigma_op;
   config.num_modes = num_modes;
-  config.num_vec = -1;
+  config.num_vec = ma_data.max_size;
   config.eig_tol = tol;
   config.which_eig = (ma_data.target > 0.0)
                          ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
