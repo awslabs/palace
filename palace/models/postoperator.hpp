@@ -244,6 +244,13 @@ protected:
   bool has_voltage_coordinates = false;
   bool has_current_path = false;
 
+  // Mode analysis voltage-only postprocessing state (separate from impedance).
+  mfem::Array<int> voltage_postpro_marker;
+  std::vector<mfem::Vector> voltage_postpro_path;
+  int voltage_postpro_integration_order = 100;
+  bool has_voltage_postpro = false;
+  bool has_voltage_postpro_coordinates = false;
+
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
   // They dispatch on solver type within the function itself using `if constexpr`, and do
@@ -459,12 +466,16 @@ public:
     return *A;
   }
 
-  // Whether impedance postprocessing is configured (mode analysis).
+  // Whether impedance/voltage postprocessing is configured (mode analysis).
   bool HasImpedancePostprocessing() const { return has_impedance_postpro; }
+  bool HasCurrentPath() const { return has_current_path; }
+  bool HasVoltagePostprocessing() const { return has_voltage_postpro; }
 
-  // Project 3D impedance path coordinates to 2D local frame (mode analysis submesh).
+  // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).
   void ProjectImpedancePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
                              const mfem::Vector &e2);
+  void ProjectVoltagePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
+                           const mfem::Vector &e2);
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

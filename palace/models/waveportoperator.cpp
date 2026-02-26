@@ -448,7 +448,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     config.has_loss_tangent = mat_op.HasLossTangent();
     config.normal = &port_normal;
     config.num_modes = mode_idx;
-    config.num_vec = -1;
+    config.num_vec = data.max_size;
     config.eig_tol = data.eig_tol;
     config.which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
     config.linear = &solver.linear;

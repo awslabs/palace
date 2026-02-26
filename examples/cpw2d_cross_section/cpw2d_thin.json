@@ -55,6 +55,14 @@
           "IntegrationOrder": 200
         }
       ],
+      "Voltage":
+      [
+        {
+          "Index": 1,
+          "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
+          "IntegrationOrder": 200
+        }
+      ],
       "Dielectric":
       [
         {

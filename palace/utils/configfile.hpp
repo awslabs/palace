@@ -561,6 +561,9 @@ public:
   // Tolerance for eigenvalue solver.
   double eig_tol = 1e-6;
 
+  // Eigenvalue solver subspace dimension or maximum dimension before restart.
+  int max_size = -1;
+
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
 
@@ -675,6 +678,32 @@ public:
   void SetUp(json &postpro);
 };
 
+struct ModeVoltageData
+{
+public:
+  // Index of this voltage computation.
+  int index = -1;
+
+  // Boundary attributes for the voltage integration path.
+  std::vector<int> voltage_attributes = {};
+
+  // Optional coordinate path for the voltage line integral (alternative to boundary
+  // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
+  // path V = integral of E . dl from first to last point.
+  std::vector<std::vector<double>> voltage_path = {};
+
+  // Quadrature order for the coordinate-based line integral.
+  int integration_order = 100;
+
+  void SetUp(json &voltage);
+};
+
+struct ModeVoltagePostData : public internal::DataMap<ModeVoltageData>
+{
+public:
+  void SetUp(json &postpro);
+};
+
 struct FarFieldPostData
 {
 public:
@@ -700,6 +729,7 @@ public:
   SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
   ModeImpedancePostData impedance = {};
+  ModeVoltagePostData voltage = {};
   FarFieldPostData farfield = {};
 
   void SetUp(json &boundaries);
@@ -899,6 +929,9 @@ public:
 
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
+
+  // Eigenvalue solver subspace dimension or maximum dimension before restart.
+  int max_size = -1;
 
   // Eigenvalue solver type.
   EigenSolverBackend type = EigenSolverBackend::DEFAULT;

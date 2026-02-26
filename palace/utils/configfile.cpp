@@ -1278,6 +1278,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
     data.ksp_tol = it->value("KSPTol", data.ksp_tol);
     data.eig_tol = it->value("EigenTol", data.eig_tol);
+    data.max_size = it->value("MaxSize", data.max_size);
     data.verbose = it->value("Verbose", data.verbose);
     if (it->find("VoltagePath") != it->end())
     {
@@ -1299,6 +1300,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("MaxIts");
     it->erase("KSPTol");
     it->erase("EigenTol");
+    it->erase("MaxSize");
     it->erase("Verbose");
     it->erase("VoltagePath");
     it->erase("IntegrationOrder");
@@ -1573,6 +1575,51 @@ void ModeImpedancePostData::SetUp(json &postpro)
   }
 }
 
+void ModeVoltagePostData::SetUp(json &postpro)
+{
+  auto voltage = postpro.find("Voltage");
+  if (voltage == postpro.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(voltage->is_array(),
+              "\"Voltage\" should specify an array in the configuration file!");
+  for (auto it = voltage->begin(); it != voltage->end(); ++it)
+  {
+    auto index = AtIndex(it, "\"Voltage\" boundary");
+    auto ret = mapdata.insert(std::make_pair(index, ModeVoltageData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Voltage\" "
+                            "boundaries in the configuration file!");
+    auto &data = ret.first->second;
+    data.index = index;
+    if (it->find("VoltageAttributes") != it->end())
+    {
+      data.voltage_attributes = it->at("VoltageAttributes").get<std::vector<int>>();
+      std::sort(data.voltage_attributes.begin(), data.voltage_attributes.end());
+    }
+    if (it->find("VoltagePath") != it->end())
+    {
+      for (auto &pt : it->at("VoltagePath"))
+      {
+        data.voltage_path.push_back(pt.get<std::vector<double>>());
+      }
+    }
+    data.integration_order = it->value("IntegrationOrder", data.integration_order);
+    MFEM_VERIFY(!data.voltage_attributes.empty() || data.voltage_path.size() >= 2,
+                "Voltage boundary requires either \"VoltageAttributes\" or "
+                "\"VoltagePath\" in the configuration file!");
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("VoltageAttributes");
+    it->erase("VoltagePath");
+    it->erase("IntegrationOrder");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"Voltage\"!\n"
+                    << it->dump(2));
+  }
+}
+
 void FarFieldPostData::SetUp(json &postpro)
 {
   auto farfield = postpro.find("FarField");
@@ -1753,6 +1800,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
   impedance.SetUp(*postpro);
+  voltage.SetUp(*postpro);
   farfield.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
@@ -1783,6 +1831,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
   postpro->erase("Impedance");
+  postpro->erase("Voltage");
   postpro->erase("FarField");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
@@ -2424,6 +2473,7 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   n_post = ma->value("Save", n_post);
   target = ma->value("Target", target);
   tol = ma->value("Tol", tol);
+  max_size = ma->value("MaxSize", max_size);
   type = ma->value("Type", type);
   if (ma->find("Attributes") != ma->end())
   {
@@ -2436,6 +2486,7 @@ void ModeAnalysisSolverData::SetUp(json &solver)
   ma->erase("Save");
   ma->erase("Target");
   ma->erase("Tol");
+  ma->erase("MaxSize");
   ma->erase("Type");
   ma->erase("Attributes");
   MFEM_VERIFY(ma->empty(),

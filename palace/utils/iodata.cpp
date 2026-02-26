@@ -592,6 +592,18 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     }
   }
 
+  // Mode voltage path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.voltage)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+  }
+
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
