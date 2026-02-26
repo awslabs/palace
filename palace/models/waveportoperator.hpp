@@ -81,7 +81,7 @@ private:
   // Voltage path for line integral (optional, for impedance postprocessing).
   std::vector<mfem::Vector> voltage_path;
   int voltage_integration_order = 100;
-  bool has_voltage_coords_ = false;
+  bool has_voltage_coords = false;
 
 public:
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,
@@ -90,7 +90,7 @@ public:
   ~WavePortData();
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
-  [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords_; }
+  [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }
 
   const auto &GetAttrList() const { return attr_list; }
 

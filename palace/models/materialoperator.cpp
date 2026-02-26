@@ -193,6 +193,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_muinv_scalar.SetSize(1, 1, nmats);
     mat_epsilon_scalar.SetSize(1, 1, nmats);
     mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
+    mat_invLondon_scalar.SetSize(1, 1, nmats);
   }
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
@@ -344,12 +345,19 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     }
 
     // λ⁻² * μ⁻¹
-    mat_invLondon(count).Set(1.0, mat_muinv(count));
-    mat_invLondon(count) *=
-        std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
-    if (mat_invLondon(count).MaxMaxNorm() > 0.0)
     {
-      has_london_attr = true;
+      double invL2 = std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+      mat_invLondon(count).Set(1.0, mat_muinv(count));
+      mat_invLondon(count) *= invL2;
+      if (sdim == 2)
+      {
+        // Scalar out-of-plane London depth: λ⁻² * μ⁻¹_zz (from 3x3 inverse).
+        mat_invLondon_scalar(count)(0, 0) = mat_muinv_scalar(count)(0, 0) * invL2;
+      }
+      if (mat_invLondon(count).MaxMaxNorm() > 0.0)
+      {
+        has_london_attr = true;
+      }
     }
 
     // μ⁻¹ [k x]
@@ -482,9 +490,7 @@ void MaterialOperator::RotateMaterialTensors(const IoData &iodata, const mfem::V
 
   // Helper: compute scalar out-of-plane component n^T M n.
   auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
-  {
-    return M3.InnerProduct(normal, normal);
-  };
+  { return M3.InnerProduct(normal, normal); };
 
   const auto &loc_attr = mesh.GetCeedAttributes();
   int count = 0;
@@ -574,11 +580,12 @@ void MaterialOperator::RotateMaterialTensors(const IoData &iodata, const mfem::V
 
     // London depth: λ^{-2} μ^{-1}, rotated.
     {
-      double invL2 =
-          std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+      double invL2 = std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
       mfem::DenseMatrix london_3d(muinv_3d);
       london_3d *= invL2;
       RotateInto(london_3d, mat_invLondon, count);
+      // Scalar out-of-plane London depth: n^T (λ^{-2} μ^{-1})_{3x3} n.
+      mat_invLondon_scalar(count)(0, 0) = ProjectNormal(london_3d);
     }
 
     count++;
