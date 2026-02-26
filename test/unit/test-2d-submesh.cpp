@@ -52,9 +52,12 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
     // Rotated eps_2x2 = R^T diag(2,3,5) R where R = [e1|e2] = [[0,0],[0,1],[1,0]]
     // Result: eps_2x2 = diag(5, 3) (zz, yy components).
     mfem::Vector e1(3), e2(3), normal(3);
-    e1 = 0.0; e1(2) = 1.0;  // z
-    e2 = 0.0; e2(1) = 1.0;  // y
-    normal = 0.0; normal(0) = 1.0;  // x
+    e1 = 0.0;
+    e1(2) = 1.0;  // z
+    e2 = 0.0;
+    e2(1) = 1.0;  // y
+    normal = 0.0;
+    normal(0) = 1.0;  // x
 
     mat_op.RotateMaterialTensors(iodata, e1, e2, normal);
 
@@ -78,9 +81,12 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
     // Surface normal = z, tangent frame: e1 = x, e2 = y.
     // Rotated eps_2x2 = diag(2, 3) — same as the truncated result.
     mfem::Vector e1(3), e2(3), normal(3);
-    e1 = 0.0; e1(0) = 1.0;  // x
-    e2 = 0.0; e2(1) = 1.0;  // y
-    normal = 0.0; normal(2) = 1.0;  // z
+    e1 = 0.0;
+    e1(0) = 1.0;  // x
+    e2 = 0.0;
+    e2(1) = 1.0;  // y
+    normal = 0.0;
+    normal(2) = 1.0;  // z
 
     mat_op.RotateMaterialTensors(iodata, e1, e2, normal);
 
@@ -104,13 +110,17 @@ TEST_CASE("Project3Dto2D", "[geodata][Serial]")
   centroid(2) = 3.0;
 
   // Tangent frame: e1 = x, e2 = y (surface normal = z).
-  e1 = 0.0; e1(0) = 1.0;
-  e2 = 0.0; e2(1) = 1.0;
+  e1 = 0.0;
+  e1(0) = 1.0;
+  e2 = 0.0;
+  e2(1) = 1.0;
 
   SECTION("Point at centroid projects to origin")
   {
     mfem::Vector p3d(3);
-    p3d(0) = 1.0; p3d(1) = 2.0; p3d(2) = 3.0;
+    p3d(0) = 1.0;
+    p3d(1) = 2.0;
+    p3d(2) = 3.0;
     auto p2d = mesh::Project3Dto2D(p3d, centroid, e1, e2);
     CHECK_THAT(p2d(0), WithinAbs(0.0, 1e-14));
     CHECK_THAT(p2d(1), WithinAbs(0.0, 1e-14));
@@ -119,7 +129,9 @@ TEST_CASE("Project3Dto2D", "[geodata][Serial]")
   SECTION("Offset along e1 gives positive u")
   {
     mfem::Vector p3d(3);
-    p3d(0) = 2.5; p3d(1) = 2.0; p3d(2) = 3.0;  // 1.5 along x from centroid
+    p3d(0) = 2.5;
+    p3d(1) = 2.0;
+    p3d(2) = 3.0;  // 1.5 along x from centroid
     auto p2d = mesh::Project3Dto2D(p3d, centroid, e1, e2);
     CHECK_THAT(p2d(0), WithinAbs(1.5, 1e-14));
     CHECK_THAT(p2d(1), WithinAbs(0.0, 1e-14));
@@ -128,11 +140,15 @@ TEST_CASE("Project3Dto2D", "[geodata][Serial]")
   SECTION("Rotated frame: e1 = z, e2 = y (x-normal surface)")
   {
     mfem::Vector re1(3), re2(3);
-    re1 = 0.0; re1(2) = 1.0;  // z
-    re2 = 0.0; re2(1) = 1.0;  // y
+    re1 = 0.0;
+    re1(2) = 1.0;  // z
+    re2 = 0.0;
+    re2(1) = 1.0;  // y
 
     mfem::Vector p3d(3);
-    p3d(0) = 1.0; p3d(1) = 4.0; p3d(2) = 5.0;
+    p3d(0) = 1.0;
+    p3d(1) = 4.0;
+    p3d(2) = 5.0;
     auto p2d = mesh::Project3Dto2D(p3d, centroid, re1, re2);
     // u = (p-c)·e1 = (0,2,2)·(0,0,1) = 2
     // v = (p-c)·e2 = (0,2,2)·(0,1,0) = 2
@@ -222,8 +238,8 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
     e2 /= e2.Norml2();
   };
 
-  auto CheckOrthonormal = [](const mfem::Vector &e1, const mfem::Vector &e2,
-                              const mfem::Vector &n)
+  auto CheckOrthonormal =
+      [](const mfem::Vector &e1, const mfem::Vector &e2, const mfem::Vector &n)
   {
     // Unit length.
     CHECK_THAT(e1.Norml2(), WithinAbs(1.0, 1e-14));
@@ -237,7 +253,8 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
   SECTION("Normal along x-axis")
   {
     mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0; n(0) = 1.0;
+    n = 0.0;
+    n(0) = 1.0;
     BuildFrame(n, e1, e2);
     CheckOrthonormal(e1, e2, n);
   }
@@ -245,7 +262,8 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
   SECTION("Normal along y-axis")
   {
     mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0; n(1) = 1.0;
+    n = 0.0;
+    n(1) = 1.0;
     BuildFrame(n, e1, e2);
     CheckOrthonormal(e1, e2, n);
   }
@@ -253,7 +271,8 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
   SECTION("Normal along z-axis")
   {
     mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0; n(2) = 1.0;
+    n = 0.0;
+    n(2) = 1.0;
     BuildFrame(n, e1, e2);
     CheckOrthonormal(e1, e2, n);
   }
@@ -261,7 +280,8 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
   SECTION("Normal along negative x-axis")
   {
     mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0; n(0) = -1.0;
+    n = 0.0;
+    n(0) = -1.0;
     BuildFrame(n, e1, e2);
     CheckOrthonormal(e1, e2, n);
   }
@@ -269,7 +289,9 @@ TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
   SECTION("Diagonal normal")
   {
     mfem::Vector n(3), e1(3), e2(3);
-    n(0) = 1.0; n(1) = 1.0; n(2) = 1.0;
+    n(0) = 1.0;
+    n(1) = 1.0;
+    n(2) = 1.0;
     n /= n.Norml2();
     BuildFrame(n, e1, e2);
     CheckOrthonormal(e1, e2, n);

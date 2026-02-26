@@ -70,10 +70,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   iodata.CheckConfiguration();
   Mesh palace_mesh(std::move(par_mesh));
 
-  auto nd_fec =
-      std::make_unique<mfem::ND_FECollection>(order, palace_mesh.Dimension());
-  auto h1_fec =
-      std::make_unique<mfem::H1_FECollection>(order, palace_mesh.Dimension());
+  auto nd_fec = std::make_unique<mfem::ND_FECollection>(order, palace_mesh.Dimension());
+  auto h1_fec = std::make_unique<mfem::H1_FECollection>(order, palace_mesh.Dimension());
   FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
   MaterialOperator mat_op(iodata, palace_mesh);
@@ -86,8 +84,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   {
     const auto &pmesh = palace_mesh.Get();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-    auto dbc_marker =
-        mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
+    auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
     nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
     h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
   }
@@ -100,8 +97,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
   }
 
-  double omega = 2.0 * M_PI *
-                 iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  double omega =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   double c_min = mat_op.GetLightSpeedMax().Min();
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   double kn_target = omega / c_min * std::sqrt(1.1);
@@ -118,11 +115,9 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   config.permittivity_imag_scalar =
       mat_op.HasLossTangent() ? &mat_op.GetPermittivityImagScalar() : nullptr;
   config.has_loss_tangent = mat_op.HasLossTangent();
-  config.conductivity =
-      mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
+  config.conductivity = mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
   config.has_conductivity = mat_op.HasConductivity();
-  config.inv_london_depth =
-      mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
+  config.inv_london_depth = mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
   config.has_london_depth = mat_op.HasLondonDepth();
   config.mat_op = &mat_op;
   config.surf_z_op = &surf_z_op;
@@ -163,8 +158,7 @@ TEST_CASE("BoundaryModeOperator PEC", "[boundarymodeoperator][Serial]")
   //   kn = sqrt(ω²ε/c² - kc²) = sqrt(4*(π*1e12/c)² - (π/1e-3)²)
   //   In nondimensional units (Lc = a*L0 = 1e-3 m):
   //     kn_nd = kn * Lc
-  auto result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3,
-                                      [](IoData &) {});
+  auto result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
   REQUIRE(result.num_converged >= 1);
 
@@ -185,21 +179,19 @@ TEST_CASE("BoundaryModeOperator PEC", "[boundarymodeoperator][Serial]")
   CHECK_THAT(kn_real, WithinRel(0.02071, 0.02));
 }
 
-TEST_CASE("BoundaryModeOperator Impedance shifts kn",
-          "[boundarymodeoperator][Serial]")
+TEST_CASE("BoundaryModeOperator Impedance shifts kn", "[boundarymodeoperator][Serial]")
 {
-  auto pec_result = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
+  auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
-  auto imp_result = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, 3,
-      [](IoData &iodata)
-      {
-        iodata.boundaries.pec.attributes = {1, 3, 4};
-        auto &imp = iodata.boundaries.impedance.emplace_back();
-        imp.attributes = {2};
-        imp.Ls = 1.0e-10;
-      });
+  auto imp_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3,
+                                          [](IoData &iodata)
+                                          {
+                                            iodata.boundaries.pec.attributes = {1, 3, 4};
+                                            auto &imp =
+                                                iodata.boundaries.impedance.emplace_back();
+                                            imp.attributes = {2};
+                                            imp.Ls = 1.0e-10;
+                                          });
 
   REQUIRE(pec_result.num_converged >= 1);
   REQUIRE(imp_result.num_converged >= 1);
@@ -207,22 +199,20 @@ TEST_CASE("BoundaryModeOperator Impedance shifts kn",
   CHECK(imp_result.kn[0].real() > pec_result.kn[0].real());
 }
 
-TEST_CASE("BoundaryModeOperator Conductivity adds loss",
-          "[boundarymodeoperator][Serial]")
+TEST_CASE("BoundaryModeOperator Conductivity adds loss", "[boundarymodeoperator][Serial]")
 {
-  auto pec_result = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
+  auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
-  auto cond_result = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, 3,
-      [](IoData &iodata)
-      {
-        iodata.boundaries.pec.attributes = {1, 3, 4};
-        auto &cond = iodata.boundaries.conductivity.emplace_back();
-        cond.attributes = {2};
-        cond.sigma = 5.0e7;
-        cond.h = 0.001;
-      });
+  auto cond_result =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3,
+                            [](IoData &iodata)
+                            {
+                              iodata.boundaries.pec.attributes = {1, 3, 4};
+                              auto &cond = iodata.boundaries.conductivity.emplace_back();
+                              cond.attributes = {2};
+                              cond.sigma = 5.0e7;
+                              cond.h = 0.001;
+                            });
 
   REQUIRE(pec_result.num_converged >= 1);
   REQUIRE(cond_result.num_converged >= 1);
