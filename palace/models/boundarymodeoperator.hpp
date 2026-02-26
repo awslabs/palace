@@ -33,36 +33,36 @@ struct BoundaryModeOperatorConfig
   // Material property mappings. For mode analysis, these come from
   // GetAttributeToMaterial() (volume attrs). For wave ports, from
   // GetBdrAttributeToMaterial() (boundary attrs).
-  const mfem::Array<int> *attr_to_material;
+  const mfem::Array<int> *attr_to_material = nullptr;
 
   // Inverse permeability tensor. Used for Atn, Ant, and Btt bilinear forms.
-  const mfem::DenseTensor *inv_permeability;
+  const mfem::DenseTensor *inv_permeability = nullptr;
 
   // Curl-curl inverse permeability. In 2D mode analysis this is the scalar mu_inv
   // (GetCurlCurlInvPermeability); for 3D wave ports it is the full tensor
   // (GetInvPermeability), with subsequent normal projection.
-  const mfem::DenseTensor *curlcurl_inv_permeability;
+  const mfem::DenseTensor *curlcurl_inv_permeability = nullptr;
 
   // Real part of permittivity tensor. Used for Att, Ant bilinear forms.
-  const mfem::DenseTensor *permittivity_real;
+  const mfem::DenseTensor *permittivity_real = nullptr;
 
   // Scalar permittivity for the Ann mass matrix. In 2D mode analysis this is
   // GetPermittivityScalar(); for 3D wave ports it is GetPermittivityReal() with
   // subsequent normal projection.
-  const mfem::DenseTensor *permittivity_scalar;
+  const mfem::DenseTensor *permittivity_scalar = nullptr;
 
   // Imaginary part of permittivity (loss tangent contribution). Set to nullptr when
   // there is no loss tangent.
-  const mfem::DenseTensor *permittivity_imag;
+  const mfem::DenseTensor *permittivity_imag = nullptr;
   // Scalar (1x1) imaginary permittivity for H1 mass in 2D. Set to nullptr for 3D.
-  const mfem::DenseTensor *permittivity_imag_scalar;
+  const mfem::DenseTensor *permittivity_imag_scalar = nullptr;
 
   // Surface normal vector for 3D wave port boundaries. Set to nullptr for 2D domain
   // meshes (mode analysis), which do not need normal projection.
-  const mfem::Vector *normal;
+  const mfem::Vector *normal = nullptr;
 
   // Whether the material operator reports a nonzero loss tangent.
-  bool has_loss_tangent;
+  bool has_loss_tangent = false;
 
   // Domain conductivity tensor. Used if non-null for damping contribution to Att.
   const mfem::DenseTensor *conductivity = nullptr;
@@ -71,6 +71,9 @@ struct BoundaryModeOperatorConfig
   // London penetration depth (1/lambda_L^2 tensor). Adds a mass term to the stiffness
   // operator: (1/lambda_L^2)(E, F). Used for superconductor modeling.
   const mfem::DenseTensor *inv_london_depth = nullptr;
+  // Scalar (1x1) London depth for the H1 Ann mass in 2D. Set to nullptr for 3D (which
+  // uses normal projection of inv_london_depth instead).
+  const mfem::DenseTensor *inv_london_depth_scalar = nullptr;
   bool has_london_depth = false;
 
   // Reference to MaterialOperator for ceed attribute access. Required when boundary
@@ -84,17 +87,17 @@ struct BoundaryModeOperatorConfig
   SurfaceConductivityOperator *surf_sigma_op = nullptr;
 
   // Eigenvalue solver configuration.
-  int num_modes;
-  int num_vec;
-  double eig_tol;
-  EigenvalueSolver::WhichType which_eig;
+  int num_modes = 1;
+  int num_vec = -1;
+  double eig_tol = 1.0e-6;
+  EigenvalueSolver::WhichType which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
 
   // Linear solver configuration.
-  const config::LinearSolverData *linear;
-  EigenSolverBackend eigen_backend;
+  const config::LinearSolverData *linear = nullptr;
+  EigenSolverBackend eigen_backend = EigenSolverBackend::DEFAULT;
 
   // Verbosity level for solvers.
-  int verbose;
+  int verbose = 0;
 };
 
 //
@@ -104,7 +107,7 @@ struct BoundaryModeOperatorConfig
 //
 // Assembles and solves the generalized eigenvalue problem:
 //
-//   [Att  Atn] [et]          [Btt  Btn] [et]
+//   [Att  Atn] [et]           [Btt  Btn] [et]
 //   [ 0   Ann] [en] = lambda  [ 0    0 ] [en]
 //
 // where:
@@ -136,22 +139,23 @@ public:
   // the FE space communicator (all processes). If solver_comm != MPI_COMM_NULL, the
   // linear and eigenvalue solvers are configured on that communicator.
   BoundaryModeOperator(const BoundaryModeOperatorConfig &config,
-                     const FiniteElementSpace &nd_fespace,
-                     const FiniteElementSpace &h1_fespace,
-                     const mfem::Array<int> &dbc_tdof_list,
-                     MPI_Comm solver_comm = MPI_COMM_NULL);
+                       const FiniteElementSpace &nd_fespace,
+                       const FiniteElementSpace &h1_fespace,
+                       const mfem::Array<int> &dbc_tdof_list,
+                       MPI_Comm solver_comm = MPI_COMM_NULL);
 
   ~BoundaryModeOperator();
 
   // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
   // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
-  // for eigenvalue solver warm-starting. Use Solve() when all processes have solvers
-  // (ModeAnalysis). Use SolveSplit() when only a subset of processes have solvers
-  // (WavePort): assembly runs on all processes, solve only on those with has_solver=true.
-  SolveResult Solve(double omega, double sigma,
+  // for eigenvalue solver warm-starting.
+  // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
+  // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
+  // for eigenvalue solver warm-starting. When has_solver is true (default), the calling
+  // process participates in the eigenvalue solve; when false (wave port non-port process),
+  // only assembly is performed.
+  SolveResult Solve(double omega, double sigma, bool has_solver = true,
                     const ComplexVector *initial_space = nullptr);
-  SolveResult SolveSplit(double omega, double sigma, bool has_solver,
-                         const ComplexVector *initial_space = nullptr);
 
   // Access converged eigenvalues and eigenvectors.
   std::complex<double> GetEigenvalue(int i) const;
