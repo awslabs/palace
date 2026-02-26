@@ -12,7 +12,7 @@ function generate_cpw2d_thin_mesh(;
     w_ground::Float64    = 500.0,
     h_substrate::Float64 = 525.0,
     h_vacuum::Float64    = 500.0,
-    lc_gap::Float64      = 0.1,
+    lc_gap::Float64      = 0.25,
     lc_far::Float64      = 50.0,
     mesh_order::Int      = 2,
     filename::String     = "cpw2d_thin.msh",
@@ -247,6 +247,7 @@ function generate_cpw2d_thin_mesh(;
     gmsh.model.mesh.setOrder(mesh_order)
 
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     println("=== CPW 2D Thin Metal Mesh ===")
