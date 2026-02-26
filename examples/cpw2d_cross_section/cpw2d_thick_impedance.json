@@ -3,7 +3,7 @@
   {
     "Type": "ModeAnalysis",
     "Verbose": 2,
-    "Output": "postpro/thick"
+    "Output": "postpro/thick_impedance"
   },
   "Model":
   {
@@ -28,22 +28,17 @@
         "Permeability": 1.0,
         "Permittivity": 1.0
       }
-    ],
-    "Postprocessing":
-    {
-      "Energy":
-      [
-        { "Index": 1, "Attributes": [1] },
-        { "Index": 2, "Attributes": [2, 3] }
-      ]
-    }
+    ]
   },
   "Boundaries":
   {
-    "PEC":
-    {
-      "Attributes": [1]
-    },
+    "Impedance":
+    [
+      {
+        "Attributes": [1],
+        "Ls": 1.332e-13
+      }
+    ],
     "Postprocessing":
     {
       "Impedance":
@@ -53,33 +48,6 @@
           "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
           "CurrentPath": [[500.0, 0.0], [522.0, 0.0], [522.0, 0.1], [500.0, 0.1]],
           "IntegrationOrder": 200
-        }
-      ],
-      "Dielectric":
-      [
-        {
-          "Index": 1,
-          "Attributes": [1],
-          "Type": "SA",
-          "Thickness": 2.0e-3,
-          "Permittivity": 4.0,
-          "LossTan": 2.0e-3
-        },
-        {
-          "Index": 2,
-          "Attributes": [1],
-          "Type": "MS",
-          "Thickness": 2.0e-3,
-          "Permittivity": 11.47,
-          "LossTan": 3.0e-4
-        },
-        {
-          "Index": 3,
-          "Attributes": [1],
-          "Type": "MA",
-          "Thickness": 2.0e-3,
-          "Permittivity": 10.0,
-          "LossTan": 3.0e-2
         }
       ]
     }
@@ -92,7 +60,7 @@
       "Freq": 5.0,
       "N": 2,
       "Save": 2,
-      "Target": 2.497,
+      "Target": 2.5,
       "Tol": 1.0e-8
     },
     "Linear":

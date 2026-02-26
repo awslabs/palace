@@ -3,12 +3,12 @@
   {
     "Type": "Electrostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro/electrostatic"
   },
   "Model":
   {
-    "Mesh": "mesh/disc2d.mesh",
-    "L0": 1.0  // m
+    "Mesh": "mesh/cavity2d.msh",
+    "L0": 1.0
   },
   "Domains":
   {
@@ -16,7 +16,7 @@
     [
       {
         "Attributes": [1],
-        "Permittivity": 1.0
+        "Permittivity": 2.08
       }
     ],
     "Postprocessing":
