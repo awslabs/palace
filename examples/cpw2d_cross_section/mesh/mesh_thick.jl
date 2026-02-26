@@ -342,6 +342,7 @@ function generate_cpw2d_mesh(;
 
     # Write mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print summary
