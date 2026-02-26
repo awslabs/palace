@@ -1181,11 +1181,11 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
     }
     if (std::abs(data.P) > 0.0)
     {
-      // Z = |V|^2 / (2 * |P|) — power-voltage impedance magnitude.
-      // Use |P| since the Poynting power sign depends on the port normal convention
-      // (positive into domain, negative out). The impedance magnitude is independent
-      // of the normal direction.
-      double Z_real = std::norm(data.V) / (2.0 * std::abs(data.P));
+      // Z = |V|^2 / |P| — power-voltage impedance magnitude.
+      // GetPower returns the full Poynting integral ∫ (E × H*) · n dS (without the
+      // 1/2 time-averaging factor), so Z_PV = |V|^2 / (2 * P_avg) = |V|^2 / |P|.
+      // Use |P| since the sign depends on the port normal convention.
+      double Z_real = std::norm(data.V) / std::abs(data.P);
       auto Z = std::complex<double>(Z_real, 0.0);
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
