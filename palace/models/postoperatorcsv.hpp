@@ -130,6 +130,8 @@ struct Measurement
     double L_VI_per_m = 0.0;                   // Inductance per unit length (H/m) [V-I]
     double C_VI_per_m = 0.0;                   // Capacitance per unit length (F/m) [V-I]
     bool has_vi_impedance = false;             // Whether Z_VI/L_VI/C_VI were computed
+    std::complex<double> V = {0.0, 0.0};    // Complex voltage from voltage postprocessing
+    bool has_voltage = false;                // Whether V was computed
   };
 
   ModeData mode_data;
@@ -325,9 +327,16 @@ protected:
 
   std::optional<TableWithCSVFile> mode_Z;
   template <ProblemType U = solver_t>
-  auto InitializeModeZ() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto InitializeModeZ(bool has_current)
+      -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
   template <ProblemType U = solver_t>
   auto PrintModeZ() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+
+  std::optional<TableWithCSVFile> mode_V;
+  template <ProblemType U = solver_t>
+  auto InitializeModeV() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  template <ProblemType U = solver_t>
+  auto PrintModeV() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
 
   std::vector<int> ports_with_L;
   std::vector<int> ports_with_R;

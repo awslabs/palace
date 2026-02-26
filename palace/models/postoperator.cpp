@@ -247,6 +247,35 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
         }
       }
     }
+
+    // Mode analysis voltage-only postprocessing setup.
+    const auto &voltage_data = iodata.boundaries.postpro.voltage;
+    if (!voltage_data.empty())
+    {
+      has_voltage_postpro = true;
+      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
+      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+      const auto &vol = voltage_data.begin()->second;
+      if (!vol.voltage_attributes.empty())
+      {
+        voltage_postpro_marker =
+            mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
+      }
+      voltage_postpro_integration_order = vol.integration_order;
+      if (vol.voltage_path.size() >= 2)
+      {
+        has_voltage_postpro_coordinates = true;
+        for (const auto &pt : vol.voltage_path)
+        {
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];
+          }
+          voltage_postpro_path.push_back(std::move(p));
+        }
+      }
+    }
   }
 
   gridfunction_output_dir =
@@ -1021,7 +1050,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", domain_H);
   }
-  else if constexpr (solver_t != ProblemType::EIGENMODE)
+  else if constexpr (solver_t != ProblemType::EIGENMODE &&
+                     solver_t != ProblemType::MODEANALYSIS)
   {
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", domain_E, domain_H,
                domain_E + domain_H);
@@ -1786,6 +1816,48 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     }
   }
 
+  // Compute voltage if voltage postprocessing is configured (separate from impedance).
+  if (has_voltage_postpro)
+  {
+    std::complex<double> V_postpro(0.0, 0.0);
+    if (has_voltage_postpro_coordinates)
+    {
+      const int quad_order = voltage_postpro_integration_order;
+      for (std::size_t k = 0; k + 1 < voltage_postpro_path.size(); k++)
+      {
+        V_postpro.real(V_postpro.real() +
+                       fem::ComputeLineIntegral(voltage_postpro_path[k],
+                                                voltage_postpro_path[k + 1],
+                                                E->Real(), quad_order));
+        V_postpro.imag(V_postpro.imag() +
+                       fem::ComputeLineIntegral(voltage_postpro_path[k],
+                                                voltage_postpro_path[k + 1],
+                                                E->Imag(), quad_order));
+      }
+    }
+    else if (voltage_postpro_marker.Size() > 0)
+    {
+      auto &nd_fespace = fem_op->GetNDSpace();
+      const int nd_size = nd_fespace.GetTrueVSize();
+      mfem::ConstantCoefficient one(1.0);
+      mfem::ParLinearForm v_lf(&nd_fespace.Get());
+      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                 voltage_postpro_marker);
+      v_lf.UseFastAssembly(false);
+      v_lf.Assemble();
+
+      Vector v_lf_tdof(nd_size);
+      v_lf.ParallelAssemble(v_lf_tdof);
+      Vector etr_tdof(nd_size), eti_tdof(nd_size);
+      E->Real().GetTrueDofs(etr_tdof);
+      E->Imag().GetTrueDofs(eti_tdof);
+      V_postpro.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
+      V_postpro.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
+    }
+    measurement_cache.mode_data.V = V_postpro;
+    measurement_cache.mode_data.has_voltage = true;
+  }
+
   // Compute electric field energy via the domain post operator.
   MeasureAllImpl();
 
@@ -1804,22 +1876,6 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
-  }
-
-  // Print Z0, L, C if computed (power-voltage definition).
-  if (measurement_cache.mode_data.has_impedance)
-  {
-    Mpi::Print("  Z_PV = {:.6e} Ohm, L_PV = {:.6e} H/m, C_PV = {:.6e} F/m\n",
-               measurement_cache.mode_data.Z0, measurement_cache.mode_data.L_per_m,
-               measurement_cache.mode_data.C_per_m);
-  }
-
-  // Print Z_VI, L_VI, C_VI if computed (voltage-current definition).
-  if (measurement_cache.mode_data.has_vi_impedance)
-  {
-    Mpi::Print("  Z_VI = {:.6e} Ohm, L_VI = {:.6e} H/m, C_VI = {:.6e} F/m\n",
-               measurement_cache.mode_data.Z_VI, measurement_cache.mode_data.L_VI_per_m,
-               measurement_cache.mode_data.C_VI_per_m);
   }
 
   int print_idx = step + 1;
@@ -1850,6 +1906,20 @@ void PostOperator<solver_t>::ProjectImpedancePaths(const mfem::Vector &centroid,
     }
   }
   for (auto &p : current_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::ProjectVoltagePaths(const mfem::Vector &centroid,
+                                                 const mfem::Vector &e1,
+                                                 const mfem::Vector &e2)
+{
+  for (auto &p : voltage_postpro_path)
   {
     if (p.Size() == 3)
     {

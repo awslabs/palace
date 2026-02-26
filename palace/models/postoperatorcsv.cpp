@@ -1368,19 +1368,22 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
 
 template <ProblemType solver_t>
 template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeZ()
+auto PostOperatorCSV<solver_t>::InitializeModeZ(bool has_current)
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
-  // Only initialize if impedance postprocessing data will be available.
   mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
-  mode_Z->table.reserve(nr_expected_measurement_rows, 7);
+  int ncols = has_current ? 7 : 4;
+  mode_Z->table.reserve(nr_expected_measurement_rows, ncols);
   mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   mode_Z->table.insert("Z_PV", "Z_PV (Ohm)");
   mode_Z->table.insert("L_PV", "L_PV (H/m)");
   mode_Z->table.insert("C_PV", "C_PV (F/m)");
-  mode_Z->table.insert("Z_VI", "Z_VI (Ohm)");
-  mode_Z->table.insert("L_VI", "L_VI (H/m)");
-  mode_Z->table.insert("C_VI", "C_VI (F/m)");
+  if (has_current)
+  {
+    mode_Z->table.insert("Z_VI", "Z_VI (Ohm)");
+    mode_Z->table.insert("L_VI", "L_VI (H/m)");
+    mode_Z->table.insert("C_VI", "C_VI (F/m)");
+  }
   mode_Z->WriteFullTableTrunc();
 }
 
@@ -1389,8 +1392,7 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintModeZ()
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
-  if (!mode_Z || (!measurement_cache.mode_data.has_impedance &&
-                  !measurement_cache.mode_data.has_vi_impedance))
+  if (!mode_Z || !measurement_cache.mode_data.has_impedance)
   {
     return;
   }
@@ -1398,10 +1400,41 @@ auto PostOperatorCSV<solver_t>::PrintModeZ()
   mode_Z->table["Z_PV"] << measurement_cache.mode_data.Z0;
   mode_Z->table["L_PV"] << measurement_cache.mode_data.L_per_m;
   mode_Z->table["C_PV"] << measurement_cache.mode_data.C_per_m;
-  mode_Z->table["Z_VI"] << measurement_cache.mode_data.Z_VI;
-  mode_Z->table["L_VI"] << measurement_cache.mode_data.L_VI_per_m;
-  mode_Z->table["C_VI"] << measurement_cache.mode_data.C_VI_per_m;
+  if (measurement_cache.mode_data.has_vi_impedance)
+  {
+    mode_Z->table["Z_VI"] << measurement_cache.mode_data.Z_VI;
+    mode_Z->table["L_VI"] << measurement_cache.mode_data.L_VI_per_m;
+    mode_Z->table["C_VI"] << measurement_cache.mode_data.C_VI_per_m;
+  }
   mode_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeV()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  mode_V = TableWithCSVFile(post_dir / "mode-V.csv");
+  mode_V->table.reserve(nr_expected_measurement_rows, 3);
+  mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  mode_V->table.insert("V_re", "Re{V}");
+  mode_V->table.insert("V_im", "Im{V}");
+  mode_V->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeV()
+    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
+{
+  if (!mode_V || !measurement_cache.mode_data.has_voltage)
+  {
+    return;
+  }
+  mode_V->table["idx"] << row_idx_v;
+  mode_V->table["V_re"] << measurement_cache.mode_data.V.real();
+  mode_V->table["V_im"] << measurement_cache.mode_data.V.imag();
+  mode_V->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1469,7 +1502,11 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     InitializeModeKn();
     if (post_op.HasImpedancePostprocessing())
     {
-      InitializeModeZ();
+      InitializeModeZ(post_op.HasCurrentPath());
+    }
+    if (post_op.HasVoltagePostprocessing())
+    {
+      InitializeModeV();
     }
   }
 }
@@ -1526,6 +1563,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   {
     PrintModeKn();
     PrintModeZ();
+    PrintModeV();
   }
 }
 
@@ -1613,9 +1651,14 @@ template auto
 PostOperatorCSV<ProblemType::MODEANALYSIS>::PrintModeKn<ProblemType::MODEANALYSIS>()
     -> void;
 template auto
-PostOperatorCSV<ProblemType::MODEANALYSIS>::InitializeModeZ<ProblemType::MODEANALYSIS>()
+PostOperatorCSV<ProblemType::MODEANALYSIS>::InitializeModeZ<ProblemType::MODEANALYSIS>(bool)
     -> void;
 template auto
 PostOperatorCSV<ProblemType::MODEANALYSIS>::PrintModeZ<ProblemType::MODEANALYSIS>() -> void;
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::InitializeModeV<ProblemType::MODEANALYSIS>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::MODEANALYSIS>::PrintModeV<ProblemType::MODEANALYSIS>() -> void;
 
 }  // namespace palace
