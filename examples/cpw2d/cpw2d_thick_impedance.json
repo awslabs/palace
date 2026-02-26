@@ -1,0 +1,71 @@
+{
+  "Problem":
+  {
+    "Type": "ModeAnalysis",
+    "Verbose": 2,
+    "Output": "postpro/thick_impedance"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw2d_thick.msh",
+    "L0": 1.0e-6,
+    "Refinement":
+    {
+      "MaxIts": 0
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.47,
+        "LossTan": 1.2e-7
+      },
+      {
+        "Attributes": [2, 3],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Impedance":
+    [
+      {
+        "Attributes": [1],
+        "Ls": 1.332e-13
+      }
+    ],
+    "Postprocessing":
+    {
+      "Impedance":
+      [
+        {
+          "Index": 1,
+          "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
+          "IntegrationOrder": 200
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "ModeAnalysis":
+    {
+      "Freq": 5.0,
+      "N": 2,
+      "Save": 2,
+      "Target": 2.5,
+      "Tol": 1.0e-8
+    },
+    "Linear":
+    {
+      "Tol": 1e-9
+    }
+  }
+}

@@ -1416,10 +1416,9 @@ auto PostOperatorCSV<solver_t>::InitializeModeV()
     -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>
 {
   mode_V = TableWithCSVFile(post_dir / "mode-V.csv");
-  mode_V->table.reserve(nr_expected_measurement_rows, 3);
+  mode_V->table.reserve(nr_expected_measurement_rows, 2);
   mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
-  mode_V->table.insert("V_re", "Re{V}");
-  mode_V->table.insert("V_im", "Im{V}");
+  mode_V->table.insert("V_abs", "|V|");
   mode_V->WriteFullTableTrunc();
 }
 
@@ -1433,8 +1432,7 @@ auto PostOperatorCSV<solver_t>::PrintModeV()
     return;
   }
   mode_V->table["idx"] << row_idx_v;
-  mode_V->table["V_re"] << measurement_cache.mode_data.V.real();
-  mode_V->table["V_im"] << measurement_cache.mode_data.V.imag();
+  mode_V->table["V_abs"] << std::abs(measurement_cache.mode_data.V);
   mode_V->WriteFullTableTrunc();
 }
 
