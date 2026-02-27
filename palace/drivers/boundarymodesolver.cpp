@@ -137,10 +137,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   FiniteElementSpace nd_fespace(*solve_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(*solve_mesh, h1_fec.get());
 
-  // Essential (Dirichlet) BCs: PEC + AuxPEC boundaries. For native 2D meshes,
-  // conductivity is also treated as PEC (handled by the 3D solver separately). For submesh
-  // mode analysis, conductivity uses SurfaceConductivityOperator instead, and other wave
-  // port boundaries on the cross-section are treated as PEC.
+  // Essential (Dirichlet) BCs: PEC + AuxPEC boundaries. For submesh mode analysis, other
+  // wave port boundaries on the cross-section are also treated as PEC. Impedance,
+  // conductivity, and absorbing BCs are handled separately through their respective
+  // boundary operators in the eigenvalue problem.
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
     const auto &pmesh = solve_mesh->Get();

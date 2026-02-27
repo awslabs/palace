@@ -177,7 +177,7 @@ When the target is zero, it is computed automatically from the material properti
 eigenvalue solver uses a shift-and-invert spectral transformation to find modes near the
 target.
 
-The computed propagation constants ``k_n`` and effective indices ``n_\text{eff} = k_n / \omega`` are written to an ASCII file named `mode-kn.csv`, in the directory specified by
+The computed propagation constants ``k_n`` and effective indices ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber) are written to an ASCII file named `mode-kn.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Both
 backward and absolute error estimates are included for each eigenvalue.
 
