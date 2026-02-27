@@ -42,8 +42,11 @@ private:
   // London penetration depth, or Floquet wave vector.
   bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
 
-  void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void SetUpFloquetWaveVector(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
+                               const config::PeriodicBoundaryData &periodic,
+                               ProblemType problem_type, const mfem::ParMesh &mesh);
+  void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
+                              ProblemType problem_type, const mfem::ParMesh &mesh);
 
   // Map from an attribute (specified on a mesh) to a material index (location in the
   // property vector).
@@ -63,6 +66,9 @@ private:
   }
 
 public:
+  MaterialOperator(const std::vector<config::MaterialData> &materials,
+                   const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
+                   const Mesh &mesh);
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }

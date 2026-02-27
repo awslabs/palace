@@ -17,6 +17,13 @@ namespace palace
 class IoData;
 class SpaceOperator;
 
+namespace config
+{
+
+struct SolverData;
+
+}  // namespace config
+
 //
 // A class handling temporal discretization of the governing equations.
 //
@@ -38,6 +45,8 @@ private:
   bool use_mfem_integrator = false;
 
 public:
+  TimeOperator(const config::SolverData &solver, int verbose, SpaceOperator &space_op,
+               std::function<double(double)> dJ_coef);
   TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                std::function<double(double)> dJ_coef);
 

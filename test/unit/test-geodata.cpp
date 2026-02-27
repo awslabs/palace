@@ -15,8 +15,8 @@
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -343,12 +343,12 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";
   std::ifstream fi(torus_path.string());
   std::unique_ptr<mfem::Mesh> mesh = std::make_unique<mfem::Mesh>(fi, false, false, true);
-  auto filename =
-      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
-  auto config = json::parse(jsonstream);
-  auto entry = config.find("boundaries_periodic_torus")->find("Boundaries");
-  config::BoundaryData boundary_torus(*entry);
+
+  json boundaries = {
+      {"Periodic",
+       {{"BoundaryPairs", {{{"DonorAttributes", {1}}, {"ReceiverAttributes", {2}}}}}}}};
+  config::BoundaryData boundary_torus(boundaries);
+
   for (const auto &data : boundary_torus.periodic.boundary_pairs)
   {
     auto periodic_mapping = mesh::DeterminePeriodicVertexMapping(mesh, data);
@@ -358,17 +358,16 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 
 TEST_CASE("Default IOData", "[iodata][Serial]")
 {
-  Units units(1.0, 1.0);
-  IoData iodata(units);
+  config::MaterialData material;
+  material.attributes = {1};
 
-  iodata.domains.materials.emplace_back();
-  iodata.domains.materials.back().attributes = {1};
+  config::PeriodicBoundaryData periodic;
 
   // Pull from the mfem externals data folder.
   mfem::Mesh mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
   mfem::ParMesh pmesh(Mpi::World(), mesh);
 
-  MaterialOperator mat_op(iodata, pmesh);
+  MaterialOperator mat_op({material}, periodic, ProblemType::ELECTROSTATIC, pmesh);
 
   REQUIRE(mat_op.HasLossTangent() == false);
 }

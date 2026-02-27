@@ -16,6 +16,13 @@ namespace palace
 class FiniteElementSpaceHierarchy;
 class IoData;
 
+namespace config
+{
+
+struct LinearSolverData;
+
+}  // namespace config
+
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //
@@ -42,6 +49,9 @@ protected:
   bool use_timer;
 
 public:
+  BaseKspSolver(const config::LinearSolverData &linear, int verbose,
+                FiniteElementSpaceHierarchy &fespaces,
+                FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,

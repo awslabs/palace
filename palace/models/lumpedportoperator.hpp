@@ -17,6 +17,7 @@ namespace palace
 class GridFunction;
 class IoData;
 class MaterialOperator;
+class Units;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
 
@@ -118,11 +119,14 @@ private:
   // ports.
   std::map<int, LumpedPortData> ports;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
+                               const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
+  LumpedPortOperator(const std::map<int, config::LumpedPortData> &lumpedport,
+                     const Units &units, const MaterialOperator &mat_op,
+                     const mfem::ParMesh &mesh);
   LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const mfem::ParMesh &mesh);
 

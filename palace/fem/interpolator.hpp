@@ -5,14 +5,17 @@
 #define PALACE_FEM_INTERPOLATOR_HPP
 
 #include <complex>
+#include <map>
 #include <vector>
 #include <mfem.hpp>
+#include "utils/configfile.hpp"
 
 namespace palace
 {
 
 class GridFunction;
 class IoData;
+class Units;
 class FiniteElementSpace;
 
 //
@@ -31,6 +34,8 @@ private:
   std::vector<double> ProbeField(const mfem::ParGridFunction &U);
 
 public:
+  InterpolationOperator(const std::map<int, config::ProbeData> &probe, const Units &units,
+                        FiniteElementSpace &nd_space);
   InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
 
   auto GetVDim() const { return v_dim_fes; }

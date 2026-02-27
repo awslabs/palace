@@ -4,6 +4,10 @@
   "type": "object",
   "additionalProperties": false,
   "required": [],
+  "allOf": [
+    { "not": { "required": ["PEC", "Ground"] } },
+    { "not": { "required": ["PMC", "ZeroCharge"] } }
+  ],
   "properties":
   {
     "PEC":
@@ -83,6 +87,10 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["Index"],
+        "oneOf": [
+          { "required": ["Attributes"] },
+          { "required": ["Elements"] }
+        ],
         "properties":
         {
           "Index": { "type": "integer", "exclusiveMinimum": 0 },
@@ -171,6 +179,10 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["Index"],
+        "oneOf": [
+          { "required": ["Attributes"] },
+          { "required": ["Elements"] }
+        ],
         "properties":
         {
           "Index": { "type": "integer", "exclusiveMinimum": 0 },

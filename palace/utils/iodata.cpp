@@ -192,6 +192,10 @@ IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(fal
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
   boundaries = config::BoundaryData(*boundaries_it);
+  if (auto err = config::Validate(boundaries))
+  {
+    MFEM_ABORT("Configuration file validation failed!\n  " << *err);
+  }
   if (auto solver_it = config.find("Solver"); solver_it != config.end())
   {
     solver = config::SolverData(*solver_it);
@@ -442,6 +446,21 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  // Compute matrix symmetry type for sparse direct solvers.
+  if (solver.linear.pc_mat_shifted || problem.type == ProblemType::TRANSIENT ||
+      problem.type == ProblemType::ELECTROSTATIC ||
+      problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::SPD;
+  }
+  else if (boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::SYMMETRIC;
+  }
+  else
+  {
+    solver.linear.pc_mat_sym = MatrixSymmetry::UNSYMMETRIC;
+  }
   if (solver.linear.mg_smooth_aux < 0)
   {
     if (problem.type == ProblemType::ELECTROSTATIC ||
@@ -507,21 +526,6 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
 }
 
-namespace
-{
-template <std::size_t N>
-constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData<N> &data,
-                                                     double s)
-{
-  for (auto &x : data.s)
-  {
-    x /= s;
-  }
-  return data;
-}
-
-}  // namespace
-
 void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 {
   // Nondimensionalization of the equations is based on a given length Lc in [m], typically
@@ -543,117 +547,68 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.
-  auto DivideLengthScale = [Lc0 = units.GetMeshLengthRelativeScale()](double val)
-  { return val / Lc0; };
-  for (auto &box : model.refinement.GetBoxes())
-  {
-    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
-                   DivideLengthScale);
-    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),
-                   DivideLengthScale);
-  }
-  for (auto &sphere : model.refinement.GetSpheres())
-  {
-    sphere.r /= units.GetMeshLengthRelativeScale();
-    std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   DivideLengthScale);
-  }
+  config::Nondimensionalize(units, model.refinement);
 
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
   {
-    data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
-    data.lambda_L /= units.GetMeshLengthRelativeScale();
+    config::Nondimensionalize(units, data);
   }
 
   // Probe location coordinates.
   for (auto &[idx, data] : domains.postpro.probe)
   {
-    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                   DivideLengthScale);
+    config::Nondimensionalize(units, data);
   }
 
   // Current dipole location coordinates.
   for (auto &[idx, data] : domains.current_dipole)
   {
-    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                   DivideLengthScale);
+    config::Nondimensionalize(units, data);
   }
 
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {
-    data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
-    data.h /= units.GetMeshLengthRelativeScale();
+    config::Nondimensionalize(units, data);
   }
 
   // Impedance boundaries and lumped ports.
   for (auto &data : boundaries.impedance)
   {
-    data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    config::Nondimensionalize(units, data);
   }
   for (auto &[idx, data] : boundaries.lumpedport)
   {
-    data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-    data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-    data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    config::Nondimensionalize(units, data);
   }
 
   // Floquet periodic boundaries.
-  for (auto &k : boundaries.periodic.wave_vector)
-  {
-    k *= units.GetMeshLengthRelativeScale();
-  }
+  config::Nondimensionalize(units, boundaries.periodic);
 
   // Wave port offset distance.
   for (auto &[idx, data] : boundaries.waveport)
   {
-    data.d_offset /= units.GetMeshLengthRelativeScale();
+    config::Nondimensionalize(units, data);
   }
 
   // Center coordinates for surface flux.
   for (auto &[idx, data] : boundaries.postpro.flux)
   {
-    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                   DivideLengthScale);
+    config::Nondimensionalize(units, data);
   }
 
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
-    data.t /= units.GetMeshLengthRelativeScale();
+    config::Nondimensionalize(units, data);
   }
 
   // Convert from GHz to non-dimensional angular frequency (adds the 2pi):
   // 1/ns -> rad/ns -> non-dim units.
-
-  // For eigenmode simulations:
-  solver.eigenmode.target =
-      2 * M_PI *
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target);
-  solver.eigenmode.target_upper =
-      2 * M_PI *
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target_upper);
-
-  // For driven simulations:
-  for (auto &f : solver.driven.sample_f)
-    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
-
-  // For transient simulations:
-  solver.transient.pulse_f =
-      2 * M_PI *
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.transient.pulse_f);
-  solver.transient.pulse_tau =
-      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.pulse_tau);
-  solver.transient.max_t =
-      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.max_t);
-  solver.transient.delta_t =
-      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.delta_t);
+  config::Nondimensionalize(units, solver.eigenmode);
+  config::Nondimensionalize(units, solver.driven);
+  config::Nondimensionalize(units, solver.transient);
 
   // Scale mesh vertices for correct nondimensionalization.
   mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());

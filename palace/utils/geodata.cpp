@@ -24,6 +24,7 @@
 #include "utils/omp.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -879,6 +880,11 @@ void DimensionalizeMesh(mfem::Mesh &mesh, double L)
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
 {
   ScaleMesh(mesh, 1.0 / L);
+}
+
+void Nondimensionalize(const Units &units, mfem::Mesh &mesh)
+{
+  NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
 }
 
 std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes() const

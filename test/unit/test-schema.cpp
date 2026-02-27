@@ -144,7 +144,7 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     CHECK(!err.empty());
   }
 
-  SECTION("Additional property not allowed")
+  SECTION("Additional root section not allowed")
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
@@ -220,6 +220,20 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Invalid LumpedPort - negative Index")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Invalid WavePort - negative Index")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "WavePort");
+    CHECK(!err.empty());
+  }
+
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",
@@ -231,6 +245,28 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
       INFO("Direction: " << dir);
       CHECK(!err.empty());
     }
+  }
+
+  SECTION("CurrentDipole rejects cylindrical R direction")
+  {
+    // CurrentDipole only allows Cartesian directions (X/Y/Z), not cylindrical R.
+    // This is enforced by schema enum, not C++ code.
+    std::vector<std::string> invalid_dirs = {"R", "+R", "-R", "r", "+r", "-r"};
+    for (const auto &dir : invalid_dirs)
+    {
+      json dipole = {
+          {"Index", 1}, {"Moment", 1.0}, {"Center", {0, 0, 0}}, {"Direction", dir}};
+      std::string err = ValidateConfig(dipole, "CurrentDipole");
+      INFO("Direction: " << dir);
+      CHECK(!err.empty());
+    }
+
+    // Verify Cartesian directions work.
+    json dipole_x = {
+        {"Index", 1}, {"Moment", 1.0}, {"Center", {0, 0, 0}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(dipole_x, "CurrentDipole");
+    INFO("Error: " << err);
+    CHECK(err.empty());
   }
 
   SECTION("Valid Material")
@@ -290,6 +326,240 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
   }
 }
 
+TEST_CASE("Schema Validation - Array Type Checks", "[schema][Serial]")
+{
+
+  SECTION("FloquetWaveVector must be array")
+  {
+    // Valid: array
+    json periodic_valid = {{"FloquetWaveVector", {1.0, 0.0, 0.0}},
+                           {"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json periodic_invalid = {{"FloquetWaveVector", "not an array"},
+                             {"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("BoundaryPairs must be array")
+  {
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs", "not an array"}};
+    std::string err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("Translation must be array")
+  {
+    // Valid: array
+    json periodic_valid = {{"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"Translation", "not array"}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("AffineTransformation must be array")
+  {
+    // Valid: 16-element array (4x4 matrix)
+    json periodic_valid = {
+        {"BoundaryPairs",
+         {{{"DonorAttributes", {1}},
+           {"ReceiverAttributes", {2}},
+           {"AffineTransformation", {1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json periodic_invalid = {{"BoundaryPairs",
+                              {{{"DonorAttributes", {1}},
+                                {"ReceiverAttributes", {2}},
+                                {"AffineTransformation", "not array"}}}}};
+    err = ValidateConfig(periodic_invalid, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("ThetaPhis must be array of arrays")
+  {
+    // Valid: array of [theta, phi] pairs
+    json farfield_valid = {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 45.0}}}};
+    std::string err = ValidateConfig(farfield_valid, "FarField");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: not an array
+    json farfield_invalid = {{"Attributes", {1}}, {"ThetaPhis", "not array"}};
+    err = ValidateConfig(farfield_invalid, "FarField");
+    CHECK(!err.empty());
+
+    // Invalid: array but inner elements not arrays
+    json farfield_invalid2 = {{"Attributes", {1}}, {"ThetaPhis", {1.0, 2.0}}};
+    err = ValidateConfig(farfield_invalid2, "FarField");
+    CHECK(!err.empty());
+  }
+}
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expansion",
+                 "[schema][Serial]")
+{
+  // Test that integer range syntax (e.g., 1-5) is expanded before validation.
+  auto temp_path = temp_dir / "palace_test_range.json";
+  {
+    std::ofstream f(temp_path);
+    f << R"({
+      "Problem": { "Type": "Eigenmode" },
+      "Model": { "Mesh": "test.msh" },
+      "Domains": { "Materials": [{ "Attributes": [1-3, 5, 7-9] }] },
+      "Boundaries": {},
+      "Solver": { "Eigenmode": { "Target": 1.0 } }
+    })";
+  }
+
+  std::stringstream buffer = PreprocessFile(temp_path.c_str());
+  json config = json::parse(buffer);
+
+  // Verify range expansion worked.
+  auto attrs = config["Domains"]["Materials"][0]["Attributes"];
+  CHECK(attrs == json({1, 2, 3, 5, 7, 8, 9}));
+
+  // Verify schema validation passes.
+  std::string err = ValidateConfig(config);
+  CHECK(err.empty());
+}
+
+TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
+{
+
+  SECTION("Periodic BoundaryPairs requires DonorAttributes and ReceiverAttributes")
+  {
+    // Valid: both present
+    json periodic_valid = {{"BoundaryPairs",
+                            {{{"DonorAttributes", {1}},
+                              {"ReceiverAttributes", {2}},
+                              {"Translation", {1, 0, 0}}}}}};
+    std::string err = ValidateConfig(periodic_valid, "Periodic");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: missing DonorAttributes
+    json periodic_no_donor = {
+        {"BoundaryPairs", {{{"ReceiverAttributes", {2}}, {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_no_donor, "Periodic");
+    CHECK(!err.empty());
+
+    // Invalid: missing ReceiverAttributes
+    json periodic_no_receiver = {
+        {"BoundaryPairs", {{{"DonorAttributes", {1}}, {"Translation", {1, 0, 0}}}}}};
+    err = ValidateConfig(periodic_no_receiver, "Periodic");
+    CHECK(!err.empty());
+  }
+
+  SECTION("LumpedPort requires either Attributes or Elements")
+  {
+    // Valid: with Attributes
+    json port_attrs = {{"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(port_attrs, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Valid: with Elements
+    json port_elems = {{"Index", 1},
+                       {"Elements", {{{"Attributes", {1}}, {"Direction", "+X"}}}}};
+    err = ValidateConfig(port_elems, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: neither Attributes nor Elements
+    json port_neither = {{"Index", 1}, {"R", 50.0}};
+    err = ValidateConfig(port_neither, "LumpedPort");
+    CHECK(!err.empty());
+  }
+
+  SECTION("SurfaceCurrent requires either Attributes or Elements")
+  {
+    // Valid: with Attributes
+    json current_attrs = {{"Index", 1}, {"Attributes", {1}}, {"Direction", "+X"}};
+    std::string err = ValidateConfig(current_attrs, "SurfaceCurrent");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Valid: with Elements
+    json current_elems = {{"Index", 1},
+                          {"Elements", {{{"Attributes", {1}}, {"Direction", "+X"}}}}};
+    err = ValidateConfig(current_elems, "SurfaceCurrent");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // Invalid: neither Attributes nor Elements
+    json current_neither = {{"Index", 1}};
+    err = ValidateConfig(current_neither, "SurfaceCurrent");
+    CHECK(!err.empty());
+  }
+}
+
+TEST_CASE("Schema Validation - Mutual Exclusion", "[schema][Serial]")
+{
+
+  SECTION("PEC and Ground are mutually exclusive")
+  {
+    // Valid: only PEC
+    json boundaries_pec = {{"PEC", {{"Attributes", {1}}}}};
+    std::string err = ValidateConfig(boundaries_pec, "Boundaries");
+    CHECK(err.empty());
+
+    // Valid: only Ground
+    json boundaries_ground = {{"Ground", {{"Attributes", {1}}}}};
+    err = ValidateConfig(boundaries_ground, "Boundaries");
+    CHECK(err.empty());
+
+    // Invalid: both PEC and Ground
+    json boundaries_both = {{"PEC", {{"Attributes", {1}}}},
+                            {"Ground", {{"Attributes", {2}}}}};
+    err = ValidateConfig(boundaries_both, "Boundaries");
+    CHECK(!err.empty());
+  }
+
+  SECTION("PMC and ZeroCharge are mutually exclusive")
+  {
+    // Valid: only PMC
+    json boundaries_pmc = {{"PMC", {{"Attributes", {1}}}}};
+    std::string err = ValidateConfig(boundaries_pmc, "Boundaries");
+    CHECK(err.empty());
+
+    // Valid: only ZeroCharge
+    json boundaries_zeroq = {{"ZeroCharge", {{"Attributes", {1}}}}};
+    err = ValidateConfig(boundaries_zeroq, "Boundaries");
+    CHECK(err.empty());
+
+    // Invalid: both PMC and ZeroCharge
+    json boundaries_both = {{"PMC", {{"Attributes", {1}}}},
+                            {"ZeroCharge", {{"Attributes", {2}}}}};
+    err = ValidateConfig(boundaries_both, "Boundaries");
+    CHECK(!err.empty());
+  }
+}
+
 TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
 {
 
@@ -332,7 +602,33 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(err == "At [\"Index\"]: unexpected instance type (got string)\n");
   }
 
-  SECTION("Additional property not allowed")
+  SECTION("Value below minimum")
+  {
+    json port = {{"Index", -1}, {"Attributes", {1}}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    CHECK(err == "At [\"Index\"]: instance is below or equals minimum of 0\n");
+  }
+
+  SECTION("Missing required field shows oneOf options")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"LumpedPort", {{{"Index", 1}, {"R", 50.0}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    std::string err = ValidateConfig(config);
+    CHECK(err ==
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: no subschema has succeeded, but one of "
+          "them is required to validate. Type: oneOf, number of failed subschemas: 2\n"
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: [combination: oneOf / case#0] required "
+          "property 'Attributes' not found in object\n"
+          "At [\"Boundaries\"][\"LumpedPort\"][0]: [combination: oneOf / case#1] required "
+          "property 'Elements' not found in object\n");
+  }
+
+  SECTION("Additional property in nested object not allowed")
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}, {"UnknownField", 123}}},
                    {"Model", {{"Mesh", "test.msh"}}},
@@ -346,30 +642,40 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
   }
 }
 
-TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expansion",
-                 "[schema][Serial]")
+TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 {
-  // Test that integer range syntax (e.g., 1-5) is expanded before validation.
-  auto temp_path = temp_dir / "palace_test_range.json";
+  SECTION("Numeric bounds - Linear.MaxIts")
   {
-    std::ofstream f(temp_path);
-    f << R"({
-      "Problem": { "Type": "Eigenmode" },
-      "Model": { "Mesh": "test.msh" },
-      "Domains": { "Materials": [{ "Attributes": [1-3, 5, 7-9] }] },
-      "Boundaries": {},
-      "Solver": { "Eigenmode": { "Target": 1.0 } }
-    })";
+    CHECK(!ValidateConfig(json{{"MaxIts", 0}}, "Linear").empty());
+    CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
   }
 
-  std::stringstream buffer = PreprocessFile(temp_path.c_str());
-  json config = json::parse(buffer);
+  SECTION("Excitation integer minimum - LumpedPort")
+  {
+    json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};
+    CHECK(!ValidateConfig(port, "LumpedPort").empty());
+  }
 
-  // Verify range expansion worked.
-  auto attrs = config["Domains"]["Materials"][0]["Attributes"];
-  CHECK(attrs == json({1, 2, 3, 5, 7, 8, 9}));
+  SECTION("Log exclusiveMinimum - Driven Samples")
+  {
+    json driven = {
+        {"Samples",
+         {{{"Type", "Log"}, {"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 5}}}}};
+    CHECK(!ValidateConfig(driven, "Driven").empty());
+  }
 
-  // Verify schema validation passes.
-  std::string err = ValidateConfig(config);
-  CHECK(err.empty());
+  SECTION("Required field - Model without Mesh")
+  {
+    CHECK(!ValidateConfig(json::object(), "Model").empty());
+  }
+
+  SECTION("Enum - Problem Type")
+  {
+    json config = {{"Problem", {{"Type", "InvalidType"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+    CHECK(!ValidateConfig(config).empty());
+  }
 }

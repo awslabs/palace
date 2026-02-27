@@ -8,6 +8,7 @@
 #include "fem/gridfunction.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -19,14 +20,16 @@ constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
 }  // namespace
-InterpolationOperator::InterpolationOperator(const IoData &iodata,
+
+InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeData> &probe,
+                                             const Units &units,
                                              FiniteElementSpace &nd_space)
 #if defined(MFEM_USE_GSLIB)
   : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
 {
   auto &mesh = nd_space.GetParMesh();
   // Set up probes interpolation. All processes search for all points.
-  if (iodata.domains.postpro.probe.empty())
+  if (probe.empty())
   {
     return;
   }
@@ -34,11 +37,11 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
   MFEM_VERIFY(
       mesh.Dimension() == dim,
       "Probe postprocessing functionality requires mesh dimension == space dimension!");
-  const int npts = static_cast<int>(iodata.domains.postpro.probe.size());
+  const int npts = static_cast<int>(probe.size());
   mfem::Vector xyz(npts * dim);
   op_idx.resize(npts);
   int i = 0;
-  for (const auto &[idx, data] : iodata.domains.postpro.probe)
+  for (const auto &[idx, data] : probe)
   {
     for (int d = 0; d < dim; d++)
     {
@@ -51,14 +54,13 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
   op.FindPoints(xyz, mfem::Ordering::byNODES);
   op.SetDefaultInterpolationValue(0.0);
   i = 0;
-  for (const auto &[idx, data] : iodata.domains.postpro.probe)
+  for (const auto &[idx, data] : probe)
   {
     if (op.GetCode()[i++] == 2)
     {
       Mpi::Warning(
           "Probe {:d} at ({:.3e}) m could not be found!\n Using default value 0.0!\n", idx,
-          fmt::join(iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.center),
-                    ", "));
+          fmt::join(units.Dimensionalize<Units::ValueType::LENGTH>(data.center), ", "));
     }
   }
 }
@@ -66,10 +68,15 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
 {
   MFEM_CONTRACT_VAR(GSLIB_BB_TOL);
   MFEM_CONTRACT_VAR(GSLIB_NEWTON_TOL);
-  MFEM_VERIFY(iodata.domains.postpro.probe.empty(),
-              "InterpolationOperator class requires MFEM_USE_GSLIB!");
+  MFEM_VERIFY(probe.empty(), "InterpolationOperator class requires MFEM_USE_GSLIB!");
 }
 #endif
+
+InterpolationOperator::InterpolationOperator(const IoData &iodata,
+                                             FiniteElementSpace &nd_space)
+  : InterpolationOperator(iodata.domains.postpro.probe, iodata.units, nd_space)
+{
+}
 
 std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {

@@ -19,25 +19,28 @@
 namespace palace
 {
 
-CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
+CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
+                                   const config::SolverData &solver,
+                                   const std::vector<config::MaterialData> &materials,
+                                   ProblemType problem_type,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsening, false)),
+        solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
+        solver.linear.mg_coarsening, false)),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsening, false)),
-    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+        solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
+        solver.linear.mg_coarsening, false)),
+    rt_fec(std::make_unique<mfem::RT_FECollection>(solver.order - 1,
                                                    mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
+        solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs)),
-    rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
-    surf_j_op(iodata, *mesh.back())
+        solver.linear.mg_max_levels, mesh, h1_fecs)),
+    rt_fespace(*mesh.back(), rt_fec.get()),
+    mat_op(materials, boundaries.periodic, problem_type, *mesh.back()),
+    surf_j_op(boundaries.current, *mesh.back())
 {
-  // Finalize setup.
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -48,13 +51,21 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   }
 }
 
-mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                           const mfem::ParMesh &mesh)
+CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
+                                   const std::vector<std::unique_ptr<Mesh>> &mesh)
+  : CurlCurlOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
+                     iodata.problem.type, mesh)
+{
+}
+
+mfem::Array<int>
+CurlCurlOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
+                                          const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.pec.empty())
+  if (!pec.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -63,13 +74,8 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr_attr_marker[attr - 1] = 1;
     }
     std::set<int> bdr_warn_list;
-    for (auto attr : iodata.boundaries.pec.attributes)
+    for (auto attr : pec.attributes)
     {
-      // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-      //             "PEC boundary attribute tags must be non-negative and correspond to "
-      //             "attributes in the mesh!");
-      // MFEM_VERIFY(bdr_attr_marker[attr - 1],
-      //             "Unknown PEC boundary attribute " << attr << "!");
       if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
         bdr_warn_list.insert(attr);
@@ -86,12 +92,12 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
   mfem::Array<int> dbc_bcs;
-  dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()));
-  for (auto attr : iodata.boundaries.pec.attributes)
+  dbc_bcs.Reserve(static_cast<int>(pec.attributes.size()));
+  for (auto attr : pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
-      continue;  // Can just ignore if wrong
+      continue;
     }
     dbc_bcs.Append(attr);
   }

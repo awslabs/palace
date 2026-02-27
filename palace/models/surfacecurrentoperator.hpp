@@ -50,10 +50,13 @@ private:
   // information.
   std::map<int, SurfaceCurrentData> sources;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const std::map<int, config::SurfaceCurrentData> &current,
+                               const mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const mfem::ParMesh &mesh);
 
 public:
+  SurfaceCurrentOperator(const std::map<int, config::SurfaceCurrentData> &current,
+                         const mfem::ParMesh &mesh);
   SurfaceCurrentOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Access data structures for the surface current source with the given index.
