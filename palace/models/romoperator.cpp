@@ -453,8 +453,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
   ksp = std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
-                                           space_op.GetNDSpaces(),
-                                           &space_op.GetH1Spaces());
+                                           space_op.GetNDSpaces(), &space_op.GetH1Spaces());
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
