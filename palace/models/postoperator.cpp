@@ -1000,7 +1000,6 @@ void PostOperator<solver_t>::MeasureSParameter() const
   // Depends on LumpedPorts, WavePorts.
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
-    using fmt::format;
     using std::complex_literals::operator""i;
 
     // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
@@ -1034,7 +1033,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
@@ -1055,7 +1054,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       vi.S *= std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
   }
@@ -1151,8 +1150,6 @@ void PostOperator<solver_t>::MeasureProbes() const
   }
 #endif
 }
-
-using fmt::format;
 
 template <ProblemType solver_t>
 template <ProblemType U>
