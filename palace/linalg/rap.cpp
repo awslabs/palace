@@ -934,9 +934,9 @@ std::unique_ptr<ComplexParOperator>
 BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                     const ComplexParOperator *(&&ops_in)[N], bool set_essential)
 {
-  return BuildParSumOperator(to_array<std::complex<double>>(std::move(coeff_in)),
-                             to_array<const ComplexParOperator *>(std::move(ops_in)),
-                             set_essential);
+  return BuildParSumOperator(
+      palace::to_array<std::complex<double>>(std::move(coeff_in)),
+      palace::to_array<const ComplexParOperator *>(std::move(ops_in)), set_essential);
 }
 
 template <std::size_t N, typename ScalarType, typename OperType>
