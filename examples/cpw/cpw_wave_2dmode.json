@@ -1,7 +1,7 @@
 {
   "Problem":
   {
-    "Type": "ModeAnalysis",
+    "Type": "BoundaryMode",
     "Verbose": 2,
     "Output": "postpro/wave_2dmode"
   },
@@ -96,7 +96,7 @@
   {
     "Order": 2,
     "Device": "CPU",
-    "ModeAnalysis":
+    "BoundaryMode":
     {
       "Freq": 17.0,
         "N": 1,

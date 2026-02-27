@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "modeanalysissolver.hpp"
+#include "boundarymodesolver.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -15,7 +15,6 @@
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/modeanalysisoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
@@ -28,26 +27,26 @@ namespace palace
 {
 
 std::pair<ErrorIndicator, long long int>
-ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
+BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
-  const auto &ma_data = iodata.solver.mode_analysis;
-  const bool use_submesh = !ma_data.attributes.empty();
+  const auto &bm_data = iodata.solver.boundary_mode;
+  const bool use_submesh = !bm_data.attributes.empty();
 
   if (use_submesh)
   {
     MFEM_VERIFY(mesh.back()->Dimension() == 3,
-                "ModeAnalysis with \"Attributes\" requires a 3D mesh!");
+                "BoundaryMode with \"Attributes\" requires a 3D mesh!");
   }
   else
   {
     MFEM_VERIFY(mesh.back()->Dimension() == 2,
-                "ModeAnalysis solver requires a 2D mesh (waveguide cross-section), "
+                "BoundaryMode solver requires a 2D mesh (waveguide cross-section), "
                 "or a 3D mesh with \"Attributes\" specifying the cross-section boundary!");
   }
 
-  const double freq_GHz = ma_data.freq;
-  const int num_modes = ma_data.n;
-  const double tol = ma_data.tol;
+  const double freq_GHz = bm_data.freq;
+  const int num_modes = bm_data.n;
+  const double tol = bm_data.tol;
   const double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
 
@@ -68,7 +67,7 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const auto &parent_mesh = mesh.back()->Get();
     MPI_Comm comm = parent_mesh.GetComm();
     mfem::Array<int> attr_list;
-    attr_list.Append(ma_data.attributes.data(), ma_data.attributes.size());
+    attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());
 
     // Collect all boundary attributes that need internal boundary elements on the
     // cross-section. This includes PEC, AuxPEC, impedance, conductivity, and absorbing
@@ -168,8 +167,8 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         for (auto attr : data.attributes)
         {
-          if (std::find(ma_data.attributes.begin(), ma_data.attributes.end(), attr) !=
-              ma_data.attributes.end())
+          if (std::find(bm_data.attributes.begin(), bm_data.attributes.end(), attr) !=
+              bm_data.attributes.end())
           {
             continue;
           }
@@ -195,9 +194,9 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());
 
   // Material operator and PostOperator.
-  ModeAnalysisOperator mode_op(mat_op, nd_fespace, h1_fespace, *solve_mesh,
-                               iodata.solver.order);
-  PostOperator<ProblemType::MODEANALYSIS> post_op(iodata, mode_op);
+  BoundaryModeFemOp mode_op(mat_op, nd_fespace, h1_fespace, *solve_mesh,
+                            iodata.solver.order);
+  PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
 
   // Project impedance/voltage path coordinates from 3D to the 2D local frame.
   if (use_submesh)
@@ -223,10 +222,10 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Determine kn_target from user-specified n_eff target or material properties.
   double kn_target;
-  if (ma_data.target > 0.0)
+  if (bm_data.target > 0.0)
   {
-    kn_target = ma_data.target * omega;
-    Mpi::Print(" Target n_eff = {:.6e}, kn_target = {:.6e}\n", ma_data.target, kn_target);
+    kn_target = bm_data.target * omega;
+    Mpi::Print(" Target n_eff = {:.6e}, kn_target = {:.6e}\n", bm_data.target, kn_target);
   }
   else
   {
@@ -267,12 +266,12 @@ ModeAnalysisSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   config.farfield_op = &farfield_op;
   config.surf_sigma_op = &surf_sigma_op;
   config.num_modes = num_modes;
-  config.num_vec = ma_data.max_size;
+  config.num_vec = bm_data.max_size;
   config.eig_tol = tol;
-  config.which_eig = (ma_data.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
+  config.which_eig = (bm_data.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                                             : EigenvalueSolver::WhichType::LARGEST_REAL;
   config.linear = &iodata.solver.linear;
-  config.eigen_backend = ma_data.type;
+  config.eigen_backend = bm_data.type;
   config.verbose = iodata.problem.verbose;
 
   // Build combined dbc_tdof_list for the block system (PEC only on both ND and H1).
