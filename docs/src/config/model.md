@@ -73,7 +73,9 @@ in the model and all computations will take place in the same units as the mesh.
 
 with
 
-`"Tol" [1.0e-2]` : Relative error convergence tolerance for adaptive mesh refinement (AMR).
+`"Tol" [1.0e-2]` : Stop adaptive mesh refinement (AMR) when the norm of the
+estimated error is below this value. The error is reported in
+`error-indicators.csv`.
 
 `"MaxIts" [0]` : Maximum number of iterations of AMR to perform.
 
@@ -81,7 +83,7 @@ with
 mesh exceeds this value no further adaptation will occur. A value less than 1 means that no
 maximum size constraint will be imposed.
 
-`"Nonconformal" [true]` : Chose whether the adaptation should use nonconformal refinement.
+`"Nonconformal" [true]` : Choose whether the adaptation should use nonconformal refinement.
 Nonconformal refinement is required for non-simplex meshes.
 
 `"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to

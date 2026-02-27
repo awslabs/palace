@@ -1,0 +1,142 @@
+# This workflow runs nightly tests on all the open PRs that:
+# - are not marked as "draft",
+# - are not trivial,
+# - do not have the `no-nightly` label,
+# - did not already pass the nightly tests,
+# - are not from forks.
+#
+# Nightly tests can be triggered immediately by adding 'trigger-nightly' label
+# to a PR.
+name: Nightly Tests
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM daily
+  pull_request:
+    types: [synchronize]
+  workflow_dispatch:
+
+permissions:
+  packages: read
+  statuses: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Determine which PRs need nightly testing based on filtering criteria
+  get-prs:
+    runs-on: ubuntu-latest
+    if: github.repository == 'awslabs/palace'  # Do not run from forks
+    outputs:
+      prs: ${{ steps.prs.outputs.result }}
+    steps:
+      - id: prs
+        uses: actions/github-script@v8
+        with:
+          script: |
+            let prs = [];
+
+            // Handle manual trigger via 'trigger-nightly' label
+            if (context.eventName === 'pull_request') {
+              const hasLabel = context.payload.pull_request.labels
+                .some(label => label.name === 'trigger-nightly');
+              if (hasLabel) {
+                prs = [context.payload.pull_request.number];
+              }
+            } else {
+              // Scheduled run: find PRs that need testing
+              const { data: allPrs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open'
+              });
+              
+              const needsTesting = [];
+
+              for (const pr of allPrs) {
+                // Skip draft PRs, PRs with 'no-nightly' label, and PRs from forks
+                if (pr.draft ||
+                    pr.labels.some(label => label.name === 'no-nightly') ||
+                    pr.head.repo.full_name !== pr.base.repo.full_name) continue;
+
+                // Check if current commit already has successful nightly status
+                try {
+                  const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: pr.head.sha
+                  });
+
+                  const nightlyStatus = statuses.find(s => s.context === 'nightly-tests');
+                  // Only test if no status exists or status is pending/failed
+                  if (!nightlyStatus || nightlyStatus.state === 'pending') {
+                    needsTesting.push(pr.number);
+                  }
+                } catch {
+                  // If we can't check status, assume testing is needed
+                  needsTesting.push(pr.number);
+                }
+              }
+
+              prs = needsTesting;
+            }
+
+            console.log(`PRs selected for nightly testing: ${prs}`);
+            return prs;
+
+  nightly:
+    needs: get-prs
+    if: needs.get-prs.outputs.prs != '[]'
+    runs-on: [self-hosted, x64]
+    strategy:
+      matrix:
+        pr: ${{ fromJson(needs.get-prs.outputs.prs) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ matrix.pr }}/merge
+
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          test-cases: nightly
+
+      - name: Get PR head SHA
+        if: always()
+        id: pr-sha
+        run: |
+          SHA=$(gh pr view ${{ matrix.pr }} --repo ${{ github.repository }} --json headRefOid -q .headRefOid)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set success status
+        if: success()
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
+            --method POST \
+            --field state=success \
+            --field context=nightly-tests \
+            --field description="Nightly tests passed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set failure status
+        if: failure()
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
+            --method POST \
+            --field state=failure \
+            --field context=nightly-tests \
+            --field description="Nightly tests failed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
