@@ -57,9 +57,9 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   configure_bcs(iodata);
 
   iodata.solver.order = order;
-  iodata.solver.mode_analysis.freq = freq_ghz;
-  iodata.solver.mode_analysis.n = num_modes;
-  iodata.solver.mode_analysis.tol = 1.0e-8;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = num_modes;
+  iodata.solver.boundary_mode.tol = 1.0e-8;
   iodata.solver.linear.tol = 1.0e-8;
   iodata.solver.linear.max_it = 200;
 
@@ -128,7 +128,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   config.eig_tol = 1.0e-8;
   config.which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
   config.linear = &iodata.solver.linear;
-  config.eigen_backend = iodata.solver.mode_analysis.type;
+  config.eigen_backend = iodata.solver.boundary_mode.type;
   config.verbose = 0;
 
   BoundaryModeOperator mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,

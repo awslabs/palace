@@ -8,11 +8,11 @@
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+#include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
-#include "drivers/modeanalysissolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -273,8 +273,8 @@ int main(int argc, char *argv[])
       case ProblemType::TRANSIENT:
         return std::make_unique<TransientSolver>(iodata, world_root, world_size,
                                                  omp_threads, GetPalaceGitTag());
-      case ProblemType::MODEANALYSIS:
-        return std::make_unique<ModeAnalysisSolver>(iodata, world_root, world_size,
+      case ProblemType::BOUNDARYMODE:
+        return std::make_unique<BoundaryModeSolver>(iodata, world_root, world_size,
                                                     omp_threads, GetPalaceGitTag());
     }
     return nullptr;

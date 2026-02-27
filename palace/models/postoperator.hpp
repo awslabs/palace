@@ -41,7 +41,7 @@ template <ProblemType solver_t>
 constexpr bool HasComplexGridFunction()
 {
   return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
-         solver_t == ProblemType::MODEANALYSIS;
+         solver_t == ProblemType::BOUNDARYMODE;
 }
 
 // Statically specify what fields a solver uses
@@ -418,7 +418,7 @@ public:
   auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
                           std::complex<double> kn, double omega, double error_abs,
                           double error_bkwd, int num_conv)
-      -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>;
+      -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>;
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.

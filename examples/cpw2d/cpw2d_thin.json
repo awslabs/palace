@@ -1,7 +1,7 @@
 {
   "Problem":
   {
-    "Type": "ModeAnalysis",
+    "Type": "BoundaryMode",
     "Verbose": 2,
     "Output": "postpro/thin"
   },
@@ -95,7 +95,7 @@
   "Solver":
   {
     "Order": 2,
-    "ModeAnalysis":
+    "BoundaryMode":
     {
       "Freq": 5.0,
       "N": 2,

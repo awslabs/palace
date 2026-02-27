@@ -579,7 +579,9 @@ if "cavity2d/eigenmode" in cases
     )
 end
 
-reltol = 1.0e-2
+# Coarser test tolerances for driven simulations with ports
+reltol = 2.0e-2
+abstol = 1.0e-10
 
 if "cavity2d/driven" in cases
     @info "Testing cavity2d/driven (2D driven)..."

@@ -45,12 +45,12 @@
   },
   "Solver":
   {
-    "Order": 3,
+    "Order": 2,
     "Device": "CPU",
     "Eigenmode":
     {
       "N": 5,
-      "Tol": 1.0e-8,
+      "Tol": 1.0e-9,
       "Target": 0.1,  // GHz
         "Save": 5
     },
@@ -58,7 +58,7 @@
     {
       "Type": "Default",
       "KSPType": "GMRES",
-      "Tol": 1.0e-8,
+      "Tol": 1.0e-10,
       "MaxIts": 100
     }
   }

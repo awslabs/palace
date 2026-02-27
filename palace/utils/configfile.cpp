@@ -68,7 +68,7 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::ELECTROSTATIC, "Electrostatic"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
                                          {ProblemType::TRANSIENT, "Transient"},
-                                         {ProblemType::MODEANALYSIS, "ModeAnalysis"}})
+                                         {ProblemType::BOUNDARYMODE, "BoundaryMode"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
@@ -1348,7 +1348,7 @@ TransientSolverData::TransientSolverData(const json &transient)
   }
 }
 
-ModeAnalysisSolverData::ModeAnalysisSolverData(const json &ma)
+BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
 {
   freq = ma.at("Freq");  // Required
   n = ma.value("N", n);
@@ -1428,7 +1428,7 @@ SolverData::SolverData(const json &solver)
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
-  mode_analysis = ParseOptional<ModeAnalysisSolverData>(solver, "ModeAnalysis");
+  boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
