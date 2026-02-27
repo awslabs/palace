@@ -85,7 +85,7 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
   MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
                   problem_type == ProblemType::DRIVEN ||
                   problem_type == ProblemType::EIGENMODE ||
-                  problem_type == ProblemType::MODEANALYSIS,
+                  problem_type == ProblemType::BOUNDARYMODE,
               "Second-order farfield boundaries are only available for frequency "
               "domain simulations!");
   return farfield_bcs;
