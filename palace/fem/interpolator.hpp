@@ -34,8 +34,8 @@ private:
   std::vector<double> ProbeField(const mfem::ParGridFunction &U);
 
 public:
-  InterpolationOperator(const std::map<int, config::ProbeData> &probe,
-                        const Units &units, FiniteElementSpace &nd_space);
+  InterpolationOperator(const std::map<int, config::ProbeData> &probe, const Units &units,
+                        FiniteElementSpace &nd_space);
   InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
 
   auto GetVDim() const { return v_dim_fes; }
