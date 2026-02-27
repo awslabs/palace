@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "rap.hpp"
+#include <array>
 
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
@@ -911,31 +912,13 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
   return O;
 }
 
-// TODO: replace with std::to_array in c++20.
-namespace detail
-{
-// Helper for conversion to std::array.
-template <class T, std::size_t N, std::size_t... I>
-constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
-                                                           std::index_sequence<I...>)
-{
-  return {{std::move(a[I])...}};
-}
-}  // namespace detail
-
-template <class T, std::size_t N>
-constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
-{
-  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
-}
-
 template <std::size_t N>
 std::unique_ptr<ComplexParOperator>
 BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                     const ComplexParOperator *(&&ops_in)[N], bool set_essential)
 {
-  return BuildParSumOperator(to_array<std::complex<double>>(std::move(coeff_in)),
-                             to_array<const ComplexParOperator *>(std::move(ops_in)),
+  return BuildParSumOperator(std::to_array<std::complex<double>>(std::move(coeff_in)),
+                             std::to_array<const ComplexParOperator *>(std::move(ops_in)),
                              set_essential);
 }
 
@@ -953,8 +936,8 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
   std::transform(ops_in, ops_in + N, par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
 
-  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)), std::move(par_ops),
-                             set_essential);
+  return BuildParSumOperator(std::to_array<ScalarType>(std::move(coeff_in)),
+                             std::move(par_ops), set_essential);
 }
 
 // Explicit instantiation.

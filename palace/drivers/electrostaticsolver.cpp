@@ -145,7 +145,6 @@ void ElectrostaticSolver::PostprocessTerminals(
     return;
   }
   using VT = Units::ValueType;
-  using fmt::format;
 
   // Write capacitance matrix data.
   auto PrintMatrix = [&terminal_sources, this](const std::string &file,
@@ -158,11 +157,12 @@ void ElectrostaticSolver::PostprocessTerminals(
     int j = 0;
     for (const auto &[idx2, data2] : terminal_sources)
     {
-      output.table.insert(format("i2{}", idx2), format("{}[i][{}] {}", name, idx2, unit));
+      output.table.insert(fmt::format("i2{}", idx2),
+                          fmt::format("{}[i][{}] {}", name, idx2, unit));
       // Use the fact that iterator over i and j is the same span.
       output.table["i"] << idx2;
 
-      auto &col = output.table[format("i2{}", idx2)];
+      auto &col = output.table[fmt::format("i2{}", idx2)];
       for (std::size_t i = 0; i < terminal_sources.size(); i++)
       {
         col << mat(i, j) * scale;
