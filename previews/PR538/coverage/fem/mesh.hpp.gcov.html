@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - fem/mesh.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">fem</a> - mesh.hpp<span style="font-size: 80%;"> (source / <a href="mesh.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">96.2&nbsp;%</td>
+            <td class="headerCovTableEntry">26</td>
+            <td class="headerCovTableEntry">25</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-02-20 21:19:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryMed">80.0&nbsp;%</td>
+            <td class="headerCovTableEntry">10</td>
+            <td class="headerCovTableEntry">8</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_FEM_MESH_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_FEM_MESH_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;memory&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;unordered_map&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;vector&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/libceed/ceed.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : </span>
+<span id="L13"><span class="lineNum">      13</span>              : namespace palace</span>
+<span id="L14"><span class="lineNum">      14</span>              : {</span>
+<span id="L15"><span class="lineNum">      15</span>              : </span>
+<span id="L16"><span class="lineNum">      16</span>              : namespace ceed</span>
+<span id="L17"><span class="lineNum">      17</span>              : {</span>
+<span id="L18"><span class="lineNum">      18</span>              : </span>
+<span id="L19"><span class="lineNum">      19</span>              : //</span>
+<span id="L20"><span class="lineNum">      20</span>              : // Data structure for geometry information stored at quadrature points.</span>
+<span id="L21"><span class="lineNum">      21</span>              : //</span>
+<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC tlaBgGNC">       54646 : struct CeedGeomFactorData</span></span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              :   // Dimension of this element topology and space dimension of the underlying mesh.</span>
+<span id="L25"><span class="lineNum">      25</span>              :   int dim, space_dim;</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              :   // Domain or boundary indices from the mesh used to construct Ceed objects with these</span>
+<span id="L28"><span class="lineNum">      28</span>              :   // geometry factors.</span>
+<span id="L29"><span class="lineNum">      29</span>              :   std::vector&lt;int&gt; indices;</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              :   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is</span>
+<span id="L32"><span class="lineNum">      32</span>              :   // space_dim x dim, stored column-major by component.</span>
+<span id="L33"><span class="lineNum">      33</span>              :   CeedVector geom_data;</span>
+<span id="L34"><span class="lineNum">      34</span>              : </span>
+<span id="L35"><span class="lineNum">      35</span>              :   // Element restriction for the geometry factor quadrature data.</span>
+<span id="L36"><span class="lineNum">      36</span>              :   CeedElemRestriction geom_data_restr;</span>
+<span id="L37"><span class="lineNum">      37</span>              : };</span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              : }  // namespace ceed</span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span>              : //</span>
+<span id="L42"><span class="lineNum">      42</span>              : // Wrapper for MFEM's ParMesh class, with extensions for Palace.</span>
+<span id="L43"><span class="lineNum">      43</span>              : //</span>
+<span id="L44"><span class="lineNum">      44</span>              : class Mesh</span>
+<span id="L45"><span class="lineNum">      45</span>              : {</span>
+<span id="L46"><span class="lineNum">      46</span>              : private:</span>
+<span id="L47"><span class="lineNum">      47</span>              :   // Underlying MFEM object (can also point to a derived class of mfem::ParMesh, such as</span>
+<span id="L48"><span class="lineNum">      48</span>              :   // mfem::ParSubMesh).</span>
+<span id="L49"><span class="lineNum">      49</span>              :   std::unique_ptr&lt;mfem::ParMesh&gt; mesh;</span>
+<span id="L50"><span class="lineNum">      50</span>              : </span>
+<span id="L51"><span class="lineNum">      51</span>              :   // Attribute mapping for (global, MFEM, 1-based) domain and boundary attributes to those</span>
+<span id="L52"><span class="lineNum">      52</span>              :   // for libCEED (local to this process, contiguous, also 1-based). For boundaries, the</span>
+<span id="L53"><span class="lineNum">      53</span>              :   // inner map is a mapping from neighboring MFEM domain attribute to the resulting local</span>
+<span id="L54"><span class="lineNum">      54</span>              :   // boundary attribute (to discern boundary elements of a given attribute which border more</span>
+<span id="L55"><span class="lineNum">      55</span>              :   // than one domain). Interior boundaries use as neighbor the element with the smaller</span>
+<span id="L56"><span class="lineNum">      56</span>              :   // domain attribute in order to be consistent when the interior boundary element normals</span>
+<span id="L57"><span class="lineNum">      57</span>              :   // are not aligned.</span>
+<span id="L58"><span class="lineNum">      58</span>              :   std::unordered_map&lt;int, int&gt; loc_attr;</span>
+<span id="L59"><span class="lineNum">      59</span>              :   std::unordered_map&lt;int, std::unordered_map&lt;int, int&gt;&gt; loc_bdr_attr;</span>
+<span id="L60"><span class="lineNum">      60</span>              : </span>
+<span id="L61"><span class="lineNum">      61</span>              :   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:</span>
+<span id="L62"><span class="lineNum">      62</span>              :   //   - Mesh element indices for threads and element geometry types.</span>
+<span id="L63"><span class="lineNum">      63</span>              :   //   - Attributes for domain and boundary elements. The attributes are not the same as the</span>
+<span id="L64"><span class="lineNum">      64</span>              :   //     MFEM mesh element attributes, they correspond to the local, contiguous (1-based)</span>
+<span id="L65"><span class="lineNum">      65</span>              :   //     attributes above.</span>
+<span id="L66"><span class="lineNum">      66</span>              :   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and</span>
+<span id="L67"><span class="lineNum">      67</span>              :   //     boundary elements.</span>
+<span id="L68"><span class="lineNum">      68</span>              :   mutable ceed::CeedObjectMap&lt;ceed::CeedGeomFactorData&gt; geom_data;</span>
+<span id="L69"><span class="lineNum">      69</span>              : </span>
+<span id="L70"><span class="lineNum">      70</span>              : public:</span>
+<span id="L71"><span class="lineNum">      71</span>              :   template &lt;typename... T&gt;</span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">           7 :   Mesh(T &amp;&amp;...args) : Mesh(std::make_unique&lt;mfem::ParMesh&gt;(std::forward&lt;T&gt;(args)...))</span></span>
+<span id="L73"><span class="lineNum">      73</span>              :   {</span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">           7 :   }</span></span>
+<span id="L75"><span class="lineNum">      75</span>              :   template &lt;typename T&gt;</span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">       11625 :   Mesh(std::unique_ptr&lt;T&gt; &amp;&amp;mesh) : mesh(std::move(mesh))</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   {</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">       11625 :     this-&gt;mesh-&gt;EnsureNodes();</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">       11625 :     Update();</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">       11625 :   }</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">       11625 :   ~Mesh() { ResetCeedObjects(); }</span></span>
+<span id="L82"><span class="lineNum">      82</span>              : </span>
+<span id="L83"><span class="lineNum">      83</span>              :   const auto &amp;Get() const { return *mesh; }</span>
+<span id="L84"><span class="lineNum">      84</span>              :   auto &amp;Get() { return *mesh; }</span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span>              :   operator const mfem::ParMesh &amp;() const { return Get(); }</span>
+<span id="L87"><span class="lineNum">      87</span>              :   operator mfem::ParMesh &amp;() { return Get(); }</span>
+<span id="L88"><span class="lineNum">      88</span>              : </span>
+<span id="L89"><span class="lineNum">      89</span>              :   operator const std::unique_ptr&lt;mfem::ParMesh&gt; &amp;() const { return mesh; }</span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaUNC tlaBgUNC">           0 :   operator std::unique_ptr&lt;mfem::ParMesh&gt; &amp;() { return mesh; }</span></span>
+<span id="L91"><span class="lineNum">      91</span>              : </span>
+<span id="L92"><span class="lineNum">      92</span>              :   auto Dimension() const { return Get().Dimension(); }</span>
+<span id="L93"><span class="lineNum">      93</span>              :   auto SpaceDimension() const { return Get().SpaceDimension(); }</span>
+<span id="L94"><span class="lineNum">      94</span>              :   auto GetNE() const { return Get().GetNE(); }</span>
+<span id="L95"><span class="lineNum">      95</span>              :   auto GetNBE() const { return Get().GetNBE(); }</span>
+<span id="L96"><span class="lineNum">      96</span>              : </span>
+<span id="L97"><span class="lineNum">      97</span>              :   const auto &amp;GetCeedAttributes() const { return loc_attr; }</span>
+<span id="L98"><span class="lineNum">      98</span>              :   const auto &amp;GetCeedBdrAttributes() const { return loc_bdr_attr; }</span>
+<span id="L99"><span class="lineNum">      99</span>              : </span>
+<span id="L100"><span class="lineNum">     100</span>              :   // Convert a list of global attributes to the corresponding process-local libCEED ones.</span>
+<span id="L101"><span class="lineNum">     101</span>              :   template &lt;typename T&gt;</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC tlaBgGNC">       47724 :   auto GetCeedAttributes(const T &amp;attr_list) const</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :   {</span>
+<span id="L104"><span class="lineNum">     104</span>              :     // Skip any entries in the input global attribute list which are not local to this</span>
+<span id="L105"><span class="lineNum">     105</span>              :     // process.</span>
+<span id="L106"><span class="lineNum">     106</span>              :     mfem::Array&lt;int&gt; loc_attr_list;</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">       95448 :     for (auto attr : attr_list)</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :     {</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">       47724 :       if (loc_attr.find(attr) != loc_attr.end())</span></span>
+<span id="L110"><span class="lineNum">     110</span>              :       {</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">       46908 :         loc_attr_list.Append(loc_attr.at(attr));</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :       }</span>
+<span id="L113"><span class="lineNum">     113</span>              :     }</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">       47724 :     return loc_attr_list;</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :   }</span>
+<span id="L116"><span class="lineNum">     116</span>              : </span>
+<span id="L117"><span class="lineNum">     117</span>              :   // Convert a list of global boundary attributes to the corresponding process-local libCEED</span>
+<span id="L118"><span class="lineNum">     118</span>              :   // ones.</span>
+<span id="L119"><span class="lineNum">     119</span>              :   template &lt;typename T&gt;</span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">       49572 :   auto GetCeedBdrAttributes(const T &amp;attr_list) const</span></span>
+<span id="L121"><span class="lineNum">     121</span>              :   {</span>
+<span id="L122"><span class="lineNum">     122</span>              :     // Skip any entries in the input global boundary attribute list which are not local</span>
+<span id="L123"><span class="lineNum">     123</span>              :     // to this process.</span>
+<span id="L124"><span class="lineNum">     124</span>              :     mfem::Array&lt;int&gt; loc_attr_list;</span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">       99144 :     for (auto attr : attr_list)</span></span>
+<span id="L126"><span class="lineNum">     126</span>              :     {</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       49572 :       if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())</span></span>
+<span id="L128"><span class="lineNum">     128</span>              :       {</span>
+<span id="L129"><span class="lineNum">     129</span>              :         const auto &amp;bdr_attr_map = loc_bdr_attr.at(attr);</span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaGNC">      100368 :         for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)</span></span>
+<span id="L131"><span class="lineNum">     131</span>              :         {</span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">       63444 :           loc_attr_list.Append(it-&gt;second);</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :         }</span>
+<span id="L134"><span class="lineNum">     134</span>              :       }</span>
+<span id="L135"><span class="lineNum">     135</span>              :     }</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">       49572 :     return loc_attr_list;</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :   }</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">       47724 :   auto GetCeedAttributes(const int attr) const</span></span>
+<span id="L140"><span class="lineNum">     140</span>              :   {</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">       95448 :     return GetCeedAttributes(std::vector&lt;int&gt;{attr});</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :   }</span>
+<span id="L143"><span class="lineNum">     143</span>              : </span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">       49572 :   auto GetCeedBdrAttributes(const int attr) const</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :   {</span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">       99144 :     return GetCeedBdrAttributes(std::vector&lt;int&gt;{attr});</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :   }</span>
+<span id="L148"><span class="lineNum">     148</span>              : </span>
+<span id="L149"><span class="lineNum">     149</span>              :   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }</span>
+<span id="L150"><span class="lineNum">     150</span>              :   auto MaxCeedBdrAttribute() const</span>
+<span id="L151"><span class="lineNum">     151</span>              :   {</span>
+<span id="L152"><span class="lineNum">     152</span>              :     std::size_t bdr_attr_max = 0;</span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       40596 :     for (const auto &amp;[attr, bdr_attr_map] : GetCeedBdrAttributes())</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :     {</span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">       36924 :       bdr_attr_max += bdr_attr_map.size();</span></span>
+<span id="L156"><span class="lineNum">     156</span>              :     }</span>
+<span id="L157"><span class="lineNum">     157</span>              :     return bdr_attr_max;</span>
+<span id="L158"><span class="lineNum">     158</span>              :   }</span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span>              :   const ceed::GeometryObjectMap&lt;ceed::CeedGeomFactorData&gt; &amp;</span>
+<span id="L161"><span class="lineNum">     161</span>              :   GetCeedGeomFactorData(Ceed ceed) const;</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              :   void ResetCeedObjects();</span>
+<span id="L164"><span class="lineNum">     164</span>              : </span>
+<span id="L165"><span class="lineNum">     165</span>              :   void Update();</span>
+<span id="L166"><span class="lineNum">     166</span>              : </span>
+<span id="L167"><span class="lineNum">     167</span>              :   MPI_Comm GetComm() const { return mesh-&gt;GetComm(); }</span>
+<span id="L168"><span class="lineNum">     168</span>              : };</span>
+<span id="L169"><span class="lineNum">     169</span>              : </span>
+<span id="L170"><span class="lineNum">     170</span>              : }  // namespace palace</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              : #endif  // PALACE_FEM_MESH_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

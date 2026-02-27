@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-domainpostoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-domainpostoperator.cpp<span style="font-size: 80%;"> (source / <a href="test-domainpostoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">30</td>
+            <td class="headerCovTableEntry">30</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-02-20 21:19:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">1</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;catch2/generators/catch_generators_all.hpp&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;mfem/fem/coefficient.hpp&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;mfem/linalg/vector.hpp&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/gridfunction.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;models/domainpostoperator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;models/postoperator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;utils/constants.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;utils/units.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : namespace palace</span>
+<span id="L21"><span class="lineNum">      21</span>              : {</span>
+<span id="L22"><span class="lineNum">      22</span>              : using namespace Catch;</span>
+<span id="L23"><span class="lineNum">      23</span>              : using namespace Catch::Matchers;</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC tlaBgGNC">           1 : TEST_CASE(&quot;DomainPostOperator - Electric Energy Units&quot;, &quot;[domainpostoperator][Serial]&quot;)</span></span>
+<span id="L26"><span class="lineNum">      26</span>              : {</span>
+<span id="L27"><span class="lineNum">      27</span>              :   // Checking units by comparing the total electric energy in a cube with a</span>
+<span id="L28"><span class="lineNum">      28</span>              :   // uniform field along the z axis.</span>
+<span id="L29"><span class="lineNum">      29</span>              :   //</span>
+<span id="L30"><span class="lineNum">      30</span>              :   // TODO: This test can be expanded/improved to be a more robust test for the</span>
+<span id="L31"><span class="lineNum">      31</span>              :   // actual function, not just the units.</span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              :   Units units(0.496, 1.453);</span>
+<span id="L34"><span class="lineNum">      34</span>              :   IoData iodata = IoData(units);</span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">           1 :   iodata.model.Lc = 1.0;  // Keep spatial conversions simple.</span></span>
+<span id="L36"><span class="lineNum">      36</span>              : </span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">           1 :   auto &amp;material = iodata.domains.materials.emplace_back();</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">           1 :   material.attributes = {1};</span></span>
+<span id="L39"><span class="lineNum">      39</span>              : </span>
+<span id="L40"><span class="lineNum">      40</span>              :   // Make mesh for a cube [0, sz] x [0, sy] x [0, sz].</span>
+<span id="L41"><span class="lineNum">      41</span>              :   constexpr double sx = 1.1, sy = 2.5, sz = 3.8;</span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaGNC">           1 :   MPI_Comm comm = Mpi::World();</span></span>
+<span id="L43"><span class="lineNum">      43</span>              :   constexpr int resolution = 20;</span>
+<span id="L44"><span class="lineNum">      44</span>              :   std::unique_ptr&lt;mfem::Mesh&gt; serial_mesh =</span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">           2 :       std::make_unique&lt;mfem::Mesh&gt;(mfem::Mesh::MakeCartesian3D(</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">           1 :           resolution, resolution, resolution, mfem::Element::TETRAHEDRON, sx, sy, sz));</span></span>
+<span id="L47"><span class="lineNum">      47</span>              :   const int dim = serial_mesh-&gt;Dimension();</span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">           1 :   auto par_mesh = std::make_unique&lt;mfem::ParMesh&gt;(comm, *serial_mesh);</span></span>
+<span id="L49"><span class="lineNum">      49</span>              : </span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">           1 :   iodata.NondimensionalizeInputs(*par_mesh);</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">           1 :   iodata.CheckConfiguration();  // initializes quadrature</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">           1 :   Mesh palace_mesh(std::move(par_mesh));</span></span>
+<span id="L53"><span class="lineNum">      53</span>              : </span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">           1 :   mfem::ND_FECollection nd_fec(1, dim);</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">           1 :   FiniteElementSpace nd_fespace(palace_mesh, &amp;nd_fec);</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">           1 :   mfem::RT_FECollection rt_fec(1, dim);</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">           1 :   FiniteElementSpace rt_fespace(palace_mesh, &amp;rt_fec);</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">           1 :   MaterialOperator mat_op(iodata, palace_mesh);</span></span>
+<span id="L59"><span class="lineNum">      59</span>              : </span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">           1 :   DomainPostOperator dom_post_op(iodata, mat_op, nd_fespace, rt_fespace);</span></span>
+<span id="L61"><span class="lineNum">      61</span>              : </span>
+<span id="L62"><span class="lineNum">      62</span>              :   // Create uniform electric field E = E0 * z_hat (SI units: V/m).</span>
+<span id="L63"><span class="lineNum">      63</span>              :   constexpr double E0_SI = 1.0e6;  // 1 MV/m</span>
+<span id="L64"><span class="lineNum">      64</span>              : </span>
+<span id="L65"><span class="lineNum">      65</span>              :   auto E_uniform = [&amp;](const mfem::Vector &amp;x, mfem::Vector &amp;E)</span>
+<span id="L66"><span class="lineNum">      66</span>              :   {</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">      288000 :     E(0) = 0.0;</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">      288000 :     E(1) = 0.0;</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">      288000 :     E(2) = units.Nondimensionalize&lt;Units::ValueType::FIELD_E&gt;(E0_SI);</span></span>
+<span id="L70"><span class="lineNum">      70</span>              :   };</span>
+<span id="L71"><span class="lineNum">      71</span>              : </span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">           1 :   constexpr bool complex = false;</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">           1 :   auto E_field = std::make_unique&lt;GridFunction&gt;(nd_fespace, complex);</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">           1 :   mfem::VectorFunctionCoefficient E_coeff(dim, E_uniform);</span></span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">           1 :   E_field-&gt;Real().ProjectCoefficient(E_coeff);</span></span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span>              :   // Compute electric field energy.</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">           1 :   double energy_nondim = dom_post_op.GetElectricFieldEnergy(*E_field);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">           1 :   double energy_SI = units.Dimensionalize&lt;Units::ValueType::ENERGY&gt;(energy_nondim);</span></span>
+<span id="L80"><span class="lineNum">      80</span>              : </span>
+<span id="L81"><span class="lineNum">      81</span>              :   // Expected: U = (ε₀ * E₀² * sx * sy * sz) / 2.</span>
+<span id="L82"><span class="lineNum">      82</span>              :   double sx_SI = units.Dimensionalize&lt;Units::ValueType::LENGTH&gt;(sx);</span>
+<span id="L83"><span class="lineNum">      83</span>              :   double sy_SI = units.Dimensionalize&lt;Units::ValueType::LENGTH&gt;(sy);</span>
+<span id="L84"><span class="lineNum">      84</span>              :   double sz_SI = units.Dimensionalize&lt;Units::ValueType::LENGTH&gt;(sz);</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">           1 :   double expected_energy_SI =</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">           1 :       0.5 * electromagnetics::epsilon0_ * E0_SI * E0_SI * sx_SI * sy_SI * sz_SI;</span></span>
+<span id="L87"><span class="lineNum">      87</span>              : </span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">           3 :   CHECK_THAT(energy_SI, WithinRel(expected_energy_SI, 0.01));</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">           3 : }</span></span>
+<span id="L90"><span class="lineNum">      90</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

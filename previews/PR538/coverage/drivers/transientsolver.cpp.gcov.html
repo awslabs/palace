@@ -1,0 +1,271 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - drivers/transientsolver.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">drivers</a> - transientsolver.cpp<span style="font-size: 80%;"> (source / <a href="transientsolver.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">74</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-02-20 21:19:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">4</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;transientsolver.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &quot;fem/errorindicator.hpp&quot;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;linalg/errorestimator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;models/lumpedportoperator.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;models/portexcitations.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;models/postoperator.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;models/spaceoperator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;models/surfacecurrentoperator.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/timeoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;utils/excitations.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;utils/timer.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : namespace palace</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              : std::pair&lt;ErrorIndicator, long long int&gt;</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaUNC tlaBgUNC">           0 : TransientSolver::Solve(const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh) const</span></span>
+<span id="L27"><span class="lineNum">      27</span>              : {</span>
+<span id="L28"><span class="lineNum">      28</span>              :   // Set up the spatial discretization and time integrators for the E and B fields.</span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaUNC">           0 :   BlockTimer bt0(Timer::CONSTRUCT);</span></span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaUNC">           0 :   std::function&lt;double(double)&gt; J_coef = GetTimeExcitation(false);</span></span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaUNC">           0 :   std::function&lt;double(double)&gt; dJdt_coef = GetTimeExcitation(true);</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaUNC">           0 :   SpaceOperator space_op(iodata, mesh);</span></span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaUNC">           0 :   TimeOperator time_op(iodata, space_op, dJdt_coef);</span></span>
+<span id="L34"><span class="lineNum">      34</span>              : </span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaUNC">           0 :   double delta_t = iodata.solver.transient.delta_t;</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC">           0 :   int n_step = config::GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaUNC">           0 :   SaveMetadata(space_op.GetNDSpaces());</span></span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              :   // Time stepping is uniform in the time domain. Index sets are for computing things like</span>
+<span id="L40"><span class="lineNum">      40</span>              :   // port voltages and currents in postprocessing.</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :   PostOperator&lt;ProblemType::TRANSIENT&gt; post_op(iodata, space_op);</span></span>
+<span id="L42"><span class="lineNum">      42</span>              : </span>
+<span id="L43"><span class="lineNum">      43</span>              :   // Transient solver only supports a single excitation, this is check in SpaceOperator.</span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nComputing transient response for:\n{}&quot;,</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaUNC">           0 :              space_op.GetPortExcitations().FmtLog());</span></span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              :   // Initialize structures for storing and reducing the results of error estimation.</span>
+<span id="L48"><span class="lineNum">      48</span>              :   TimeDependentFluxErrorEstimator&lt;Vector&gt; estimator(</span>
+<span id="L49"><span class="lineNum">      49</span>              :       space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),</span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaUNC">           0 :       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaUNC">           0 :       iodata.solver.linear.estimator_mg);</span></span>
+<span id="L52"><span class="lineNum">      52</span>              :   ErrorIndicator indicator;</span>
+<span id="L53"><span class="lineNum">      53</span>              : </span>
+<span id="L54"><span class="lineNum">      54</span>              :   // Main time integration loop.</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC">           0 :   double t = -delta_t;</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :   auto t0 = Timer::Now();</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaUNC">           0 :   for (int step = 0; step &lt; n_step; step++)</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :   {</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaUNC">           0 :     const double ts = iodata.units.Dimensionalize&lt;Units::ValueType::TIME&gt;(t + delta_t);</span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n&quot;, step, n_step - 1,</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 :                ts, Timer::Duration(Timer::Now() - t0).count());</span></span>
+<span id="L62"><span class="lineNum">      62</span>              : </span>
+<span id="L63"><span class="lineNum">      63</span>              :     // Single time step t -&gt; t + dt.</span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaUNC">           0 :     BlockTimer bt1(Timer::TS);</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaUNC">           0 :     if (step == 0)</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :     {</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaUNC">           0 :       t += delta_t;</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaUNC">           0 :       time_op.Init();  // Initial conditions</span></span>
+<span id="L70"><span class="lineNum">      70</span>              :     }</span>
+<span id="L71"><span class="lineNum">      71</span>              :     else</span>
+<span id="L72"><span class="lineNum">      72</span>              :     {</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaUNC">           0 :       time_op.Step(t, delta_t);  // Advances t internally</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :     }</span>
+<span id="L75"><span class="lineNum">      75</span>              : </span>
+<span id="L76"><span class="lineNum">      76</span>              :     // Postprocess for the time step.</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 :     BlockTimer bt2(Timer::POSTPRO);</span></span>
+<span id="L78"><span class="lineNum">      78</span>              :     const Vector &amp;E = time_op.GetE();</span>
+<span id="L79"><span class="lineNum">      79</span>              :     const Vector &amp;B = time_op.GetB();</span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n&quot;,</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :                linalg::Norml2(space_op.GetComm(), E),</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaUNC">           0 :                linalg::Norml2(space_op.GetComm(), B));</span></span>
+<span id="L83"><span class="lineNum">      83</span>              : </span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaUNC">           0 :     auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, t, J_coef(t));</span></span>
+<span id="L85"><span class="lineNum">      85</span>              : </span>
+<span id="L86"><span class="lineNum">      86</span>              :     // Calculate and record the error indicators.</span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Updating solution error estimates\n&quot;);</span></span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaUNC">           0 :     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :   // Final postprocessing &amp; printing.</span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaUNC">           0 :   BlockTimer bt1(Timer::POSTPRO);</span></span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaUNC">           0 :   time_op.PrintStats();</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :   SaveMetadata(time_op.GetLinearSolver());</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 :   post_op.MeasureFinalize(indicator);</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaUNC">           0 :   return {indicator, space_op.GlobalTrueVSize()};</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L97"><span class="lineNum">      97</span>              : </span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaUNC">           0 : std::function&lt;double(double)&gt; TransientSolver::GetTimeExcitation(bool dot) const</span></span>
+<span id="L99"><span class="lineNum">      99</span>              : {</span>
+<span id="L100"><span class="lineNum">     100</span>              :   using namespace excitations;</span>
+<span id="L101"><span class="lineNum">     101</span>              :   using F = std::function&lt;double(double)&gt;;</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC">           0 :   const config::TransientSolverData &amp;data = iodata.solver.transient;</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :   const Excitation &amp;type = data.excitation;</span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaUNC">           0 :   if (type == Excitation::SINUSOIDAL || type == Excitation::MOD_GAUSSIAN)</span></span>
+<span id="L105"><span class="lineNum">     105</span>              :   {</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(data.pulse_f &gt; 0.0,</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :                 &quot;Excitation frequency is missing for transient simulation!&quot;);</span>
+<span id="L108"><span class="lineNum">     108</span>              :   }</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaUNC">           0 :   if (type == Excitation::GAUSSIAN || type == Excitation::DIFF_GAUSSIAN ||</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaUNC">           0 :       type == Excitation::MOD_GAUSSIAN || type == Excitation::SMOOTH_STEP)</span></span>
+<span id="L111"><span class="lineNum">     111</span>              :   {</span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(data.pulse_tau &gt; 0.0,</span></span>
+<span id="L113"><span class="lineNum">     113</span>              :                 &quot;Excitation width is missing for transient simulation!&quot;);</span>
+<span id="L114"><span class="lineNum">     114</span>              :   }</span>
+<span id="L115"><span class="lineNum">     115</span>              :   const double delay = (type == Excitation::GAUSSIAN || type == Excitation::DIFF_GAUSSIAN ||</span>
+<span id="L116"><span class="lineNum">     116</span>              :                         type == Excitation::MOD_GAUSSIAN)</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaUNC">           0 :                            ? 4.5 * data.pulse_tau</span></span>
+<span id="L118"><span class="lineNum">     118</span>              :                            : 0.0;</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaUNC">           0 :   switch (type)</span></span>
+<span id="L120"><span class="lineNum">     120</span>              :   {</span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaUNC">           0 :     case Excitation::SINUSOIDAL:</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :       {</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return dpulse_sinusoidal(t, data.pulse_f, delay); }};</span></span>
+<span id="L125"><span class="lineNum">     125</span>              :       }</span>
+<span id="L126"><span class="lineNum">     126</span>              :       else</span>
+<span id="L127"><span class="lineNum">     127</span>              :       {</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return pulse_sinusoidal(t, data.pulse_f, delay); }};</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :       }</span>
+<span id="L130"><span class="lineNum">     130</span>              :       break;</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaUNC">           0 :     case Excitation::GAUSSIAN:</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :       {</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return dpulse_gaussian(t, data.pulse_tau, delay); }};</span></span>
+<span id="L135"><span class="lineNum">     135</span>              :       }</span>
+<span id="L136"><span class="lineNum">     136</span>              :       else</span>
+<span id="L137"><span class="lineNum">     137</span>              :       {</span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return pulse_gaussian(t, data.pulse_tau, delay); }};</span></span>
+<span id="L139"><span class="lineNum">     139</span>              :       }</span>
+<span id="L140"><span class="lineNum">     140</span>              :       break;</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC">           0 :     case Excitation::DIFF_GAUSSIAN:</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :       {</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return dpulse_gaussian_diff(t, data.pulse_tau, delay); }};</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :       }</span>
+<span id="L146"><span class="lineNum">     146</span>              :       else</span>
+<span id="L147"><span class="lineNum">     147</span>              :       {</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return pulse_gaussian_diff(t, data.pulse_tau, delay); }};</span></span>
+<span id="L149"><span class="lineNum">     149</span>              :       }</span>
+<span id="L150"><span class="lineNum">     150</span>              :       break;</span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaUNC">           0 :     case Excitation::MOD_GAUSSIAN:</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L153"><span class="lineNum">     153</span>              :       {</span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :         return F{[=](double t)</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :                  { return dpulse_gaussian_mod(t, data.pulse_f, data.pulse_tau, delay); }};</span></span>
+<span id="L156"><span class="lineNum">     156</span>              :       }</span>
+<span id="L157"><span class="lineNum">     157</span>              :       else</span>
+<span id="L158"><span class="lineNum">     158</span>              :       {</span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaUNC">           0 :         return F{[=](double t)</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :                  { return pulse_gaussian_mod(t, data.pulse_f, data.pulse_tau, delay); }};</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :       }</span>
+<span id="L162"><span class="lineNum">     162</span>              :       break;</span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :     case Excitation::RAMP_STEP:</span></span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L165"><span class="lineNum">     165</span>              :       {</span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return dpulse_ramp(t, data.pulse_tau, delay); }};</span></span>
+<span id="L167"><span class="lineNum">     167</span>              :       }</span>
+<span id="L168"><span class="lineNum">     168</span>              :       else</span>
+<span id="L169"><span class="lineNum">     169</span>              :       {</span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return pulse_ramp(t, data.pulse_tau, delay); }};</span></span>
+<span id="L171"><span class="lineNum">     171</span>              :       }</span>
+<span id="L172"><span class="lineNum">     172</span>              :       break;</span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :     case Excitation::SMOOTH_STEP:</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :       if (dot)</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :       {</span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return dpulse_smootherstep(t, data.pulse_tau, delay); }};</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :       }</span>
+<span id="L178"><span class="lineNum">     178</span>              :       else</span>
+<span id="L179"><span class="lineNum">     179</span>              :       {</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC">           0 :         return F{[=](double t) { return pulse_smootherstep(t, data.pulse_tau, delay); }};</span></span>
+<span id="L181"><span class="lineNum">     181</span>              :       }</span>
+<span id="L182"><span class="lineNum">     182</span>              :       break;</span>
+<span id="L183"><span class="lineNum">     183</span>              :   }</span>
+<span id="L184"><span class="lineNum">     184</span>              :   return F{};</span>
+<span id="L185"><span class="lineNum">     185</span>              : }</span>
+<span id="L186"><span class="lineNum">     186</span>              : </span>
+<span id="L187"><span class="lineNum">     187</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

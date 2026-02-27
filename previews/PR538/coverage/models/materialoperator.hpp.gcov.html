@@ -1,0 +1,276 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/materialoperator.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - materialoperator.hpp<span style="font-size: 80%;"> (source / <a href="materialoperator.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">48.5&nbsp;%</td>
+            <td class="headerCovTableEntry">33</td>
+            <td class="headerCovTableEntry">16</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-02-20 21:19:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">3</td>
+            <td class="headerCovTableEntry">3</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_MATERIAL_OPERATOR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : </span>
+<span id="L11"><span class="lineNum">      11</span>              : namespace palace</span>
+<span id="L12"><span class="lineNum">      12</span>              : {</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : class IoData;</span>
+<span id="L15"><span class="lineNum">      15</span>              : </span>
+<span id="L16"><span class="lineNum">      16</span>              : //</span>
+<span id="L17"><span class="lineNum">      17</span>              : // A class handling material attributes.</span>
+<span id="L18"><span class="lineNum">      18</span>              : //</span>
+<span id="L19"><span class="lineNum">      19</span>              : class MaterialOperator</span>
+<span id="L20"><span class="lineNum">      20</span>              : {</span>
+<span id="L21"><span class="lineNum">      21</span>              : private:</span>
+<span id="L22"><span class="lineNum">      22</span>              :   // Reference to underlying mesh object (not owned).</span>
+<span id="L23"><span class="lineNum">      23</span>              :   const Mesh &amp;mesh;</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              :   // Mapping from the local libCEED attribute to material index.</span>
+<span id="L26"><span class="lineNum">      26</span>              :   mfem::Array&lt;int&gt; attr_mat;</span>
+<span id="L27"><span class="lineNum">      27</span>              : </span>
+<span id="L28"><span class="lineNum">      28</span>              :   // Material properties: relative permeability, relative permittivity, and others (like</span>
+<span id="L29"><span class="lineNum">      29</span>              :   // electrical conductivity, London penetration depth for superconductors and Floquet wave</span>
+<span id="L30"><span class="lineNum">      30</span>              :   // vector).</span>
+<span id="L31"><span class="lineNum">      31</span>              :   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,</span>
+<span id="L32"><span class="lineNum">      32</span>              :       mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;</span>
+<span id="L33"><span class="lineNum">      33</span>              :   mfem::DenseMatrix wave_vector_cross;</span>
+<span id="L34"><span class="lineNum">      34</span>              :   mfem::Array&lt;double&gt; mat_c0_min, mat_c0_max;</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span>              :   // Are materials isotropic? True when all the material properties are effectively</span>
+<span id="L37"><span class="lineNum">      37</span>              :   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a</span>
+<span id="L38"><span class="lineNum">      38</span>              :   // material is isotropic, the intersection is true when all are isotropic.</span>
+<span id="L39"><span class="lineNum">      39</span>              :   mfem::Array&lt;bool&gt; attr_is_isotropic;</span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span>              :   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,</span>
+<span id="L42"><span class="lineNum">      42</span>              :   // London penetration depth, or Floquet wave vector.</span>
+<span id="L43"><span class="lineNum">      43</span>              :   bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;</span>
+<span id="L44"><span class="lineNum">      44</span>              : </span>
+<span id="L45"><span class="lineNum">      45</span>              :   void SetUpMaterialProperties(const IoData &amp;iodata, const mfem::ParMesh &amp;mesh);</span>
+<span id="L46"><span class="lineNum">      46</span>              :   void SetUpFloquetWaveVector(const IoData &amp;iodata, const mfem::ParMesh &amp;mesh);</span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span>              :   // Map from an attribute (specified on a mesh) to a material index (location in the</span>
+<span id="L49"><span class="lineNum">      49</span>              :   // property vector).</span>
+<span id="L50"><span class="lineNum">      50</span>              :   auto AttrToMat(int attr) const</span>
+<span id="L51"><span class="lineNum">      51</span>              :   {</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC tlaBgGNC">      802343 :     const auto &amp;loc_attr = mesh.GetCeedAttributes();</span></span>
+<span id="L53"><span class="lineNum">      53</span>              :     MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),</span>
+<span id="L54"><span class="lineNum">      54</span>              :                 &quot;Missing libCEED domain attribute for attribute &quot; &lt;&lt; attr &lt;&lt; &quot;!&quot;);</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">      571938 :     return attr_mat[loc_attr.at(attr) - 1];</span></span>
+<span id="L56"><span class="lineNum">      56</span>              :   }</span>
+<span id="L57"><span class="lineNum">      57</span>              : </span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">      571932 :   auto Wrap(const mfem::DenseTensor &amp;data, int attr) const</span></span>
+<span id="L59"><span class="lineNum">      59</span>              :   {</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">      571932 :     const int k = AttrToMat(attr);</span></span>
+<span id="L61"><span class="lineNum">      61</span>              :     return mfem::DenseMatrix(const_cast&lt;double *&gt;(data.GetData(k)), data.SizeI(),</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">      571932 :                              data.SizeJ());</span></span>
+<span id="L63"><span class="lineNum">      63</span>              :   }</span>
+<span id="L64"><span class="lineNum">      64</span>              : </span>
+<span id="L65"><span class="lineNum">      65</span>              : public:</span>
+<span id="L66"><span class="lineNum">      66</span>              :   MaterialOperator(const IoData &amp;iodata, const Mesh &amp;mesh);</span>
+<span id="L67"><span class="lineNum">      67</span>              : </span>
+<span id="L68"><span class="lineNum">      68</span>              :   int SpaceDimension() const { return mat_muinv.SizeI(); }</span>
+<span id="L69"><span class="lineNum">      69</span>              : </span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">       80028 :   auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">       31104 :   auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }</span></span>
+<span id="L72"><span class="lineNum">      72</span>              :   auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }</span>
+<span id="L73"><span class="lineNum">      73</span>              :   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }</span>
+<span id="L74"><span class="lineNum">      74</span>              :   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">      460800 :   auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :   auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }</span>
+<span id="L77"><span class="lineNum">      77</span>              :   auto GetInvLondonDepth(int attr) const { return Wrap(mat_invLondon, attr); }</span>
+<span id="L78"><span class="lineNum">      78</span>              :   auto GetFloquetCurl(int attr) const { return Wrap(mat_muinvkx, attr); }</span>
+<span id="L79"><span class="lineNum">      79</span>              :   auto GetFloquetMass(int attr) const { return Wrap(mat_kxTmuinvkx, attr); }</span>
+<span id="L80"><span class="lineNum">      80</span>              :   auto GetFloquetCross(int attr) const { return Wrap(mat_kx, attr); }</span>
+<span id="L81"><span class="lineNum">      81</span>              : </span>
+<span id="L82"><span class="lineNum">      82</span>              :   auto GetLightSpeedMin(int attr) const { return mat_c0_min[AttrToMat(attr)]; }</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">      230400 :   auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }</span></span>
+<span id="L84"><span class="lineNum">      84</span>              : </span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">          11 :   bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }</span></span>
+<span id="L86"><span class="lineNum">      86</span>              : </span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">          10 :   const auto &amp;GetInvPermeability() const { return mat_muinv; }</span></span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">          13 :   const auto &amp;GetPermittivityReal() const { return mat_epsilon; }</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC tlaBgUNC">           0 :   const auto &amp;GetPermittivityImag() const { return mat_epsilon_imag; }</span></span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaUNC">           0 :   const auto &amp;GetPermittivityAbs() const { return mat_epsilon_abs; }</span></span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaUNC">           0 :   const auto &amp;GetInvImpedance() const { return mat_invz0; }</span></span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaUNC">           0 :   const auto &amp;GetLightSpeed() const { return mat_c0; }</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :   const auto &amp;GetConductivity() const { return mat_sigma; }</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 :   const auto &amp;GetInvLondonDepth() const { return mat_invLondon; }</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaUNC">           0 :   const auto &amp;GetFloquetCurl() const { return mat_muinvkx; }</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaUNC">           0 :   const auto &amp;GetFloquetMass() const { return mat_kxTmuinvkx; }</span></span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaUNC">           0 :   const auto &amp;GetFloquetCross() const { return mat_kx; }</span></span>
+<span id="L98"><span class="lineNum">      98</span>              : </span>
+<span id="L99"><span class="lineNum">      99</span>              :   const auto &amp;GetLightSpeedMin() const { return mat_c0_min; }</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaUNC">           0 :   const auto &amp;GetLightSpeedMax() const { return mat_c0_max; }</span></span>
+<span id="L101"><span class="lineNum">     101</span>              : </span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC tlaBgGNC">           1 :   bool HasLossTangent() const { return has_losstan_attr; }</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaUNC tlaBgUNC">           0 :   bool HasConductivity() const { return has_conductivity_attr; }</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaUNC">           0 :   bool HasLondonDepth() const { return has_london_attr; }</span></span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaUNC">           0 :   bool HasWaveVector() const { return has_wave_attr; }</span></span>
+<span id="L106"><span class="lineNum">     106</span>              : </span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC tlaBgGNC">          16 :   const auto &amp;GetAttributeToMaterial() const { return attr_mat; }</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :   mfem::Array&lt;int&gt; GetBdrAttributeToMaterial() const;</span>
+<span id="L109"><span class="lineNum">     109</span>              : </span>
+<span id="L110"><span class="lineNum">     110</span>              :   template &lt;typename T&gt;</span>
+<span id="L111"><span class="lineNum">     111</span>              :   auto GetCeedAttributes(const T &amp;attr_list) const</span>
+<span id="L112"><span class="lineNum">     112</span>              :   {</span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaUNC tlaBgUNC">           0 :     return mesh.GetCeedAttributes(attr_list);</span></span>
+<span id="L114"><span class="lineNum">     114</span>              :   }</span>
+<span id="L115"><span class="lineNum">     115</span>              :   template &lt;typename T&gt;</span>
+<span id="L116"><span class="lineNum">     116</span>              :   auto GetCeedBdrAttributes(const T &amp;attr_list) const</span>
+<span id="L117"><span class="lineNum">     117</span>              :   {</span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaUNC">           0 :     return mesh.GetCeedBdrAttributes(attr_list);</span></span>
+<span id="L119"><span class="lineNum">     119</span>              :   }</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC tlaBgGNC">           6 :   auto MaxCeedAttribute() const { return mesh.MaxCeedAttribute(); }</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC tlaBgUNC">           0 :   auto MaxCeedBdrAttribute() const { return mesh.MaxCeedBdrAttribute(); }</span></span>
+<span id="L123"><span class="lineNum">     123</span>              : </span>
+<span id="L124"><span class="lineNum">     124</span>              :   const auto &amp;GetMesh() const { return mesh; }</span>
+<span id="L125"><span class="lineNum">     125</span>              : };</span>
+<span id="L126"><span class="lineNum">     126</span>              : </span>
+<span id="L127"><span class="lineNum">     127</span>              : //</span>
+<span id="L128"><span class="lineNum">     128</span>              : // Material property represented as a piecewise constant coefficient over domain or boundary</span>
+<span id="L129"><span class="lineNum">     129</span>              : // mesh elements. Can be scalar-valued or matrix-valued. This should probably always operate</span>
+<span id="L130"><span class="lineNum">     130</span>              : // at the level of libCEED attribute numbers (contiguous, 1-based) for consistency.</span>
+<span id="L131"><span class="lineNum">     131</span>              : //</span>
+<span id="L132"><span class="lineNum">     132</span>              : class MaterialPropertyCoefficient</span>
+<span id="L133"><span class="lineNum">     133</span>              : {</span>
+<span id="L134"><span class="lineNum">     134</span>              : private:</span>
+<span id="L135"><span class="lineNum">     135</span>              :   // Map attribute to material index (coeff = mat_coeff[attr_mat[attr - 1]], for 1-based</span>
+<span id="L136"><span class="lineNum">     136</span>              :   // attributes).</span>
+<span id="L137"><span class="lineNum">     137</span>              :   mfem::Array&lt;int&gt; attr_mat;</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              :   // Material property coefficients, ordered by material index.</span>
+<span id="L140"><span class="lineNum">     140</span>              :   mfem::DenseTensor mat_coeff;</span>
+<span id="L141"><span class="lineNum">     141</span>              : </span>
+<span id="L142"><span class="lineNum">     142</span>              : public:</span>
+<span id="L143"><span class="lineNum">     143</span>              :   MaterialPropertyCoefficient(int attr_max);</span>
+<span id="L144"><span class="lineNum">     144</span>              :   MaterialPropertyCoefficient(const mfem::Array&lt;int&gt; &amp;attr_mat_,</span>
+<span id="L145"><span class="lineNum">     145</span>              :                               const mfem::DenseTensor &amp;mat_coeff_, double a = 1.0);</span>
+<span id="L146"><span class="lineNum">     146</span>              : </span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaUNC">           0 :   bool empty() const { return mat_coeff.TotalSize() == 0; }</span></span>
+<span id="L148"><span class="lineNum">     148</span>              : </span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC tlaBgGNC">        9866 :   const auto &amp;GetAttributeToMaterial() const { return attr_mat; }</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :   const auto &amp;GetMaterialProperties() const { return mat_coeff; }</span>
+<span id="L151"><span class="lineNum">     151</span>              : </span>
+<span id="L152"><span class="lineNum">     152</span>              :   void AddCoefficient(const mfem::Array&lt;int&gt; &amp;attr_mat_,</span>
+<span id="L153"><span class="lineNum">     153</span>              :                       const mfem::DenseTensor &amp;mat_coeff_, double a = 1.0);</span>
+<span id="L154"><span class="lineNum">     154</span>              : </span>
+<span id="L155"><span class="lineNum">     155</span>              :   template &lt;typename T&gt;</span>
+<span id="L156"><span class="lineNum">     156</span>              :   void AddMaterialProperty(const mfem::Array&lt;int&gt; &amp;attr_list, const T &amp;coeff,</span>
+<span id="L157"><span class="lineNum">     157</span>              :                            double a = 1.0);</span>
+<span id="L158"><span class="lineNum">     158</span>              :   template &lt;typename T&gt;</span>
+<span id="L159"><span class="lineNum">     159</span>              :   void AddMaterialProperty(int attr, const T &amp;coeff, double a = 1.0)</span>
+<span id="L160"><span class="lineNum">     160</span>              :   {</span>
+<span id="L161"><span class="lineNum">     161</span>              :     mfem::Array&lt;int&gt; attr_list(1);</span>
+<span id="L162"><span class="lineNum">     162</span>              :     attr_list[0] = attr;</span>
+<span id="L163"><span class="lineNum">     163</span>              :     AddMaterialProperty(attr_list, coeff, a);</span>
+<span id="L164"><span class="lineNum">     164</span>              :   }</span>
+<span id="L165"><span class="lineNum">     165</span>              : </span>
+<span id="L166"><span class="lineNum">     166</span>              :   MaterialPropertyCoefficient &amp;operator*=(double a);</span>
+<span id="L167"><span class="lineNum">     167</span>              : </span>
+<span id="L168"><span class="lineNum">     168</span>              :   void RestrictCoefficient(const mfem::Array&lt;int&gt; &amp;attr_list);</span>
+<span id="L169"><span class="lineNum">     169</span>              : </span>
+<span id="L170"><span class="lineNum">     170</span>              :   void NormalProjectedCoefficient(const mfem::Vector &amp;normal);</span>
+<span id="L171"><span class="lineNum">     171</span>              : };</span>
+<span id="L172"><span class="lineNum">     172</span>              : </span>
+<span id="L173"><span class="lineNum">     173</span>              : }  // namespace palace</span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              : namespace palace::internal::mat</span>
+<span id="L176"><span class="lineNum">     176</span>              : {</span>
+<span id="L177"><span class="lineNum">     177</span>              : </span>
+<span id="L178"><span class="lineNum">     178</span>              : template &lt;std::size_t N&gt;</span>
+<span id="L179"><span class="lineNum">     179</span>              : bool IsOrthonormal(const config::SymmetricMatrixData&lt;N&gt; &amp;data);</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span>              : template &lt;std::size_t N&gt;</span>
+<span id="L182"><span class="lineNum">     182</span>              : bool IsValid(const config::SymmetricMatrixData&lt;N&gt; &amp;data);</span>
+<span id="L183"><span class="lineNum">     183</span>              : </span>
+<span id="L184"><span class="lineNum">     184</span>              : template &lt;std::size_t N&gt;</span>
+<span id="L185"><span class="lineNum">     185</span>              : bool IsIsotropic(const config::SymmetricMatrixData&lt;N&gt; &amp;data);</span>
+<span id="L186"><span class="lineNum">     186</span>              : </span>
+<span id="L187"><span class="lineNum">     187</span>              : template &lt;std::size_t N&gt;</span>
+<span id="L188"><span class="lineNum">     188</span>              : bool IsIdentity(const config::SymmetricMatrixData&lt;N&gt; &amp;data);</span>
+<span id="L189"><span class="lineNum">     189</span>              : </span>
+<span id="L190"><span class="lineNum">     190</span>              : }  // namespace palace::internal::mat</span>
+<span id="L191"><span class="lineNum">     191</span>              : </span>
+<span id="L192"><span class="lineNum">     192</span>              : #endif  // PALACE_MODELS_MATERIAL_OPERATOR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

@@ -1,0 +1,83 @@
+{
+  "ElapsedTime": {
+    "Counts": {
+      "Adaptation": 0,
+      "CoarseSolve": 21,
+      "Construction": 1,
+      "DiskIO": 3,
+      "Div.-FreeProjection": 0,
+      "EigenvalueSolve": 0,
+      "Estimation": 2,
+      "FarFields": 0,
+      "Gridfunction": 3,
+      "Initialization": 2,
+      "LinearSolve": 2,
+      "MeshPreprocessing": 1,
+      "OperatorConstruction": 1,
+      "PROMConstruction": 0,
+      "PROMSolve": 0,
+      "Paraview": 3,
+      "Postprocessing": 6,
+      "Preconditioner": 21,
+      "Rebalancing": 0,
+      "Setup": 1,
+      "Solve": 2,
+      "TimeStepping": 0,
+      "Total": 1,
+      "WavePorts": 0
+    },
+    "Durations": {
+      "Adaptation": 0.0,
+      "CoarseSolve": 0.009230824999999998,
+      "Construction": 2.400484583,
+      "DiskIO": 0.369475985,
+      "Div.-FreeProjection": 0.0,
+      "EigenvalueSolve": 0.0,
+      "Estimation": 0.047388510999999994,
+      "FarFields": 0.0,
+      "Gridfunction": 3.2994429370000002,
+      "Initialization": 0.37449531,
+      "LinearSolve": 0.161567722,
+      "MeshPreprocessing": 0.45249986799999997,
+      "OperatorConstruction": 4.7830661050000005,
+      "PROMConstruction": 0.0,
+      "PROMSolve": 0.0,
+      "Paraview": 8.607189607,
+      "Postprocessing": 0.15810427400000002,
+      "Preconditioner": 3.854773034,
+      "Rebalancing": 0.0,
+      "Setup": 2.318887282,
+      "Solve": 2.391305409,
+      "TimeStepping": 0.0,
+      "Total": 29.240505176,
+      "WavePorts": 0.0
+    }
+  },
+  "GitTag": "12a7985",
+  "LinearSolver": {
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 682.4375,
+    "Max": 682.4375,
+    "Min": 682.4375,
+    "Total": 682.4375
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 682.4375,
+    "Max": 682.4375,
+    "Min": 682.4375,
+    "Total": 682.4375
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}
