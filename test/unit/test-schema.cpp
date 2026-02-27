@@ -183,6 +183,14 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
                               {"Solver", {{"Linear", {}}}}};
     CHECK(!ValidateConfig(transient_missing).empty());
 
+    // ModeAnalysis type requires Solver.ModeAnalysis section
+    json modeanalysis_missing = {{"Problem", {{"Type", "ModeAnalysis"}}},
+                                 {"Model", {{"Mesh", "test.msh"}}},
+                                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                                 {"Boundaries", json::object()},
+                                 {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(modeanalysis_missing).empty());
+
     // Electrostatic and Magnetostatic don't require matching sections (have defaults)
     json electro_ok = {{"Problem", {{"Type", "Electrostatic"}}},
                        {"Model", {{"Mesh", "test.msh"}}},
@@ -305,7 +313,8 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(
         err ==
         "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\", "
+        "\"ModeAnalysis\"\n");
   }
 
   SECTION("Invalid enum in nested array")
