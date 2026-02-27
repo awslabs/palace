@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <string>
+#include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/interpolator.hpp"
@@ -12,7 +13,6 @@
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/modeanalysisoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
@@ -43,8 +43,8 @@ std::string OutputFolderName(const ProblemType solver_t)
       return "magnetostatic";
     case ProblemType::TRANSIENT:
       return "transient";
-    case ProblemType::MODEANALYSIS:
-      return "modeanalysis";
+    case ProblemType::BOUNDARYMODE:
+      return "boundarymode";
     default:
       return "unknown";
   }
@@ -117,7 +117,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
                                       fem_op_.GetNDSpace());
           }
-          else if constexpr (solver_t == ProblemType::MODEANALYSIS)
+          else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
             // Mode analysis: E on ND space, B (Hz) on L2 curl space.
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
@@ -154,7 +154,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
 
   // Mode analysis: create grid functions for out-of-plane E (H1) and in-plane B (ND).
-  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
     En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
     Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
@@ -196,13 +196,13 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   {
     output_delta_post = iodata.solver.transient.delta_post;
   }
-  else if (solver_t == ProblemType::MODEANALYSIS)
+  else if (solver_t == ProblemType::BOUNDARYMODE)
   {
-    output_n_post = iodata.solver.mode_analysis.n_post;
+    output_n_post = iodata.solver.boundary_mode.n_post;
   }
 
   // Mode analysis impedance postprocessing setup.
-  if constexpr (solver_t == ProblemType::MODEANALYSIS)
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
     const auto &impedance_data = iodata.boundaries.postpro.impedance;
     if (!impedance_data.empty())
@@ -1050,7 +1050,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     Mpi::Print(" Field energy H = {:.3e} J\n", domain_H);
   }
   else if constexpr (solver_t != ProblemType::EIGENMODE &&
-                     solver_t != ProblemType::MODEANALYSIS)
+                     solver_t != ProblemType::BOUNDARYMODE)
   {
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", domain_E, domain_H,
                domain_E + domain_H);
@@ -1601,7 +1601,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
                                                 std::complex<double> kn, double omega,
                                                 double error_abs, double error_bkwd,
                                                 int num_conv)
-    -> std::enable_if_t<U == ProblemType::MODEANALYSIS, double>
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetEGridFunction(et);
@@ -1934,7 +1934,7 @@ template class PostOperator<ProblemType::EIGENMODE>;
 template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
-template class PostOperator<ProblemType::MODEANALYSIS>;
+template class PostOperator<ProblemType::BOUNDARYMODE>;
 
 // Function explicit instantiation.
 // TODO(C++20): with requires, we won't need a second template.
@@ -1961,7 +1961,7 @@ PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>
     int step, const Vector &e, const Vector &b, double t, double J_coef) -> double;
 
 template auto
-PostOperator<ProblemType::MODEANALYSIS>::MeasureAndPrintAll<ProblemType::MODEANALYSIS>(
+PostOperator<ProblemType::BOUNDARYMODE>::MeasureAndPrintAll<ProblemType::BOUNDARYMODE>(
     int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
     double omega, double error_abs, double error_bkwd, int num_conv) -> double;
 

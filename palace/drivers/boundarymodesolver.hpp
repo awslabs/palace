@@ -1,11 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MODELS_MODE_ANALYSIS_OPERATOR_HPP
-#define PALACE_MODELS_MODE_ANALYSIS_OPERATOR_HPP
+#ifndef PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP
+#define PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP
 
 #include <memory>
 #include <mfem.hpp>
+#include "drivers/basesolver.hpp"
 #include "fem/fespace.hpp"
 #include "models/materialoperator.hpp"
 
@@ -13,11 +14,11 @@ namespace palace
 {
 
 //
-// Lightweight operator wrapper for mode analysis that provides the interface expected by
-// PostOperator. Holds references to the FE spaces and material operator created by the
-// mode analysis solver. Also owns the Btt mass matrix and L2 curl space for B-field.
+// Lightweight operator wrapper for the boundary mode solver that provides the interface
+// expected by PostOperator. Holds references to the FE spaces and material operator created
+// by the solver. Also owns the Btt mass matrix and L2 curl space for B-field.
 //
-class ModeAnalysisOperator
+class BoundaryModeFemOp
 {
 private:
   MaterialOperator &mat_op;
@@ -32,8 +33,8 @@ private:
   std::unique_ptr<mfem::HypreParMatrix> Btt;
 
 public:
-  ModeAnalysisOperator(MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                       FiniteElementSpace &h1_fespace, Mesh &mesh, int order)
+  BoundaryModeFemOp(MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+                    FiniteElementSpace &h1_fespace, Mesh &mesh, int order)
     : mat_op(mat_op), nd_fespace(nd_fespace), h1_fespace(h1_fespace)
   {
     // Create L2 curl space for the scalar B-field (Hz) in 2D.
@@ -60,6 +61,21 @@ public:
   const mfem::HypreParMatrix *GetBtt() const { return Btt.get(); }
 };
 
+//
+// Driver class for 2D waveguide mode analysis using a linear eigenvalue formulation
+// (Eq 1 + Eq 2 with VD substitution). This formulation supports full impedance BC
+// handling (both BC-t and BC-n) while maintaining a standard generalized eigenvalue
+// problem in kn^2 (no quadratic linearization).
+//
+class BoundaryModeSolver : public BaseSolver
+{
+public:
+  using BaseSolver::BaseSolver;
+
+  std::pair<ErrorIndicator, long long int>
+  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+};
+
 }  // namespace palace
 
-#endif  // PALACE_MODELS_MODE_ANALYSIS_OPERATOR_HPP
+#endif  // PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP

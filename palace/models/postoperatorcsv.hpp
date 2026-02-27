@@ -6,10 +6,10 @@
 
 #include <memory>
 #include <optional>
+#include "drivers/boundarymodesolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
-#include "models/modeanalysisoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
@@ -47,9 +47,9 @@ struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
   using type = CurlCurlOperator;
 };
 template <>
-struct fem_op_map_type<ProblemType::MODEANALYSIS>
+struct fem_op_map_type<ProblemType::BOUNDARYMODE>
 {
-  using type = ModeAnalysisOperator;
+  using type = BoundaryModeFemOp;
 };
 
 template <ProblemType solver_t>
@@ -321,22 +321,22 @@ protected:
   // Mode Analysis.
   std::optional<TableWithCSVFile> mode_kn;
   template <ProblemType U = solver_t>
-  auto InitializeModeKn() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto InitializeModeKn() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
   template <ProblemType U = solver_t>
-  auto PrintModeKn() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto PrintModeKn() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 
   std::optional<TableWithCSVFile> mode_Z;
   template <ProblemType U = solver_t>
   auto InitializeModeZ(bool has_current)
-      -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+      -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
   template <ProblemType U = solver_t>
-  auto PrintModeZ() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto PrintModeZ() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 
   std::optional<TableWithCSVFile> mode_V;
   template <ProblemType U = solver_t>
-  auto InitializeModeV() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto InitializeModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
   template <ProblemType U = solver_t>
-  auto PrintModeV() -> std::enable_if_t<U == ProblemType::MODEANALYSIS, void>;
+  auto PrintModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 
   std::vector<int> ports_with_L;
   std::vector<int> ports_with_R;
