@@ -5,8 +5,10 @@
 #define PALACE_UTILS_PRETTY_PRINT_HPP
 
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
+#include <fmt/core.h>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
 
@@ -60,10 +62,10 @@ inline std::size_t PrePrint(MPI_Comm comm, std::size_t w, std::size_t wv, std::s
 // integral types.
 template <template <typename...> class Container, typename T, typename... U>
 inline void PrettyPrint(const Container<T, U...> &data, T scale,
-                        const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
+                        const std::string_view prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
 {
   std::size_t w = 0, lead = prefix.length();
-  Mpi::Print(comm, prefix);
+  Mpi::Print(comm, fmt::runtime(prefix));
   auto i = data.begin();
   while (i != data.end())
   {

@@ -934,9 +934,9 @@ std::unique_ptr<ComplexParOperator>
 BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                     const ComplexParOperator *(&&ops_in)[N], bool set_essential)
 {
-  return BuildParSumOperator(to_array<std::complex<double>>(std::move(coeff_in)),
-                             to_array<const ComplexParOperator *>(std::move(ops_in)),
-                             set_essential);
+  return BuildParSumOperator(
+      palace::to_array<std::complex<double>>(std::move(coeff_in)),
+      palace::to_array<const ComplexParOperator *>(std::move(ops_in)), set_essential);
 }
 
 template <std::size_t N, typename ScalarType, typename OperType>
@@ -953,8 +953,8 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
   std::transform(ops_in, ops_in + N, par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
 
-  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)), std::move(par_ops),
-                             set_essential);
+  return BuildParSumOperator(palace::to_array<ScalarType>(std::move(coeff_in)),
+                             std::move(par_ops), set_essential);
 }
 
 // Explicit instantiation.

@@ -1166,9 +1166,8 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   {
     return;
   }
-  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [&buf](auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  fmt::memory_buffer buffer{};
+  auto out = fmt::appender{buffer};
 
   // Print out BC info for all active port attributes.
   for (const auto &[idx, data] : ports)
@@ -1179,17 +1178,18 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     }
     for (auto attr : data.GetAttrList())
     {
-      to(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr, idx,
-         data.mode_idx,
-         iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
-         fmt::join(data.port_normal, ","));
+      fmt::format_to(out,
+                     " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n",
+                     attr, idx, data.mode_idx,
+                     iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
+                     fmt::join(data.port_normal, ","));
     }
   }
-  if (buf.size() > 0)
+  if (buffer.size() > 0)
   {
     Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
-    Mpi::Print("{}", fmt::to_string(buf));
-    buf.clear();
+    Mpi::Print("{}", fmt::to_string(buffer));
+    buffer.clear();
   }
 
   // Print some information for excited wave ports.
@@ -1201,13 +1201,13 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     }
     for (auto attr : data.GetAttrList())
     {
-      to(" {:d}: Index = {:d}\n", attr, idx);
+      fmt::format_to(out, " {:d}: Index = {:d}\n", attr, idx);
     }
   }
-  if (buf.size() > 0)
+  if (buffer.size() > 0)
   {
     Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
-    Mpi::Print("{}", fmt::to_string(buf));
+    Mpi::Print("{}", fmt::to_string(buffer));
   }
 }
 
