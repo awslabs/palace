@@ -953,8 +953,8 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
   std::transform(ops_in, ops_in + N, par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
 
-  return BuildParSumOperator(to_array<ScalarType>(std::move(coeff_in)), std::move(par_ops),
-                             set_essential);
+  return BuildParSumOperator(palace::to_array<ScalarType>(std::move(coeff_in)),
+                             std::move(par_ops), set_essential);
 }
 
 // Explicit instantiation.
