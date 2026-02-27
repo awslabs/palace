@@ -41,10 +41,11 @@ Both configurations use `"Problem": {"Type": "BoundaryMode"}` and request 2 mode
 }
 ```
 
-The `"Target"` parameter sets the effective index around which the eigenvalue solver
-searches. A value near the expected ``n_\text{eff}`` (between 1 for air and
-``\sqrt{\varepsilon_r} \approx 3.39`` for the substrate) helps the solver converge to the
-desired propagating modes.
+The `"Target"` parameter sets the effective index ``n_\text{eff} = k_n / k_0`` around which
+the eigenvalue solver searches, where ``k_n`` is the propagation constant and
+``k_0 = \omega / c_0`` is the free-space wavenumber. A value near the expected
+``n_\text{eff}`` (between 1 for air and ``\sqrt{\varepsilon_r} \approx 3.39`` for the
+substrate) helps the solver converge to the desired propagating modes.
 
 ### Thin metal configuration
 
