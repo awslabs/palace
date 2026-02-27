@@ -34,7 +34,7 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
-    "ModeAnalysis":
+    "BoundaryMode":
     {
         ...
     },
@@ -94,9 +94,9 @@ Thus, this object is only relevant for
 Thus, this object is only relevant for
 [`config["Problem"]["Type"]: "Magnetostatic"`](problem.md#config%5B%22Problem%22%5D).
 
-`"ModeAnalysis"` :  Top-level object for configuring the mode analysis simulation type.
+`"BoundaryMode"` :  Top-level object for configuring the mode analysis simulation type.
 Thus, this object is only relevant for
-[`config["Problem"]["Type"]: "ModeAnalysis"`](problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Type"]: "BoundaryMode"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
@@ -414,10 +414,10 @@ entries in the computed inductance matrix. Files are saved in the `paraview/` (a
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-## `solver["ModeAnalysis"]`
+## `solver["BoundaryMode"]`
 
 ```json
-"ModeAnalysis":
+"BoundaryMode":
 {
     "Freq": <float>,
     "N": <int>,

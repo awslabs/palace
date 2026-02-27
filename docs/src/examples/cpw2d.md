@@ -27,11 +27,11 @@ The CPW has a center trace on a silicon substrate (``\varepsilon_r = 11.47``,
 
 ## Configuration
 
-Both configurations use `"Problem": {"Type": "ModeAnalysis"}` and request 2 modes at
+Both configurations use `"Problem": {"Type": "BoundaryMode"}` and request 2 modes at
 5 GHz. The key solver settings are:
 
 ```json
-"ModeAnalysis":
+"BoundaryMode":
 {
     "Freq": 5.0,
     "N": 2,

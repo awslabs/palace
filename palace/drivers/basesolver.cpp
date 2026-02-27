@@ -130,11 +130,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
     }
-    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::MODEANALYSIS &&
-        !iodata.solver.mode_analysis.attributes.empty())
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::BOUNDARYMODE &&
+        !iodata.solver.boundary_mode.attributes.empty())
     {
-      Mpi::Warning("AMR is not currently supported for mode analysis on 3D mesh "
-                   "cross-sections (ModeAnalysis with Attributes)!\n");
+      Mpi::Warning("AMR is not currently supported for boundary mode analysis on 3D mesh "
+                   "cross-sections (BoundaryMode with Attributes)!\n");
       return false;
     }
     return (refinement.max_it > 0);

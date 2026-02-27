@@ -63,14 +63,14 @@
       "if": {
         "properties": {
           "Problem": {
-            "properties": { "Type": { "const": "ModeAnalysis" } },
+            "properties": { "Type": { "const": "BoundaryMode" } },
             "required": ["Type"]
           }
         }
       },
       "then": {
         "properties": {
-          "Solver": { "required": ["ModeAnalysis"] }
+          "Solver": { "required": ["BoundaryMode"] }
         }
       }
     }

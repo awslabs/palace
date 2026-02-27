@@ -855,7 +855,7 @@ public:
   TransientSolverData(const json &transient);
 };
 
-struct ModeAnalysisSolverData
+struct BoundaryModeSolverData
 {
 public:
   // Operating frequency for mode analysis [GHz].
@@ -887,8 +887,8 @@ public:
   // empty, the mesh must be 2D (current behavior).
   std::vector<int> attributes = {};
 
-  ModeAnalysisSolverData() = default;
-  ModeAnalysisSolverData(const json &ma);
+  BoundaryModeSolverData() = default;
+  BoundaryModeSolverData(const json &bm);
 };
 
 struct LinearSolverData
@@ -1048,7 +1048,7 @@ public:
   ElectrostaticSolverData electrostatic = {};
   MagnetostaticSolverData magnetostatic = {};
   TransientSolverData transient = {};
-  ModeAnalysisSolverData mode_analysis = {};
+  BoundaryModeSolverData boundary_mode = {};
   LinearSolverData linear = {};
 
   SolverData() = default;

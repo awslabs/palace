@@ -25,8 +25,8 @@ class SurfaceImpedanceOperator;
 
 //
 // Configuration for the BoundaryModeOperator, parameterizing the differences between the
-// 2D mode analysis (ModeAnalysisSolver) and 3D wave port (WavePortOperator) eigenvalue
-// problems.
+// 2D boundary mode analysis (BoundaryModeSolver) and 3D wave port (WavePortOperator)
+// eigenvalue problems.
 //
 struct BoundaryModeOperatorConfig
 {
