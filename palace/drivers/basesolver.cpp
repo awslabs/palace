@@ -4,8 +4,6 @@
 #include "basesolver.hpp"
 
 #include <array>
-#include <complex>
-#include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -22,6 +20,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -161,9 +160,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
-    Mpi::Print("\nCumulative timing statistics:\n");
+    Mpi::Print(comm, "\nCumulative timing statistics:\n");
     BlockTimer::Print(comm);
+    auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
+    auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
+    memory_reporting::PrintMemoryUsage(comm, peak_mem);
+    memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
     SaveMetadata(BlockTimer::GlobalTimer());
+    SaveMetadata(peak_mem);
+    SaveMetadata(peak_node_mem);
 
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
@@ -283,6 +288,26 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
     }
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const
+{
+  if (root)
+  {
+    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
+    json meta = LoadMetadata(post_dir);
+
+    // Determine key name based on whether this is per-node or per-rank stats
+    std::string key = (peak_memory.label.find("per-node") != std::string::npos)
+                          ? "PeakNodeMemoryMegabytes"
+                          : "PeakMemoryMegabytes";
+
+    meta[key]["Min"] = peak_memory.min * to_mb;
+    meta[key]["Max"] = peak_memory.max * to_mb;
+    meta[key]["Average"] = peak_memory.avg * to_mb;
+    meta[key]["Total"] = peak_memory.sum * to_mb;
     WriteMetadata(post_dir, meta);
   }
 }

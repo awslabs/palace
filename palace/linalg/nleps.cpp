@@ -4,7 +4,6 @@
 #include "nleps.hpp"
 
 #include <algorithm>
-#include <string>
 #include <Eigen/Dense>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
@@ -283,7 +282,7 @@ void QuasiNewtonSolver::SetInitialGuess()
 
   // If the number of initial guesses is greater than the number of requested modes
   // de-prioritize the initial guesses that have larger errors.
-  std::vector<size_t> indices(nev_linear);
+  std::vector<std::size_t> indices(nev_linear);
   std::iota(indices.begin(), indices.end(), 0);
   if (nev_linear > nev)
   {

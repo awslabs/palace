@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "fem/integrator.hpp"
+#include "fixtures.hpp"
 #include "models/postoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -142,7 +143,7 @@ auto RandomMeasurement(int ndomain = 5)
   return cache;
 }
 
-TEST_CASE("PostOperator", "[idempotent][Serial]")
+TEST_CASE("PostOperator - Idempotent", "[postoperator][Serial]")
 {
   auto cache = RandomMeasurement();
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
@@ -343,7 +344,8 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   }
 }
 
-TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "GridFunction export",
+                 "[gridfunction][Serial][Parallel]")
 {
   // Create iodata.
   Units units(0.496, 1.453);
@@ -352,14 +354,16 @@ TEST_CASE("GridFunction export", "[gridfunction][Serial][Parallel]")
   iodata.domains.materials.emplace_back().attributes = {1};
   iodata.boundaries.pec.attributes = {1};
   iodata.problem.output_formats.gridfunction = true;
-  iodata.CheckConfiguration();  // initializes quadrature
+  iodata.problem.output = temp_dir.string();  // Use temporary directory
+  iodata.CheckConfiguration();                // initializes quadrature
 
   // Setup lumped port boundary data for driven and transient.
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
-  config::BoundaryData boundary_port;
-  REQUIRE_NOTHROW(boundary_port.SetUp(*config.find("boundaries_lumped_port_X_2")));
+  auto entry = config.find("boundaries_lumped_port_X_2")->find("Boundaries");
+  config::BoundaryData boundary_port(*entry);
 
   // Create serial mesh.
   int resolution = 3;
@@ -554,7 +558,7 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   // Create fields, initialize them to random values, and set the corresponding
   // gridfunctions.
   ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
-  Vector a(rt_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
+  Vector a(nd_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
   linalg::SetRandom(comm, e);
   linalg::SetRandom(comm, b);
   linalg::SetRandom(comm, a);

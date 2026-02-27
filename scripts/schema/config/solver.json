@@ -19,7 +19,7 @@
       "required": ["Target"],
       "properties":
       {
-        "Target": { "type": "number" },
+        "Target": { "type": "number", "exclusiveMinimum": 0.0 },
         "Tol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
@@ -99,7 +99,10 @@
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
-        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 }
+        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
+        "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
+        "AdaptiveCircuitSynthesis": { "type": "boolean" },
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
       }
     },
     "Transient":
@@ -113,8 +116,8 @@
         "Excitation": { "type": "string" },
         "ExcitationFreq": { "type": "number" },
         "ExcitationWidth": { "type": "number" },
-        "MaxTime": { "type": "number" },
-        "TimeStep": { "type": "number" },
+        "MaxTime": { "type": "number", "exclusiveMinimum": 0.0 },
+        "TimeStep": { "type": "number", "exclusiveMinimum": 0.0 },
         "SaveStep": { "type": "integer" },
         "Order": {"type": "integer", "minimum": 2, "maximum": 5},
         "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
@@ -179,12 +182,13 @@
         "AMSVectorInterpolation": { "type": "boolean" },
         "AMSSingularOperator": { "type": "boolean" },
         "AMGAggressiveCoarsening": { "type": "boolean" },
+        "AMSMaxIts": { "type": "integer", "minimum": 0 },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
         "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorTol": { "type": "number", "minimum": 0.0 },
         "EstimatorMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorMG": { "type": "boolean" },
-        "GSOrthogonalization": { "type": "string" }
+        "GSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] }
       }
     }
   }

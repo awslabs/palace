@@ -156,6 +156,12 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
                                                {Orthogonalization::CGS, "CGS"},
                                                {Orthogonalization::CGS2, "CGS2"}})
 
+PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight,
+                           {{DomainOrthogonalizationWeight::ENERGY, "Energy"},
+                            {DomainOrthogonalizationWeight::FE_BASIS_IDENTITY,
+                             "FEBasisIdentity"},
+                            {DomainOrthogonalizationWeight::SPACE_OVERLAP, "SpaceOverlap"}})
+
 // Helpers for converting string keys to enum for Device.
 PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
                                     {Device::GPU, "GPU"},
@@ -168,19 +174,13 @@ namespace palace::config
 namespace
 {
 
-int AtIndex(json::iterator &port_it, std::string_view errmsg_parent)
+int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
-  MFEM_VERIFY(
-      port_it->find("Index") != port_it->end(),
-      fmt::format("Missing {} \"Index\" in the configuration file!", errmsg_parent));
-  auto index = port_it->at("Index").get<int>();
-  MFEM_VERIFY(index > 0, fmt::format("The {} \"Index\" should be an integer > 0; got {}",
-                                     errmsg_parent, index));
-  return index;
+  return port_it->at("Index").get<int>();
 }
 
 template <std::size_t N>
-void ParseSymmetricMatrixData(json &mat, const std::string &name,
+void ParseSymmetricMatrixData(const json &mat, const std::string &name,
                               SymmetricMatrixData<N> &data)
 {
   auto it = mat.find(name);
@@ -201,24 +201,21 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
 // Helper function for extracting element data from the configuration file, either from a
 // provided keyword argument of from a specified vector. In extracting the direction various
 // checks are performed for validity of the input combinations.
-void ParseElementData(json &elem, bool required, internal::ElementData &data)
+void ParseElementData(const json &elem, bool required, internal::ElementData &data)
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(data.attributes.begin(), data.attributes.end());
   auto it = elem.find("Direction");
   if (it != elem.end() && it->is_array())
   {
-    // Attempt to parse as an array.
     data.direction = it->get<std::array<double, 3>>();
     data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
   }
   else
   {
-    // Fall back to parsing as a string (value is optional).
+    // String direction - CoordinateSystem is implicit in the string value.
     MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
-                "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
-                "using a string in the configuration file!");
-
+                "Cannot specify \"CoordinateSystem\" with string \"Direction\"!");
     std::tie(data.direction, data.coordinate_system) =
         ParseStringAsDirection(elem.value("Direction", ""), required);
   }
@@ -250,430 +247,159 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
   return os;
 }
 
-constexpr bool JSON_DEBUG = false;
-
 }  // namespace
 
-void ProblemData::SetUp(json &config)
+// Parse optional JSON field into type T, returns default-constructed T if missing.
+template <typename T>
+T ParseOptional(const json &j, const std::string &key)
 {
-  auto problem = config.find("Problem");
-  MFEM_VERIFY(problem != config.end(),
-              "\"Problem\" must be specified in the configuration file!");
-  MFEM_VERIFY(problem->find("Type") != problem->end(),
-              "Missing config[\"Problem\"][\"Type\"] in the configuration file!");
-  type = problem->at("Type");  // Required
-  verbose = problem->value("Verbose", verbose);
-  output = problem->value("Output", output);
+  if (auto it = j.find(key); it != j.end())
+  {
+    return T(*it);
+  }
+  return T{};
+}
+
+// Parse optional JSON array field into std::vector<T>, returns empty vector if missing.
+template <typename T>
+std::vector<T> ParseOptionalVector(const json &j, const std::string &key)
+{
+  std::vector<T> result;
+  if (auto it = j.find(key); it != j.end())
+  {
+    for (const auto &elem : *it)
+    {
+      result.emplace_back(elem);
+    }
+  }
+  return result;
+}
+
+// Parse optional JSON array into std::map<int, T> keyed by "Index", checking for
+// duplicates.
+template <typename T>
+std::map<int, T> ParseOptionalMap(const json &j, const std::string &key,
+                                  const std::string &type_name)
+{
+  std::map<int, T> result;
+  if (auto it = j.find(key); it != j.end())
+  {
+    for (auto elem = it->begin(); elem != it->end(); ++elem)
+    {
+      auto index = AtIndex(elem, type_name);
+      auto [iter, inserted] = result.try_emplace(index, *elem);
+      MFEM_VERIFY(inserted, "Repeated \"Index\" found when processing "
+                                << type_name << " in the configuration file!");
+    }
+  }
+  return result;
+}
+
+ProblemData::ProblemData(const json &problem)
+{
+  type = problem.at("Type");  // Required
+  verbose = problem.value("Verbose", verbose);
+  output = problem.value("Output", output);
 
   // Parse output formats.
-  auto output_formats_it = problem->find("OutputFormats");
-  if (output_formats_it != problem->end())
+  auto output_formats_it = problem.find("OutputFormats");
+  if (output_formats_it != problem.end())
   {
     output_formats.paraview = output_formats_it->value("Paraview", output_formats.paraview);
     output_formats.gridfunction =
         output_formats_it->value("GridFunction", output_formats.gridfunction);
   }
-
-  // Check for provided solver configuration data (not required for electrostatics or
-  // magnetostatics since defaults can be used for every option).
-  auto solver = config.find("Solver");
-  if (type == ProblemType::DRIVEN)
-  {
-    MFEM_VERIFY(solver->find("Driven") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Driven\" should be accompanied by a "
-                "config[\"Solver\"][\"Driven\"] configuration!");
-  }
-  else if (type == ProblemType::EIGENMODE)
-  {
-    MFEM_VERIFY(solver->find("Eigenmode") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Eigenmode\" should be accompanied by a "
-                "config[\"Solver\"][\"Eigenmode\"] configuration!");
-  }
-  else if (type == ProblemType::ELECTROSTATIC)
-  {
-    // MFEM_VERIFY(
-    //     solver->find("Electrostatic") != solver->end(),
-    //     "config[\"Problem\"][\"Type\"] == \"Electrostatic\" should be accompanied by a "
-    //     "config[\"Solver\"][\"Electrostatic\"] configuration!");
-  }
-  else if (type == ProblemType::MAGNETOSTATIC)
-  {
-    // MFEM_VERIFY(
-    //     solver->find("Magnetostatic") != solver->end(),
-    //     "config[\"Problem\"][\"Type\"] == \"Magnetostatic\" should be accompanied by a "
-    //     "config[\"Solver\"][\"Magnetostatic\"] configuration!");
-  }
-  else if (type == ProblemType::TRANSIENT)
-  {
-    MFEM_VERIFY(solver->find("Transient") != solver->end(),
-                "config[\"Problem\"][\"Type\"] == \"Transient\" should be accompanied by a "
-                "config[\"Solver\"][\"Transient\"] configuration!");
-  }
-
-  // Cleanup
-  problem->erase("Type");
-  problem->erase("Verbose");
-  problem->erase("Output");
-  problem->erase("OutputFormats");
-  MFEM_VERIFY(problem->empty(),
-              "Found an unsupported configuration file keyword under \"Problem\"!\n"
-                  << problem->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "Verbose: " << verbose << '\n';
-    std::cout << "Output: " << output << '\n';
-    std::cout << "OutputFormats.Paraview: " << output_formats.paraview << '\n';
-    std::cout << "OutputFormats.GridFunction: " << output_formats.gridfunction << '\n';
-  }
 }
 
-void RefinementData::SetUp(json &model)
+RefinementData::RefinementData(const json &refinement)
 {
-  auto refinement = model.find("Refinement");
-  if (refinement == model.end())
-  {
-    return;
-  }
-
   // Options for AMR.
-  tol = refinement->value("Tol", tol);
-  max_it = refinement->value("MaxIts", max_it);
-  max_size = refinement->value("MaxSize", max_size);
-  nonconformal = refinement->value("Nonconformal", nonconformal);
-  max_nc_levels = refinement->value("MaxNCLevels", max_nc_levels);
-  update_fraction = refinement->value("UpdateFraction", update_fraction);
-  maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
-  save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
-  save_adapt_mesh = refinement->value("SaveAdaptMesh", save_adapt_mesh);
-  MFEM_VERIFY(tol > 0.0, "config[\"Refinement\"][\"Tol\"] must be strictly positive!");
-  MFEM_VERIFY(max_it >= 0, "config[\"Refinement\"][\"MaxIts\"] must be non-negative!");
-  MFEM_VERIFY(max_size >= 0, "config[\"Refinement\"][\"MaxSize\"] must be non-negative!");
-  MFEM_VERIFY(max_nc_levels >= 0,
-              "config[\"Refinement\"][\"MaxNCLevels\"] must be non-negative!");
-  MFEM_VERIFY(update_fraction > 0 && update_fraction < 1,
-              "config[\"Refinement\"][\"UpdateFraction\" must be in (0,1)!");
-  MFEM_VERIFY(
-      maximum_imbalance >= 1,
-      "config[\"Refinement\"][\"MaximumImbalance\"] must be greater than or equal to 1!");
+  tol = refinement.value("Tol", tol);
+  max_it = refinement.value("MaxIts", max_it);
+  max_size = refinement.value("MaxSize", max_size);
+  nonconformal = refinement.value("Nonconformal", nonconformal);
+  max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
+  update_fraction = refinement.value("UpdateFraction", update_fraction);
+  maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
+  save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
+  save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
 
   // Options for a priori refinement.
-  uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
-  ser_uniform_ref_levels = refinement->value("SerialUniformLevels", ser_uniform_ref_levels);
-  MFEM_VERIFY(uniform_ref_levels >= 0 && ser_uniform_ref_levels >= 0,
-              "Number of uniform mesh refinement levels must be non-negative!");
-  auto boxes = refinement->find("Boxes");
-  if (boxes != refinement->end())
+  uniform_ref_levels = refinement.value("UniformLevels", uniform_ref_levels);
+  ser_uniform_ref_levels = refinement.value("SerialUniformLevels", ser_uniform_ref_levels);
+  auto boxes = refinement.find("Boxes");
+  if (boxes != refinement.end())
   {
-    MFEM_VERIFY(boxes->is_array(), "config[\"Refinement\"][\"Boxes\"] should specify an "
-                                   "array in the configuration file!");
     for (auto it = boxes->begin(); it != boxes->end(); ++it)
     {
-      MFEM_VERIFY(
-          it->find("Levels") != it->end(),
-          "Missing \"Boxes\" refinement region \"Levels\" in the configuration file!");
       auto bbmin = it->find("BoundingBoxMin");
       auto bbmax = it->find("BoundingBoxMax");
-      MFEM_VERIFY(bbmin != it->end() && bbmax != it->end(),
-                  "Missing \"Boxes\" refinement region \"BoundingBoxMin/Max\" in the "
-                  "configuration file!");
-      MFEM_VERIFY(bbmin->is_array() && bbmin->is_array(),
-                  "config[\"Refinement\"][\"Boxes\"][\"BoundingBoxMin/Max\"] should "
-                  "specify an array in the configuration file!");
       BoxRefinementData &data = box_list.emplace_back();
       data.ref_levels = it->at("Levels");                // Required
       data.bbmin = bbmin->get<std::array<double, 3>>();  // Required
       data.bbmax = bbmax->get<std::array<double, 3>>();  // Required
-
-      // Cleanup
-      it->erase("Levels");
-      it->erase("BoundingBoxMin");
-      it->erase("BoundingBoxMax");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                               "config[\"Refinement\"][\"Boxes\"]!\n"
-                                   << it->dump(2));
-
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Levels: " << data.ref_levels << '\n';
-        std::cout << "BoundingBoxMin: " << data.bbmin << '\n';
-        std::cout << "BoundingBoxMax: " << data.bbmax << '\n';
-      }
     }
   }
-  auto spheres = refinement->find("Spheres");
-  if (spheres != refinement->end())
+  auto spheres = refinement.find("Spheres");
+  if (spheres != refinement.end())
   {
-    MFEM_VERIFY(spheres->is_array(), "config[\"Refinement\"][\"Spheres\"] should specify "
-                                     "an array in the configuration file!");
     for (auto it = spheres->begin(); it != spheres->end(); ++it)
     {
-      MFEM_VERIFY(
-          it->find("Levels") != it->end(),
-          "Missing \"Spheres\" refinement region \"Levels\" in the configuration file!");
       auto ctr = it->find("Center");
-      MFEM_VERIFY(ctr != it->end() && it->find("Radius") != it->end(),
-                  "Missing \"Spheres\" refinement region \"Center\" or \"Radius\" in "
-                  "configuration file!");
-      MFEM_VERIFY(ctr->is_array(),
-                  "config[\"Refinement\"][\"Spheres\"][\"Center\"] should specify "
-                  "an array in the configuration file!");
       SphereRefinementData &data = sphere_list.emplace_back();
       data.ref_levels = it->at("Levels");               // Required
       data.r = it->at("Radius");                        // Required
       data.center = ctr->get<std::array<double, 3>>();  // Required
-
-      // Cleanup
-      it->erase("Levels");
-      it->erase("Radius");
-      it->erase("Center");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                               "config[\"Refinement\"][\"Spheres\"]!\n"
-                                   << it->dump(2));
-
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Levels: " << data.ref_levels << '\n';
-        std::cout << "Radius: " << data.r << '\n';
-        std::cout << "Center: " << data.center << '\n';
-      }
-    }
-  }
-
-  // Cleanup
-  refinement->erase("Tol");
-  refinement->erase("MaxIts");
-  refinement->erase("MaxSize");
-  refinement->erase("Nonconformal");
-  refinement->erase("MaxNCLevels");
-  refinement->erase("UpdateFraction");
-  refinement->erase("MaximumImbalance");
-  refinement->erase("SaveAdaptIterations");
-  refinement->erase("SaveAdaptMesh");
-  refinement->erase("UniformLevels");
-  refinement->erase("SerialUniformLevels");
-  refinement->erase("Boxes");
-  refinement->erase("Spheres");
-  MFEM_VERIFY(refinement->empty(),
-              "Found an unsupported configuration file keyword under \"Refinement\"!\n"
-                  << refinement->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "Nonconformal: " << nonconformal << '\n';
-    std::cout << "MaxNCLevels: " << max_nc_levels << '\n';
-    std::cout << "UpdateFraction: " << update_fraction << '\n';
-    std::cout << "MaximumImbalance: " << maximum_imbalance << '\n';
-    std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';
-    std::cout << "SaveAdaptMesh: " << save_adapt_mesh << '\n';
-    std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
-    std::cout << "SerialUniformLevels: " << ser_uniform_ref_levels << '\n';
-  }
-}
-
-void ModelData::SetUp(json &config)
-{
-  auto model = config.find("Model");
-  MFEM_VERIFY(model != config.end(),
-              "\"Model\" must be specified in the configuration file!");
-  MFEM_VERIFY(model->find("Mesh") != model->end(),
-              "Missing config[\"Model\"][\"Mesh\"] file in the configuration file!");
-  mesh = model->at("Mesh");  // Required
-  L0 = model->value("L0", L0);
-  Lc = model->value("Lc", Lc);
-  remove_curvature = model->value("RemoveCurvature", remove_curvature);
-  make_simplex = model->value("MakeSimplex", make_simplex);
-  make_hex = model->value("MakeHexahedral", make_hex);
-  reorder_elements = model->value("ReorderElements", reorder_elements);
-  clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
-  crack_bdr_elements = model->value("CrackInternalBoundaryElements", crack_bdr_elements);
-  refine_crack_elements = model->value("RefineCrackElements", refine_crack_elements);
-  crack_displ_factor = model->value("CrackDisplacementFactor", crack_displ_factor);
-  add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
-  export_prerefined_mesh = model->value("ExportPrerefinedMesh", export_prerefined_mesh);
-  reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
-  partitioning = model->value("Partitioning", partitioning);
-  refinement.SetUp(*model);
-
-  // Cleanup
-  model->erase("Mesh");
-  model->erase("L0");
-  model->erase("Lc");
-  model->erase("RemoveCurvature");
-  model->erase("MakeSimplex");
-  model->erase("MakeHexahedral");
-  model->erase("ReorderElements");
-  model->erase("CleanUnusedElements");
-  model->erase("CrackInternalBoundaryElements");
-  model->erase("RefineCrackElements");
-  model->erase("CrackDisplacementFactor");
-  model->erase("AddInterfaceBoundaryElements");
-  model->erase("ExportPrerefinedMesh");
-  model->erase("ReorientTetMesh");
-  model->erase("Partitioning");
-  model->erase("Refinement");
-  MFEM_VERIFY(model->empty(),
-              "Found an unsupported configuration file keyword under \"Model\"!\n"
-                  << model->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Mesh: " << mesh << '\n';
-    std::cout << "L0: " << L0 << '\n';
-    std::cout << "Lc: " << Lc << '\n';
-    std::cout << "RemoveCurvature: " << remove_curvature << '\n';
-    std::cout << "MakeSimplex: " << make_simplex << '\n';
-    std::cout << "MakeHexahedral: " << make_hex << '\n';
-    std::cout << "ReorderElements: " << reorder_elements << '\n';
-    std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
-    std::cout << "CrackInternalBoundaryElements: " << crack_bdr_elements << '\n';
-    std::cout << "RefineCrackElements: " << refine_crack_elements << '\n';
-    std::cout << "CrackDisplacementFactor: " << crack_displ_factor << '\n';
-    std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
-    std::cout << "ExportPrerefinedMesh: " << export_prerefined_mesh << '\n';
-    std::cout << "ReorientTetMesh: " << reorient_tet_mesh << '\n';
-    std::cout << "Partitioning: " << partitioning << '\n';
-  }
-}
-
-void DomainMaterialData::SetUp(json &domains)
-{
-  auto materials = domains.find("Materials");
-  MFEM_VERIFY(materials != domains.end() && materials->is_array(),
-              "\"Materials\" must be specified as an array in the configuration file!");
-  for (auto it = materials->begin(); it != materials->end(); ++it)
-  {
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Materials\" domain in the configuration file!");
-    MaterialData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
-    ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
-    ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
-    ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
-    data.lambda_L = it->value("LondonDepth", data.lambda_L);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Permeability");
-    it->erase("Permittivity");
-    it->erase("LossTan");
-    it->erase("Conductivity");
-    it->erase("MaterialAxes");
-    it->erase("LondonDepth");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Materials\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Permeability: " << data.mu_r << '\n';
-      std::cout << "Permittivity: " << data.epsilon_r << '\n';
-      std::cout << "LossTan: " << data.tandelta << '\n';
-      std::cout << "Conductivity: " << data.sigma << '\n';
-      std::cout << "LondonDepth: " << data.lambda_L << '\n';
     }
   }
 }
 
-void DomainEnergyPostData::SetUp(json &postpro)
+ModelData::ModelData(const json &model)
 {
-  auto energy = postpro.find("Energy");
-  if (energy == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(energy->is_array(),
-              "\"Energy\" should specify an array in the configuration file!");
-  for (auto it = energy->begin(); it != energy->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Energy\" domain");
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Energy\" domain in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, DomainEnergyData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
-                            "in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Energy\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-    }
-  }
+  mesh = model.at("Mesh");  // Required
+  L0 = model.value("L0", L0);
+  Lc = model.value("Lc", Lc);
+  remove_curvature = model.value("RemoveCurvature", remove_curvature);
+  make_simplex = model.value("MakeSimplex", make_simplex);
+  make_hex = model.value("MakeHexahedral", make_hex);
+  reorder_elements = model.value("ReorderElements", reorder_elements);
+  clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
+  crack_bdr_elements = model.value("CrackInternalBoundaryElements", crack_bdr_elements);
+  refine_crack_elements = model.value("RefineCrackElements", refine_crack_elements);
+  crack_displ_factor = model.value("CrackDisplacementFactor", crack_displ_factor);
+  add_bdr_elements = model.value("AddInterfaceBoundaryElements", add_bdr_elements);
+  export_prerefined_mesh = model.value("ExportPrerefinedMesh", export_prerefined_mesh);
+  reorient_tet_mesh = model.value("ReorientTetMesh", reorient_tet_mesh);
+  partitioning = model.value("Partitioning", partitioning);
+  refinement = ParseOptional<RefinementData>(model, "Refinement");
 }
 
-void ProbePostData::SetUp(json &postpro)
+MaterialData::MaterialData(const json &domain)
 {
-  auto probe = postpro.find("Probe");
-  if (probe == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(probe->is_array(),
-              "\"Probe\" should specify an array in the configuration file!");
-  for (auto it = probe->begin(); it != probe->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Probe\" point");
-    auto ctr = it->find("Center");
-    MFEM_VERIFY(ctr != it->end() && ctr->is_array(),
-                "Missing \"Probe\" point \"Center\" or \"Center\" should specify an array "
-                "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, ProbeData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Probe\" points in "
-                            "the configuration file!");
-    auto &data = ret.first->second;
-    data.center = ctr->get<std::array<double, 3>>();  // Required
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Center");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Probe\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Center: " << data.center << '\n';
-    }
-  }
+  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  ParseSymmetricMatrixData(domain, "Permeability", mu_r);
+  ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+  ParseSymmetricMatrixData(domain, "LossTan", tandelta);
+  ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
-void DomainPostData::SetUp(json &domains)
+DomainEnergyData::DomainEnergyData(const json &domain)
 {
-  auto postpro = domains.find("Postprocessing");
-  if (postpro == domains.end())
-  {
-    return;
-  }
-  energy.SetUp(*postpro);
-  probe.SetUp(*postpro);
+  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+}
+
+ProbeData::ProbeData(const json &probe)
+{
+  center = probe.at("Center").get<std::array<double, 3>>();  // Required
+}
+
+DomainPostData::DomainPostData(const json &postpro)
+{
+  energy = ParseOptionalMap<DomainEnergyData>(postpro, "Energy", "\"Energy\" domain");
+  probe = ParseOptionalMap<ProbeData>(postpro, "Probe", "\"Probe\" point");
 
   // Store all unique postprocessing domain attributes.
   for (const auto &[idx, data] : energy)
@@ -683,96 +409,41 @@ void DomainPostData::SetUp(json &domains)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  postpro->erase("Energy");
-  postpro->erase("Probe");
-  MFEM_VERIFY(postpro->empty(),
-              "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
-                  << postpro->dump(2));
 }
 
-void CurrentDipoleSourceData::SetUp(json &domains)
+CurrentDipoleData::CurrentDipoleData(const json &source)
 {
-  auto current_dipole = domains.find("CurrentDipole");
-  if (current_dipole == domains.end())
+  auto dir = source.find("Direction");
+  if (dir->is_array())
   {
-    return;
-  }
-  MFEM_VERIFY(current_dipole->is_array(),
-              "\"CurrentDipole\" should specify an array in the configuration file!");
-
-  for (auto it = current_dipole->begin(); it != current_dipole->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"CurrentDipole\" source");
-    auto ret = mapdata.insert(std::make_pair(index, CurrentDipoleData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"CurrentDipole\" "
-                            "sources in the configuration file!");
-    auto &data = ret.first->second;
-
-    MFEM_VERIFY(
-        it->find("Direction") != it->end(),
-        "Missing \"CurrentDipole\" source \"Direction\" in the configuration file!");
-    MFEM_VERIFY(it->find("Center") != it->end(),
-                "Missing \"CurrentDipole\" source \"Center\" in the configuration file!");
-    MFEM_VERIFY(
-        it->find("Moment") != it->end(),
-        "Missing \"CurrentDipole\" source \"Moment\" magnitude in the configuration file!");
-    auto direction = it->find("Direction");
-    auto center = it->find("Center");
-    MFEM_VERIFY(center->is_array(),
-                "\"CurrentDipole\" source \"Center\" should specify an array "
-                "in the configuration file!");
-
-    if (direction->is_array())
+    direction = dir->get<std::array<double, 3>>();
+    double norm = direction[0] * direction[0] + direction[1] * direction[1] +
+                  direction[2] * direction[2];
+    for (auto &x : direction)
     {
-      // Attempt to parse as an array.
-      data.direction = direction->get<std::array<double, 3>>();
-      double norm = data.direction[0] * data.direction[0] +
-                    data.direction[1] * data.direction[1] +
-                    data.direction[2] * data.direction[2];
-      for (auto &x : data.direction)
-        x /= norm;
-    }
-    else
-    {
-      auto direction_and_coord =
-          ParseStringAsDirection(direction->get<std::string>());  // Required
-      MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
-                  "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
-      data.direction = direction_and_coord.first;
-    }
-    data.center = center->get<std::array<double, 3>>();  // Required
-    data.moment = it->at("Moment");                      // Required
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Direction");
-    it->erase("Center");
-    it->erase("Moment");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"CurrentDipole\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Direction: " << data.direction << '\n';
-      std::cout << "Center: " << data.center << '\n';
-      std::cout << "Moment: " << data.moment << '\n';
+      x /= norm;
     }
   }
+  else
+  {
+    auto direction_and_coord = ParseStringAsDirection(dir->get<std::string>());
+    MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
+                "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
+    direction = direction_and_coord.first;
+  }
+  center = source.at("Center").get<std::array<double, 3>>();  // Required
+  moment = source.at("Moment");                               // Required
 }
 
-void DomainData::SetUp(json &config)
+DomainData::DomainData(const json &domains)
 {
-  auto domains = config.find("Domains");
-  MFEM_VERIFY(domains != config.end(),
-              "\"Domains\" must be specified in the configuration file!");
-  materials.SetUp(*domains);
-  current_dipole.SetUp(*domains);
-  postpro.SetUp(*domains);
+  for (const auto &d : *domains.find("Materials"))
+  {
+    materials.emplace_back(d);
+  }
+  current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
+                                                       "\"CurrentDipole\" source");
+  postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
 
   // Store all unique domain attributes.
   for (const auto &data : materials)
@@ -789,404 +460,126 @@ void DomainData::SetUp(json &config)
                 "Domain postprocessing can only be enabled on domains which have a "
                 "corresponding \"Materials\" entry!");
   }
-
-  // Cleanup
-  domains->erase("Materials");
-  domains->erase("CurrentDipole");
-  domains->erase("Postprocessing");
-  MFEM_VERIFY(domains->empty(),
-              "Found an unsupported configuration file keyword under \"Domains\"!\n"
-                  << domains->dump(2));
 }
 
-void PecBoundaryData::SetUp(json &boundaries)
+PecBoundaryData::PecBoundaryData(const json &pec)
 {
-  auto pec = boundaries.find("PEC");
-  auto ground = boundaries.find("Ground");
-  if (pec == boundaries.end() && ground == boundaries.end())
-  {
-    return;
-  }
-  if (pec == boundaries.end())
-  {
-    pec = ground;
-  }
-  else if (ground == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT(
-        "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
-  }
-  MFEM_VERIFY(
-      pec->find("Attributes") != pec->end(),
-      "Missing \"Attributes\" list for \"PEC\" boundary in the configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pec.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pec->erase("Attributes");
-  MFEM_VERIFY(pec->empty(),
-              "Found an unsupported configuration file keyword under \"PEC\"!\n"
-                  << pec->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "PEC:" << attributes << '\n';
-  }
 }
 
-void PmcBoundaryData::SetUp(json &boundaries)
+PmcBoundaryData::PmcBoundaryData(const json &pmc)
 {
-  auto pmc = boundaries.find("PMC");
-  auto zeroq = boundaries.find("ZeroCharge");
-  if (pmc == boundaries.end() && zeroq == boundaries.end())
-  {
-    return;
-  }
-  if (pmc == boundaries.end())
-  {
-    pmc = zeroq;
-  }
-  else if (zeroq == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT("Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
-               "boundaries!");
-  }
-  MFEM_VERIFY(
-      pmc->find("Attributes") != pmc->end(),
-      "Missing \"Attributes\" list for \"PMC\" boundary in the configuration file!");
-  attributes = pmc->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = pmc.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pmc->erase("Attributes");
-  MFEM_VERIFY(pmc->empty(),
-              "Found an unsupported configuration file keyword under \"PMC\"!\n"
-                  << pmc->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "PMC:" << attributes << '\n';
-  }
 }
 
-void WavePortPecBoundaryData::SetUp(json &boundaries)
+WavePortPecBoundaryData::WavePortPecBoundaryData(const json &auxpec)
 {
-  auto pec = boundaries.find("WavePortPEC");
-  if (pec == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(pec->find("Attributes") != pec->end(),
-              "Missing \"Attributes\" list for \"WavePortPEC\" boundary in the "
-              "configuration file!");
-  attributes = pec->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = auxpec.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-
-  // Cleanup
-  pec->erase("Attributes");
-  MFEM_VERIFY(pec->empty(),
-              "Found an unsupported configuration file keyword under \"WavePortPEC\"!\n"
-                  << pec->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "WavePortPEC:" << attributes << '\n';
-  }
 }
 
-void FarfieldBoundaryData::SetUp(json &boundaries)
+FarfieldBoundaryData::FarfieldBoundaryData(const json &absorbing)
 {
-  auto absorbing = boundaries.find("Absorbing");
-  if (absorbing == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(
-      absorbing->find("Attributes") != absorbing->end(),
-      "Missing \"Attributes\" list for \"Absorbing\" boundary in the configuration file!");
-  attributes = absorbing->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = absorbing.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-  order = absorbing->value("Order", order);
-  MFEM_VERIFY(order == 1 || order == 2,
-              "Supported values for config[\"Absorbing\"][\"Order\"] are 1 or 2!");
-
-  // Cleanup
-  absorbing->erase("Attributes");
-  absorbing->erase("Order");
-  MFEM_VERIFY(absorbing->empty(),
-              "Found an unsupported configuration file keyword under \"Absorbing\"!\n"
-                  << absorbing->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Absorbing:" << attributes << '\n';
-    std::cout << "Order: " << order << '\n';
-  }
+  order = absorbing.value("Order", order);
 }
 
-void ConductivityBoundaryData::SetUp(json &boundaries)
+ConductivityData::ConductivityData(const json &boundary)
 {
-  auto conductivity = boundaries.find("Conductivity");
-  if (conductivity == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(conductivity->is_array(),
-              "\"Conductivity\" should specify an array in the configuration file!");
-  for (auto it = conductivity->begin(); it != conductivity->end(); ++it)
-  {
-    MFEM_VERIFY(it->find("Attributes") != it->end(),
-                "Missing \"Attributes\" list for \"Conductivity\" boundary in the "
-                "configuration file!");
-    MFEM_VERIFY(
-        it->find("Conductivity") != it->end(),
-        "Missing \"Conductivity\" boundary \"Conductivity\" in the configuration file!");
-    ConductivityData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.sigma = it->at("Conductivity");  // Required
-    data.mu_r = it->value("Permeability", data.mu_r);
-    data.h = it->value("Thickness", data.h);
-    data.external = it->value("External", data.external);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Conductivity");
-    it->erase("Permeability");
-    it->erase("Thickness");
-    it->erase("External");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Conductivity\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Conductivity: " << data.sigma << '\n';
-      std::cout << "Permeability: " << data.mu_r << '\n';
-      std::cout << "Thickness: " << data.h << '\n';
-      std::cout << "External: " << data.external << '\n';
-    }
-  }
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  sigma = boundary.at("Conductivity");  // Required
+  mu_r = boundary.value("Permeability", mu_r);
+  h = boundary.value("Thickness", h);
+  external = boundary.value("External", external);
 }
 
-void ImpedanceBoundaryData::SetUp(json &boundaries)
+ImpedanceData::ImpedanceData(const json &boundary)
 {
-  auto impedance = boundaries.find("Impedance");
-  if (impedance == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(impedance->is_array(),
-              "\"Impedance\" should specify an array in the configuration file!");
-  for (auto it = impedance->begin(); it != impedance->end(); ++it)
-  {
-    MFEM_VERIFY(it->find("Attributes") != it->end(),
-                "Missing \"Attributes\" list for \"Impedance\" boundary in the "
-                "configuration file!");
-    ImpedanceData &data = emplace_back();
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
-
-    // Cleanup
-    it->erase("Attributes");
-    it->erase("Rs");
-    it->erase("Ls");
-    it->erase("Cs");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Impedance\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Rs: " << data.Rs << '\n';
-      std::cout << "Ls: " << data.Ls << '\n';
-      std::cout << "Cs: " << data.Cs << '\n';
-    }
-  }
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  Rs = boundary.value("Rs", Rs);
+  Ls = boundary.value("Ls", Ls);
+  Cs = boundary.value("Cs", Cs);
 }
 
-int ParsePortExcitation(json::iterator &port_it, int default_excitation)
+int ParsePortExcitation(const json &port, int index)
 {
-  auto it_excitation = port_it->find("Excitation");
-  if (it_excitation == port_it->end())
+  auto it = port.find("Excitation");
+  if (it == port.end())
   {
-    // Keep default; don't set input flag.
-    return default_excitation;
+    return 0;  // Not excited
   }
-  else if (it_excitation->is_boolean())
+  else if (it->is_boolean())
   {
-    return int(it_excitation->get<bool>());  // 0 false; 1 true
+    return int(it->get<bool>());  // 0 false; 1 true
   }
-  else if (it_excitation->is_number_unsigned())
+  else if (it->is_number_unsigned())
   {
-    return it_excitation->get<int>();
+    return it->get<int>();
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
                            "as a bool or unsigned (non-negative) integer; got {}",
-                           int(port_it->at("Index")), it_excitation->dump(2)));
+                           index, it->dump(2)));
   }
 }
 
-void LumpedPortBoundaryData::SetUp(json &boundaries)
+LumpedPortData::LumpedPortData(const json &port)
 {
-  auto port = boundaries.find("LumpedPort");
-  auto terminal = boundaries.find("Terminal");
-  if (port == boundaries.end() && terminal == boundaries.end())
-  {
-    return;
-  }
+  int index = port.at("Index");  // Required
+  R = port.value("R", R);
+  L = port.value("L", L);
+  C = port.value("C", C);
+  Rs = port.value("Rs", Rs);
+  Ls = port.value("Ls", Ls);
+  Cs = port.value("Cs", Cs);
 
-  if (port == boundaries.end())
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  if (port.find("Attributes") != port.end())
   {
-    port = terminal;
-  }
-  else if (terminal == boundaries.end())  // Do nothing
-  {
+    MFEM_VERIFY(port.find("Elements") == port.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(port, true, elem);
   }
   else
   {
-    MFEM_ABORT("Configuration file should not specify both \"LumpedPort\" and \"Terminal\" "
-               "boundaries!");
-  }
-
-  std::string label = (terminal != boundaries.end()) ? "\"Terminal\"" : "\"LumpedPort\"";
-  MFEM_VERIFY(port->is_array(),
-              label << " should specify an array in the configuration file!");
-  for (auto it = port->begin(); it != port->end(); ++it)
-  {
-    auto index = AtIndex(it, label);
-    auto ret = mapdata.insert(std::make_pair(index, LumpedPortData()));
-    MFEM_VERIFY(ret.second, fmt::format("Repeated \"Index\" found when processing {} "
-                                        "boundaries in the configuration file!",
-                                        label));
-    auto &data = ret.first->second;
-    data.R = it->value("R", data.R);
-    data.L = it->value("L", data.L);
-    data.C = it->value("C", data.C);
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
-
-    data.excitation = ParsePortExcitation(it, data.excitation);
-    data.active = it->value("Active", data.active);
-    if (it->find("Attributes") != it->end())
+    auto elems = port.find("Elements");
+    MFEM_VERIFY(elems != port.end(),
+                "Missing top-level \"Attributes\" list or \"Elements\" for "
+                "\"LumpedPort\" in the configuration file!");
+    for (const auto &e : *elems)
     {
-      MFEM_VERIFY(
-          it->find("Elements") == it->end(),
-          fmt::format(
-              "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-              "{} in the configuration file!",
-              label));
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, terminal == boundaries.end(), elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(elements != it->end(),
-                  fmt::format("Missing top-level \"Attributes\" list or \"Elements\" for "
-                              "{} in the configuration file!",
-                              label));
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
-                    fmt::format("Missing \"Attributes\" list for {} element in "
-                                "the configuration file!",
-                                label));
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, terminal == boundaries.end(), elem);
-
-        // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(), fmt::format("Found an unsupported configuration file "
-                                                  "keyword under {} element!\n{}",
-                                                  label, elem_it->dump(2)));
-      }
-    }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("R");
-    it->erase("L");
-    it->erase("C");
-    it->erase("Rs");
-    it->erase("Ls");
-    it->erase("Cs");
-    it->erase("Excitation");
-    it->erase("Active");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("CoordinateSystem");
-    it->erase("Elements");
-    MFEM_VERIFY(it->empty(),
-                fmt::format("Found an unsupported configuration file keyword under {}!\n{}",
-                            label, it->dump(2)));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "R: " << data.R << '\n';
-      std::cout << "L: " << data.L << '\n';
-      std::cout << "C: " << data.C << '\n';
-      std::cout << "Rs: " << data.Rs << '\n';
-      std::cout << "Ls: " << data.Ls << '\n';
-      std::cout << "Cs: " << data.Cs << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Active: " << data.active << '\n';
-      for (const auto &elem : data.elements)
-      {
-        std::cout << "Attributes: " << elem.attributes << '\n';
-        std::cout << "Direction: " << elem.direction << '\n';
-        std::cout << "CoordinateSystem: " << elem.coordinate_system << '\n';
-      }
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
 
-void PeriodicBoundaryData::SetUp(json &boundaries)
+TerminalData::TerminalData(const json &terminal)
 {
-  auto periodic = boundaries.find("Periodic");
-  if (periodic == boundaries.end())
-  {
-    return;
-  }
-  auto floquet = periodic->find("FloquetWaveVector");
-  if (floquet != periodic->end())
+  attributes = terminal.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+}
+
+PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
+{
+  auto floquet = periodic.find("FloquetWaveVector");
+  if (floquet != periodic.end())
   {
     MFEM_VERIFY(floquet->is_array(),
                 "\"FloquetWaveVector\" should specify an array in the configuration file!");
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "FloquetWaveVector: " << wave_vector << '\n';
-  }
-
-  auto pairs = periodic->find("BoundaryPairs");
+  auto pairs = periodic.find("BoundaryPairs");
   MFEM_VERIFY(pairs->is_array(),
               "\"BoundaryPairs\" should specify an array in the configuration file!");
   for (auto it = pairs->begin(); it != pairs->end(); ++it)
@@ -1223,287 +616,77 @@ void PeriodicBoundaryData::SetUp(json &boundaries)
           "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
-
-    // Cleanup
-    it->erase("DonorAttributes");
-    it->erase("ReceiverAttributes");
-    it->erase("Translation");
-    it->erase("AffineTransformation");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Periodic\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "DonorAttributes: " << data.donor_attributes << '\n';
-      std::cout << "ReceiverAttributes: " << data.receiver_attributes << '\n';
-      std::cout << "AffineTransformation: " << data.affine_transform << '\n';
-    }
   }
 }
 
-void WavePortBoundaryData::SetUp(json &boundaries)
+WavePortData::WavePortData(const json &port)
 {
-  auto port = boundaries.find("WavePort");
-  if (port == boundaries.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(port->is_array(),
-              "\"WavePort\" should specify an array in the configuration file!");
+  int index = port.at("Index");                                // Required
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  mode_idx = port.value("Mode", mode_idx);
+  d_offset = port.value("Offset", d_offset);
+  eigen_solver = port.value("SolverType", eigen_solver);
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  ksp_max_its = port.value("MaxIts", ksp_max_its);
+  ksp_tol = port.value("KSPTol", ksp_tol);
+  eig_tol = port.value("EigenTol", eig_tol);
+  verbose = port.value("Verbose", verbose);
+}
 
-  for (auto it = port->begin(); it != port->end(); ++it)
+SurfaceCurrentData::SurfaceCurrentData(const json &source)
+{
+  if (source.find("Attributes") != source.end())
   {
+    MFEM_VERIFY(source.find("Elements") == source.end(),
+                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
+                "\"SurfaceCurrent\" boundary in the configuration file!");
+    auto &elem = elements.emplace_back();
+    ParseElementData(source, true, elem);
+  }
+  else
+  {
+    auto elems = source.find("Elements");
     MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"WavePort\" boundary in the configuration file!");
-    auto index = AtIndex(it, "\"WavePort\" boundary");
-    auto ret = mapdata.insert(std::make_pair(index, WavePortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"WavePort\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.mode_idx = it->value("Mode", data.mode_idx);
-    MFEM_VERIFY(data.mode_idx > 0,
-                "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
-    data.d_offset = it->value("Offset", data.d_offset);
-    data.eigen_solver = it->value("SolverType", data.eigen_solver);
-
-    data.excitation = ParsePortExcitation(it, data.excitation);
-    data.active = it->value("Active", data.active);
-    data.ksp_max_its = it->value("MaxIts", data.ksp_max_its);
-    data.ksp_tol = it->value("KSPTol", data.ksp_tol);
-    data.eig_tol = it->value("EigenTol", data.eig_tol);
-    data.verbose = it->value("Verbose", data.verbose);
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Mode");
-    it->erase("Offset");
-    it->erase("SolverType");
-    it->erase("Excitation");
-    it->erase("Active");
-    it->erase("MaxIts");
-    it->erase("KSPTol");
-    it->erase("EigenTol");
-    it->erase("Verbose");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"WavePort\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
+        elems != source.end(),
+        "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
+        "boundary in the configuration file!");
+    for (const auto &e : *elems)
     {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Mode: " << data.mode_idx << '\n';
-      std::cout << "Offset: " << data.d_offset << '\n';
-      std::cout << "SolverType: " << data.eigen_solver << '\n';
-      std::cout << "Excitation: " << data.excitation << '\n';
-      std::cout << "Active: " << data.active << '\n';
-      std::cout << "MaxIts: " << data.ksp_max_its << '\n';
-      std::cout << "KSPTol: " << data.ksp_tol << '\n';
-      std::cout << "EigenTol: " << data.eig_tol << '\n';
-      std::cout << "Verbose: " << data.verbose << '\n';
+      auto &elem = elements.emplace_back();
+      ParseElementData(e, true, elem);
     }
   }
 }
 
-void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
+SurfaceFluxData::SurfaceFluxData(const json &flux)
 {
-  auto source = boundaries.find("SurfaceCurrent");
-  if (source == boundaries.end())
+  attributes = flux.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  type = flux.at("Type");  // Required
+  two_sided = flux.value("TwoSided", two_sided);
+  auto ctr = flux.find("Center");
+  if (ctr != flux.end())
   {
-    return;
-  }
-  MFEM_VERIFY(source->is_array(),
-              "\"SurfaceCurrent\" should specify an array in the configuration file!");
-  for (auto it = source->begin(); it != source->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"SurfaceCurrent\" source");
-    auto ret = mapdata.insert(std::make_pair(index, SurfaceCurrentData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    if (it->find("Attributes") != it->end())
-    {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
-                  "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"SurfaceCurrent\" boundary in the configuration file!");
-      auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, true, elem);
-    }
-    else
-    {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(
-          elements != it->end(),
-          "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
-          "boundary in the configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
-      {
-        MFEM_VERIFY(
-            elem_it->find("Attributes") != elem_it->end(),
-            "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
-            "configuration file!");
-        auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, true, elem);
-
-        // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
-                                      "under \"SurfaceCurrent\" boundary element!\n"
-                                          << elem_it->dump(2));
-      }
-    }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("Elements");
-    it->erase("CoordinateSystem");
-    MFEM_VERIFY(
-        it->empty(),
-        "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
-            << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      for (const auto &elem : data.elements)
-      {
-        std::cout << "Attributes: " << elem.attributes << '\n';
-        std::cout << "Direction: " << elem.direction << '\n';
-        std::cout << "CoordinateSystem: " << elem.coordinate_system << '\n';
-      }
-    }
+    center = ctr->get<std::array<double, 3>>();
+    no_center = false;
   }
 }
 
-void SurfaceFluxPostData::SetUp(json &postpro)
+InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
 {
-  auto flux = postpro.find("SurfaceFlux");
-  if (flux == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(flux->is_array(),
-              "\"SurfaceFlux\" should specify an array in the configuration file!");
-  for (auto it = flux->begin(); it != flux->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"SurfaceFlux\" boundary");
-    MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Type") != it->end(),
-                "Missing \"Attributes\" list or \"Type\" for \"SurfaceFlux\" boundary "
-                "in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, SurfaceFluxData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceFlux\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.type = it->at("Type");  // Required
-    data.two_sided = it->value("TwoSided", data.two_sided);
-    auto ctr = it->find("Center");
-    if (ctr != it->end())
-    {
-      MFEM_VERIFY(ctr->is_array(),
-                  "\"Center\" should specify an array in the configuration file!");
-      data.center = ctr->get<std::array<double, 3>>();
-      data.no_center = false;
-    }
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Type");
-    it->erase("TwoSided");
-    it->erase("Center");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"SurfaceFlux\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Type: " << data.type << '\n';
-      std::cout << "TwoSided: " << data.two_sided << '\n';
-      std::cout << "Center: " << data.center << '\n';
-    }
-  }
+  attributes = dielectric.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  type = dielectric.value("Type", type);
+  t = dielectric.at("Thickness");             // Required
+  epsilon_r = dielectric.at("Permittivity");  // Required
+  tandelta = dielectric.value("LossTan", tandelta);
 }
 
-void InterfaceDielectricPostData::SetUp(json &postpro)
+FarFieldPostData::FarFieldPostData(const json &farfield)
 {
-  auto dielectric = postpro.find("Dielectric");
-  if (dielectric == postpro.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(dielectric->is_array(),
-              "\"Dielectric\" should specify an array in the configuration file!");
-  for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
-  {
-    auto index = AtIndex(it, "\"Dielectric\" boundary");
-    MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Thickness") != it->end() &&
-                    it->find("Permittivity") != it->end(),
-                "Missing \"Dielectric\" boundary \"Attributes\" list, \"Thickness\", or "
-                "\"Permittivity\" in the configuration file!");
-    auto ret = mapdata.insert(std::make_pair(index, InterfaceDielectricData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
-                            "boundaries in the configuration file!");
-    auto &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    std::sort(data.attributes.begin(), data.attributes.end());
-    data.type = it->value("Type", data.type);
-    data.t = it->at("Thickness");             // Required
-    data.epsilon_r = it->at("Permittivity");  // Required
-    data.tandelta = it->value("LossTan", data.tandelta);
-
-    // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Type");
-    it->erase("Thickness");
-    it->erase("Permittivity");
-    it->erase("LossTan");
-    MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
-                    << it->dump(2));
-
-    // Debug
-    if constexpr (JSON_DEBUG)
-    {
-      std::cout << "Index: " << ret.first->first << '\n';
-      std::cout << "Attributes: " << data.attributes << '\n';
-      std::cout << "Type: " << data.type << '\n';
-      std::cout << "Thickness: " << data.t << '\n';
-      std::cout << "Permittivity: " << data.epsilon_r << '\n';
-      std::cout << "LossTan: " << data.tandelta << '\n';
-    }
-  }
-}
-void FarFieldPostData::SetUp(json &postpro)
-{
-  auto farfield = postpro.find("FarField");
-  if (farfield == postpro.end())
-  {
-    return;
-  }
-
-  MFEM_VERIFY(farfield->find("Attributes") != farfield->end(),
-              "Missing \"Attributes\" list for \"FarField\" postprocessing in the "
-              "configuration file!");
-
-  attributes = farfield->at("Attributes").get<std::vector<int>>();  // Required
+  attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
 
   // Generate NSample points with the following properties:
@@ -1513,9 +696,9 @@ void FarFieldPostData::SetUp(json &postpro)
   //   previous condition.
   // - The points are on rings of constant theta.
 
-  auto nsample_json = farfield->find("NSample");
+  auto nsample_json = farfield.find("NSample");
   int nsample = 0;
-  if (nsample_json != farfield->end())
+  if (nsample_json != farfield.end())
   {
     nsample = nsample_json->get<int>();
     if (nsample > 0)
@@ -1590,8 +773,8 @@ void FarFieldPostData::SetUp(json &postpro)
     }
   }
 
-  auto thetaphis_json = farfield->find("ThetaPhis");
-  if (thetaphis_json != farfield->end())
+  auto thetaphis_json = farfield.find("ThetaPhis");
+  if (thetaphis_json != farfield.end())
   {
     MFEM_VERIFY(thetaphis_json->is_array(),
                 "\"ThetaPhis\" should specify an array in the configuration file!");
@@ -1644,33 +827,14 @@ void FarFieldPostData::SetUp(json &postpro)
   {
     MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
   }
-
-  // Cleanup
-  farfield->erase("Attributes");
-  farfield->erase("NSample");
-  farfield->erase("ThetaPhis");
-  MFEM_VERIFY(farfield->empty(),
-              "Found an unsupported configuration file keyword under \"FarField\"!\n"
-                  << farfield->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Attributes: " << attributes << '\n';
-    std::cout << "NSample: " << nsample << '\n';
-    std::cout << "ThetaPhis: " << thetaphis << '\n';
-  }
 }
-void BoundaryPostData::SetUp(json &boundaries)
+BoundaryPostData::BoundaryPostData(const json &postpro)
 {
-  auto postpro = boundaries.find("Postprocessing");
-  if (postpro == boundaries.end())
-  {
-    return;
-  }
-  flux.SetUp(*postpro);
-  dielectric.SetUp(*postpro);
-  farfield.SetUp(*postpro);
+  flux =
+      ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
+  dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
+                                                         "\"Dielectric\" boundary");
+  farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : flux)
@@ -1688,32 +852,51 @@ void BoundaryPostData::SetUp(json &boundaries)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  postpro->erase("SurfaceFlux");
-  postpro->erase("Dielectric");
-  postpro->erase("FarField");
-  MFEM_VERIFY(postpro->empty(),
-              "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
-                  << postpro->dump(2));
 }
 
-void BoundaryData::SetUp(json &config)
+BoundaryData::BoundaryData(const json &boundaries)
 {
-  auto boundaries = config.find("Boundaries");
-  MFEM_VERIFY(boundaries != config.end(),
-              "\"Boundaries\" must be specified in the configuration file!");
-  pec.SetUp(*boundaries);
-  pmc.SetUp(*boundaries);
-  auxpec.SetUp(*boundaries);
-  farfield.SetUp(*boundaries);
-  conductivity.SetUp(*boundaries);
-  impedance.SetUp(*boundaries);
-  lumpedport.SetUp(*boundaries);
-  periodic.SetUp(*boundaries);
-  waveport.SetUp(*boundaries);
-  current.SetUp(*boundaries);
-  postpro.SetUp(*boundaries);
+  // PEC can be specified as "PEC" or "Ground".
+  auto pec_it = boundaries.find("PEC");
+  auto ground_it = boundaries.find("Ground");
+  MFEM_VERIFY(
+      pec_it == boundaries.end() || ground_it == boundaries.end(),
+      "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
+  if (pec_it != boundaries.end())
+  {
+    pec = PecBoundaryData(*pec_it);
+  }
+  else if (ground_it != boundaries.end())
+  {
+    pec = PecBoundaryData(*ground_it);
+  }
+
+  // PMC can be specified as "PMC" or "ZeroCharge".
+  auto pmc_it = boundaries.find("PMC");
+  auto zeroq_it = boundaries.find("ZeroCharge");
+  MFEM_VERIFY(pmc_it == boundaries.end() || zeroq_it == boundaries.end(),
+              "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
+              "boundaries!");
+  if (pmc_it != boundaries.end())
+  {
+    pmc = PmcBoundaryData(*pmc_it);
+  }
+  else if (zeroq_it != boundaries.end())
+  {
+    pmc = PmcBoundaryData(*zeroq_it);
+  }
+
+  auxpec = ParseOptional<WavePortPecBoundaryData>(boundaries, "WavePortPEC");
+  farfield = ParseOptional<FarfieldBoundaryData>(boundaries, "Absorbing");
+  conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
+  impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
+  lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
+  terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
+  periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
+  waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
+  current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
+                                                 "\"SurfaceCurrent\"");
+  postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
   // Ensure unique indexing of lumpedport, waveport, current.
   {
@@ -1812,26 +995,6 @@ void BoundaryData::SetUp(json &config)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
-
-  // Cleanup
-  boundaries->erase("PEC");
-  boundaries->erase("PMC");
-  boundaries->erase("WavePortPEC");
-  boundaries->erase("Absorbing");
-  boundaries->erase("Conductivity");
-  boundaries->erase("Impedance");
-  boundaries->erase("LumpedPort");
-  boundaries->erase("Periodic");
-  boundaries->erase("FloquetWaveVector");
-  boundaries->erase("WavePort");
-  boundaries->erase("SurfaceCurrent");
-  boundaries->erase("Ground");
-  boundaries->erase("ZeroCharge");
-  boundaries->erase("Terminal");
-  boundaries->erase("Postprocessing");
-  MFEM_VERIFY(boundaries->empty(),
-              "Found an unsupported configuration file keyword under \"Boundaries\"!\n"
-                  << boundaries->dump(2));
 }
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
@@ -1889,32 +1052,33 @@ auto FindNearestValue(const std::vector<double> &vec, double x, double tol)
   return vec.end();
 }
 
-void DrivenSolverData::SetUp(json &solver)
+DrivenSolverData::DrivenSolverData(const json &driven)
 {
-  auto driven = solver.find("Driven");
-  if (driven == solver.end())
-  {
-    return;
-  }
-
-  restart = driven->value("Restart", restart);
-  adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
-  adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
-  adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
+  restart = driven.value("Restart", restart);
+  adaptive_tol = driven.value("AdaptiveTol", adaptive_tol);
+  adaptive_max_size = driven.value("AdaptiveMaxSamples", adaptive_max_size);
+  adaptive_memory = driven.value("AdaptiveConvergenceMemory", adaptive_memory);
+  adaptive_solver_gs_orthog_type =
+      driven.value("AdaptiveGSOrthogonalization", adaptive_solver_gs_orthog_type);
+  adaptive_circuit_synthesis =
+      driven.value("AdaptiveCircuitSynthesis", adaptive_circuit_synthesis);
+  adaptive_circuit_synthesis_domain_orthog =
+      driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
+                   adaptive_circuit_synthesis_domain_orthog);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
-  if (driven->find("MinFreq") != driven->end() &&
-      driven->find("MaxFreq") != driven->end() && driven->find("FreqStep") != driven->end())
+  if (driven.find("MinFreq") != driven.end() && driven.find("MaxFreq") != driven.end() &&
+      driven.find("FreqStep") != driven.end())
   {
-    double min_f = driven->at("MinFreq");     // Required
-    double max_f = driven->at("MaxFreq");     // Required
-    double delta_f = driven->at("FreqStep");  // Required
+    double min_f = driven.at("MinFreq");     // Required
+    double max_f = driven.at("MaxFreq");     // Required
+    double delta_f = driven.at("FreqStep");  // Required
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
-    if (int save_step = driven->value("SaveStep", 0); save_step > 0)
+    if (int save_step = driven.value("SaveStep", 0); save_step > 0)
     {
       for (std::size_t n = 0; n < sample_f.size(); n += save_step)
       {
@@ -1922,7 +1086,7 @@ void DrivenSolverData::SetUp(json &solver)
       }
     }
   }
-  if (auto freq_samples = driven->find("Samples"); freq_samples != driven->end())
+  if (auto freq_samples = driven.find("Samples"); freq_samples != driven.end())
   {
     for (auto &r : *freq_samples)
     {
@@ -1979,30 +1143,6 @@ void DrivenSolverData::SetUp(json &solver)
         }
         prom_f.insert(prom_f.end(), f.begin(), f.end());
       }
-
-      // Debug
-      if constexpr (JSON_DEBUG)
-      {
-        std::cout << "Type: " << type << '\n';
-        std::cout << "Freq: " << f << '\n';
-        std::cout << "FreqStep: " << r.value("FreqStep", 0.0) << '\n';
-        std::cout << "NSample: " << r.value("NSample", 0.0) << '\n';
-        std::cout << "SaveStep: " << r.value("SaveStep", 0) << '\n';
-        std::cout << "AddToPROM: " << r.value("AddToPROM", false) << '\n';
-      }
-
-      // Cleanup
-      r.erase("Type");
-      r.erase("MinFreq");
-      r.erase("MaxFreq");
-      r.erase("FreqStep");
-      r.erase("NSample");
-      r.erase("Freq");
-      r.erase("SaveStep");
-      r.erase("AddToPROM");
-      MFEM_VERIFY(r.empty(),
-                  "Found an unsupported configuration file keyword in \"Samples\"!\n"
-                      << r.dump(2));
     }
   }
 
@@ -2017,7 +1157,7 @@ void DrivenSolverData::SetUp(json &solver)
 
   // Enforce explicit saves exactly match the sample frequencies.
   deduplicate(sample_f);
-  auto explicit_save_f = driven->value("Save", std::vector<double>());
+  auto explicit_save_f = driven.value("Save", std::vector<double>());
   for (auto &f : explicit_save_f)
   {
     auto it = FindNearestValue(sample_f, f, delta_eps);
@@ -2068,452 +1208,139 @@ void DrivenSolverData::SetUp(json &solver)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "MinFreq: " << driven->value("MinFreq", 0.0) << '\n';
-    std::cout << "MaxFreq: " << driven->value("MaxFreq", 0.0) << '\n';
-    std::cout << "FreqStep: " << driven->value("FreqStep", 0) << '\n';
-    std::cout << "Samples: " << sample_f << '\n';
-    std::cout << "SaveSamples: " << save_f << '\n';
-    std::cout << "PROMSamples: " << prom_f << '\n';
-    std::cout << "SaveIndices: " << save_indices << '\n';
-    std::cout << "PromIndices: " << prom_indices << '\n';
-    std::cout << "Restart: " << restart << '\n';
-    std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
-    std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
-    std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
-  }
-
-  // Cleanup
-  driven->erase("MinFreq");
-  driven->erase("MaxFreq");
-  driven->erase("FreqStep");
-  driven->erase("Samples");
-  driven->erase("Save");
-  driven->erase("SaveStep");
-  driven->erase("Restart");
-  driven->erase("AdaptiveTol");
-  driven->erase("AdaptiveMaxSamples");
-  driven->erase("AdaptiveConvergenceMemory");
-  MFEM_VERIFY(driven->empty(),
-              "Found an unsupported configuration file keyword under \"Driven\"!\n"
-                  << driven->dump(2));
 }
 
-void EigenSolverData::SetUp(json &solver)
+EigenSolverData::EigenSolverData(const json &eigenmode)
 {
-  auto eigenmode = solver.find("Eigenmode");
-  if (eigenmode == solver.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(eigenmode->find("Target") != eigenmode->end() ||
-                  solver.find("Driven") != solver.end(),
-              "Missing \"Eigenmode\" solver \"Target\" in the configuration file!");
-  target = eigenmode->value("Target", target);  // Required (only for eigenmode simulations)
-  tol = eigenmode->value("Tol", tol);
-  max_it = eigenmode->value("MaxIts", max_it);
-  max_size = eigenmode->value("MaxSize", max_size);
-  n = eigenmode->value("N", n);
-  n_post = eigenmode->value("Save", n_post);
-  type = eigenmode->value("Type", type);
-  pep_linear = eigenmode->value("PEPLinear", pep_linear);
-  scale = eigenmode->value("Scaling", scale);
-  init_v0 = eigenmode->value("StartVector", init_v0);
-  init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
-  mass_orthog = eigenmode->value("MassOrthogonal", mass_orthog);
-  nonlinear_type = eigenmode->value("NonlinearType", nonlinear_type);
-  refine_nonlinear = eigenmode->value("RefineNonlinear", refine_nonlinear);
-  linear_tol = eigenmode->value("LinearTol", linear_tol);
-  target_upper = eigenmode->value("TargetUpper", target_upper);
-  preconditioner_lag = eigenmode->value("PreconditionerLag", preconditioner_lag);
-  preconditioner_lag_tol = eigenmode->value("PreconditionerLagTol", preconditioner_lag_tol);
-  max_restart = eigenmode->value("MaxRestart", max_restart);
+  target = eigenmode.value("Target", target);
+  tol = eigenmode.value("Tol", tol);
+  max_it = eigenmode.value("MaxIts", max_it);
+  max_size = eigenmode.value("MaxSize", max_size);
+  n = eigenmode.value("N", n);
+  n_post = eigenmode.value("Save", n_post);
+  type = eigenmode.value("Type", type);
+  pep_linear = eigenmode.value("PEPLinear", pep_linear);
+  scale = eigenmode.value("Scaling", scale);
+  init_v0 = eigenmode.value("StartVector", init_v0);
+  init_v0_const = eigenmode.value("StartVectorConstant", init_v0_const);
+  mass_orthog = eigenmode.value("MassOrthogonal", mass_orthog);
+  nonlinear_type = eigenmode.value("NonlinearType", nonlinear_type);
+  refine_nonlinear = eigenmode.value("RefineNonlinear", refine_nonlinear);
+  linear_tol = eigenmode.value("LinearTol", linear_tol);
+  target_upper = eigenmode.value("TargetUpper", target_upper);
+  preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
+  preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
+  max_restart = eigenmode.value("MaxRestart", max_restart);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
-  MFEM_VERIFY(target > 0.0, "config[\"Eigenmode\"][\"Target\"] must be strictly positive!");
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
-  MFEM_VERIFY(preconditioner_lag >= 0,
-              "config[\"Eigenmode\"][\"PreconditionerLag\"] must be non-negative!");
-  MFEM_VERIFY(preconditioner_lag_tol >= 0,
-              "config[\"Eigenmode\"][\"PreconditionerLagTol\"] must be non-negative!");
-  MFEM_VERIFY(max_restart >= 0,
-              "config[\"Eigenmode\"][\"MaxRestart\"] must be non-negative!");
-
-  MFEM_VERIFY(n > 0, "\"N\" must be greater than 0!");
-
-  // Cleanup
-  eigenmode->erase("Target");
-  eigenmode->erase("Tol");
-  eigenmode->erase("MaxIts");
-  eigenmode->erase("MaxSize");
-  eigenmode->erase("N");
-  eigenmode->erase("Save");
-  eigenmode->erase("Type");
-  eigenmode->erase("PEPLinear");
-  eigenmode->erase("Scaling");
-  eigenmode->erase("StartVector");
-  eigenmode->erase("StartVectorConstant");
-  eigenmode->erase("MassOrthogonal");
-  eigenmode->erase("NonlinearType");
-  eigenmode->erase("RefineNonlinear");
-  eigenmode->erase("LinearTol");
-  eigenmode->erase("TargetUpper");
-  eigenmode->erase("PreconditionerLag");
-  eigenmode->erase("PreconditionerLagTol");
-  eigenmode->erase("MaxRestart");
-  MFEM_VERIFY(eigenmode->empty(),
-              "Found an unsupported configuration file keyword under \"Eigenmode\"!\n"
-                  << eigenmode->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Target: " << target << '\n';
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "N: " << n << '\n';
-    std::cout << "Save: " << n_post << '\n';
-    std::cout << "Type: " << type << '\n';
-    std::cout << "PEPLinear: " << pep_linear << '\n';
-    std::cout << "Scaling: " << scale << '\n';
-    std::cout << "StartVector: " << init_v0 << '\n';
-    std::cout << "StartVectorConstant: " << init_v0_const << '\n';
-    std::cout << "MassOrthogonal: " << mass_orthog << '\n';
-    std::cout << "NonlinearType: " << nonlinear_type << '\n';
-    std::cout << "RefineNonlinear: " << refine_nonlinear << '\n';
-    std::cout << "LinearTol: " << linear_tol << '\n';
-    std::cout << "TargetUpper: " << target_upper << '\n';
-    std::cout << "PreconditionerLag: " << preconditioner_lag << '\n';
-    std::cout << "PreconditionerLagTol: " << preconditioner_lag_tol << '\n';
-    std::cout << "MaxRestart: " << max_restart << '\n';
-  }
 }
 
-void ElectrostaticSolverData::SetUp(json &solver)
+ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
-  auto electrostatic = solver.find("Electrostatic");
-  if (electrostatic == solver.end())
-  {
-    return;
-  }
-  n_post = electrostatic->value("Save", n_post);
-
-  // Cleanup
-  electrostatic->erase("Save");
-  MFEM_VERIFY(electrostatic->empty(),
-              "Found an unsupported configuration file keyword under \"Electrostatic\"!\n"
-                  << electrostatic->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Save: " << n_post << '\n';
-  }
+  n_post = electrostatic.value("Save", n_post);
 }
 
-void MagnetostaticSolverData::SetUp(json &solver)
+MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
 {
-  auto magnetostatic = solver.find("Magnetostatic");
-  if (magnetostatic == solver.end())
-  {
-    return;
-  }
-  n_post = magnetostatic->value("Save", n_post);
-
-  // Cleanup
-  magnetostatic->erase("Save");
-  MFEM_VERIFY(magnetostatic->empty(),
-              "Found an unsupported configuration file keyword under \"Magnetostatic\"!\n"
-                  << magnetostatic->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Save: " << n_post << '\n';
-  }
+  n_post = magnetostatic.value("Save", n_post);
 }
 
-void TransientSolverData::SetUp(json &solver)
+TransientSolverData::TransientSolverData(const json &transient)
 {
-  auto transient = solver.find("Transient");
-  if (transient == solver.end())
-  {
-    return;
-  }
-  MFEM_VERIFY(
-      transient->find("Excitation") != transient->end(),
-      "Missing \"Transient\" solver \"Excitation\" type in the configuration file!");
-  MFEM_VERIFY(transient->find("MaxTime") != transient->end() &&
-                  transient->find("TimeStep") != transient->end(),
-              "Missing \"Transient\" solver \"MaxTime\" or \"TimeStep\" in the "
-              "configuration file!");
-  type = transient->value("Type", type);
-  excitation = transient->at("Excitation");  // Required
-  pulse_f = transient->value("ExcitationFreq", pulse_f);
-  pulse_tau = transient->value("ExcitationWidth", pulse_tau);
-  max_t = transient->at("MaxTime");     // Required
-  delta_t = transient->at("TimeStep");  // Required
-  delta_post = transient->value("SaveStep", delta_post);
-  order = transient->value("Order", order);
-  rel_tol = transient->value("RelTol", rel_tol);
-  abs_tol = transient->value("AbsTol", abs_tol);
-  MFEM_VERIFY(delta_t > 0, "\"TimeStep\" must be greater than 0.0!");
+  type = transient.value("Type", type);
+  excitation = transient.at("Excitation");  // Required
+  pulse_f = transient.value("ExcitationFreq", pulse_f);
+  pulse_tau = transient.value("ExcitationWidth", pulse_tau);
+  max_t = transient.at("MaxTime");     // Required
+  delta_t = transient.at("TimeStep");  // Required
+  delta_post = transient.value("SaveStep", delta_post);
+  order = transient.value("Order", order);
+  rel_tol = transient.value("RelTol", rel_tol);
+  abs_tol = transient.value("AbsTol", abs_tol);
 
   if (type == TimeSteppingScheme::GEN_ALPHA || type == TimeSteppingScheme::RUNGE_KUTTA)
   {
-    if (transient->contains("Order"))
+    if (transient.contains("Order"))
     {
       MFEM_WARNING("GeneralizedAlpha and RungeKutta transient solvers do not use "
                    "config[\"Transient\"][\"Order\"]!");
     }
-    if (transient->contains("RelTol") || transient->contains("AbsTol"))
+    if (transient.contains("RelTol") || transient.contains("AbsTol"))
     {
       MFEM_WARNING(
           "GeneralizedAlpha and RungeKutta transient solvers do not use\n"
           "config[\"Transient\"][\"RelTol\"] and config[\"Transient\"][\"AbsTol\"]!");
     }
   }
-  else
-  {
-    MFEM_VERIFY(rel_tol > 0,
-                "config[\"Transient\"][\"RelTol\"] must be strictly positive!");
-    MFEM_VERIFY(abs_tol > 0,
-                "config[\"Transient\"][\"AbsTol\"] must be strictly positive!");
-    MFEM_VERIFY(order >= 2 && order <= 5,
-                "config[\"Transient\"][\"Order\"] must be between 2 and 5!");
-  }
-
-  // Cleanup
-  transient->erase("Type");
-  transient->erase("Excitation");
-  transient->erase("ExcitationFreq");
-  transient->erase("ExcitationWidth");
-  transient->erase("MaxTime");
-  transient->erase("TimeStep");
-  transient->erase("SaveStep");
-  transient->erase("Order");
-  transient->erase("RelTol");
-  transient->erase("AbsTol");
-  MFEM_VERIFY(transient->empty(),
-              "Found an unsupported configuration file keyword under \"Transient\"!\n"
-                  << transient->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "Excitation: " << excitation << '\n';
-    std::cout << "ExcitationFreq: " << pulse_f << '\n';
-    std::cout << "ExcitationWidth: " << pulse_tau << '\n';
-    std::cout << "MaxTime: " << max_t << '\n';
-    std::cout << "TimeStep: " << delta_t << '\n';
-    std::cout << "SaveStep: " << delta_post << '\n';
-    std::cout << "Order: " << order << '\n';
-    std::cout << "RelTol: " << rel_tol << '\n';
-    std::cout << "AbsTol: " << abs_tol << '\n';
-  }
 }
 
-void LinearSolverData::SetUp(json &solver)
+LinearSolverData::LinearSolverData(const json &linear)
 {
-  auto linear = solver.find("Linear");
-  if (linear == solver.end())
-  {
-    return;
-  }
-  type = linear->value("Type", type);
-  krylov_solver = linear->value("KSPType", krylov_solver);
-  tol = linear->value("Tol", tol);
-  max_it = linear->value("MaxIts", max_it);
-  MFEM_VERIFY(max_it > 0,
-              "config[\"Solver\"][\"Linear\"][\"MaxIts\"] must be strictly positive!");
-  max_size = linear->value("MaxSize", max_size);
-  initial_guess = linear->value("InitialGuess", initial_guess);
+  type = linear.value("Type", type);
+  krylov_solver = linear.value("KSPType", krylov_solver);
+  tol = linear.value("Tol", tol);
+  max_it = linear.value("MaxIts", max_it);
+  max_size = linear.value("MaxSize", max_size);
+  initial_guess = linear.value("InitialGuess", initial_guess);
 
   // Options related to multigrid.
-  mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
-  mg_coarsening = linear->value("MGCoarsenType", mg_coarsening);
-  mg_use_mesh = linear->value("MGUseMesh", mg_use_mesh);
-  mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
-  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
-  mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
-  mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);
-  mg_smooth_sf_max = linear->value("MGSmoothEigScaleMax", mg_smooth_sf_max);
-  mg_smooth_sf_min = linear->value("MGSmoothEigScaleMin", mg_smooth_sf_min);
-  mg_smooth_cheby_4th = linear->value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
+  mg_max_levels = linear.value("MGMaxLevels", mg_max_levels);
+  mg_coarsening = linear.value("MGCoarsenType", mg_coarsening);
+  mg_use_mesh = linear.value("MGUseMesh", mg_use_mesh);
+  mg_cycle_it = linear.value("MGCycleIts", mg_cycle_it);
+  mg_smooth_aux = linear.value("MGAuxiliarySmoother", mg_smooth_aux);
+  mg_smooth_it = linear.value("MGSmoothIts", mg_smooth_it);
+  mg_smooth_order = linear.value("MGSmoothOrder", mg_smooth_order);
+  mg_smooth_sf_max = linear.value("MGSmoothEigScaleMax", mg_smooth_sf_max);
+  mg_smooth_sf_min = linear.value("MGSmoothEigScaleMin", mg_smooth_sf_min);
+  mg_smooth_cheby_4th = linear.value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
 
   // Preconditioner-specific options.
-  pc_mat_real = linear->value("PCMatReal", pc_mat_real);
-  pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
-  complex_coarse_solve = linear->value("ComplexCoarseSolve", complex_coarse_solve);
-  drop_small_entries = linear->value("DropSmallEntries", drop_small_entries);
-  reorder_reuse = linear->value("ReorderingReuse", reorder_reuse);
-  pc_side = linear->value("PCSide", pc_side);
-  sym_factorization = linear->value("ColumnOrdering", sym_factorization);
+  pc_mat_real = linear.value("PCMatReal", pc_mat_real);
+  pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
+  complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
+  drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
+  reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
+  pc_side = linear.value("PCSide", pc_side);
+  sym_factorization = linear.value("ColumnOrdering", sym_factorization);
   strumpack_compression_type =
-      linear->value("STRUMPACKCompressionType", strumpack_compression_type);
-  strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
+      linear.value("STRUMPACKCompressionType", strumpack_compression_type);
+  strumpack_lr_tol = linear.value("STRUMPACKCompressionTol", strumpack_lr_tol);
   strumpack_lossy_precision =
-      linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
-  strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
-  superlu_3d = linear->value("SuperLU3DCommunicator", superlu_3d);
-  ams_vector_interp = linear->value("AMSVectorInterpolation", ams_vector_interp);
-  ams_singular_op = linear->value("AMSSingularOperator", ams_singular_op);
-  amg_agg_coarsen = linear->value("AMGAggressiveCoarsening", amg_agg_coarsen);
+      linear.value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
+  strumpack_butterfly_l = linear.value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
+  superlu_3d = linear.value("SuperLU3DCommunicator", superlu_3d);
+  ams_vector_interp = linear.value("AMSVectorInterpolation", ams_vector_interp);
+  ams_singular_op = linear.value("AMSSingularOperator", ams_singular_op);
+  amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
+  ams_max_it = linear.value("AMSMaxIts", ams_max_it);
 
   // Other linear solver options.
-  divfree_tol = linear->value("DivFreeTol", divfree_tol);
-  divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
-  estimator_tol = linear->value("EstimatorTol", estimator_tol);
-  estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
-  estimator_mg = linear->value("EstimatorMG", estimator_mg);
-  gs_orthog = linear->value("GSOrthogonalization", gs_orthog);
-
-  // Cleanup
-  linear->erase("Type");
-  linear->erase("KSPType");
-  linear->erase("Tol");
-  linear->erase("MaxIts");
-  linear->erase("MaxSize");
-  linear->erase("InitialGuess");
-
-  linear->erase("MGMaxLevels");
-  linear->erase("MGCoarsenType");
-  linear->erase("MGUseMesh");
-  linear->erase("MGCycleIts");
-  linear->erase("MGAuxiliarySmoother");
-  linear->erase("MGSmoothIts");
-  linear->erase("MGSmoothOrder");
-  linear->erase("MGSmoothEigScaleMax");
-  linear->erase("MGSmoothEigScaleMin");
-  linear->erase("MGSmoothChebyshev4th");
-
-  linear->erase("PCMatReal");
-  linear->erase("PCMatShifted");
-  linear->erase("ComplexCoarseSolve");
-  linear->erase("DropSmallEntries");
-  linear->erase("ReorderingReuse");
-  linear->erase("PCSide");
-  linear->erase("ColumnOrdering");
-  linear->erase("STRUMPACKCompressionType");
-  linear->erase("STRUMPACKCompressionTol");
-  linear->erase("STRUMPACKLossyPrecision");
-  linear->erase("STRUMPACKButterflyLevels");
-  linear->erase("SuperLU3DCommunicator");
-  linear->erase("AMSVectorInterpolation");
-  linear->erase("AMSSingularOperator");
-  linear->erase("AMGAggressiveCoarsening");
-
-  linear->erase("DivFreeTol");
-  linear->erase("DivFreeMaxIts");
-  linear->erase("EstimatorTol");
-  linear->erase("EstimatorMaxIts");
-  linear->erase("EstimatorMG");
-  linear->erase("GSOrthogonalization");
-  MFEM_VERIFY(linear->empty(),
-              "Found an unsupported configuration file keyword under \"Linear\"!\n"
-                  << linear->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Type: " << type << '\n';
-    std::cout << "KSPType: " << krylov_solver << '\n';
-    std::cout << "Tol: " << tol << '\n';
-    std::cout << "MaxIts: " << max_it << '\n';
-    std::cout << "MaxSize: " << max_size << '\n';
-    std::cout << "InitialGuess: " << initial_guess << '\n';
-
-    std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
-    std::cout << "MGCoarsenType: " << mg_coarsening << '\n';
-    std::cout << "MGUseMesh: " << mg_use_mesh << '\n';
-    std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
-    std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
-    std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
-    std::cout << "MGSmoothOrder: " << mg_smooth_order << '\n';
-    std::cout << "MGSmoothEigScaleMax: " << mg_smooth_sf_max << '\n';
-    std::cout << "MGSmoothEigScaleMin: " << mg_smooth_sf_min << '\n';
-    std::cout << "MGSmoothChebyshev4th: " << mg_smooth_cheby_4th << '\n';
-
-    std::cout << "PCMatReal: " << pc_mat_real << '\n';
-    std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
-    std::cout << "ComplexCoarseSolve: " << complex_coarse_solve << '\n';
-    std::cout << "DropSmallEntries: " << drop_small_entries << '\n';
-    std::cout << "ReorderingReuse: " << reorder_reuse << '\n';
-    std::cout << "PCSide: " << pc_side << '\n';
-    std::cout << "ColumnOrdering: " << sym_factorization << '\n';
-    std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
-    std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
-    std::cout << "STRUMPACKLossyPrecision: " << strumpack_lossy_precision << '\n';
-    std::cout << "STRUMPACKButterflyLevels: " << strumpack_butterfly_l << '\n';
-    std::cout << "SuperLU3DCommunicator: " << superlu_3d << '\n';
-    std::cout << "AMSVectorInterpolation: " << ams_vector_interp << '\n';
-    std::cout << "AMSSingularOperator: " << ams_singular_op << '\n';
-    std::cout << "AMGAggressiveCoarsening: " << amg_agg_coarsen << '\n';
-
-    std::cout << "DivFreeTol: " << divfree_tol << '\n';
-    std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
-    std::cout << "EstimatorTol: " << estimator_tol << '\n';
-    std::cout << "EstimatorMaxIts: " << estimator_max_it << '\n';
-    std::cout << "EstimatorMG: " << estimator_mg << '\n';
-    std::cout << "GSOrthogonalization: " << gs_orthog << '\n';
-  }
+  divfree_tol = linear.value("DivFreeTol", divfree_tol);
+  divfree_max_it = linear.value("DivFreeMaxIts", divfree_max_it);
+  estimator_tol = linear.value("EstimatorTol", estimator_tol);
+  estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
+  estimator_mg = linear.value("EstimatorMG", estimator_mg);
+  gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 
-void SolverData::SetUp(json &config)
+SolverData::SolverData(const json &solver)
 {
-  auto solver = config.find("Solver");
-  if (solver == config.end())
-  {
-    return;
-  }
-  order = solver->value("Order", order);
-  pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
-  q_order_jac = solver->value("QuadratureOrderJacobian", q_order_jac);
-  q_order_extra = solver->value("QuadratureOrderExtra", q_order_extra);
-  device = solver->value("Device", device);
-  ceed_backend = solver->value("Backend", ceed_backend);
+  order = solver.value("Order", order);
+  pa_order_threshold = solver.value("PartialAssemblyOrder", pa_order_threshold);
+  q_order_jac = solver.value("QuadratureOrderJacobian", q_order_jac);
+  q_order_extra = solver.value("QuadratureOrderExtra", q_order_extra);
+  device = solver.value("Device", device);
+  ceed_backend = solver.value("Backend", ceed_backend);
 
-  driven.SetUp(*solver);
-  eigenmode.SetUp(*solver);
-  electrostatic.SetUp(*solver);
-  magnetostatic.SetUp(*solver);
-  transient.SetUp(*solver);
-  linear.SetUp(*solver);
-
-  // Cleanup
-  solver->erase("Order");
-  solver->erase("PartialAssemblyOrder");
-  solver->erase("QuadratureOrderJacobian");
-  solver->erase("QuadratureOrderExtra");
-  solver->erase("Device");
-  solver->erase("Backend");
-
-  solver->erase("Driven");
-  solver->erase("Eigenmode");
-  solver->erase("Electrostatic");
-  solver->erase("Magnetostatic");
-  solver->erase("Transient");
-  solver->erase("Linear");
-  MFEM_VERIFY(solver->empty(),
-              "Found an unsupported configuration file keyword under \"Solver\"!\n"
-                  << solver->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Order: " << order << '\n';
-    std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
-    std::cout << "QuadratureOrderJacobian: " << q_order_jac << '\n';
-    std::cout << "QuadratureOrderExtra: " << q_order_extra << '\n';
-    std::cout << "Device: " << device << '\n';
-    std::cout << "Backend: " << ceed_backend << '\n';
-  }
+  driven = ParseOptional<DrivenSolverData>(solver, "Driven");
+  eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
+  electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
+  transient = ParseOptional<TransientSolverData>(solver, "Transient");
+  linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
 int GetNumSteps(double start, double end, double delta)
@@ -2533,39 +1360,27 @@ int GetNumSteps(double start, double end, double delta)
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,
                                                                           bool required)
 {
-  for (auto &c : str)
+  if (str.empty())
   {
-    c = std::tolower(c);
+    MFEM_VERIFY(!required, "Missing required \"Direction\" in the configuration file!");
+    return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
-  const bool xfound = str.find("x") != std::string::npos;
-  const bool yfound = str.find("y") != std::string::npos;
-  const bool zfound = str.find("z") != std::string::npos;
-  const bool rfound = str.find("r") != std::string::npos;
   const bool is_positive = str.length() == 1 || str[0] == '+';
-  const int num_found = xfound + yfound + zfound + rfound;
-  const bool is_valid =
-      (num_found == 1) &&
-      (str.length() == 1 || (str.length() == 2 && (str[0] == '+' || str[0] == '-')));
-  // If not required, must be empty, otherwise must be valid
-  MFEM_VERIFY((!required && str.empty()) || is_valid,
-              "Invalid string \"Direction\" in the configuration file!");
-  if (xfound)
+  const char axis = std::tolower(str.back());
+  switch (axis)
   {
-    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'x':
+      return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'y':
+      return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
+    case 'z':
+      return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
+    case 'r':
+      return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0},
+              CoordinateSystem::CYLINDRICAL};
+    default:
+      return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
-  if (yfound)
-  {
-    return {std::array{0.0, is_positive ? 1.0 : -1.0, 0.0}, CoordinateSystem::CARTESIAN};
-  }
-  if (zfound)
-  {
-    return {std::array{0.0, 0.0, is_positive ? 1.0 : -1.0}, CoordinateSystem::CARTESIAN};
-  }
-  if (rfound)
-  {
-    return {std::array{is_positive ? 1.0 : -1.0, 0.0, 0.0}, CoordinateSystem::CYLINDRICAL};
-  }
-  return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
 }
 
 }  // namespace palace::config

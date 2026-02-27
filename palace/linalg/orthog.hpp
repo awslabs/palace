@@ -4,7 +4,11 @@
 #ifndef PALACE_LINALG_ORTHOG_HPP
 #define PALACE_LINALG_ORTHOG_HPP
 
+#include <complex>
+#include <cstddef>
+#include <memory>
 #include <vector>
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
@@ -15,36 +19,56 @@ namespace palace::linalg
 // Orthogonalization functions for orthogonalizing a vector against a number of basis
 // vectors using modified or classical Gram-Schmidt.
 //
+// Assumes that the input vectors are normalized, but does not normalize the output vectors!
+// If done in a loop, normalization has to be managed by hand! (TODO: Reconsider).
+//
 
-template <typename VecType, typename ScalarType>
-inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *H, int m)
+// Concept: InnerProductHelper has function InnerProduct(VecType, VecType) -> ScalarType,
+// acting on local degrees of freedom. Also add MPI reduction.
+
+// Simplest case is canonical inner product on R & C.
+struct IdentityInnerProduct
 {
-  MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
-              "Out of bounds number of columns for MGS orthogonalization!");
-  for (int j = 0; j < m; j++)
+  template <typename VecType>
+  auto operator()(const VecType &x, const VecType &y) const
   {
-    H[j] = linalg::Dot(comm, w, V[j]);  // Global inner product
+    return LocalDot(x, y);
+  }
+};
+
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = IdentityInnerProduct>
+inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
+                                   ScalarType *H, std::size_t m,
+                                   const InnerProductW &dot_op = {})
+{
+  MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for MGS orthogonalization!");
+  for (std::size_t j = 0; j < m; j++)
+  {
+    // Global inner product: Note order is important for complex vectors.
+    H[j] = dot_op(w, V[j]);
+    Mpi::GlobalSum(1, &H[j], comm);
     w.Add(-H[j], V[j]);
   }
 }
 
-template <typename VecType, typename ScalarType>
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = IdentityInnerProduct>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *H, int m, bool refine = false)
+                                   ScalarType *H, std::size_t m, bool refine = false,
+                                   const InnerProductW &dot_op = {})
 {
-  MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
-              "Out of bounds number of columns for CGS orthogonalization!");
+  MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for CGS orthogonalization!");
   if (m == 0)
   {
     return;
   }
-  for (int j = 0; j < m; j++)
+  for (std::size_t j = 0; j < m; j++)
   {
-    H[j] = w * V[j];  // Local inner product
+    H[j] = dot_op(w, V[j]);  // Local inner product
   }
   Mpi::GlobalSum(m, H, comm);
-  for (int j = 0; j < m; j++)
+  for (std::size_t j = 0; j < m; j++)
   {
     w.Add(-H[j], V[j]);
   }
@@ -53,10 +77,10 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
     std::vector<ScalarType> dH(m);
     for (int j = 0; j < m; j++)
     {
-      dH[j] = w * V[j];  // Local inner product
+      dH[j] = dot_op(w, V[j]);  // Local inner product
     }
     Mpi::GlobalSum(m, dH.data(), comm);
-    for (int j = 0; j < m; j++)
+    for (std::size_t j = 0; j < m; j++)
     {
       H[j] += dH[j];
       w.Add(-dH[j], V[j]);

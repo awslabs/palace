@@ -1,34 +1,39 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
+#include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <string>
-#include <fmt/format.h>
+#include <vector>
+#include <fmt/core.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
   {
     // Basic passing config with bool excitation.
-    config::BoundaryData boundary_ex_bool;
-    REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
+    auto entry = config.find("boundaries_1_pass")->find("Boundaries");
+    config::BoundaryData boundary_ex_bool(*entry);
 
     // Check simple parsing & defaults:
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
@@ -39,9 +44,8 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);
 
     // Equivalent config with int excitation.
-    config::BoundaryData boundary_ex_int;
-    REQUIRE_NOTHROW(
-        boundary_ex_int.SetUp(*config.find("boundaries_1_pass_excitation_int")));
+    auto entry_int = config.find("boundaries_1_pass_excitation_int")->find("Boundaries");
+    config::BoundaryData boundary_ex_int(*entry_int);
 
     // FUTURE: Default equality is C++20.
     // CHECK(boundary_ex_bool == boundary_ex_int);
@@ -57,70 +61,62 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
   // Excitation Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_1")));
+    auto entry = config.find("boundaries_negative_excitation_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_excitation_2")));
+    auto entry = config.find("boundaries_negative_excitation_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Index Specification.
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_lumped")));
+    auto entry = config.find("boundaries_repeated_index_lumped")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_wave")));
+    auto entry = config.find("boundaries_repeated_index_wave")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_repeated_index_mixed")));
+    auto entry = config.find("boundaries_repeated_index_mixed")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_1")));
+    auto entry = config.find("boundaries_mislabeled_index_1")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_negative_index_2")));
-  }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_1")));
-  }
-  {
-    config::BoundaryData boundary_data;
-    CHECK_THROWS(boundary_data.SetUp(*config.find("boundaries_mislabeled_index_2")));
+    auto entry = config.find("boundaries_mislabeled_index_2")->find("Boundaries");
+    CHECK_THROWS(config::BoundaryData(*entry));
   }
   // Mark single excitation index.
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_1")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_1")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_2")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_2")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 2);
     CHECK(boundary_data.waveport.at(4).excitation == 0);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_3")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_3")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 0);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 4);
     CHECK(boundary_data.waveport.at(5).excitation == 0);
   }
   {
-    config::BoundaryData boundary_data;
-    CHECK_NOTHROW(boundary_data.SetUp(*config.find("boundaries_upgrade_excitation_idx_4")));
+    auto entry = config.find("boundaries_upgrade_excitation_idx_4")->find("Boundaries");
+    config::BoundaryData boundary_data(*entry);
     CHECK(boundary_data.lumpedport.at(1).excitation == 1);
     CHECK(boundary_data.lumpedport.at(2).excitation == 0);
     CHECK(boundary_data.waveport.at(4).excitation == 1);
@@ -130,7 +126,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/solver_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
@@ -139,13 +135,13 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
-    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
+    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8, 10};
     {
       // Top level configuration
-      config::DrivenSolverData driven_solver;
-      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_base_uniform_sample")));
+      auto driven = config.find("driven_base_uniform_sample")->find("Driven");
+      config::DrivenSolverData driven_solver(*driven);
 
-      for (size_t i = 0; i < sample_f.size(); ++i)
+      for (std::size_t i = 0; i < sample_f.size(); ++i)
       {
         CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
@@ -154,10 +150,10 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     }
     {
       // Equivalent to top level from within Samples, deduplicates
-      config::DrivenSolverData driven_solver;
-      REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_freq_step")));
+      auto driven = config.find("driven_uniform_freq_step")->find("Driven");
+      config::DrivenSolverData driven_solver(*driven);
 
-      for (size_t i = 0; i < sample_f.size(); ++i)
+      for (std::size_t i = 0; i < sample_f.size(); ++i)
       {
         CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
@@ -167,13 +163,13 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Specification through number of points rather than step size
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_nsample")));
+    auto driven = config.find("driven_uniform_nsample")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
+    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -182,14 +178,14 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_paired_uniform_sample")));
+    auto driven = config.find("driven_paired_uniform_sample")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
-    auto save_indices =
-        std::vector<size_t>{0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
+    auto save_indices = std::vector<std::size_t>{
+        0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -198,15 +194,15 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_uniform_with_point")));
+    auto driven = config.find("driven_uniform_with_point")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<size_t>{0, 2, 3, 4, 6, 7, 9, 11};
-    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 2, 4, 7};
+    auto save_indices = std::vector<std::size_t>{0, 2, 3, 4, 6, 7, 9, 11};
+    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 2, 4, 7};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -215,15 +211,15 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
   {
     // Combining two different linear sample resolutions
-    config::DrivenSolverData driven_solver;
-    REQUIRE_NOTHROW(driven_solver.SetUp(*config.find("driven_log_with_point")));
+    auto driven = config.find("driven_log_with_point")->find("Driven");
+    config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
                                 0.35, 0.55, 0.5623413251903491, 1.0};
-    auto save_indices = std::vector<size_t>{0, 1, 3, 4, 5, 7};
-    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 1, 4, 5};
+    auto save_indices = std::vector<std::size_t>{0, 1, 3, 4, 5, 7};
+    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 1, 4, 5};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -238,28 +234,26 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
                                               "driven_uniform_with_point_invalid_save"};
   for (auto c : invalid_configs)
   {
-    config::DrivenSolverData driven_solver;
-    CHECK_THROWS(config::DrivenSolverData().SetUp(*config.find(c)));
+    auto driven = config.find(c)->find("Driven");
+    CHECK_THROWS(config::DrivenSolverData(*driven));
   }
 }
 
 TEST_CASE("Config Linear Solver MaxIts", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
-  auto jsonstream = PreprocessFile(filename.c_str());
-  auto config = json::parse(jsonstream);
-
-  SECTION("Linear solver MaxIts = 0 should throw")
+  SECTION("Linear solver MaxIts = 0 should fail schema validation")
   {
-    config::LinearSolverData linear_solver;
-    CHECK_THROWS_WITH(linear_solver.SetUp(*config.find("linear_maxits_zero")),
-                      Catch::Matchers::ContainsSubstring("MaxIts"));
+    json linear = {{"MaxIts", 0}};
+    std::string err = ValidateConfig(linear, "Linear");
+    CHECK(!err.empty());
+    CHECK(err.find("MaxIts") != std::string::npos);
   }
 
-  SECTION("Linear solver with valid MaxIts should succeed")
+  SECTION("Linear solver with valid MaxIts should pass schema validation")
   {
-    config::LinearSolverData linear_solver;
-    REQUIRE_NOTHROW(linear_solver.SetUp(*config.find("linear_maxits_one")));
+    json linear = {{"MaxIts", 1}};
+    std::string err = ValidateConfig(linear, "Linear");
+    CHECK(err.empty());
   }
 }
 
@@ -267,12 +261,9 @@ TEST_CASE("FarField", "[config][Serial]")
 {
   constexpr double delta_eps = 1.0e-6;  // Precision in angle comparisons (rad)
 
-  SECTION("Missing FarField section")
+  SECTION("Default constructor")
   {
-    json postpro = json::object();
     config::FarFieldPostData data;
-
-    data.SetUp(postpro);
 
     CHECK(data.attributes.empty());
     CHECK(data.thetaphis.empty());
@@ -281,10 +272,8 @@ TEST_CASE("FarField", "[config][Serial]")
   SECTION("Basic setup with attributes only")
   {
     // This should produce a warning because there is no target point.
-    json postpro = {{"FarField", {{"Attributes", {1, 3, 5}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1, 3, 5}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.attributes == std::vector<int>{1, 3, 5});
     CHECK(data.thetaphis.empty());
@@ -292,11 +281,8 @@ TEST_CASE("FarField", "[config][Serial]")
 
   SECTION("ThetaPhis conversion to radians")
   {
-    json postpro = {
-        {"FarField", {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 2);
     CHECK(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
@@ -307,13 +293,9 @@ TEST_CASE("FarField", "[config][Serial]")
 
   SECTION("Duplicate removal")
   {
-    json postpro = {
-        {"FarField",
-         {{"Attributes", {1}},
-          {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}},
+                     {"ThetaPhis", {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 2);
   }
@@ -322,46 +304,35 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     // Test pole singularity: (0°, any φ) should be treated as same point.
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}}, {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}},
+                       {"ThetaPhis", {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // All should collapse to one pole.
     }
 
     // Test phi periodicity: φ and φ+360° are same point.
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}},
-            {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}}}};  // 390° = 30° + 360°
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}},
+                       {"ThetaPhis", {{45.0, 30.0}, {45.0, 390.0}}}};  // 390° = 30° + 360°
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
     }
 
     // Test theta reflection: (θ, φ) ≡ (180°-θ, φ+180°).
     {
-      json postpro = {
-          {"FarField",
-           {{"Attributes", {1}},
-            {"ThetaPhis",
-             {{60.0, 45.0}, {120.0, 225.0}}}}}};  // 120° = 180°-60°, 225° = 45°+180°
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {
+          {"Attributes", {1}},
+          {"ThetaPhis",
+           {{60.0, 45.0}, {120.0, 225.0}}}};  // 120° = 180°-60°, 225° = 45°+180°
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 1);  // Should be deduplicated.
     }
   }
 
   SECTION("Combined NSample and ThetaPhis")
   {
-    json postpro = {
-        {"FarField",
-         {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}}}};
-    config::FarFieldPostData data;
-
-    data.SetUp(postpro);
+    json farfield = {{"Attributes", {1}}, {"NSample", 10}, {"ThetaPhis", {{33.0, 22.0}}}};
+    config::FarFieldPostData data(farfield);
 
     CHECK(data.thetaphis.size() == 11);  // 10 from NSample + 1 from ThetaPhis.
   }
@@ -370,9 +341,8 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     for (int nsample : {2, 6, 10, 15, 20, 25, 64800})
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", nsample}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", nsample}};
+      config::FarFieldPostData data(farfield);
 
       // Exact point count.
       CHECK(data.thetaphis.size() == nsample);
@@ -425,17 +395,15 @@ TEST_CASE("FarField", "[config][Serial]")
   {
     // NSample = 0 produces no points.
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 0}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", 0}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.empty());
     }
 
     // NSample = 1 produces two points (the poles).
     {
-      json postpro = {{"FarField", {{"Attributes", {1}}, {"NSample", 1}}}};
-      config::FarFieldPostData data;
-      data.SetUp(postpro);
+      json farfield = {{"Attributes", {1}}, {"NSample", 1}};
+      config::FarFieldPostData data(farfield);
       CHECK(data.thetaphis.size() == 2);
     }
   }
@@ -467,20 +435,5 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
     CHECK(cs == CoordinateSystem::CYLINDRICAL);
   }
 
-  SECTION("Invalid")
-  {
-    auto req = GENERATE(true, false);
-    CHECK_THROWS(config::ParseStringAsDirection("a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("+a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("-a", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xx", req));
-    CHECK_THROWS(config::ParseStringAsDirection("~x", req));
-    CHECK_THROWS(config::ParseStringAsDirection("x+", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xy", req));
-    CHECK_THROWS(config::ParseStringAsDirection("xyz", req));
-    CHECK_THROWS(config::ParseStringAsDirection("abc", req));
-  }
-
-  CHECK_THROWS(config::ParseStringAsDirection("", true));
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }

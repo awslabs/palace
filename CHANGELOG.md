@@ -16,6 +16,8 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added reporting for memory used by Palace. Peak values are also stored in
+    `postpro/palace.json`. [PR 629](https://github.com/awslabs/palace/pull/629)
   - Added JSON schema validation for configuration files at runtime, with embedded schemas
     and detailed error messages including valid enum options
     [PR 613](https://github.com/awslabs/palace/pull/613).
@@ -24,6 +26,15 @@ The format of this changelog is based on
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
     [documentation](https://awslabs.github.io/palace/dev/examples/antenna/#alternative-short-dipole-using-the-electric-current-dipole-operator)
     for additional information. [PR 556](https://github.com/awslabs/palace/pull/556).
+  - Added an option to specify the number of AMS iterations in `config["Solver"]["Linear"]["AMSMaxIts"]`,
+    with the default value changed from 1 to the solution order, and changed some of the AMS options.
+    [PR 625](https://github.com/awslabs/palace/pull/625).
+  - Added support for circuit synthesis from the ROM in adaptive driven simulations
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`). Modifies ROM to add `LumpedPort`
+    fields to make circuit. Prints out the projected matrices of the driven problem as well as the
+    basis orthogonalization matrix. Extended tests on aspects related to ROM and LumpedPortOp. [PR 326](https://github.com/awslabs/palace/pull/326).
+  - Upgraded internal orthogonalization routines to optionally allow taking non-identity weights in
+    inner product. Part of [PR 326](https://github.com/awslabs/palace/pull/326).
 
 #### Bug Fixes
 
@@ -33,6 +44,19 @@ The format of this changelog is based on
     when computing the average of field values on interior boundaries, causing incorrect
     results for interior trace postprocessing.
     [PR 621](https://github.com/awslabs/palace/pull/621).
+  - Fixed a bug in complex diagonal operator multiplication where the imaginary part used an
+    incorrect term in `AddMult` and `AddMultHermitianTranspose`.
+    [PR 633](https://github.com/awslabs/palace/pull/633).
+
+#### Interface Changes
+
+  - `config["Boundaries"]["Terminal"]` must now be used for electrostatic and magnetostatic
+    simulations to compute capacitance and inductance matrices. Previously, terminals could
+    also be specified under `"LumpedPort"`.
+    [PR 624](https://github.com/awslabs/palace/pull/624).
+  - `config["Solver"]["Eigenmode"]["Target"]` is now always required for eigenmode
+    simulations. Previously, it could be omitted if a `"Driven"` section was also present.
+    [PR 624](https://github.com/awslabs/palace/pull/624).
 
 ## [0.15.0] - 2025-12-2
 

@@ -45,7 +45,7 @@ public:
   int excitation;
   bool active;
 
-private:
+protected:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
@@ -60,7 +60,34 @@ public:
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
 
-  [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
+  // Normalization of tangential electric field of port corresponding ∫|E|²ds = |Z₀| *
+  // ∑(Wₑ/Lₑ). In this function we set the impedance magnitude|Z₀| = 1 in internal units (=
+  // Z_freespace Ohm). The actual lumped impedance is frequency dependant for ports with L,C
+  // so it is more convenient to add this factor later as needed.
+  double GetExcitationFieldEtNormSqWithUnityZR() const
+  {
+    double norm_et = 0.0;
+    for (const auto &el : elems)
+    {
+      norm_et += el->GetGeometryWidth() / el->GetGeometryLength();
+    }
+    return norm_et;
+  }
+
+  // Normalization of tangential electric field of port corresponding ∫|H|²ds = 1 / (|Z₀|
+  // nₑₗₑₘₛ²) * ∑(Lₑ/Wₑ). Same details as in GetExcitationFieldEtNormSqWithUnityZR above.
+  double GetExcitationFieldHtNormSqWithUnityZR() const
+  {
+    double norm_ht = 0.0;
+    for (const auto &el : elems)
+    {
+      norm_ht += el->GetGeometryLength() / el->GetGeometryWidth();
+    }
+    norm_ht /= elems.size() * elems.size();
+    return norm_ht;
+  }
+
+  constexpr bool HasExcitation() const { return excitation != 0; }
 
   enum class Branch
   {

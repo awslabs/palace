@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include "embedded_schema.hpp"
+#include "fixtures.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -17,32 +18,42 @@ namespace fs = std::filesystem;
 
 TEST_CASE("Schema Validation - Embedded Schema Matches Source", "[schema][Serial]")
 {
-  // Verify embedded schemas match source files (catches stale builds).
-  std::string schema_dir = fmt::format("{}/../../scripts/schema", PALACE_TEST_DIR);
+  // Verify embedded schemas match source files (catches stale builds). This
+  // test only makes sense when PALACE_TEST_DATA_DIR is in the folder where
+  // Palace is being developed. E.g., if Palace is being built with Cmake in a
+  // palace_repo/build type of folder.
+  std::string schema_dir = fmt::format("{}/../../scripts/schema", PALACE_TEST_DATA_DIR);
 
-  for (const auto &[path, embedded_content] : schema::GetSchemaMap())
+  if (std::filesystem::exists(schema_dir) && std::filesystem::is_directory(schema_dir))
   {
-    SECTION(path)
+    for (const auto &[path, embedded_content] : schema::GetSchemaMap())
     {
-      std::string full_path = schema_dir + "/" + path;
-      std::ifstream f(full_path);
-      if (!f.is_open())
+      SECTION(path)
       {
-        SKIP("Schema source not found (installed build?): " << full_path);
+        std::string full_path = schema_dir + "/" + path;
+        std::ifstream f(full_path);
+        if (!f.is_open())
+        {
+          SKIP("Schema source not found (installed build?): " << full_path);
+        }
+        // Parse both to compare (ignores whitespace differences).
+        json embedded = json::parse(embedded_content);
+        json source = json::parse(f);
+        INFO("Schema file: " << full_path);
+        CHECK(embedded == source);
       }
-      // Parse both to compare (ignores whitespace differences).
-      json embedded = json::parse(embedded_content);
-      json source = json::parse(f);
-      INFO("Schema file: " << full_path);
-      CHECK(embedded == source);
     }
+  }
+  else
+  {
+    SKIP("Schema source not found (installed build?): " << schema_dir);
   }
 }
 
 TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
 {
   // Schema directory is relative to test source directory.
-  std::string examples_dir = fmt::format("{}/../../examples", PALACE_TEST_DIR);
+  std::string examples_dir = fmt::format("{}/examples", PALACE_TEST_DATA_DIR);
 
   // Collect JSON config files directly in example subdirectories (not in postpro/output).
   std::vector<std::string> config_files;
@@ -80,10 +91,11 @@ TEST_CASE("Schema Validation - Example Configs", "[schema][Serial]")
   }
 }
 
-TEST_CASE("Schema Validation - Config with Comments", "[schema][Serial]")
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Config with Comments",
+                 "[schema][Serial]")
 {
   // Test that preprocessing (comment stripping) works with schema validation.
-  auto temp_path = fs::temp_directory_path() / "palace_test_comments.json";
+  auto temp_path = temp_dir / "palace_test_comments.json";
   {
     std::ofstream f(temp_path);
     f << R"({
@@ -100,7 +112,6 @@ TEST_CASE("Schema Validation - Config with Comments", "[schema][Serial]")
   std::stringstream buffer = PreprocessFile(temp_path.c_str());
   json config;
   REQUIRE_NOTHROW(config = json::parse(buffer));
-  fs::remove(temp_path);
 
   std::string err = ValidateConfig(config);
   CHECK(err.empty());
@@ -113,8 +124,8 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
   {
     json config = {{"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}}};
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
     // Missing "Problem" which is required.
 
     std::string err = ValidateConfig(config);
@@ -126,8 +137,8 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     json config = {{"Problem", {{"Type", "InvalidType"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}}};
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
 
     std::string err = ValidateConfig(config);
     CHECK(!err.empty());
@@ -138,12 +149,54 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
     json config = {{"Problem", {{"Type", "Eigenmode"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver", {}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()},
                    {"UnknownSection", {}}};
 
     std::string err = ValidateConfig(config);
     CHECK(!err.empty());
+  }
+
+  SECTION("Problem.Type requires matching Solver section")
+  {
+    // Driven type requires Solver.Driven section
+    json driven_missing = {{"Problem", {{"Type", "Driven"}}},
+                           {"Model", {{"Mesh", "test.msh"}}},
+                           {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                           {"Boundaries", json::object()},
+                           {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(driven_missing).empty());
+
+    // Eigenmode type requires Solver.Eigenmode section
+    json eigen_missing = {{"Problem", {{"Type", "Eigenmode"}}},
+                          {"Model", {{"Mesh", "test.msh"}}},
+                          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                          {"Boundaries", json::object()},
+                          {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(eigen_missing).empty());
+
+    // Transient type requires Solver.Transient section
+    json transient_missing = {{"Problem", {{"Type", "Transient"}}},
+                              {"Model", {{"Mesh", "test.msh"}}},
+                              {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                              {"Boundaries", json::object()},
+                              {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(transient_missing).empty());
+
+    // Electrostatic and Magnetostatic don't require matching sections (have defaults)
+    json electro_ok = {{"Problem", {{"Type", "Electrostatic"}}},
+                       {"Model", {{"Mesh", "test.msh"}}},
+                       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                       {"Boundaries", json::object()},
+                       {"Solver", json::object()}};
+    CHECK(ValidateConfig(electro_ok).empty());
+
+    json magneto_ok = {{"Problem", {{"Type", "Magnetostatic"}}},
+                       {"Model", {{"Mesh", "test.msh"}}},
+                       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                       {"Boundaries", json::object()},
+                       {"Solver", json::object()}};
+    CHECK(ValidateConfig(magneto_ok).empty());
   }
 }
 
@@ -293,10 +346,11 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
   }
 }
 
-TEST_CASE("Schema Validation - Range Expansion", "[schema][Serial]")
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expansion",
+                 "[schema][Serial]")
 {
   // Test that integer range syntax (e.g., 1-5) is expanded before validation.
-  auto temp_path = fs::temp_directory_path() / "palace_test_range.json";
+  auto temp_path = temp_dir / "palace_test_range.json";
   {
     std::ofstream f(temp_path);
     f << R"({
@@ -310,7 +364,6 @@ TEST_CASE("Schema Validation - Range Expansion", "[schema][Serial]")
 
   std::stringstream buffer = PreprocessFile(temp_path.c_str());
   json config = json::parse(buffer);
-  fs::remove(temp_path);
 
   // Verify range expansion worked.
   auto attrs = config["Domains"]["Materials"][0]["Attributes"];

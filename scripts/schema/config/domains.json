@@ -98,7 +98,7 @@
         "required": ["Index", "Moment", "Center", "Direction"],
         "properties":
         {
-          "Index": { "type": "integer" },
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
           "Moment": { "type": "number" },
           "Center":
           {
@@ -147,7 +147,7 @@
             "required": ["Index", "Attributes"],
             "properties":
             {
-              "Index": { "type": "integer" },
+              "Index": { "type": "integer", "exclusiveMinimum": 0 },
               "Attributes": { "$ref": "#/$defs/Attributes" }
             }
           }
@@ -163,7 +163,7 @@
             "required": ["Index", "Center"],
             "properties":
             {
-              "Index": { "type": "integer" },
+              "Index": { "type": "integer", "exclusiveMinimum": 0 },
               "Center":
               {
                 "type": "array",

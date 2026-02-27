@@ -175,7 +175,10 @@ number of eigenmodes of the problem. The available options are:
     "Restart": <int>,
     "AdaptiveTol": <float>,
     "AdaptiveMaxSamples": <int>,
-    "AdaptiveConvergenceMemory": <int>
+    "AdaptiveConvergenceMemory": <int>,
+    "AdaptiveGSOrthogonalization": <string>,
+    "AdaptiveCircuitSynthesis": <bool>,
+    "AdaptiveCircuitSynthesisDomainOrthogonalization": <string>
 }
 ```
 
@@ -226,6 +229,32 @@ per excitation.
 sampling algorithm for constructing the reduced-order model for adaptive fast frequency
 sweep. For example, a memory of "2" requires two consecutive samples which satisfy the
 error tolerance.
+
+`"AdaptiveGSOrthogonalization" ["CGS2"]` :  Gram-Schmidt variant used to
+orthogonalize vectors of the reduced-order model in the adaptive driven solver. Uses same options as [`solver["Linear"]["GSOrthogonalization"]`](solver.md#solver%5B%22Linear%22%5D).
+
+  - `"MGS"` :  Modified Gram-Schmidt
+  - `"CGS"` :  Classical Gram-Schmidt
+  - `"CGS2"` :  Two-step classical Gram-Schmidt with reorthogonalization
+
+`"AdaptiveCircuitSynthesis" [false]` : Uses the adaptive reduced-order model to print circuit-like
+matrices (inverse inductance ``L^{-1}``, inverse resistance ``R^{-1}``, capacitance ``C``, and basis
+orthogonalization matrix). These matrices are directly normalized to the conventional voltage for
+the external ports. This option adds the lumped port fields as a basis function to the reduced-order
+model. Requires:
+
+  - Adaptive frequency sweep (`AdaptiveTol > 0.0`) is turned on.
+  - All `LumpedPort` fields are orthogonal to each other.
+  - Only terms with LRC-like frequency dependence are currently supported. This means no `WavePort` or `WavePortPEC`, no `Conductivity`, and no second-order `Farfield` boundary conditions.
+
+`"AdaptiveCircuitSynthesisDomainOrthogonalization" ["Energy"]` : Advanced option to specify the
+weight matrix type for the domain (non-port) orthogonalization when building the synthesized
+circuit matrices.
+
+  - `"Energy"` : Uses the energy-based domain mass matrix for orthogonalization.
+  - `"FEBasisIdentity"` : Uses the identity matrix in the finite element basis; domain nodes
+    change substantially with finite element order.
+  - `"SpaceOverlap"` : Uses the overlap of fields in physical space for orthogonalization.
 
 ### `solver["Driven"]["Samples"]`
 
@@ -472,10 +501,11 @@ the fine levels is performed with Chebyshev smoothing.
   - `"Logarithmic"`
   - `"Linear"`
 
-`"MGCycleIts" [1]` : Number of V-cycle iterations per preconditioner application
+`"MGCycleIts" [0]` : Number of V-cycle iterations per preconditioner application
 for multigrid preconditioners (when the geometric multigrid preconditioner is
 enabled, i.e. when `MGMaxLevels` > 1, or when `"Type"` is `"AMS"` or
-`"BoomerAMG"`).
+`"BoomerAMG"`). A value less than 1 defaults to 2 for frequency domain problems
+using `"AMS"` or 1 otherwise.
 
 `"MGSmoothIts" [1]` : Number of pre- and post-smooth iterations used for
 multigrid preconditioners (when the geometric multigrid preconditioner is
@@ -543,6 +573,10 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGS"` :  Modified Gram-Schmidt
   - `"CGS"` :  Classical Gram-Schmidt
   - `"CGS2"` :  Two-step classical Gram-Schmidt with reorthogonalization
+
+`"AMSMaxIts" [0]` : Number of AMS iterations per preconditioner application when the geometric
+multigrid preconditioner is enabled (`MGMaxLevels` > 1) and `"Type"` is `"AMS"`. A value less than 1 defaults
+to the solution order given in [`config["Solver"]["Order"]`](problem.md#config%5B%22Solver%22%5D)
 
 ### Advanced linear solver options
 

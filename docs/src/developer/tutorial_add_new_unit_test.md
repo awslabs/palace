@@ -166,3 +166,42 @@ TEST_CASE("MyTest Vector Sum - Different Lengths", "[myvector][Parallel]")
 This test is useful because it checks that `Sum` is not implemented making
 assumptions on the length of the vector. This test is also meaningless when run
 with less than 2 MPI processes, so we removed the `[Serial]` tag.
+
+Sometimes, tests need to write to the filesystem. In this case, it is often best
+to create temporary working directories. This can be accomplished with the
+`PerRankTempDir` fixture, which gives each MPI rank its own directory:
+
+```cpp
+#include "fixtures.hpp"
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "MyTest Print", "[myvector][Serial]") {
+  // temp_dir is available and will be cleaned up automatically.
+  auto file_path = temp_dir / "vector.txt";
+  Vector v;
+  v = 1;
+  {
+     std::ofstream file(file_path);
+     v.Print(file);
+  }
+  CHECK(std::filesystem::exists(file_path));
+}
+```
+
+For tests where all ranks need to share the same directory, use `SharedTempDir`:
+
+```cpp
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "MyTest Shared", "[myvector][Parallel]") {
+  // All ranks share temp_dir.
+}
+```
+
+Suppose you want to compare the result of some operations with some pre-existing
+file `expected_vector.txt`. To do this, we first need to save the file in
+`test/unit/data`. Then, we can access it as
+
+```cpp
+auto path_expected_vector = fs::path(PALACE_TEST_DATA_DIR) / "expected_vector.txt"
+```
+
+`path_expected_vector` points to the `expected_vector.txt` file.

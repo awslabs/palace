@@ -4,7 +4,6 @@
 #include "materialoperator.hpp"
 
 #include <cmath>
-#include <functional>
 #include <limits>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"

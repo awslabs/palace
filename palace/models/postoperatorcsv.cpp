@@ -11,7 +11,6 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
-#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -292,7 +291,7 @@ int PrecIndexCol(const ProblemType solver_t)
 // Index checking when adding to a new excitation block: When adding data to data_col with
 // index idx, checks that idx matches what is already written in the corresponding row of
 // idx_col. Adds a new idx row to idx_col if needed.
-void CheckAppendIndex(Column &idx_col, double idx_value, size_t m_idx_row)
+void CheckAppendIndex(Column &idx_col, double idx_value, std::size_t m_idx_row)
 {
   if (m_idx_row == idx_col.n_rows())
   {
@@ -656,7 +655,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
   }
   using fmt::format;
   int v_dim = surf_post_op.GetVDim();
-  for (size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
+  for (std::size_t i = 0; i < measurement_cache.farfield.thetaphis.size(); i++)
   {
     farfield_E->table["idx"] << row_idx_v;
     if constexpr (U == ProblemType::EIGENMODE)
@@ -740,7 +739,7 @@ void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_
 
   CheckAppendIndex(probe_E->table["idx"], row_idx_v, row_i);
 
-  size_t i = 0;
+  std::size_t i = 0;
   for (const auto &idx : interp_op.GetProbes())
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
@@ -818,7 +817,7 @@ void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_
 
   CheckAppendIndex(probe_B->table["idx"], row_idx_v, row_i);
 
-  size_t i = 0;
+  std::size_t i = 0;
   for (const auto &idx : interp_op.GetProbes())
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
@@ -1348,8 +1347,8 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
     nr_expected_measurement_rows = iodata.solver.driven.sample_f.size();
     reload_table = (iodata.solver.driven.restart != 1);
 
-    row_i = std::size_t(iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
-    ex_idx_i = std::size_t(iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;
+    row_i = (iodata.solver.driven.restart - 1) % nr_expected_measurement_rows;
+    ex_idx_i = (iodata.solver.driven.restart - 1) / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
   }
 

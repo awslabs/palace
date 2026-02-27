@@ -1,13 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <complex>
-#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
 #include "fem/mesh.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
@@ -16,7 +11,6 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/meshio.hpp"
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-do-while)
 
@@ -34,15 +28,15 @@ public:
 
 IoData load_iodata(std::string_view relative_path)
 {
-  fs::path io_file(PALACE_TEST_DIR);
+  fs::path io_file(PALACE_TEST_DATA_DIR);
   io_file /= relative_path;
   assert(fs::exists(io_file));
-  return {io_file.c_str(), false};
+  return IoData{io_file.c_str(), false};
 }
 
 std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_)
 {
-  iodata_.model.mesh = fs::path(PALACE_TEST_DIR) / "mesh/fichera-tet.mesh";
+  iodata_.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/fichera-tet.mesh";
 
   // Load Mesh — copy from main.cpp
   std::vector<std::unique_ptr<Mesh>> mesh_;
@@ -76,7 +70,7 @@ public:
   void restart1_fresh_folder()
   {
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_test_tmp";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_test_tmp";
     REQUIRE(!fs::exists(fs::path(iodata.problem.output) /
                         "port-V.csv"));  // Restart is 1 Indexed.
 
@@ -91,7 +85,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
         REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -111,7 +105,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -123,7 +117,7 @@ public:
   void restart1_restart_in_middle()
   {
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_c3";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_c3";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     // No restart, no previous file to load.
@@ -137,7 +131,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -180,7 +174,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
       }
@@ -195,7 +189,7 @@ public:
         CHECK(post_op_csv.row_i == 5);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -207,7 +201,7 @@ public:
   void restart1_restart_with_empty()
   {
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_empty";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_empty";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     // No restart, no previous file to load.
@@ -220,7 +214,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1});
         CHECK(post_op_csv.HasSingleExIdx());
         CHECK(!post_op_csv.reload_table);  // Default restart
 
@@ -250,7 +244,7 @@ public:
     iodata.solver.driven.restart = 3;  // non-trivial restart for check to trigger
                                        // Try and load wrong table with incorrect width.
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c03";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c03";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
@@ -265,7 +259,7 @@ public:
   {
     iodata.solver.driven.restart = 3 + 1;
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_colswap";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_colswap";
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
     if (Mpi::Root(Mpi::World()))
     {
@@ -278,7 +272,7 @@ public:
   {
     iodata.solver.driven.restart = 3 + 1;
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_badcols";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_badcols";
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
     if (Mpi::Root(Mpi::World()))
     {
@@ -290,7 +284,7 @@ public:
   void restart2_restart_in_middle_ex1()
   {
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c03";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c03";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     // No restart, no previous file to load.
@@ -304,7 +298,7 @@ public:
         CHECK(post_op_csv.row_i == 3);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 
@@ -354,7 +348,7 @@ public:
         CHECK(post_op_csv.row_i == 0);
         CHECK(post_op_csv.ex_idx_i == 0);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         // No throw since 1 restart just overwrite existing table.
         CHECK_NOTHROW(post_op_csv.InitializePortVI(space_op));
@@ -370,7 +364,7 @@ public:
         CHECK(post_op_csv.row_i == 1);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
 
         CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
                           Catch::Matchers::ContainsSubstring(
@@ -382,7 +376,7 @@ public:
   void restart2_restart_in_middle_ex2()
   {
     iodata.problem.output =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart2_c14";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c14";
     REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
 
     // No restart, no previous file to load.
@@ -396,7 +390,7 @@ public:
         CHECK(post_op_csv.row_i == 4);
         CHECK(post_op_csv.ex_idx_i == 1);
         CHECK(post_op_csv.nr_expected_measurement_rows == 6);
-        CHECK(post_op_csv.ex_idx_v_all == std::vector<size_t>{1, 2});
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
         CHECK(!post_op_csv.HasSingleExIdx());
         CHECK(post_op_csv.reload_table);
 

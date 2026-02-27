@@ -14,8 +14,6 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
-template <ProblemType>
-class PostOperator;
 class SpaceOperator;
 
 //

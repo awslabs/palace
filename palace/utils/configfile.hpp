@@ -23,54 +23,6 @@ using json = nlohmann::json;
 namespace internal
 {
 
-template <typename DataType>
-struct DataVector
-{
-protected:
-  std::vector<DataType> vecdata = {};
-
-public:
-  template <typename... Args>
-  decltype(auto) emplace_back(Args &&...args)
-  {
-    return vecdata.emplace_back(std::forward<Args>(args)...);
-  }
-  [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
-  [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
-  [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return vecdata.at(i); }
-  [[nodiscard]] auto size() const { return vecdata.size(); }
-  [[nodiscard]] auto empty() const { return vecdata.empty(); }
-  [[nodiscard]] auto begin() const { return vecdata.begin(); }
-  [[nodiscard]] auto end() const { return vecdata.end(); }
-  [[nodiscard]] auto begin() { return vecdata.begin(); }
-  [[nodiscard]] auto end() { return vecdata.end(); }
-  [[nodiscard]] auto front() const { return vecdata.front(); }
-  [[nodiscard]] auto back() const { return vecdata.back(); }
-  [[nodiscard]] auto front() { return vecdata.front(); }
-  [[nodiscard]] auto back() { return vecdata.back(); }
-};
-
-template <typename DataType>
-struct DataMap
-{
-protected:
-  // Map keys are the object indices for postprocessing.
-  std::map<int, DataType> mapdata = {};
-
-public:
-  [[nodiscard]] const auto &operator[](int i) const { return mapdata[i]; }
-  [[nodiscard]] auto &operator[](int i) { return mapdata[i]; }
-  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
-  [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
-  [[nodiscard]] auto size() const { return mapdata.size(); }
-  [[nodiscard]] auto empty() const { return mapdata.empty(); }
-  [[nodiscard]] auto begin() const { return mapdata.begin(); }
-  [[nodiscard]] auto end() const { return mapdata.end(); }
-  [[nodiscard]] auto begin() { return mapdata.begin(); }
-  [[nodiscard]] auto end() { return mapdata.end(); }
-};
-
 // An ElementData consists of a list of attributes making up a single element of a
 // potentially multielement boundary, and a direction and/or a normal defining the incident
 // field. These are used for lumped ports, terminals, surface currents, and other boundary
@@ -116,7 +68,8 @@ public:
   // Output formats configuration.
   OutputFormatsData output_formats = {};
 
-  void SetUp(json &config);
+  ProblemData() = default;
+  ProblemData(const json &problem);
 };
 
 struct BoxRefinementData
@@ -195,7 +148,8 @@ public:
   const auto &GetSpheres() const { return sphere_list; }
   auto &GetSpheres() { return sphere_list; }
 
-  void SetUp(json &model);
+  RefinementData() = default;
+  RefinementData(const json &refinement);
 };
 
 struct ModelData
@@ -254,7 +208,8 @@ public:
   // Object controlling mesh refinement.
   RefinementData refinement = {};
 
-  void SetUp(json &config);
+  ModelData() = default;
+  ModelData(const json &model);
 };
 
 // Domain Config.
@@ -299,12 +254,9 @@ public:
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
-};
 
-struct DomainMaterialData : public internal::DataVector<MaterialData>
-{
-public:
-  void SetUp(json &domains);
+  MaterialData() = default;
+  MaterialData(const json &domain);
 };
 
 struct DomainEnergyData
@@ -312,12 +264,9 @@ struct DomainEnergyData
 public:
   // List of domain attributes for this domain postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct DomainEnergyPostData : public internal::DataMap<DomainEnergyData>
-{
-public:
-  void SetUp(json &postpro);
+  DomainEnergyData() = default;
+  DomainEnergyData(const json &domain);
 };
 
 struct ProbeData
@@ -325,12 +274,9 @@ struct ProbeData
 public:
   // Physical space coordinates for the probe location [m].
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
-};
 
-struct ProbePostData : public internal::DataMap<ProbeData>
-{
-public:
-  void SetUp(json &postpro);
+  ProbeData() = default;
+  ProbeData(const json &probe);
 };
 
 struct DomainPostData
@@ -340,10 +286,11 @@ public:
   std::vector<int> attributes = {};
 
   // Domain postprocessing objects.
-  DomainEnergyPostData energy;
-  ProbePostData probe;
+  std::map<int, DomainEnergyData> energy = {};
+  std::map<int, ProbeData> probe = {};
 
-  void SetUp(json &domains);
+  DomainPostData() = default;
+  DomainPostData(const json &postpro);
 };
 
 struct CurrentDipoleData
@@ -357,12 +304,9 @@ public:
 
   // Current dipole center position.
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
-};
 
-struct CurrentDipoleSourceData : public internal::DataMap<CurrentDipoleData>
-{
-public:
-  void SetUp(json &domains);
+  CurrentDipoleData() = default;
+  CurrentDipoleData(const json &source);
 };
 
 struct DomainData
@@ -372,11 +316,12 @@ public:
   std::vector<int> attributes = {};
 
   // Domain objects.
-  DomainMaterialData materials = {};
-  CurrentDipoleSourceData current_dipole = {};
+  std::vector<MaterialData> materials = {};
+  std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
 
-  void SetUp(json &config);
+  DomainData() = default;
+  DomainData(const json &domains);
 };
 
 // Boundary Configuration.
@@ -389,7 +334,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  PecBoundaryData() = default;
+  PecBoundaryData(const json &pec);
 };
 
 struct PmcBoundaryData
@@ -400,7 +346,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  PmcBoundaryData() = default;
+  PmcBoundaryData(const json &pmc);
 };
 
 struct WavePortPecBoundaryData
@@ -411,7 +358,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  WavePortPecBoundaryData() = default;
+  WavePortPecBoundaryData(const json &auxpec);
 };
 
 struct FarfieldBoundaryData
@@ -425,7 +373,8 @@ public:
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
-  void SetUp(json &boundaries);
+  FarfieldBoundaryData() = default;
+  FarfieldBoundaryData(const json &absorbing);
 };
 
 struct ConductivityData
@@ -445,12 +394,9 @@ public:
 
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
-};
 
-struct ConductivityBoundaryData : public internal::DataVector<ConductivityData>
-{
-public:
-  void SetUp(json &boundaries);
+  ConductivityData() = default;
+  ConductivityData(const json &boundary);
 };
 
 struct ImpedanceData
@@ -463,12 +409,9 @@ public:
 
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
-};
 
-struct ImpedanceBoundaryData : public internal::DataVector<ImpedanceData>
-{
-public:
-  void SetUp(json &boundaries);
+  ImpedanceData() = default;
+  ImpedanceData(const json &boundary);
 };
 
 struct LumpedPortData
@@ -495,12 +438,19 @@ public:
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
+
+  LumpedPortData() = default;
+  LumpedPortData(const json &port);
 };
 
-struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
+struct TerminalData
 {
 public:
-  void SetUp(json &boundaries);
+  // List of boundary attributes for this terminal.
+  std::vector<int> attributes = {};
+
+  TerminalData() = default;
+  TerminalData(const json &terminal);
 };
 
 struct PeriodicData
@@ -526,7 +476,8 @@ public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
-  void SetUp(json &boundaries);
+  PeriodicBoundaryData() = default;
+  PeriodicBoundaryData(const json &periodic);
 };
 
 struct WavePortData
@@ -563,12 +514,9 @@ public:
 
   // Print level for linear and eigenvalue solvers.
   int verbose = 0;
-};
 
-struct WavePortBoundaryData : public internal::DataMap<WavePortData>
-{
-public:
-  void SetUp(json &boundaries);
+  WavePortData() = default;
+  WavePortData(const json &port);
 };
 
 struct SurfaceCurrentData
@@ -577,12 +525,9 @@ public:
   // For each surface current source index, each element contains a list of attributes
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};
-};
 
-struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
-{
-public:
-  void SetUp(json &boundaries);
+  SurfaceCurrentData() = default;
+  SurfaceCurrentData(const json &source);
 };
 
 struct SurfaceFluxData
@@ -604,12 +549,9 @@ public:
 
   // List of boundary attributes for this surface flux postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct SurfaceFluxPostData : public internal::DataMap<SurfaceFluxData>
-{
-public:
-  void SetUp(json &postpro);
+  SurfaceFluxData() = default;
+  SurfaceFluxData(const json &flux);
 };
 
 struct InterfaceDielectricData
@@ -629,12 +571,9 @@ public:
 
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
-};
 
-struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
-{
-public:
-  void SetUp(json &postpro);
+  InterfaceDielectricData() = default;
+  InterfaceDielectricData(const json &dielectric);
 };
 
 struct FarFieldPostData
@@ -647,7 +586,8 @@ public:
   // Units are radians.
   std::vector<std::pair<double, double>> thetaphis = {};
 
-  void SetUp(json &postpro);
+  FarFieldPostData() = default;
+  FarFieldPostData(const json &farfield);
 
   bool empty() const { return thetaphis.empty(); };
 };
@@ -659,11 +599,12 @@ public:
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
-  SurfaceFluxPostData flux = {};
-  InterfaceDielectricPostData dielectric = {};
+  std::map<int, SurfaceFluxData> flux = {};
+  std::map<int, InterfaceDielectricData> dielectric = {};
   FarFieldPostData farfield = {};
 
-  void SetUp(json &boundaries);
+  BoundaryPostData() = default;
+  BoundaryPostData(const json &postpro);
 };
 
 struct BoundaryData
@@ -680,15 +621,17 @@ public:
   PmcBoundaryData pmc = {};
   WavePortPecBoundaryData auxpec = {};
   FarfieldBoundaryData farfield = {};
-  ConductivityBoundaryData conductivity = {};
-  ImpedanceBoundaryData impedance = {};
-  LumpedPortBoundaryData lumpedport = {};
-  WavePortBoundaryData waveport = {};
-  SurfaceCurrentBoundaryData current = {};
+  std::vector<ConductivityData> conductivity = {};
+  std::vector<ImpedanceData> impedance = {};
+  std::map<int, LumpedPortData> lumpedport = {};
+  std::map<int, TerminalData> terminal = {};
+  std::map<int, WavePortData> waveport = {};
+  std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
 
-  void SetUp(json &config);
+  BoundaryData() = default;
+  BoundaryData(const json &boundaries);
 };
 
 // Solver Configuration.
@@ -707,18 +650,30 @@ public:
 
   // Restart iteration for a partial sweep. 1-based indexing. So 1 <= restart <= nr_freq *
   // nr_excitations.
-  int restart = 1;
+  std::size_t restart = 1;
 
   // Error tolerance for enabling adaptive frequency sweep.
   double adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
-  int adaptive_max_size = 20;
+  std::size_t adaptive_max_size = 20;
 
   // Memory required for adaptive sampling convergence.
-  int adaptive_memory = 2;
+  std::size_t adaptive_memory = 2;
 
-  void SetUp(json &solver);
+  // Gram-Schmidt orthogonalization used in PROM construction, separate from linear solver
+  // orthogonalization option. Default to CGS2 for higher quality.
+  Orthogonalization adaptive_solver_gs_orthog_type = Orthogonalization::CGS2;
+
+  // Return circuit matrices from port with port excitation vectors.
+  bool adaptive_circuit_synthesis = false;
+
+  // Domain orthogonalization type for circuit synthesis weight matrix.
+  DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
+      DomainOrthogonalizationWeight::ENERGY;
+
+  DrivenSolverData() = default;
+  DrivenSolverData(const json &driven);
 };
 
 struct EigenSolverData
@@ -785,7 +740,8 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
-  void SetUp(json &solver);
+  EigenSolverData() = default;
+  EigenSolverData(const json &eigenmode);
 };
 
 struct ElectrostaticSolverData
@@ -794,7 +750,8 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(json &solver);
+  ElectrostaticSolverData() = default;
+  ElectrostaticSolverData(const json &electrostatic);
 };
 
 struct MagnetostaticSolverData
@@ -803,7 +760,8 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
-  void SetUp(json &solver);
+  MagnetostaticSolverData() = default;
+  MagnetostaticSolverData(const json &magnetostatic);
 };
 
 struct TransientSolverData
@@ -837,7 +795,8 @@ public:
   double rel_tol = 1e-4;
   double abs_tol = 1e-9;
 
-  void SetUp(json &solver);
+  TransientSolverData() = default;
+  TransientSolverData(const json &transient);
 };
 
 struct LinearSolverData
@@ -873,7 +832,7 @@ public:
 
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
-  int mg_cycle_it = 1;
+  int mg_cycle_it = -1;
 
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;
@@ -942,6 +901,9 @@ public:
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;
 
+  // Maximum number of iterations of the AMS solver.
+  int ams_max_it = -1;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
@@ -962,7 +924,8 @@ public:
   // solvers and SLEPc eigenvalue solver.
   Orthogonalization gs_orthog = Orthogonalization::MGS;
 
-  void SetUp(json &solver);
+  LinearSolverData() = default;
+  LinearSolverData(const json &linear);
 };
 
 struct SolverData
@@ -995,7 +958,8 @@ public:
   TransientSolverData transient = {};
   LinearSolverData linear = {};
 
-  void SetUp(json &config);
+  SolverData() = default;
+  SolverData(const json &solver);
 };
 
 // Calculate the number of steps from [start, end) in increments of delta. Will only include

@@ -65,7 +65,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("lapack")
     depends_on("zlib-api")
     depends_on("nlohmann-json")
-    depends_on("nlohmann-json-schema-validator@2.4.0:")
+    depends_on("nlohmann-json-schema-validator@2.4.0:", when="@0.16:")
     depends_on("fmt+shared", when="+shared")
     depends_on("fmt~shared", when="~shared")
     depends_on("scnlib+shared", when="+shared@0.14:")
@@ -231,11 +231,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
             # We need https://github.com/llnl/blt/pull/735, which is not available
             # in blt <= 0.7.1
-            depends_on("umpire %blt@0.7.2:")
+            depends_on("umpire %blt@0.7.2:", when="@0.16:")
 
-            depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant}")
-            depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant}")
-            depends_on(f"mfem+umpire{cuda_variant}", when=f"{cuda_variant}")
+            depends_on(f"umpire{cuda_variant}", when=f"{cuda_variant} @0.16:")
+            depends_on(f"hypre+umpire{cuda_variant}", when=f"{cuda_variant} @0.16:")
+            depends_on(f"hypre{cuda_variant}", when=f"{cuda_variant} @:0.15")
+            depends_on(f"mfem+umpire{cuda_variant}", when=f"{cuda_variant} @0.16:")
             depends_on(f"magma{cuda_variant}", when=f"{cuda_variant}")
             depends_on(f"libceed{cuda_variant}", when=f"{cuda_variant} @0.14:")
             depends_on(f"sundials{cuda_variant}", when=f"+sundials{cuda_variant} @0.14:")
@@ -251,9 +252,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
-            depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant}")
-            depends_on(f"hypre+umpire{rocm_variant}", when=f"{rocm_variant}")
-            depends_on(f"mfem+umpire{rocm_variant}", when=f"{rocm_variant}")
+            depends_on(f"umpire{rocm_variant}", when=f"{rocm_variant} @0.16:")
+            depends_on(f"hypre+umpire{rocm_variant}", when=f"{rocm_variant} @0.16:")
+            depends_on(f"hypre{rocm_variant}", when=f"{rocm_variant} @:0.15")
+            depends_on(f"mfem+umpire{rocm_variant}", when=f"{rocm_variant} @0.16:")
             depends_on(f"magma{rocm_variant}", when=f"{rocm_variant}")
             depends_on(f"libceed{rocm_variant}", when=f"{rocm_variant} @0.14:")
             depends_on(f"sundials{rocm_variant}", when=f"+sundials{rocm_variant} @0.14:")
@@ -289,6 +291,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+strumpack"):
                 args.append(self.define("STRUMPACK_DIR", self.spec["strumpack"].prefix))
+            if self.spec.satisfies("+mumps") or self.spec.satisfies("+strumpack"):
+                args.append(
+                    self.define("SCALAPACK_ROOT", self.spec["scalapack"].prefix)
+                )
             if self.spec.satisfies("+superlu-dist"):
                 args.append(
                     self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix)

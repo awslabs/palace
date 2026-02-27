@@ -52,7 +52,7 @@
       "properties":
       {
         "Attributes": { "$ref": "#/$defs/Attributes" },
-        "Order": { "type": "integer" }
+        "Order": { "type": "integer", "minimum": 1, "maximum": 2 }
       }
     },
     "Conductivity":
@@ -85,7 +85,7 @@
         "required": ["Index"],
         "properties":
         {
-          "Index": { "type": "integer" },
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
@@ -133,7 +133,7 @@
         "required": ["Index", "Attributes"],
         "properties":
         {
-          "Index": { "type": "integer" },
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Mode": { "type": "integer", "exclusiveMinimum": 0 },
           "Offset": { "type": "number", "minimum": 0.0 },
@@ -173,7 +173,7 @@
         "required": ["Index"],
         "properties":
         {
-          "Index": { "type": "integer" },
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
@@ -228,7 +228,7 @@
         "required": ["Index", "Attributes"],
         "properties":
         {
-          "Index": { "type": "integer" },
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
           "Attributes": { "$ref": "#/$defs/Attributes" }
         }
       }
@@ -279,7 +279,7 @@
             "required": ["Index", "Attributes", "Type"],
             "properties":
             {
-              "Index": { "type": "integer" },
+              "Index": { "type": "integer", "exclusiveMinimum": 0 },
               "Attributes": { "$ref": "#/$defs/Attributes" },
               "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power"] },
               "TwoSided": { "type": "boolean" },
@@ -305,7 +305,7 @@
             "required": ["Index", "Attributes", "Thickness", "Permittivity"],
             "properties":
             {
-              "Index": { "type": "integer" },
+              "Index": { "type": "integer", "exclusiveMinimum": 0 },
               "Attributes": { "$ref": "#/$defs/Attributes" },
               "Type": { "type": "string", "enum": ["Default", "MA", "MS", "SA"] },
               "Thickness": { "type": "number" },
