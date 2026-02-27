@@ -99,6 +99,8 @@ target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
+          $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
+          $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
 )
 
 # Status messages for test target
@@ -133,3 +135,57 @@ install(
     PATTERN "*.json"
     PATTERN "*/postpro/*" EXCLUDE     # Skip palace.json files
 )
+
+# Enable CTest for coverage support
+include(CTest)
+
+# Discover and register tests with CTest using Catch2's built-in function
+include(Catch)
+
+# Common coverage environment variable setup
+set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>")
+
+# Serial tests
+catch_discover_tests(unit-tests
+  TEST_PREFIX "serial-"
+  TEST_SPEC "[Serial]"
+  EXTRA_ARGS --skip-benchmarks
+  PROPERTIES
+    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
+)
+
+# MPI tests  
+catch_discover_tests(unit-tests
+  TEST_PREFIX "mpi-"
+  TEST_SPEC "[Parallel]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
+  PROPERTIES
+    PROCESSORS 2
+    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
+# GPU tests (if available)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  catch_discover_tests(unit-tests
+    TEST_PREFIX "gpu-"
+    TEST_SPEC "[GPU]"
+    EXTRA_ARGS --device cuda --skip-benchmarks
+    PROPERTIES
+      # Don't allow one more than GPU test at the time.
+      # In theory, we could allow one per GPU, but that's much harder to implement.
+      RESOURCE_LOCK gpu
+
+      # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
+      ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
+  )
+
+  # TODO: ADD MPI+GPU tests. This requires checking that we have enough GPUs
+  # (one per rank).
+endif()
+
+# Enable testing
+enable_testing()
+

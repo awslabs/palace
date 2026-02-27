@@ -128,6 +128,7 @@ if(PALACE_BUILD_WITH_COVERAGE)
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
         $<$<CXX_COMPILER_ID:GNU>:--coverage>
         $<$<CXX_COMPILER_ID:GNU>:-fprofile-abs-path>
+        $<$<CXX_COMPILER_ID:GNU>:-fprofile-dir=${CMAKE_BINARY_DIR}/coverage.%p>
   )
   target_link_options(
     coverage_flags
