@@ -89,7 +89,7 @@ makedocs(
             "config/boundaries.md",
             "config/solver.md"
         ],
-        "Features" => Any["features/farfield.md",],
+        "Features" => Any["features/farfield.md", "features/driven_rom_and_circuits.md"],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",
