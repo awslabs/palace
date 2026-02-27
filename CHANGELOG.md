@@ -16,6 +16,9 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added `PALACE_BUILD_WITH_SANITIZERS` CMake option and `asan` Spack variant
+    for AddressSanitizer and UndefinedBehaviorSanitizer support. [PR
+    642](https://github.com/awslabs/palace/pull/642)
   - Added reporting for memory used by Palace. Peak values are also stored in
     `postpro/palace.json`. [PR 629](https://github.com/awslabs/palace/pull/629)
   - Added JSON schema validation for configuration files at runtime, with embedded schemas

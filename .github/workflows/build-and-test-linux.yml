@@ -223,6 +223,16 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
+        - arch: x86
+          compiler: clang
+          mpi: openmpi
+          math-libs: openblas
+          build-shared: shared
+          with-64bit-int: int32
+          with-openmp: serial
+          with-eigensolver: slepc
+          with-solver: superlu
+          with-sanitizers: true
 
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
@@ -417,6 +427,7 @@ jobs:
           [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
           [[ "${{ matrix.with-eigensolver }}" == 'slepc' ]] && WITH_SLEPC='ON' || WITH_SLEPC='OFF'
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
+          [[ "${{ matrix.with-sanitizers }}" == 'true' ]] && WITH_SANITIZERS='ON' || WITH_SANITIZERS='OFF'
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
@@ -431,12 +442,13 @@ jobs:
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
             -DPALACE_WITH_SLEPC=$WITH_SLEPC \
             -DPALACE_WITH_ARPACK=$WITH_ARPACK \
-            -DPALACE_MFEM_USE_EXCEPTIONS=ON
+            -DPALACE_MFEM_USE_EXCEPTIONS=ON \
+            -DPALACE_BUILD_WITH_SANITIZERS=$WITH_SANITIZERS
           make -j$NUM_PROC_BUILD palace-tests
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           NUM_PROC_TEST_MAX: '2'
         run: |
@@ -461,6 +473,15 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
+          # Configure sanitizer options
+          if [[ "${{ matrix.with-sanitizers }}" == 'true' ]]; then
+            export ASAN_OPTIONS=detect_leaks=1
+            export UBSAN_OPTIONS=print_stacktrace=1
+            # Suppress known leaks in third-party MPI/hwloc/libCEED libraries.
+            # See test/unit/lsan_suppressions.txt for the suppression list.
+            export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/test/unit/lsan_suppressions.txt"
+          fi
+
           cd $(pwd)/palace-build/palace-build/test/unit
 
           # Run Serial tests
@@ -469,7 +490,7 @@ jobs:
           mpirun -np $NUM_PROC_TEST_MAX ./palace-unit-tests --skip-benchmarks
 
       - name: Run regression tests for examples/
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
         timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
@@ -501,7 +522,7 @@ jobs:
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
       - name: Check antenna postprocessing example
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
         run: |
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=examples examples/antenna/plot_farfield.jl examples/antenna/postpro/farfield-rE.csv

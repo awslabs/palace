@@ -40,6 +40,7 @@ set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using 
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
+set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
@@ -136,6 +137,20 @@ if(PALACE_BUILD_WITH_COVERAGE)
         $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
         $<$<CXX_COMPILER_ID:GNU>:--coverage>
   )
+endif()
+
+if(PALACE_BUILD_WITH_SANITIZERS)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
+     AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR
+      "PALACE_BUILD_WITH_SANITIZERS is not compatible with GCC on macOS Apple Silicon. "
+      "GCC does not ship libasan on this platform. Use Clang instead "
+      "(e.g. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++)."
+    )
+  endif()
+  add_library(sanitizer_flags INTERFACE)
+  target_compile_options(sanitizer_flags INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(sanitizer_flags INTERFACE -fsanitize=address,undefined)
 endif()
 
 # Add extra CMake modules
@@ -284,7 +299,9 @@ add_subdirectory(utils)
 # Add executable target
 set(TARGET_NAME palace)
 add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
-target_link_libraries(${TARGET_NAME} PRIVATE ${LIB_TARGET_NAME})
+target_link_libraries(${TARGET_NAME}
+  PRIVATE ${LIB_TARGET_NAME}
+          $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)
 
 # Add binary extension for build architecture
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
@@ -615,7 +632,8 @@ endif()
 target_link_libraries(
   ${LIB_TARGET_NAME}
   PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
-          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>)
+          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
+          $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB

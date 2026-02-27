@@ -1,0 +1,20 @@
+# LeakSanitizer suppressions for third-party libraries.
+# These are known leaks in MPI/hwloc/libCEED internals, not Palace code.
+# See https://clang.llvm.org/docs/AddressSanitizer.html#suppressing-memory-leaks
+
+# OpenMPI / PRRTE runtime (MPI_Init, event loop, hardware topology)
+leak:libopen-rte
+leak:libmpi
+leak:libhwloc
+leak:libopen-pal
+leak:libevent
+
+# libCEED backend initialization
+leak:CeedStringAllocCopy
+leak:libceed
+
+# MFEM (NCMesh element allocations not freed at shutdown)
+leak:libmfem
+
+# OpenMPI internal strdup calls (no debug symbols, shows as <unknown module>)
+leak:strdup
