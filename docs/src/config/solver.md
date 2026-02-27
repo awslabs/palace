@@ -34,7 +34,7 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
-    "ModeAnalysis":
+    "BoundaryMode":
     {
         ...
     },
@@ -94,9 +94,9 @@ Thus, this object is only relevant for
 Thus, this object is only relevant for
 [`config["Problem"]["Type"]: "Magnetostatic"`](problem.md#config%5B%22Problem%22%5D).
 
-`"ModeAnalysis"` :  Top-level object for configuring the mode analysis simulation type.
+`"BoundaryMode"` :  Top-level object for configuring the mode analysis simulation type.
 Thus, this object is only relevant for
-[`config["Problem"]["Type"]: "ModeAnalysis"`](problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Type"]: "BoundaryMode"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
@@ -414,10 +414,10 @@ entries in the computed inductance matrix. Files are saved in the `paraview/` (a
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-## `solver["ModeAnalysis"]`
+## `solver["BoundaryMode"]`
 
 ```json
-"ModeAnalysis":
+"BoundaryMode":
 {
     "Freq": <float>,
     "N": <int>,
@@ -441,10 +441,11 @@ with
 the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
-`"Target" [0.0]` :  Target effective index for the eigenvalue solver shift-and-invert
-spectral transformation. When nonzero, the solver searches for modes with effective index
-near this value. When zero (default), the shift is computed automatically from the material
-properties.
+`"Target" [0.0]` :  Target effective index ``n_\text{eff} = k_n / k_0`` for the eigenvalue
+solver shift-and-invert spectral transformation, where ``k_n`` is the propagation constant
+of the guided mode and ``k_0 = \omega / c_0`` is the free-space wavenumber. When nonzero,
+the solver searches for modes with effective index near this value. When zero (default), the
+shift is computed automatically from the material properties.
 
 `"Tol" [1.0e-6]` :  Relative convergence tolerance for the eigenvalue solver.
 

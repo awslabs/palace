@@ -76,7 +76,7 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
   }
 
   // Configure linear and eigenvalue solvers.
-  // - ModeAnalysis: solver_comm == MPI_COMM_NULL -> use FE space communicator (all procs).
+  // - BoundaryMode: solver_comm == MPI_COMM_NULL -> use FE space communicator (all procs).
   // - WavePort on port procs: solver_comm is a valid subset communicator -> use it.
   // - WavePort on non-port procs: solver_comm == MPI_COMM_NULL but FE space has no local
   //   DOFs -> skip solver setup (ksp and eigen remain null).
@@ -87,7 +87,7 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
   }
   else if (nd_size > 0)
   {
-    // Standalone mode (ModeAnalysis): all procs have DOFs, use FE space comm.
+    // Standalone mode (BoundaryMode): all procs have DOFs, use FE space comm.
     SetUpLinearSolver(nd_fespace.GetComm());
     SetUpEigenSolver(nd_fespace.GetComm());
   }
@@ -128,7 +128,7 @@ BoundaryModeOperator::Solve(double omega, double sigma, bool has_solver,
   // Assemble frequency-dependent matrices (MPI collective on FE space communicator).
   AssembleFrequencyDependent(omega, sigma);
 
-  // Only processes with solvers participate in the eigenvalue solve. For ModeAnalysis
+  // Only processes with solvers participate in the eigenvalue solve. For BoundaryMode
   // (has_solver=true on all processes) all processes solve. For WavePort, only port
   // processes solve while non-port processes skip.
   if (!has_solver)

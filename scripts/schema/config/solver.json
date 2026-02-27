@@ -124,7 +124,7 @@
         "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }
     },
-    "ModeAnalysis":
+    "BoundaryMode":
     {
       "type": "object",
       "additionalProperties": false,
