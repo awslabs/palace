@@ -248,6 +248,16 @@ void RemapSubMeshAttributes(mfem::ParSubMesh &submesh);
 void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
                                const mfem::Array<int> &surface_attrs);
 
+// Add internal boundary elements to a boundary ParSubMesh for edges that correspond to
+// intersections with parent boundary faces having attributes in internal_bdr_attrs. This
+// is needed because ParSubMesh::CreateFromBoundary only creates boundary elements at the
+// geometric boundary of the selected face region, but internal edges where the surface
+// meets other boundary faces (PEC, impedance, conductivity, absorbing) must also be
+// treated as boundary elements for the 2D eigenvalue problem.
+void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
+                                        const mfem::Array<int> &surface_attrs,
+                                        const std::vector<int> &internal_bdr_attrs);
+
 // Project a planar 2D submesh (with 3D ambient coordinates from ParSubMesh) to true 2D
 // coordinates. Computes the surface normal and tangent frame from the mesh, then replaces
 // each node coordinate with its projection onto the tangent plane. After this call, the

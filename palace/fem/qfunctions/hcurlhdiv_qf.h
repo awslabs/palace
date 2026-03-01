@@ -17,6 +17,8 @@
 #include "21/hcurlhdiv_build_21_qf.h"
 #include "22/hcurlhdiv_22_qf.h"
 #include "22/hcurlhdiv_build_22_qf.h"
+#include "31/hcurlhdiv_31_qf.h"
+#include "31/hcurlhdiv_build_31_qf.h"
 #include "32/hcurlhdiv_32_qf.h"
 #include "32/hcurlhdiv_build_32_qf.h"
 #include "33/hcurlhdiv_33_qf.h"

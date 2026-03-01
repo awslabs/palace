@@ -16,6 +16,8 @@
 #include "21/hdiv_build_21_qf.h"
 #include "22/hdiv_22_qf.h"
 #include "22/hdiv_build_22_qf.h"
+#include "31/hdiv_31_qf.h"
+#include "31/hdiv_build_31_qf.h"
 #include "32/hdiv_32_qf.h"
 #include "32/hdiv_build_32_qf.h"
 #include "33/hdiv_33_qf.h"

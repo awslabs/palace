@@ -48,6 +48,11 @@ void GradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
       info.apply_qf_path = PalaceQFunctionRelativePath(
           assemble_q_data ? f_build_hcurlh1d_21_loc : f_apply_hcurlh1d_21_loc);
       break;
+    case 31:
+      info.apply_qf = assemble_q_data ? f_build_hcurlh1d_31 : f_apply_hcurlh1d_31;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurlh1d_31_loc : f_apply_hcurlh1d_31_loc);
+      break;
     case 32:
       info.apply_qf = assemble_q_data ? f_build_hcurlh1d_32 : f_apply_hcurlh1d_32;
       info.apply_qf_path = PalaceQFunctionRelativePath(

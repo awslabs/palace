@@ -18,10 +18,13 @@
 namespace palace
 {
 
+class FarfieldBoundaryOperator;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
+class SurfaceConductivityOperator;
+class SurfaceImpedanceOperator;
 
 namespace config
 {
@@ -61,8 +64,14 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  mfem::Array<int> port_bdr_attr_mat;  // Cached copy for BoundaryModeOperator config
   double mu_eps_max;
+
+  // Submesh-specific material operator and boundary condition operators. Constructed on
+  // the remapped submesh with rebuilt CEED data for correct attribute mapping.
+  std::unique_ptr<MaterialOperator> port_mat_op;
+  std::unique_ptr<SurfaceImpedanceOperator> port_surf_z_op;
+  std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
+  std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
 
   // Boundary mode eigenvalue problem solver.
   std::unique_ptr<BoundaryModeOperator> mode_solver;
@@ -84,7 +93,7 @@ private:
   bool has_voltage_coords = false;
 
 public:
-  WavePortData(const config::WavePortData &data, const config::SolverData &solver,
+  WavePortData(const config::WavePortData &data, const IoData &iodata,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();

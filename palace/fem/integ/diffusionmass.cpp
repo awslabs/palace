@@ -49,6 +49,11 @@ void DiffusionMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_rest
       info.apply_qf_path = PalaceQFunctionRelativePath(
           assemble_q_data ? f_build_hcurlmass_21_loc : f_apply_hcurlmass_21_loc);
       break;
+    case 31:
+      info.apply_qf = assemble_q_data ? f_build_hcurlmass_31 : f_apply_hcurlmass_31;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurlmass_31_loc : f_apply_hcurlmass_31_loc);
+      break;
     case 32:
       info.apply_qf = assemble_q_data ? f_build_hcurlmass_32 : f_apply_hcurlmass_32;
       info.apply_qf_path = PalaceQFunctionRelativePath(

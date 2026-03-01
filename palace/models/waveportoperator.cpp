@@ -7,7 +7,10 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
+#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfaceconductivityoperator.hpp"
+#include "models/surfaceimpedanceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -331,8 +334,8 @@ public:
 
 }  // namespace
 
-WavePortData::WavePortData(const config::WavePortData &data,
-                           const config::SolverData &solver, const MaterialOperator &mat_op,
+WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodata,
+                           const MaterialOperator &mat_op,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
@@ -347,8 +350,46 @@ WavePortData::WavePortData(const config::WavePortData &data,
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
   const auto &mesh = *nd_fespace.GetParMesh();
   attr_list.Append(data.attributes.data(), data.attributes.size());
-  port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
+  auto port_submesh_ptr = std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
+
+  // Add internal boundary elements for edges where the port face intersects other boundary
+  // faces (PEC, impedance, conductivity, absorbing). ParSubMesh::CreateFromBoundary only
+  // creates boundary elements at the geometric boundary of the selected face region, but
+  // internal intersections need boundary elements for the 2D eigenvalue problem BCs.
+  {
+    std::vector<int> internal_bdr_attrs;
+    for (auto a : iodata.boundaries.pec.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+    for (auto a : iodata.boundaries.auxpec.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+    for (const auto &d : iodata.boundaries.impedance)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
+    }
+    for (const auto &d : iodata.boundaries.conductivity)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
+    }
+    for (auto a : iodata.boundaries.farfield.attributes)
+    {
+      internal_bdr_attrs.push_back(a);
+    }
+    mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
+                                             internal_bdr_attrs);
+  }
+
+  port_mesh = std::make_unique<Mesh>(std::move(port_submesh_ptr));
   port_normal = mesh::GetSurfaceNormal(*port_mesh);
 
   port_nd_fec = std::make_unique<mfem::ND_FECollection>(nd_fespace.GetMaxElementOrder(),
@@ -367,6 +408,29 @@ WavePortData::WavePortData(const config::WavePortData &data,
       mfem::ParSubMesh::CreateTransferMap(E0t.Real(), port_E0t->Real()));
   port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0n.Real(), port_E0n->Real()));
+
+  // Remap submesh attributes so that domain elements get the adjacent volume element
+  // attribute (matching material definitions) and boundary edges get the adjacent boundary
+  // face attribute (matching BC definitions). This must happen AFTER CreateTransferMap
+  // (which depends on the original parent-child attribute relationship). Then rebuild the
+  // CEED attribute maps from the remapped submesh.
+  {
+    auto &port_submesh = static_cast<mfem::ParSubMesh &>(port_mesh->Get());
+    mesh::RemapSubMeshAttributes(port_submesh);
+    mesh::RemapSubMeshBdrAttributes(port_submesh, attr_list);
+  }
+  port_mesh->RebuildCeedAttributes();
+
+  // Construct submesh-specific MaterialOperator (uses remapped submesh for CEED attribute
+  // mapping) and boundary condition operators. The surface operators are constructed with
+  // the parent 3D mesh for bdr_attributes validation (modifying a ParSubMesh's
+  // bdr_attributes corrupts MFEM internal state), but use port_mat_op for CEED boundary
+  // attribute lookups which correctly reference the remapped submesh.
+  port_mat_op = std::make_unique<MaterialOperator>(iodata, *port_mesh);
+  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *port_mat_op, mesh);
+  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *port_mat_op, mesh);
+  port_surf_sigma_op =
+      std::make_unique<SurfaceConductivityOperator>(iodata, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -402,16 +466,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
-  // The operators for the generalized eigenvalue problem are:
-  //                [Aₜₜ  Aₜₙ] [eₜ] = -kₙ² [Bₜₜ  0ₜₙ] [eₜ]
-  //                [Aₙₜ  Aₙₙ] [eₙ]        [0ₙₜ  0ₙₙ] [eₙ]
-  // for the wave port of the given index. The transformed variables are related to the true
-  // field by Eₜ = eₜ and Eₙ = eₙ / ikₙ. We will actually solve the shift-and-inverse
-  // problem (A - σ B)⁻¹ B e = λ e, with λ = 1 / (-kₙ² - σ).
-  // Reference: Vardapetyan and Demkowicz, Full-wave analysis of dielectric waveguides at a
-  //            given frequency, Math. Comput. (2003).
-  // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
-  //           transmission line, arXiv:2302.11994 (2023).
+  // Set the shift-and-invert target as the maximum propagation constant.
   double c_min = mat_op.GetLightSpeedMax().Min();
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
@@ -436,22 +491,35 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // communicator (all processes), so the config + construction must happen on all
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
-    port_bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
     BoundaryModeOperatorConfig config;
-    config.attr_to_material = &port_bdr_attr_mat;
-    config.inv_permeability = &mat_op.GetInvPermeability();
-    config.curlcurl_inv_permeability = &mat_op.GetInvPermeability();
-    config.permittivity_real = &mat_op.GetPermittivityReal();
-    config.permittivity_scalar = &mat_op.GetPermittivityReal();
-    config.permittivity_imag =
-        mat_op.HasLossTangent() ? &mat_op.GetPermittivityImag() : nullptr;
-    config.has_loss_tangent = mat_op.HasLossTangent();
+    config.attr_to_material = &port_mat_op->GetAttributeToMaterial();
+    config.inv_permeability = &port_mat_op->GetInvPermeability();
+    config.curlcurl_inv_permeability = &port_mat_op->GetInvPermeability();
+    config.permittivity_real = &port_mat_op->GetPermittivityReal();
+    config.permittivity_scalar = &port_mat_op->GetPermittivityReal();
     config.normal = &port_normal;
+    config.permittivity_imag =
+        port_mat_op->HasLossTangent() ? &port_mat_op->GetPermittivityImag() : nullptr;
+    config.permittivity_imag_scalar =
+        port_mat_op->HasLossTangent() ? &port_mat_op->GetPermittivityImagScalar() : nullptr;
+    config.has_loss_tangent = port_mat_op->HasLossTangent();
+    config.conductivity =
+        port_mat_op->HasConductivity() ? &port_mat_op->GetConductivity() : nullptr;
+    config.has_conductivity = port_mat_op->HasConductivity();
+    config.inv_london_depth =
+        port_mat_op->HasLondonDepth() ? &port_mat_op->GetInvLondonDepth() : nullptr;
+    config.inv_london_depth_scalar =
+        port_mat_op->HasLondonDepth() ? &port_mat_op->GetInvLondonDepthScalar() : nullptr;
+    config.has_london_depth = port_mat_op->HasLondonDepth();
+    config.mat_op = port_mat_op.get();
+    config.surf_z_op = port_surf_z_op.get();
+    config.farfield_op = port_farfield_op.get();
+    config.surf_sigma_op = port_surf_sigma_op.get();
     config.num_modes = mode_idx;
     config.num_vec = data.max_size;
     config.eig_tol = data.eig_tol;
     config.which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
-    config.linear = &solver.linear;
+    config.linear = &iodata.solver.linear;
     config.eigen_backend = data.eigen_solver;
     config.verbose = data.verbose;
 
@@ -811,16 +879,14 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
   }
 
-  // List of all boundaries which will be marked as essential for the purposes of computing
-  // wave port modes. This includes all PEC surfaces, but may also include others like when
-  // a kinetic inductance or other BC is applied for the 3D simulation but should be
-  // considered as PEC for the 2D problem. In addition, we mark as Dirichlet boundaries all
-  // wave ports other than the wave port being currently considered, in case two wave ports
-  // are touching and share one or more edges.
+  // List of all boundaries which will be marked as essential (Dirichlet) for the purposes
+  // of computing wave port modes: PEC and AuxPEC surfaces. Other wave ports are also marked
+  // as Dirichlet in case two wave ports are touching and share one or more edges.
+  // Impedance, conductivity, and absorbing BCs are handled through their respective
+  // boundary operators in the eigenvalue problem.
   mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
-                                   iodata.boundaries.auxpec.attributes.size() +
-                                   iodata.boundaries.conductivity.size()));
+                                   iodata.boundaries.auxpec.attributes.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
@@ -836,17 +902,6 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
       continue;  // Can just ignore if wrong
     }
     dbc_bcs.Append(attr);
-  }
-  for (const auto &data : iodata.boundaries.conductivity)
-  {
-    for (auto attr : data.attributes)
-    {
-      if (attr <= 0 || attr > bdr_attr_max)
-      {
-        continue;  // Can just ignore if wrong
-      }
-      dbc_bcs.Append(attr);
-    }
   }
   // If user accidentally specifies a surface as both "PEC" and "WavePortPEC", this is fine
   // so allow for duplicates in the attribute list.
@@ -874,8 +929,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
-    ports.try_emplace(idx, data, iodata.solver, mat_op, nd_fespace, h1_fespace,
-                      port_dbc_bcs);
+    ports.try_emplace(idx, data, iodata, mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || iodata.problem.type == ProblemType::DRIVEN ||

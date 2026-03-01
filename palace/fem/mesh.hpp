@@ -57,6 +57,7 @@ private:
   // are not aligned.
   std::unordered_map<int, int> loc_attr;
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
+  bool ceed_from_self = false;  // True after RebuildCeedAttributes()
 
   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
   //   - Mesh element indices for threads and element geometry types.
@@ -163,6 +164,11 @@ public:
   void ResetCeedObjects();
 
   void Update();
+
+  // Rebuild CEED attribute maps from the mesh's own elements, ignoring any parent mesh.
+  // Use after remapping attributes on a boundary submesh (RemapSubMeshAttributes +
+  // RemapSubMeshBdrAttributes) so that CEED data reflects the remapped attributes.
+  void RebuildCeedAttributes();
 
   MPI_Comm GetComm() const { return mesh->GetComm(); }
 };

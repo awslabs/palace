@@ -204,7 +204,8 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
-    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed)
+    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed,
+    bool ceed_from_self)
 {
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type and corresponding geometry factor data. libCEED operators will be
@@ -230,36 +231,38 @@ auto BuildCeedGeomFactorData(
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
     auto GetCeedAttribute = [&]() -> std::function<int(int)>
     {
-      if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(&mesh))
+      if (!ceed_from_self)
       {
-        MFEM_VERIFY(submesh->GetFrom() == mfem::SubMesh::From::Boundary,
-                    "Unexpected non-SubMesh object for BuildCeedGeomFactorData with Mesh "
-                    "with (dim, space_dim) = ("
-                        << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
-        return [&, submesh](int i)
+        if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(&mesh))
         {
-          // Mesh is actually a boundary submesh, so we use the boundary attribute mappings
-          // from the parent mesh.
-          const int attr = mesh.GetAttribute(i);
-          const int nbr_attr = GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[i],
-                                                       *submesh->GetParent(), FET, T1, T2);
-          MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
-                          loc_bdr_attr.at(attr).find(nbr_attr) !=
-                              loc_bdr_attr.at(attr).end(),
-                      "Missing libCEED boundary attribute for attribute " << attr << "!");
-          return loc_bdr_attr.at(attr).at(nbr_attr);
-        };
+          MFEM_VERIFY(submesh->GetFrom() == mfem::SubMesh::From::Boundary,
+                      "Unexpected non-SubMesh object for BuildCeedGeomFactorData with Mesh "
+                      "with (dim, space_dim) = ("
+                          << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
+          return [&, submesh](int i)
+          {
+            // Mesh is a boundary submesh with parent-based CEED data, so we use the
+            // boundary attribute mappings from the parent mesh.
+            const int attr = mesh.GetAttribute(i);
+            const int nbr_attr =
+                GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[i],
+                                        *submesh->GetParent(), FET, T1, T2);
+            MFEM_ASSERT(
+                loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
+                    loc_bdr_attr.at(attr).find(nbr_attr) != loc_bdr_attr.at(attr).end(),
+                "Missing libCEED boundary attribute for attribute " << attr << "!");
+            return loc_bdr_attr.at(attr).at(nbr_attr);
+          };
+        }
       }
-      else
+      // Non-submesh mesh, or submesh with self-rebuilt CEED data: use loc_attr directly.
+      return [&](int i)
       {
-        return [&](int i)
-        {
-          const int attr = mesh.GetAttribute(i);
-          MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
-                      "Missing libCEED domain attribute for attribute " << attr << "!");
-          return loc_attr.at(attr);
-        };
-      }
+        const int attr = mesh.GetAttribute(i);
+        MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+                    "Missing libCEED domain attribute for attribute " << attr << "!");
+        return loc_attr.at(attr);
+      };
     }();
     for (auto &[geom, indices] : element_indices)
     {
@@ -273,9 +276,10 @@ auto BuildCeedGeomFactorData(
     }
   }
 
-  // Then boundary elements (no support for boundary integrators on meshes embedded in
-  // higher dimensional space for now).
-  if (mesh.Dimension() == mesh.SpaceDimension())
+  // Then boundary elements. For embedded meshes (dim != sdim), boundary element geometry
+  // data is only available when the CEED data has been rebuilt from the mesh itself
+  // (after attribute remapping on a boundary submesh).
+  if (mesh.Dimension() == mesh.SpaceDimension() || ceed_from_self)
   {
     const int nbe = mesh.GetNBE();
     const int stride = (nbe + nt - 1) / nt;
@@ -312,14 +316,13 @@ auto BuildCeedGeomFactorData(
 const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
 Mesh::GetCeedGeomFactorData(Ceed ceed) const
 {
-  MFEM_VERIFY(!loc_attr.empty(),
-              "Mesh attribute mappings have not been built for GetCeedGeomFactorData!");
   auto it = geom_data.find(ceed);
   MFEM_ASSERT(it != geom_data.end(), "Unknown Ceed context in GetCeedGeomFactorData!");
   auto &geom_data_map = it->second;
-  if (geom_data_map.empty())
+  if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed);
+    geom_data_map =
+        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed, ceed_from_self);
   }
   return geom_data_map;
 }
@@ -352,6 +355,26 @@ void Mesh::Update()
   loc_bdr_attr.clear();
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
+  ResetCeedObjects();
+}
+
+void Mesh::RebuildCeedAttributes()
+{
+  // Rebuild CEED attribute maps from the mesh's own elements (not the parent). This is
+  // needed after remapping attributes on a boundary submesh. For ranks with no local
+  // elements (e.g., wave port submesh on ranks without port elements), the maps are left
+  // empty. Sets the ceed_from_self flag so that BuildCeedGeomFactorData uses loc_attr for
+  // domain elements (instead of the ParSubMesh-specific loc_bdr_attr path) and builds
+  // boundary element geometry data (even when dim != sdim).
+  loc_attr.clear();
+  loc_bdr_attr.clear();
+  mesh->ExchangeFaceNbrData();  // MPI collective — all ranks must participate
+  if (mesh->GetNE() > 0)
+  {
+    loc_attr = BuildCeedAttributes(*mesh);
+    loc_bdr_attr = BuildCeedBdrAttributes(*mesh);
+  }
+  ceed_from_self = true;
   ResetCeedObjects();
 }
 

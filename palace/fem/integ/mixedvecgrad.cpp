@@ -95,6 +95,24 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
         MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
       }
       break;
+    case 31:
+      if (test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_31 : f_apply_hcurl_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_31_loc : f_apply_hcurl_31_loc);
+      }
+      else if (test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_31 : f_apply_hcurlhdiv_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_31_loc : f_apply_hcurlhdiv_31_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
+      }
+      break;
     case 32:
       if (test_map_type == mfem::FiniteElement::H_CURL)
       {
@@ -161,6 +179,11 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
       info.apply_qf = assemble_q_data ? f_build_hcurl_21 : f_apply_hcurl_21;
       info.apply_qf_path = PalaceQFunctionRelativePath(
           assemble_q_data ? f_build_hcurl_21_loc : f_apply_hcurl_21_loc);
+      break;
+    case 31:
+      info.apply_qf = assemble_q_data ? f_build_hcurl_31 : f_apply_hcurl_31;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurl_31_loc : f_apply_hcurl_31_loc);
       break;
     case 32:
       info.apply_qf = assemble_q_data ? f_build_hcurl_32 : f_apply_hcurl_32;
