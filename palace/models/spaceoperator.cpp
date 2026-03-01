@@ -67,7 +67,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   // target space.
   if (mesh.back()->Dimension() == 2)
   {
-    const int l2_order = iodata.solver.order - 1;
+    const int l2_order = solver.order - 1;
     const int dim = mesh.back()->Dimension();
     l2_curl_fecs.push_back(std::make_unique<mfem::L2_FECollection>(
         l2_order, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL));
@@ -114,6 +114,14 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
                   iodata.units, mesh)
 {
+  // The sub-struct constructor creates an empty WavePortOperator. Reconstruct with full
+  // IoData for impedance/conductivity/absorbing BC support on wave port submeshes.
+  if (!iodata.boundaries.waveport.empty())
+  {
+    wave_port_op = WavePortOperator(iodata, mat_op, GetNDSpace(), GetH1Space());
+    port_excitation_helper =
+        PortExcitations(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op);
+  }
 }
 
 mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
