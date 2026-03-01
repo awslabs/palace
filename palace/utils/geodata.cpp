@@ -1405,7 +1405,6 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2)
 {
   MPI_Comm comm = parent_mesh.GetComm();
-  const int nprocs = Mpi::Size(comm);
 
   // Step 1: Extract ParSubMesh from 3D boundary.
   auto par_submesh = mfem::ParSubMesh::CreateFromBoundary(parent_mesh, surface_attrs);
@@ -1424,9 +1423,11 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
   // local PEC edges, gathered to rank 0 for matching against submesh edges.
   std::vector<std::array<int, 3>> pec_internal_edges;  // {v1, v2, attr}
   {
-    // Global vertex numbering (collective MPI operation).
+    // Global vertex numbering (collective MPI operations).
     mfem::Array<HYPRE_BigInt> pvert_gi;
     parent_mesh.GetGlobalVertexIndices(pvert_gi);
+    mfem::Array<HYPRE_BigInt> svert_gi;
+    par_submesh.GetGlobalVertexIndices(svert_gi);
 
     // Each rank: collect PEC edges as global vertex pairs.
     std::vector<int> local_pec_flat;
@@ -1463,12 +1464,15 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
         par_submesh.GetEdgeVertices(i, sev);
         int gv0 = static_cast<int>(pvert_gi[pev[0]]);
         int gv1 = static_cast<int>(pvert_gi[pev[1]]);
+        int sgv0 = static_cast<int>(svert_gi[sev[0]]);
+        int sgv1 = static_cast<int>(svert_gi[sev[1]]);
         local_sub_flat.insert(local_sub_flat.end(),
-                              {std::min(gv0, gv1), std::max(gv0, gv1), sev[0], sev[1]});
+                              {std::min(gv0, gv1), std::max(gv0, gv1), sgv0, sgv1});
       }
     }
 
     // Gather both sets on rank 0.
+    const int nprocs = Mpi::Size(comm);
     auto GatherFlat = [&](const std::vector<int> &local, int stride) -> std::vector<int>
     {
       int local_n = static_cast<int>(local.size()) / stride;
@@ -1530,47 +1534,21 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     Mpi::Print(" Found {:d} PEC internal edges on the cross-section\n", n_pec);
   }
 
-  // Step 5: Gather parallel submesh as serial mesh. PrintAsOne replaces domain element
-  // attributes with (rank + 1), so we gather the real attributes separately.
-  std::vector<int> global_elem_attrs, global_bdr_attrs;
-  {
-    auto GatherAttrs = [&](int n_local, auto get_attr) -> std::vector<int>
-    {
-      std::vector<int> local(n_local);
-      for (int i = 0; i < n_local; i++)
-      {
-        local[i] = get_attr(i);
-      }
-      std::vector<int> counts(nprocs);
-      MPI_Gather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-      int total = 0;
-      std::vector<int> displs(nprocs);
-      for (int i = 0; i < nprocs; i++)
-      {
-        displs[i] = total;
-        total += counts[i];
-      }
-      std::vector<int> result(total);
-      MPI_Gatherv(local.data(), n_local, MPI_INT, result.data(), counts.data(),
-                  displs.data(), MPI_INT, 0, comm);
-      // Broadcast to all ranks.
-      MPI_Bcast(&total, 1, MPI_INT, 0, comm);
-      result.resize(total);
-      MPI_Bcast(result.data(), total, MPI_INT, 0, comm);
-      return result;
-    };
-
-    global_elem_attrs = GatherAttrs(par_submesh.GetNE(),
-                                    [&](int i) { return par_submesh.GetAttribute(i); });
-    global_bdr_attrs = GatherAttrs(par_submesh.GetNBE(),
-                                   [&](int i) { return par_submesh.GetBdrAttribute(i); });
-  }
-
-  // PrintAsOne (collective) + broadcast serial mesh string.
+  // Step 5: Gather parallel submesh as a serial mesh. GetSerialMesh properly deduplicates
+  // shared vertices (using H1 global TDof numbering) and preserves real attributes, unlike
+  // PrintAsOne which duplicates shared vertices and overwrites attributes with (rank + 1).
+  // The vertex numbering matches GetGlobalVertexIndices, so PEC edge vertices (stored as
+  // submesh global indices via svert_gi) are directly valid in the serial mesh.
   std::string serial_str;
   {
+    // GetSerialMesh is collective — all ranks must call it. The resulting mesh is only
+    // populated on rank 0; other ranks get an empty mesh.
+    auto serial_on_root = par_submesh.GetSerialMesh(0);
     std::ostringstream oss;
-    par_submesh.PrintAsOne(oss);
+    if (Mpi::Root(comm))
+    {
+      serial_on_root.Print(oss);
+    }
     serial_str = oss.str();
   }
   int str_size = static_cast<int>(serial_str.size());
@@ -1578,21 +1556,8 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
   serial_str.resize(str_size);
   MPI_Bcast(serial_str.data(), str_size, MPI_CHAR, 0, comm);
 
-  // Read serial mesh and restore correct attributes.
   std::istringstream iss(serial_str);
   auto serial_mesh = std::make_unique<mfem::Mesh>(iss);
-  int ne_total = static_cast<int>(global_elem_attrs.size());
-  MFEM_VERIFY(serial_mesh->GetNE() == ne_total, "PrintAsOne element count mismatch!");
-  for (int i = 0; i < ne_total; i++)
-  {
-    serial_mesh->SetAttribute(i, global_elem_attrs[i]);
-  }
-  int nbe_total = static_cast<int>(global_bdr_attrs.size());
-  for (int i = 0; i < std::min(nbe_total, serial_mesh->GetNBE()); i++)
-  {
-    serial_mesh->SetBdrAttribute(i, global_bdr_attrs[i]);
-  }
-  serial_mesh->SetAttributes();
 
   // Step 6: Add PEC internal edges as boundary elements.
   if (!pec_internal_edges.empty())
@@ -1788,7 +1753,7 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
   {
     int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
     MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
-                "Submesh boundary edge index out of parent edge map range!");
+                "Submesh boundary element edge index out of range!");
     int parent_edge = parent_edge_map[submesh_edge];
     auto it = edge_to_bdr_attr.find(parent_edge);
     if (it != edge_to_bdr_attr.end())
@@ -1799,8 +1764,138 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
     // but possible for internal edges). Leave the default attribute.
   }
 
-  // Rebuild the bdr_attributes array to reflect the new attribute values.
-  submesh.SetAttributes();
+  // Note: We intentionally do NOT modify submesh.bdr_attributes here. Modifying
+  // bdr_attributes (even via SetAttributes) on a ParSubMesh can corrupt internal MFEM
+  // state. The individual SetBdrAttribute() calls above are sufficient — the CEED boundary
+  // attribute maps are rebuilt separately via Mesh::RebuildCeedAttributes(), which reads
+  // from GetBdrAttribute(i) directly.
+}
+
+void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
+                                        const mfem::Array<int> &surface_attrs,
+                                        const std::vector<int> &internal_bdr_attrs)
+{
+  MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
+              "AddSubMeshInternalBoundaryElements requires a boundary ParSubMesh!");
+
+  if (internal_bdr_attrs.empty())
+  {
+    return;
+  }
+
+  const auto &parent = *submesh.GetParent();
+
+  // Build a set of surface and internal boundary attributes for quick lookup.
+  std::unordered_set<int> surface_attr_set, internal_attr_set;
+  for (int i = 0; i < surface_attrs.Size(); i++)
+  {
+    surface_attr_set.insert(surface_attrs[i]);
+  }
+  for (int a : internal_bdr_attrs)
+  {
+    internal_attr_set.insert(a);
+  }
+
+  // Build a map from parent edge index to the parent boundary face attribute that should
+  // generate an internal boundary element. We want edges that belong to a parent boundary
+  // face in internal_bdr_attrs AND also belong to a parent boundary face in surface_attrs
+  // (i.e., the edge lies at the intersection of the selected surface with an internal
+  // boundary face).
+  std::unordered_map<int, int> edge_to_internal_attr;
+  mfem::Array<int> edges, orientations;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    int attr = parent.GetBdrAttribute(be);
+    if (internal_attr_set.count(attr) == 0)
+    {
+      continue;  // Not an internal boundary attribute
+    }
+    parent.GetBdrElementEdges(be, edges, orientations);
+    for (int j = 0; j < edges.Size(); j++)
+    {
+      edge_to_internal_attr[edges[j]] = attr;
+    }
+  }
+
+  // Now find parent edges that also belong to the surface (the selected face region).
+  // These are the edges where the internal boundary intersects the surface.
+  std::unordered_set<int> surface_edges;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    int attr = parent.GetBdrAttribute(be);
+    if (surface_attr_set.count(attr) == 0)
+    {
+      continue;  // Not a surface face
+    }
+    parent.GetBdrElementEdges(be, edges, orientations);
+    for (int j = 0; j < edges.Size(); j++)
+    {
+      surface_edges.insert(edges[j]);
+    }
+  }
+
+  // Find the intersection: parent edges that are both in an internal boundary face AND
+  // in a surface face.
+  std::unordered_map<int, int> intersection_edges;
+  for (const auto &[edge, attr] : edge_to_internal_attr)
+  {
+    if (surface_edges.count(edge) > 0)
+    {
+      intersection_edges[edge] = attr;
+    }
+  }
+
+  if (intersection_edges.empty())
+  {
+    return;
+  }
+
+  // Build a set of parent edges that are already boundary elements of the submesh.
+  const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
+  std::unordered_set<int> existing_bdr_edges;
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
+    if (submesh_edge >= 0 && submesh_edge < parent_edge_map.Size())
+    {
+      existing_bdr_edges.insert(parent_edge_map[submesh_edge]);
+    }
+  }
+
+  // Build reverse map: parent edge → submesh edge index.
+  std::unordered_map<int, int> parent_to_submesh_edge;
+  for (int se = 0; se < parent_edge_map.Size(); se++)
+  {
+    parent_to_submesh_edge[parent_edge_map[se]] = se;
+  }
+
+  // Collect new boundary elements and their edge (face) indices. We use
+  // AddBdrElements(elems, be_to_face) which atomically adds elements with their topology
+  // mapping, avoiding the need to call FinalizeTopology (which deadlocks on ParSubMesh).
+  mfem::Array<mfem::Element *> new_bdr_elems;
+  mfem::Array<int> new_be_to_face;
+  for (const auto &[parent_edge, attr] : intersection_edges)
+  {
+    if (existing_bdr_edges.count(parent_edge) > 0)
+    {
+      continue;  // Already a boundary element
+    }
+    auto it = parent_to_submesh_edge.find(parent_edge);
+    if (it == parent_to_submesh_edge.end())
+    {
+      continue;  // Edge not in this rank's submesh
+    }
+    int submesh_edge = it->second;
+    mfem::Array<int> edge_verts;
+    submesh.GetEdgeVertices(submesh_edge, edge_verts);
+    MFEM_ASSERT(edge_verts.Size() == 2, "Expected 2 vertices per edge!");
+    new_bdr_elems.Append(new mfem::Segment(edge_verts[0], edge_verts[1], attr));
+    new_be_to_face.Append(submesh_edge);
+  }
+  if (new_bdr_elems.Size() > 0)
+  {
+    submesh.AddBdrElements(new_bdr_elems, new_be_to_face);
+  }
 }
 
 mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centroid,
