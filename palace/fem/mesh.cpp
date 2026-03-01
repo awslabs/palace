@@ -244,13 +244,12 @@ auto BuildCeedGeomFactorData(
             // Mesh is a boundary submesh with parent-based CEED data, so we use the
             // boundary attribute mappings from the parent mesh.
             const int attr = mesh.GetAttribute(i);
-            const int nbr_attr =
-                GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[i],
-                                        *submesh->GetParent(), FET, T1, T2);
-            MFEM_ASSERT(
-                loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
-                    loc_bdr_attr.at(attr).find(nbr_attr) != loc_bdr_attr.at(attr).end(),
-                "Missing libCEED boundary attribute for attribute " << attr << "!");
+            const int nbr_attr = GetBdrNeighborAttribute(
+                submesh->GetParentElementIDMap()[i], *submesh->GetParent(), FET, T1, T2);
+            MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
+                            loc_bdr_attr.at(attr).find(nbr_attr) !=
+                                loc_bdr_attr.at(attr).end(),
+                        "Missing libCEED boundary attribute for attribute " << attr << "!");
             return loc_bdr_attr.at(attr).at(nbr_attr);
           };
         }
