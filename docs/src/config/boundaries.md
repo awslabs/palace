@@ -116,9 +116,9 @@ ports can only be specified on boundaries which are on the true boundary of the
 computational domain. Additionally, wave port boundaries are only available for
 frequency domain driven and eigenmode simulation types.
 
-`"WavePortPEC"` :  Top-level object for configuring additional PEC boundary conditions for boundary
-mode analysis performed on the wave port boundaries. Thus, this object is only relevant
-when wave port boundaries are specified under
+`"WavePortPEC"` :  Top-level object for forcing specific boundary attributes to act as PEC in the
+wave port boundary mode analysis, overriding any other boundary condition assigned to those
+attributes. Only relevant when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
@@ -440,10 +440,11 @@ integral. Higher values give more integration points and better accuracy.
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider as PEC when solving the
-2D eigenproblem for the wave port boundary mode analysis, along with those specified under
-[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) and
-[`config["Boundaries"]["Conductivity"]["Attributes"]`](#boundaries%5B%22Conductivity%22%5D).
+`"Attributes" [None]` :  Integer array of mesh boundary attributes to force as PEC when solving the
+2D eigenproblem for the wave port boundary mode analysis, in addition to those specified under
+[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D). This overrides any
+impedance, absorbing, or conductivity boundary condition that may be assigned to the same
+attributes for the purpose of the 2D wave port boundary mode problem.
 
 ## `boundaries["SurfaceCurrent"]`
 
