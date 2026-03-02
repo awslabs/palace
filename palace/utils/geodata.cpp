@@ -1399,7 +1399,6 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2)
 {
   MPI_Comm comm = parent_mesh.GetComm();
-  const int nprocs = Mpi::Size(comm);
 
   // Step 1: Extract ParSubMesh from 3D boundary.
   auto par_submesh = mfem::ParSubMesh::CreateFromBoundary(parent_mesh, surface_attrs);
@@ -1418,9 +1417,11 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
   // local PEC edges, gathered to rank 0 for matching against submesh edges.
   std::vector<std::array<int, 3>> pec_internal_edges;  // {v1, v2, attr}
   {
-    // Global vertex numbering (collective MPI operation).
+    // Global vertex numbering (collective MPI operations).
     mfem::Array<HYPRE_BigInt> pvert_gi;
     parent_mesh.GetGlobalVertexIndices(pvert_gi);
+    mfem::Array<HYPRE_BigInt> svert_gi;
+    par_submesh.GetGlobalVertexIndices(svert_gi);
 
     // Each rank: collect PEC edges as global vertex pairs.
     std::vector<int> local_pec_flat;
@@ -1457,12 +1458,15 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
         par_submesh.GetEdgeVertices(i, sev);
         int gv0 = static_cast<int>(pvert_gi[pev[0]]);
         int gv1 = static_cast<int>(pvert_gi[pev[1]]);
+        int sgv0 = static_cast<int>(svert_gi[sev[0]]);
+        int sgv1 = static_cast<int>(svert_gi[sev[1]]);
         local_sub_flat.insert(local_sub_flat.end(),
-                              {std::min(gv0, gv1), std::max(gv0, gv1), sev[0], sev[1]});
+                              {std::min(gv0, gv1), std::max(gv0, gv1), sgv0, sgv1});
       }
     }
 
     // Gather both sets on rank 0.
+    const int nprocs = Mpi::Size(comm);
     auto GatherFlat = [&](const std::vector<int> &local, int stride) -> std::vector<int>
     {
       int local_n = static_cast<int>(local.size()) / stride;
@@ -1524,47 +1528,21 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     Mpi::Print(" Found {:d} PEC internal edges on the cross-section\n", n_pec);
   }
 
-  // Step 5: Gather parallel submesh as serial mesh. PrintAsOne replaces domain element
-  // attributes with (rank + 1), so we gather the real attributes separately.
-  std::vector<int> global_elem_attrs, global_bdr_attrs;
-  {
-    auto GatherAttrs = [&](int n_local, auto get_attr) -> std::vector<int>
-    {
-      std::vector<int> local(n_local);
-      for (int i = 0; i < n_local; i++)
-      {
-        local[i] = get_attr(i);
-      }
-      std::vector<int> counts(nprocs);
-      MPI_Gather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-      int total = 0;
-      std::vector<int> displs(nprocs);
-      for (int i = 0; i < nprocs; i++)
-      {
-        displs[i] = total;
-        total += counts[i];
-      }
-      std::vector<int> result(total);
-      MPI_Gatherv(local.data(), n_local, MPI_INT, result.data(), counts.data(),
-                  displs.data(), MPI_INT, 0, comm);
-      // Broadcast to all ranks.
-      MPI_Bcast(&total, 1, MPI_INT, 0, comm);
-      result.resize(total);
-      MPI_Bcast(result.data(), total, MPI_INT, 0, comm);
-      return result;
-    };
-
-    global_elem_attrs = GatherAttrs(par_submesh.GetNE(),
-                                    [&](int i) { return par_submesh.GetAttribute(i); });
-    global_bdr_attrs = GatherAttrs(par_submesh.GetNBE(),
-                                   [&](int i) { return par_submesh.GetBdrAttribute(i); });
-  }
-
-  // PrintAsOne (collective) + broadcast serial mesh string.
+  // Step 5: Gather parallel submesh as a serial mesh. GetSerialMesh properly deduplicates
+  // shared vertices (using H1 global TDof numbering) and preserves real attributes, unlike
+  // PrintAsOne which duplicates shared vertices and overwrites attributes with (rank + 1).
+  // The vertex numbering matches GetGlobalVertexIndices, so PEC edge vertices (stored as
+  // submesh global indices via svert_gi) are directly valid in the serial mesh.
   std::string serial_str;
   {
+    // GetSerialMesh is collective — all ranks must call it. The resulting mesh is only
+    // populated on rank 0; other ranks get an empty mesh.
+    auto serial_on_root = par_submesh.GetSerialMesh(0);
     std::ostringstream oss;
-    par_submesh.PrintAsOne(oss);
+    if (Mpi::Root(comm))
+    {
+      serial_on_root.Print(oss);
+    }
     serial_str = oss.str();
   }
   int str_size = static_cast<int>(serial_str.size());
@@ -1572,21 +1550,8 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
   serial_str.resize(str_size);
   MPI_Bcast(serial_str.data(), str_size, MPI_CHAR, 0, comm);
 
-  // Read serial mesh and restore correct attributes.
   std::istringstream iss(serial_str);
   auto serial_mesh = std::make_unique<mfem::Mesh>(iss);
-  int ne_total = static_cast<int>(global_elem_attrs.size());
-  MFEM_VERIFY(serial_mesh->GetNE() == ne_total, "PrintAsOne element count mismatch!");
-  for (int i = 0; i < ne_total; i++)
-  {
-    serial_mesh->SetAttribute(i, global_elem_attrs[i]);
-  }
-  int nbe_total = static_cast<int>(global_bdr_attrs.size());
-  for (int i = 0; i < std::min(nbe_total, serial_mesh->GetNBE()); i++)
-  {
-    serial_mesh->SetBdrAttribute(i, global_bdr_attrs[i]);
-  }
-  serial_mesh->SetAttributes();
 
   // Step 6: Add PEC internal edges as boundary elements.
   if (!pec_internal_edges.empty())
