@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # CPW 2D cross-section mesh with infinitely thin (zero-thickness) PEC metal.
 # The trace and ground are 1D line segments at y=0 (substrate surface).
 # The domain is split into substrate (below y=0) and vacuum (above y=0) regions.

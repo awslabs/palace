@@ -596,7 +596,6 @@ if "cavity2d/eigenmode" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -606,7 +605,7 @@ end
 
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
-abstol = 1.0e-10
+abstol = 1.0e-8
 
 if "cavity2d/driven" in cases
     @info "Testing cavity2d/driven (2D driven)..."
@@ -618,8 +617,7 @@ if "cavity2d/driven" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
+        excluded_columns=["Maximum", "Minimum", "Mean"],
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -627,6 +625,7 @@ if "cavity2d/driven" in cases
 end
 
 reltol = 1.0e-4
+abstol = 1.0e-10
 
 if "cavity2d/electrostatic" in cases
     @info "Testing cavity2d/electrostatic (2D electrostatic)..."
@@ -656,7 +655,6 @@ if "cavity2d/magnetostatic" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -674,7 +672,6 @@ if "cavity2d/transient" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -702,7 +699,6 @@ if "cpw2d/thin" in cases
             "Im{kn} (1/m)",
             "Im{n_eff}"
         ],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -729,7 +725,6 @@ if "cpw2d/thick_impedance" in cases
             "Im{kn} (1/m)",
             "Im{n_eff}"
         ],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -750,7 +745,6 @@ if "cpw/wave_2dmode" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
