@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -17,8 +18,11 @@
 namespace palace
 {
 
+template <typename OperType>
+class BlockDiagonalPreconditioner;
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
+class FiniteElementSpaceHierarchy;
 class MaterialOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
@@ -101,6 +105,26 @@ struct BoundaryModeOperatorConfig
 };
 
 //
+// Configuration for p-multigrid preconditioning of the boundary mode eigenvalue problem.
+// When provided, the BoundaryModeOperator uses a block-diagonal GMG preconditioner
+// (ND p-multigrid + H1 p-multigrid) instead of a sparse direct solver.
+//
+struct BoundaryModeMultigridConfig
+{
+  // ND and H1 FE space hierarchies for the diagonal blocks (not owned).
+  FiniteElementSpaceHierarchy *nd_fespaces = nullptr;
+  FiniteElementSpaceHierarchy *h1_fespaces = nullptr;
+
+  // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
+  FiniteElementSpaceHierarchy *h1_aux_fespaces = nullptr;
+
+  // Per-level essential BC true DOF lists for ND, H1, and H1 auxiliary blocks (not owned).
+  std::vector<mfem::Array<int>> *nd_dbc_tdof_lists = nullptr;
+  std::vector<mfem::Array<int>> *h1_dbc_tdof_lists = nullptr;
+  std::vector<mfem::Array<int>> *h1_aux_dbc_tdof_lists = nullptr;
+};
+
+//
 // Linear eigenvalue solver for 2D boundary mode computation using a direct linearization
 // of the transverse curl-curl (Equation 1) and normal curl-curl (Equation 2) equations
 // with the Vardapetyan-Demkowicz substitution e_n_tilde = i*kn*E_n, e_t = E_t.
@@ -142,7 +166,8 @@ public:
                        const FiniteElementSpace &nd_fespace,
                        const FiniteElementSpace &h1_fespace,
                        const mfem::Array<int> &dbc_tdof_list,
-                       MPI_Comm solver_comm = MPI_COMM_NULL);
+                       MPI_Comm solver_comm = MPI_COMM_NULL,
+                       const BoundaryModeMultigridConfig *mg_config = nullptr);
 
   ~BoundaryModeOperator();
 
@@ -241,8 +266,31 @@ private:
                                            const mfem::HypreParMatrix *Btni,
                                            const mfem::HypreParMatrix *Dnn) const;
 
+  // Optional multigrid configuration (not owned, may be nullptr for sparse direct path).
+  const BoundaryModeMultigridConfig *mg_config;
+
+  // Non-owning pointer to the block preconditioner (for setting operators in Solve).
+  BlockDiagonalPreconditioner<ComplexOperator> *block_pc_ptr = nullptr;
+
+  // Multigrid preconditioner operators (owned, must outlive the GMG solver application).
+  std::unique_ptr<ComplexMultigridOperator> att_mg_op, ann_mg_op;
+
+  // Shifted off-diagonal operator -sigma*Btn for block lower-triangular preconditioning.
+  std::unique_ptr<ComplexOperator> shifted_Btn_op;
+
+  // Assemble preconditioner operators at all multigrid levels for the Att (ND) block.
+  // Returns a ComplexMultigridOperator with primary (ND) and auxiliary (H1) operators.
+  std::unique_ptr<ComplexMultigridOperator> AssembleAttPreconditioner(double omega,
+                                                                      double sigma) const;
+
+  // Assemble preconditioner operators at all multigrid levels for the Ann (H1) block.
+  std::unique_ptr<ComplexMultigridOperator> AssembleAnnPreconditioner(double omega) const;
+
   // Set up the linear solver (GMRES + sparse direct preconditioner).
   void SetUpLinearSolver(MPI_Comm comm);
+
+  // Set up the linear solver with p-multigrid block-diagonal preconditioning.
+  void SetUpMultigridLinearSolver(MPI_Comm comm);
 
   // Set up the eigenvalue solver (SLEPc or ARPACK).
   void SetUpEigenSolver(MPI_Comm comm);
