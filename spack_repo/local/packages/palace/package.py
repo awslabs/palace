@@ -51,6 +51,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
     )
+    variant(
+        "asan",
+        default=False,
+        description="Build with address-sanitizer enabled (leads to severe loss of performance)",
+        when="@0.16:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch("palace-0.12.0.patch", when="@0.12")
@@ -73,6 +79,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("eigen")
 
     conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
+    conflicts(
+        "+asan",
+        when="platform=darwin %gcc",
+        msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
+    )
 
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
@@ -281,6 +292,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
             self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
+            self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
         ]
