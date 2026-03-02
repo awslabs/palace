@@ -6,7 +6,11 @@
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/ams.hpp"
 #include "linalg/arpack.hpp"
+#include "linalg/blockprecond.hpp"
+#include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
@@ -33,9 +37,10 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
                                            const FiniteElementSpace &nd_fespace,
                                            const FiniteElementSpace &h1_fespace,
                                            const mfem::Array<int> &dbc_tdof_list,
-                                           MPI_Comm solver_comm)
+                                           MPI_Comm solver_comm,
+                                           const BoundaryModeMultigridConfig *mg_config)
   : config(config), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
-    dbc_tdof_list(dbc_tdof_list)
+    dbc_tdof_list(dbc_tdof_list), mg_config(mg_config)
 {
   nd_size = nd_fespace.GetTrueVSize();
   h1_size = h1_fespace.GetTrueVSize();
@@ -80,15 +85,31 @@ BoundaryModeOperator::BoundaryModeOperator(const BoundaryModeOperatorConfig &con
   // - WavePort on port procs: solver_comm is a valid subset communicator -> use it.
   // - WavePort on non-port procs: solver_comm == MPI_COMM_NULL but FE space has no local
   //   DOFs -> skip solver setup (ksp and eigen remain null).
+  const bool use_mg =
+      mg_config && mg_config->nd_fespaces && mg_config->nd_fespaces->GetNumLevels() > 1;
   if (solver_comm != MPI_COMM_NULL)
   {
-    SetUpLinearSolver(solver_comm);
+    if (use_mg)
+    {
+      SetUpMultigridLinearSolver(solver_comm);
+    }
+    else
+    {
+      SetUpLinearSolver(solver_comm);
+    }
     SetUpEigenSolver(solver_comm);
   }
   else if (nd_size > 0)
   {
     // Standalone mode (BoundaryMode): all procs have DOFs, use FE space comm.
-    SetUpLinearSolver(nd_fespace.GetComm());
+    if (use_mg)
+    {
+      SetUpMultigridLinearSolver(nd_fespace.GetComm());
+    }
+    else
+    {
+      SetUpLinearSolver(nd_fespace.GetComm());
+    }
     SetUpEigenSolver(nd_fespace.GetComm());
   }
   // else: non-port process with empty FE space -- no solvers needed.
@@ -138,8 +159,37 @@ BoundaryModeOperator::Solve(double omega, double sigma, bool has_solver,
 
   MFEM_VERIFY(ksp && eigen,
               "BoundaryModeOperator::Solve called on process without solvers!");
-  ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
-  ksp->SetOperators(*opA, opP);
+
+  if (block_pc_ptr)
+  {
+    // Multigrid path: assemble preconditioner operators at all levels and set on the
+    // block-diagonal preconditioner. The outer Krylov solver gets the monolithic opA.
+    att_mg_op = AssembleAttPreconditioner(omega, sigma);
+    ann_mg_op = AssembleAnnPreconditioner(omega);
+    block_pc_ptr->SetBlockOperators(*att_mg_op, *ann_mg_op);
+
+    // Set the off-diagonal operator -sigma*Btn for block lower-triangular preconditioning.
+    // This captures the shift-and-invert coupling that dominates the off-diagonal.
+    if (Btnr && std::abs(sigma) > 0.0)
+    {
+      auto sBtnr = std::make_unique<mfem::HypreParMatrix>(*Btnr);
+      *sBtnr *= -sigma;
+      shifted_Btn_op = std::make_unique<ComplexWrapperOperator>(std::move(sBtnr), nullptr);
+      block_pc_ptr->SetOffDiagonalOperator(shifted_Btn_op.get());
+    }
+    else
+    {
+      block_pc_ptr->SetOffDiagonalOperator(nullptr);
+    }
+
+    ksp->SetOperators(*opA, *opA);  // opA passed twice; pc uses block_pc_ptr
+  }
+  else
+  {
+    // Sparse direct path: precondition with real part of the full block system.
+    ComplexWrapperOperator opP(opA->Real(), nullptr);
+    ksp->SetOperators(*opA, opP);
+  }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
   if (initial_space)
@@ -523,6 +573,7 @@ void BoundaryModeOperator::SetUpLinearSolver(MPI_Comm comm)
   gmres->SetRelTol(config.linear->tol);
   gmres->SetMaxIter(config.linear->max_it);
   gmres->SetRestartDim(config.linear->max_it);
+  gmres->EnableTimer();
 
   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for
   // the combined ND+H1 block system, so fall back to a sparse direct solver.
@@ -598,6 +649,341 @@ void BoundaryModeOperator::SetUpLinearSolver(MPI_Comm comm)
   pc->SetSaveAssembled(false);
   pc->SetDropSmallEntries(false);
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
+}
+
+void BoundaryModeOperator::SetUpMultigridLinearSolver(MPI_Comm comm)
+{
+  MFEM_VERIFY(mg_config && mg_config->nd_fespaces && mg_config->h1_fespaces &&
+                  mg_config->h1_aux_fespaces,
+              "Multigrid linear solver requires ND, H1, and H1 auxiliary space "
+              "hierarchies!");
+  const auto &linear = *config.linear;
+  const int print = config.verbose - 1;
+
+  // Determine coarse solver types for the ND and H1 blocks from the config. The default
+  // type is resolved in IoData (sparse direct for frequency-domain problems, AMS
+  // otherwise). For the H1 block, AMS is not applicable — use BoomerAMG instead.
+  LinearSolver nd_pc_type = linear.type;
+  LinearSolver h1_pc_type = linear.type;
+
+  if (nd_pc_type == LinearSolver::BOOMER_AMG)
+  {
+    Mpi::Warning(comm,
+                 "BoomerAMG is not well-suited for the Nedelec system matrix, consider "
+                 "using another solver.\n");
+  }
+  if (h1_pc_type == LinearSolver::AMS)
+  {
+    h1_pc_type = LinearSolver::BOOMER_AMG;
+    Mpi::Print(" Multigrid coarse solve: AMS for ND block, BoomerAMG for H1 block\n");
+  }
+
+  // Helper to create a coarse solver from the type.
+  auto MakeCoarseSolver =
+      [&](LinearSolver type) -> std::unique_ptr<MfemWrapperSolver<ComplexOperator>>
+  {
+    switch (type)
+    {
+      case LinearSolver::AMS:
+        MFEM_VERIFY(mg_config->h1_aux_fespaces,
+                    "AMS coarse solver requires auxiliary H1 space!");
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<HypreAmsSolver>(
+                mg_config->nd_fespaces->GetFESpaceAtLevel(0),
+                mg_config->h1_aux_fespaces->GetFESpaceAtLevel(0), linear.ams_max_it,
+                linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
+                linear.amg_agg_coarsen, print),
+            true, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+      case LinearSolver::BOOMER_AMG:
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<BoomerAmgSolver>(1, linear.mg_smooth_it,
+                                              linear.amg_agg_coarsen, print),
+            true, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+      case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<SuperLUSolver>(comm, linear.sym_factorization,
+                                            linear.superlu_3d, true, print),
+            false, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+#else
+        MFEM_ABORT("Solver was not built with SuperLU_DIST support!");
+        return {};
+#endif
+      case LinearSolver::STRUMPACK:
+      case LinearSolver::STRUMPACK_MP:
+#if defined(MFEM_USE_STRUMPACK)
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<StrumpackSolver>(
+                comm, linear.sym_factorization, linear.strumpack_compression_type,
+                linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+                linear.strumpack_lossy_precision, true, print),
+            false, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+#else
+        MFEM_ABORT("Solver was not built with STRUMPACK support!");
+        return {};
+#endif
+      case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<MumpsSolver>(comm, mfem::MUMPSSolver::UNSYMMETRIC,
+                                          linear.sym_factorization, linear.strumpack_lr_tol,
+                                          true, print),
+            false, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+#else
+        MFEM_ABORT("Solver was not built with MUMPS support!");
+        return {};
+#endif
+      default:
+        MFEM_ABORT("Unsupported coarse solver type for multigrid boundary mode solver!");
+        return {};
+    }
+  };
+
+  // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.
+  const auto nd_P = mg_config->nd_fespaces->GetProlongationOperators();
+  const auto nd_G =
+      mg_config->nd_fespaces->GetDiscreteInterpolators(*mg_config->h1_aux_fespaces);
+  auto nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
+      comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
+      linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+  nd_gmg->EnableTimer();
+
+  // H1 block: p-multigrid with Chebyshev smoothing.
+  const auto h1_P = mg_config->h1_fespaces->GetProlongationOperators();
+  auto h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
+      comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
+      linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+  h1_gmg->EnableTimer();
+
+  // Combine into block-diagonal preconditioner.
+  auto block_pc = std::make_unique<BlockDiagonalPreconditioner<ComplexOperator>>(
+      nd_size, std::move(nd_gmg), std::move(h1_gmg));
+  block_pc_ptr = block_pc.get();
+
+  // Outer Krylov solver — use the user-configured type from Solver.Linear.KSPType.
+  std::unique_ptr<IterativeSolver<ComplexOperator>> krylov;
+  switch (linear.krylov_solver)
+  {
+    case KrylovSolver::CG:
+      krylov = std::make_unique<CgSolver<ComplexOperator>>(comm, config.verbose);
+      break;
+    case KrylovSolver::FGMRES:
+      {
+        auto fgmres = std::make_unique<FgmresSolver<ComplexOperator>>(comm, config.verbose);
+        fgmres->SetRestartDim(linear.max_size);
+        krylov = std::move(fgmres);
+      }
+      break;
+    case KrylovSolver::GMRES:
+    case KrylovSolver::DEFAULT:
+    default:
+      {
+        auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, config.verbose);
+        gmres->SetRestartDim(linear.max_size);
+        krylov = std::move(gmres);
+      }
+      break;
+  }
+  krylov->SetInitialGuess(linear.initial_guess);
+  krylov->SetRelTol(linear.tol);
+  krylov->SetMaxIter(linear.max_it);
+  krylov->EnableTimer();
+
+  ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc));
+}
+
+std::unique_ptr<ComplexMultigridOperator>
+BoundaryModeOperator::AssembleAttPreconditioner(double omega, double sigma) const
+{
+  MFEM_VERIFY(mg_config && mg_config->nd_fespaces && mg_config->h1_aux_fespaces,
+              "AssembleAttPreconditioner requires ND and H1 auxiliary hierarchies!");
+  const auto n_levels = mg_config->nd_fespaces->GetNumLevels();
+  auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
+
+  // Material coefficients (same at all levels — indexed by element attribute, not by p).
+  MaterialPropertyCoefficient muinv_cc_func(*config.attr_to_material,
+                                            *config.curlcurl_inv_permeability);
+  if (config.normal)
+  {
+    muinv_cc_func.NormalProjectedCoefficient(*config.normal);
+  }
+
+  // Preconditioner mass coefficient: -omega^2 eps - sigma/mu (+ London). When
+  // pc_mat_shifted is enabled (config), use absolute values to ensure well-conditioning
+  // near the shift target (where -omega^2 eps + kn^2/mu ≈ 0). This follows
+  // SpaceOperator's pc_mat_shifted pattern.
+  const bool shifted = config.linear->pc_mat_shifted;
+  const double mass_coeff = shifted ? std::abs(omega * omega) : (-omega * omega);
+  const double shift_coeff = shifted ? std::abs(sigma) : (-sigma);
+
+  MaterialPropertyCoefficient eps_shifted_pc(*config.attr_to_material,
+                                             *config.permittivity_real, mass_coeff);
+  eps_shifted_pc.AddCoefficient(*config.attr_to_material, *config.inv_permeability,
+                                shift_coeff);
+  if (config.has_london_depth)
+  {
+    eps_shifted_pc.AddCoefficient(*config.attr_to_material, *config.inv_london_depth, 1.0);
+  }
+
+  // Boundary coefficients for preconditioner (real part only).
+  int max_bdr_attr = config.mat_op ? config.mat_op->MaxCeedBdrAttribute() : 0;
+  MaterialPropertyCoefficient fbr(max_bdr_attr);
+  if (config.surf_z_op)
+  {
+    config.surf_z_op->AddStiffnessBdrCoefficients(1.0, fbr);
+    config.surf_z_op->AddMassBdrCoefficients(
+        shifted ? std::abs(omega * omega) : (-omega * omega), fbr);
+  }
+  if (config.surf_sigma_op)
+  {
+    config.surf_sigma_op->AddExtraSystemBdrCoefficients(omega, fbr, fbr);
+  }
+
+  // Assemble ND operators at all levels using the hierarchy-aware assembly pattern
+  // (matching SpaceOperator::AssembleOperators). Creates a BilinearForm on the finest
+  // space and uses Assemble(fespaces) to produce operators at all levels.
+  constexpr bool assemble_q_data = false;
+  {
+    BilinearForm att(mg_config->nd_fespaces->GetFinestFESpace());
+    att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_pc);
+    if (!fbr.empty())
+    {
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+    }
+    auto att_ops = att.Assemble(*mg_config->nd_fespaces, skip_zeros);
+
+    // Auxiliary H1 operators for Hiptmair smoothing (matching SpaceOperator::
+    // AssembleAuxOperators — uses DiffusionIntegrator with the mass coefficient).
+    BilinearForm att_aux(mg_config->h1_aux_fespaces->GetFinestFESpace());
+    att_aux.AddDomainIntegrator<DiffusionIntegrator>(eps_shifted_pc);
+    if (!fbr.empty())
+    {
+      att_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
+    }
+    auto att_aux_ops = att_aux.Assemble(*mg_config->h1_aux_fespaces, skip_zeros);
+
+    for (std::size_t l = 0; l < n_levels; l++)
+    {
+      const auto &nd_fespace_l = mg_config->nd_fespaces->GetFESpaceAtLevel(l);
+      auto B_l = std::make_unique<ComplexParOperator>(std::move(att_ops[l]), nullptr,
+                                                      nd_fespace_l);
+      if (mg_config->nd_dbc_tdof_lists && l < mg_config->nd_dbc_tdof_lists->size())
+      {
+        B_l->SetEssentialTrueDofs((*mg_config->nd_dbc_tdof_lists)[l],
+                                  Operator::DiagonalPolicy::DIAG_ONE);
+      }
+      B->AddOperator(std::move(B_l));
+
+      const auto &h1_aux_l = mg_config->h1_aux_fespaces->GetFESpaceAtLevel(l);
+      auto B_aux_l = std::make_unique<ComplexParOperator>(std::move(att_aux_ops[l]),
+                                                          nullptr, h1_aux_l);
+      if (mg_config->h1_aux_dbc_tdof_lists && l < mg_config->h1_aux_dbc_tdof_lists->size())
+      {
+        B_aux_l->SetEssentialTrueDofs((*mg_config->h1_aux_dbc_tdof_lists)[l],
+                                      Operator::DiagonalPolicy::DIAG_ONE);
+      }
+      B->AddAuxiliaryOperator(std::move(B_aux_l));
+    }
+  }
+
+  return B;
+}
+
+std::unique_ptr<ComplexMultigridOperator>
+BoundaryModeOperator::AssembleAnnPreconditioner(double omega) const
+{
+  MFEM_VERIFY(mg_config && mg_config->h1_fespaces,
+              "AssembleAnnPreconditioner requires H1 hierarchy!");
+  const auto n_levels = mg_config->h1_fespaces->GetNumLevels();
+  auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
+
+  // Material coefficients matching AssembleAnn (real part only). The negative diffusion
+  // sign from the IBP is preserved — this matches the actual operator.
+  MaterialPropertyCoefficient neg_muinv_func(*config.attr_to_material,
+                                             *config.inv_permeability, -1.0);
+  if (config.normal)
+  {
+    neg_muinv_func.NormalProjectedCoefficient(*config.normal);
+  }
+
+  MaterialPropertyCoefficient poseps_h1_func(*config.attr_to_material,
+                                             *config.permittivity_scalar, omega * omega);
+  if (config.normal)
+  {
+    poseps_h1_func.NormalProjectedCoefficient(*config.normal);
+  }
+  if (config.has_london_depth)
+  {
+    if (config.inv_london_depth_scalar)
+    {
+      poseps_h1_func.AddCoefficient(*config.attr_to_material,
+                                    *config.inv_london_depth_scalar);
+    }
+    else if (config.inv_london_depth && config.normal)
+    {
+      const auto &ild = *config.inv_london_depth;
+      mfem::DenseTensor ild_scalar(1, 1, ild.SizeK());
+      for (int k = 0; k < ild.SizeK(); k++)
+      {
+        ild_scalar(0, 0, k) = ild(0, 0, k);
+      }
+      poseps_h1_func.AddCoefficient(*config.attr_to_material, ild_scalar);
+      poseps_h1_func.NormalProjectedCoefficient(*config.normal);
+    }
+  }
+
+  // Boundary coefficients (real part only).
+  int max_bdr_attr = config.mat_op ? config.mat_op->MaxCeedBdrAttribute() : 0;
+  MaterialPropertyCoefficient nn_fbr(max_bdr_attr);
+  if (config.surf_z_op)
+  {
+    config.surf_z_op->AddStiffnessBdrCoefficients(-1.0, nn_fbr);
+    config.surf_z_op->AddMassBdrCoefficients(omega * omega, nn_fbr);
+  }
+  if (config.surf_sigma_op)
+  {
+    MaterialPropertyCoefficient cond_r(max_bdr_attr);
+    config.surf_sigma_op->AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);
+    if (!cond_r.empty())
+    {
+      cond_r *= -1.0;
+      nn_fbr.AddCoefficient(cond_r.GetAttributeToMaterial(),
+                            cond_r.GetMaterialProperties());
+    }
+  }
+
+  // Assemble H1 operators at all levels using hierarchy-aware assembly.
+  {
+    BilinearForm ann(mg_config->h1_fespaces->GetFinestFESpace());
+    ann.AddDomainIntegrator<DiffusionMassIntegrator>(neg_muinv_func, poseps_h1_func);
+    if (!nn_fbr.empty())
+    {
+      ann.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
+    }
+    auto ann_ops = ann.Assemble(*mg_config->h1_fespaces, skip_zeros);
+
+    for (std::size_t l = 0; l < n_levels; l++)
+    {
+      const auto &h1_fespace_l = mg_config->h1_fespaces->GetFESpaceAtLevel(l);
+      auto B_l = std::make_unique<ComplexParOperator>(std::move(ann_ops[l]), nullptr,
+                                                      h1_fespace_l);
+      if (mg_config->h1_dbc_tdof_lists && l < mg_config->h1_dbc_tdof_lists->size())
+      {
+        B_l->SetEssentialTrueDofs((*mg_config->h1_dbc_tdof_lists)[l],
+                                  Operator::DiagonalPolicy::DIAG_ONE);
+      }
+      B->AddOperator(std::move(B_l));
+    }
+  }
+
+  return B;
 }
 
 void BoundaryModeOperator::SetUpEigenSolver(MPI_Comm comm)
