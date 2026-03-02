@@ -130,23 +130,58 @@ function testcase(
     @testset "Results" begin
         # Test that directories were created
         @test isdir(postprodir)
-        (~, dirs, files) = first(walkdir(postprodir))
-        (~, ~, filesref) = first(walkdir(refpostprodir))
-        metafiles = filter(x -> last(splitext(x)) != ".csv", files)
-        if (paraview_fields && gridfunction_fields)
-            @test length(dirs) == 2 && "paraview" in dirs && "gridfunction" in dirs ||
-                  (@show dirs; false)
-        elseif (paraview_fields)
-            @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
-        elseif (gridfunction_fields)
-            @test length(dirs) == 1 && first(dirs) == "gridfunction" || (@show dirs; false)
+
+        # Collect all files recursively, excluding folders with large data
+        exclude_folders = ["paraview", "gridfunction"]
+        csvfiles = String[]
+        csvfilesref = String[]
+        metafiles = String[]
+        alldirs = Set{String}()
+        for (root, dirs, fs) in walkdir(postprodir)
+            relroot = relpath(root, postprodir)
+            for d in dirs
+                push!(alldirs, relroot == "." ? d : joinpath(relroot, d))
+            end
+            filter!(d -> d ∉ exclude_folders, dirs)
+            for f in fs
+                path = relroot == "." ? f : joinpath(relroot, f)
+                endswith(f, ".csv") ? push!(csvfiles, path) : push!(metafiles, path)
+            end
         end
-        # When using AMR, `iterationN` directories are created
-        @test length(dirs) >= 1 && last(dirs) == "paraview" || (@show dirs; false)
-        @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
-              (@show metafiles; false)
-        @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||
-              (@show filesref; false)
+        for (root, dirs, fs) in walkdir(refpostprodir)
+            filter!(d -> d ∉ exclude_folders, dirs)
+            relroot = relpath(root, refpostprodir)
+            for f in fs
+                endswith(f, ".csv") &&
+                    push!(csvfilesref, relroot == "." ? f : joinpath(relroot, f))
+            end
+        end
+
+        # TODO: Determine paraview_fields and gridfunction_fields from config
+        expected_dirs = Set{String}()
+        if gridfunction_fields
+            push!(expected_dirs, "gridfunction")
+        end
+        max_its =
+            get(get(get(config_json, "Model", Dict()), "Refinement", Dict()), "MaxIts", 0)
+        for i = 1:max_its
+            push!(expected_dirs, "iteration$(i)")
+            gridfunction_fields && push!(expected_dirs, "iteration$(i)/gridfunction")
+            paraview_fields && push!(expected_dirs, "iteration$(i)/paraview")
+        end
+        if paraview_fields
+            push!(expected_dirs, "paraview")
+        end
+
+        @test alldirs == expected_dirs || (@show alldirs, expected_dirs; false)
+        @test sort(csvfiles) == sort(csvfilesref) || (@show csvfiles, csvfilesref; false)
+
+        expected_metafiles = ["palace.json"]
+        for i = 1:max_its
+            push!(expected_metafiles, "iteration$(i)/palace.json")
+        end
+        @test sort(metafiles) == sort(expected_metafiles) ||
+              (@show metafiles, expected_metafiles; false)
 
         # Helper to extract the stdout and stderr files and dump their contents.
         # Useful when debugging a failure
@@ -166,7 +201,7 @@ function testcase(
         end
 
         # Test the simulation outputs
-        for file in filesref
+        for file in csvfilesref
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             if !skip_rowcount

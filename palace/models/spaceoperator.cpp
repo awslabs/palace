@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <limits>
 #include <set>
 #include <type_traits>
 #include "fem/bilinearform.hpp"
@@ -11,6 +12,9 @@
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/hypre.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -531,6 +535,93 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
   return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
 }
 
+// Project a boundary coefficient into a Vector via a boundary mass matrix solve.
+//
+// This should be done by ParGridFunction::ProjectBdrCoefficientTangent, including parallel
+// reduction. See also https://github.com/mfem/mfem/pull/606. However there seems to be a
+// bug in MFEM that breaks this for Nédélec elements, perhaps due to orientation signs.
+// TODO(future): Investigate and fix this bug.
+//
+// Here project via CG solve of boundary mass matrix system M_bdr * e = f.
+void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPortData &data,
+                                       const MaterialOperator &mat_op,
+                                       FiniteElementSpace &nd_fespace, MPI_Comm comm,
+                                       Vector &result)
+{
+  // Assemble the boundary linear form f = ∫ φ_i · coeff dS (parallel-correct via P^T).
+  mfem::LinearForm rhs(&nd_fespace.Get());
+  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
+  rhs.Assemble();
+  rhs.UseDevice(true);
+  nd_fespace.GetProlongationMatrix()->MultTranspose(rhs, result);
+
+  // Assemble boundary mass matrix M_bdr = ∫ φ_i · φ_j dS on port surface.
+  MaterialPropertyCoefficient fb_mass(mat_op.MaxCeedBdrAttribute());
+  for (const auto &elem : data.elems)
+  {
+    fb_mass.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), 1.0);
+  }
+  BilinearForm m_bdr(nd_fespace);
+  if (!fb_mass.empty())
+  {
+    m_bdr.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_mass);
+  }
+  auto M_bdr = std::make_unique<ParOperator>(m_bdr.Assemble(false), nd_fespace);
+
+  // The boundary mass matrix is zero for all DOFs not on the port surface, making it
+  // singular on the full space. Set non-port DOFs as essential with DIAG_ONE so that M_bdr
+  // acts as identity there, giving a full-rank SPD system. non_port_tdof_list must outlive
+  // M_bdr because SetEssentialTrueDofs uses pointer not copy.
+  mfem::Array<int> attr_list;
+  for (const auto &elem : data.elems)
+  {
+    attr_list.Append(elem->GetAttrList());
+  }
+  const auto &mesh = nd_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker;
+  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  mfem::Array<int> port_tdof_list;
+  nd_fespace.Get().GetEssentialTrueDofs(attr_marker, port_tdof_list);
+
+  mfem::Array<int> non_port_tdof_list;
+  {
+    std::vector<bool> is_port(nd_fespace.GetTrueVSize(), false);
+    for (int i = 0; i < port_tdof_list.Size(); i++)
+    {
+      is_port[port_tdof_list[i]] = true;
+    }
+    for (int i = 0; i < nd_fespace.GetTrueVSize(); i++)
+    {
+      if (!is_port[i])
+      {
+        non_port_tdof_list.Append(i);
+      }
+    }
+  }
+  M_bdr->SetEssentialTrueDofs(non_port_tdof_list, Operator::DIAG_ONE);
+
+  // CG solve M_bdr * e = f entirely in T-vector space.
+  // TODO: Make solver parameters configurable from IoData, or inherit other settings.
+  auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+  pcg->SetInitialGuess(false);
+  pcg->SetRelTol(1.0e-14);
+  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  pcg->SetMaxIter(200);
+  auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
+  auto ksp = std::make_unique<BaseKspSolver<Operator>>(std::move(pcg), std::move(jac));
+  ksp->SetOperators(*M_bdr, *M_bdr);
+
+  Vector sol(nd_fespace.GetTrueVSize());
+  sol.UseDevice(true);
+  sol = 0.0;
+  ksp->Mult(result, sol);
+  result = sol;
+}
+
 }  // namespace
 
 void SpaceOperator::AssemblePreconditioner(
@@ -841,6 +932,76 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   return nnz1 || nnz2;
 }
 
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
+                                                           ComplexVector &Et_primary,
+                                                           bool zero_metal)
+{
+  const auto &data = GetLumpedPortOp().GetPort(port_idx);
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  for (const auto &elem : data.elems)
+  {
+    const double Rs = 1.0 * data.GetToSquare(*elem);
+    const double Einc = std::sqrt(
+        Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
+    fb.AddCoefficient(elem->GetModeCoefficient(Einc));
+  }
+
+  Et_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Et_primary.UseDevice(true);
+  Et_primary = 0.0;
+
+  // Broken code that should work using ParGridFunction::ProjectBdrCoefficientTangent.
+  // See ProjectBdrCoefficientViaMassSolve comment above.
+
+  //  mfem::Array<int> attr_marker;
+  //
+  // const auto &mesh = GetNDSpace().GetParMesh();
+  // int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  // mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+  //
+  // GridFunction rhs(GetNDSpace());
+  // rhs = 0.0;
+  // rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+
+  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                    Et_primary.Real());
+
+  if (zero_metal)
+  {
+    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  }
+}
+
+void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
+                                                             ComplexVector &Htcn_primary,
+                                                             bool zero_metal)
+{
+  const auto &data = lumped_port_op.GetPort(port_idx);
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  for (const auto &elem : data.elems)
+  {
+    const double Rs = 1.0 * data.GetToSquare(*elem);
+    const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                        elem->GetGeometryLength() * data.elems.size());
+    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+  }
+
+  Htcn_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Htcn_primary.UseDevice(true);
+  Htcn_primary = 0.0;
+
+  // See ParGridFunction::ProjectBdrCoefficientTangent issue above.
+  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                    Htcn_primary.Real());
+
+  if (zero_metal)
+  {
+    linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  }
+}
+
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
@@ -912,8 +1073,8 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
 bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omega,
                                                  ComplexVector &RHS2)
 {
-  // Assemble the contribution of wave ports to the frequency domain excitation term at the
-  // specified frequency.
+  // Assemble the contribution of wave ports to the frequency domain excitation term at
+  // the specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());

@@ -135,6 +135,22 @@ names like `[vector]` or `[materialoperator]` (typically named after files or
 classes). This enables effective filtering, as described in [Building and
 running unit tests](#Building-and-running-unit-tests).
 
+#### Accessing files
+
+Files required for tests (e.g., meshes or configurations) need to be saved
+inside the `test/unit/data` folder. This ensures that the files are accessible
+when *Palace* is installed in a folder that is not the source folder (e.g., with
+Spack). The path to the content of `test/unit/data` maps to
+`PALACE_TEST_DATA_DIR`. For example, if you want to access the `banana.txt` file
+in `test/unit/data`, refer to it as
+
+```cpp
+auto path_to_banana = fs::path(PALACE_TEST_DATA_DIR) / "banana.txt"
+```
+
+Accessing files without using `PALACE_TEST_DATA_DIR` will likely result in
+failing tests on Spack builds (unless you know what you are doing).
+
 #### Test configuration
 
 The `CMakeLists.txt` in

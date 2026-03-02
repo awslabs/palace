@@ -1,15 +1,18 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
+#include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <string>
-#include <fmt/format.h>
+#include <vector>
+#include <fmt/core.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
@@ -22,7 +25,8 @@ using namespace palace;
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/boundary_configs.json");
+  auto filename =
+      fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/boundary_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
@@ -122,7 +126,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
-  auto filename = fmt::format("{}/{}", PALACE_TEST_DIR, "config/solver_configs.json");
+  auto filename = fmt::format("{}/{}", PALACE_TEST_DATA_DIR, "config/solver_configs.json");
   auto jsonstream = PreprocessFile(filename.c_str());  // Apply custom palace json
   auto config = json::parse(jsonstream);
 
@@ -131,13 +135,13 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
   {
     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};
-    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8, 10};
+    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8, 10};
     {
       // Top level configuration
       auto driven = config.find("driven_base_uniform_sample")->find("Driven");
       config::DrivenSolverData driven_solver(*driven);
 
-      for (size_t i = 0; i < sample_f.size(); ++i)
+      for (std::size_t i = 0; i < sample_f.size(); ++i)
       {
         CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
@@ -149,7 +153,7 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
       auto driven = config.find("driven_uniform_freq_step")->find("Driven");
       config::DrivenSolverData driven_solver(*driven);
 
-      for (size_t i = 0; i < sample_f.size(); ++i)
+      for (std::size_t i = 0; i < sample_f.size(); ++i)
       {
         CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
       }
@@ -163,9 +167,9 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<size_t>{0, 2, 4, 6, 8};
+    auto save_indices = std::vector<std::size_t>{0, 2, 4, 6, 8};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -178,10 +182,10 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     config::DrivenSolverData driven_solver(*driven);
 
     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};
-    auto save_indices =
-        std::vector<size_t>{0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
+    auto save_indices = std::vector<std::size_t>{
+        0, 2, 4, 5, 6, 7, 8};  // 0.0, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -195,10 +199,10 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,
                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};
-    auto save_indices = std::vector<size_t>{0, 2, 3, 4, 6, 7, 9, 11};
-    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 2, 4, 7};
+    auto save_indices = std::vector<std::size_t>{0, 2, 3, 4, 6, 7, 9, 11};
+    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 2, 4, 7};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }
@@ -212,10 +216,10 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 
     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,
                                 0.35, 0.55, 0.5623413251903491, 1.0};
-    auto save_indices = std::vector<size_t>{0, 1, 3, 4, 5, 7};
-    auto prom_indices = std::vector<size_t>{0, sample_f.size() - 1, 1, 4, 5};
+    auto save_indices = std::vector<std::size_t>{0, 1, 3, 4, 5, 7};
+    auto prom_indices = std::vector<std::size_t>{0, sample_f.size() - 1, 1, 4, 5};
 
-    for (size_t i = 0; i < sample_f.size(); ++i)
+    for (std::size_t i = 0; i < sample_f.size(); ++i)
     {
       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
     }

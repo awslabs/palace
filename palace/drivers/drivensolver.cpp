@@ -4,6 +4,10 @@
 #include "drivensolver.hpp"
 
 #include <complex>
+#include <cstddef>
+#include <iostream>
+#include <Eigen/Dense>
+#include <fmt/core.h>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -41,7 +45,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &omega_sample = iodata.solver.driven.sample_f;
 
   bool adaptive = (iodata.solver.driven.adaptive_tol > 0.0);
-  if (adaptive && omega_sample.size() <= iodata.solver.driven.prom_indices.size())
+  if (adaptive && omega_sample.size() <= iodata.solver.driven.prom_indices.size() &&
+      !iodata.solver.driven.adaptive_circuit_synthesis)
   {
     Mpi::Warning("Adaptive frequency sweep requires > {} total frequency samples!\n"
                  "Reverting to uniform sweep!\n",
@@ -52,10 +57,10 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
 
-  auto restart = iodata.solver.driven.restart;
+  std::size_t restart = iodata.solver.driven.restart;
   if (restart != 1)
   {
-    int max_iter = omega_sample.size() * space_op.GetPortExcitations().Size();
+    std::size_t max_iter = omega_sample.size() * space_op.GetPortExcitations().Size();
     MFEM_VERIFY(
         restart - 1 < max_iter,
         fmt::format("\"Restart\" ({}) is greater than the number of total samples ({})!",
@@ -119,10 +124,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Main excitation and frequency loop.
   auto t0 = Timer::Now();
-  int excitation_counter = 0;
-  const int excitation_restart_counter =
+  std::size_t excitation_counter = 0;
+  const std::size_t excitation_restart_counter =
       ((iodata.solver.driven.restart - 1) / omega_sample.size()) + 1;
-  const int freq_restart_idx = (iodata.solver.driven.restart - 1) % omega_sample.size();
+  const std::size_t freq_restart_idx =
+      (iodata.solver.driven.restart - 1) % omega_sample.size();
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (++excitation_counter < excitation_restart_counter)
@@ -212,15 +218,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
-  int convergence_memory = iodata.solver.driven.adaptive_memory;
-  int max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
-  int nprom_indices = static_cast<int>(iodata.solver.driven.prom_indices.size());
+  std::size_t convergence_memory = iodata.solver.driven.adaptive_memory;
+  std::size_t max_size_per_excitation = iodata.solver.driven.adaptive_max_size;
+  std::size_t nprom_indices = iodata.solver.driven.prom_indices.size();
   MFEM_VERIFY(max_size_per_excitation <= 0 || max_size_per_excitation >= nprom_indices,
               "Adaptive frequency sweep must sample at least " << nprom_indices
                                                                << " frequency points!");
-  // Maximum size — no more than nr steps needed.
-  max_size_per_excitation =
-      std::min(max_size_per_excitation, static_cast<int>(omega_sample.size()));
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
@@ -262,14 +265,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   RomOperator prom_op(iodata, space_op, max_size_per_excitation);
   space_op.GetWavePortOp().SetSuppressOutput(true);
 
+  // Add ports to PROM if we do synthesis.
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    prom_op.AddLumpedPortModesForSynthesis();
+  }
+
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM = [&](int excitation_idx, double omega)
+  auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx)
   {
     // Add the HDM solution to the PROM reduced basis.
-    prom_op.UpdatePROM(E);
+    prom_op.UpdatePROM(E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
     prom_op.UpdateMRI(excitation_idx, omega, E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -307,6 +316,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Initialize PROM with explicit HDM samples, record the estimate but do not act on it.
     std::vector<double> max_errors;
+    std::size_t counter_rom_sample = 0;
     for (auto i : iodata.solver.driven.prom_indices)
     {
       auto omega = omega_sample[i];
@@ -315,19 +325,22 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       linalg::AXPY(-1.0, E, Eh);
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega);
+      UpdatePROM(excitation_idx, omega, counter_rom_sample);
+      counter_rom_sample++;
     }
     // The estimates associated to the end points are assumed inaccurate.
     max_errors[0] = std::numeric_limits<double>::infinity();
     max_errors[1] = std::numeric_limits<double>::infinity();
-    int memory = std::distance(max_errors.rbegin(),
-                               std::find_if(max_errors.rbegin(), max_errors.rend(),
-                                            [=](auto x) { return x > offline_tol; }));
+    auto memory = std::distance(max_errors.rbegin(),
+                                std::find_if(max_errors.rbegin(), max_errors.rend(),
+                                             [=](auto x) { return x > offline_tol; }));
+    memory = std::max(0L, memory);  // Ensure memory >= 0 as it should be.
 
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints and explicit sample frequencies.
-    int it = static_cast<int>(max_errors.size());
-    for (int it0 = it; it < max_size_per_excitation && memory < convergence_memory; it++)
+    std::size_t it = max_errors.size();
+    for (std::size_t it0 = it; it < max_size_per_excitation && memory < convergence_memory;
+         it++)
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
       // previous samples).
@@ -337,18 +350,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       prom_op.SolveHDM(excitation_idx, omega_star, E);
       prom_op.SolvePROM(excitation_idx, omega_star, Eh);
       linalg::AXPY(-1.0, E, Eh);
+
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
       memory = max_errors.back() < offline_tol ? memory + 1 : 0;
 
       Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
-                 "{:.3e}{}\n",
+                 "{:.3e}, memory = {:d}/{:d}\n",
                  it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
-                 omega_star, max_errors.back(),
-                 (memory == 0)
-                     ? ""
-                     : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
-      UpdatePROM(excitation_idx, omega_star);
+                 omega_star, max_errors.back(), memory, convergence_memory);
+      UpdatePROM(excitation_idx, omega_star, counter_rom_sample);
+      counter_rom_sample++;
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
@@ -363,18 +375,24 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
+  }
+
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
   // in the general case with wave ports, etc.?)
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
+  excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (port_excitations.Size() > 1)
     {
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
-                 excitation_counter, port_excitations.Size());
+                 ++excitation_counter, port_excitations.Size());
     }
     // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
     post_op.InitializeParaviewDataCollection(excitation_idx);

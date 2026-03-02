@@ -5,9 +5,9 @@
 
 #include <charconv>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stack>
 #include <string>
@@ -155,52 +155,9 @@ IoData::IoData(const Units &units) : units(units), init(false)
   fem::DefaultIntegrationOrder::p_trial = -1;
 }
 
-IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
+IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(false)
 {
-  // Open configuration file and preprocess: strip whitespace, comments, and expand integer
-  // ranges.
-  std::stringstream buffer = PreprocessFile(filename);
-
-  // Parse the configuration file. Use a callback function to detect and throw errors for
-  // duplicate keys.
-  json config;
-  std::stack<std::set<json>> parse_stack;
-  json::parser_callback_t check_duplicate_keys =
-      [&](int, json::parse_event_t event, json &parsed)
-  {
-    switch (event)
-    {
-      case json::parse_event_t::object_start:
-        parse_stack.push(std::set<json>());
-        break;
-      case json::parse_event_t::object_end:
-        parse_stack.pop();
-        break;
-      case json::parse_event_t::key:
-        {
-          const auto result = parse_stack.top().insert(parsed);
-          if (!result.second)
-          {
-            MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
-                       << parsed << " was already seen in this object!");
-            return false;
-          }
-        }
-        break;
-      default:
-        break;
-    }
-    return true;
-  };
-  try
-  {
-    config = json::parse(buffer, check_duplicate_keys);
-  }
-  catch (json::parse_error &e)
-  {
-    MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
-  }
-
+  auto config = std::move(config_);
   // Validate against JSON schema.
   {
     std::string err = ValidateConfig(config);
@@ -253,13 +210,81 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   CheckConfiguration();
 }
 
+IoData::IoData(const char *filename, bool print)
+  : IoData(
+        [&filename]()
+        {
+          // Open configuration file and preprocess: strip whitespace, comments, and expand
+          // integer ranges.
+          std::stringstream buffer = PreprocessFile(filename);
+
+          // Parse the configuration file. Use a callback function to detect and throw
+          // errors for duplicate keys.
+          json config;
+          std::stack<std::set<json>> parse_stack;
+          json::parser_callback_t check_duplicate_keys =
+              [&](int, json::parse_event_t event, json &parsed)
+          {
+            switch (event)
+            {
+              case json::parse_event_t::object_start:
+                parse_stack.emplace();
+                break;
+              case json::parse_event_t::object_end:
+                parse_stack.pop();
+                break;
+              case json::parse_event_t::key:
+                {
+                  const auto result = parse_stack.top().insert(parsed);
+                  if (!result.second)
+                  {
+                    MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
+                               << parsed << " was already seen in this object!");
+                    return false;
+                  }
+                }
+                break;
+              default:
+                break;
+            }
+            return true;
+          };
+          try
+          {
+            config = json::parse(buffer, check_duplicate_keys);
+          }
+          catch (json::parse_error &e)
+          {
+            MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
+          }
+          return config;
+        }(),
+        print)
+{
+}
+
 void IoData::CheckConfiguration()
 {
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
   {
-    // No unsupported domain or boundary objects for frequency domain driven simulations.
+    // Driven (frequency) solver itself has no unsupported domain or boundary objects.
+    // Can't synthesize non-LRC circuit (same conditions as eigenmode solver)
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    solver.driven.adaptive_tol > 0.0,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !boundaries.lumpedport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least one LumpedPort boundary condition!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
+                     (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
+                     boundaries.conductivity.empty()),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
+                "supported in systems with any of: "
+                "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
@@ -484,7 +509,6 @@ void IoData::CheckConfiguration()
 
 namespace
 {
-
 template <std::size_t N>
 constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData<N> &data,
                                                      double s)

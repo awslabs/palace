@@ -5,6 +5,7 @@
 #define PALACE_UTILS_IODATA_HPP
 
 #include <sstream>
+#include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
 
@@ -44,10 +45,13 @@ public:
   // Exposed for testing; not intended for general use.
   void CheckConfiguration();
 
-  IoData(const Units &units);
+  explicit IoData(const Units &units);
+
+  // Take parsed json and override options defaults.
+  explicit IoData(nlohmann::json &&config, bool print = false);
 
   // Parse command line arguments and override options defaults.
-  IoData(const char *filename, bool print);
+  explicit IoData(const char *filename, bool print);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);

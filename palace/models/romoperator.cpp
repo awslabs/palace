@@ -3,13 +3,28 @@
 
 #include "romoperator.hpp"
 
-#include <Eigen/SVD>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <memory>
+#include <string_view>
+#include <tuple>
+#include <utility>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
+#include "linalg/rap.hpp"
+#include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
+#include "utils/units.hpp"
 
 // Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
 // for this.
@@ -31,22 +46,23 @@ namespace
 
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
-template <typename VecType, typename ScalarType>
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = linalg::IdentityInnerProduct>
 inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                 const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
-                                int j)
+                                std::size_t j, const InnerProductW &dot_op = {})
 {
   // Orthogonalize w against the leading j columns of V.
   switch (type)
   {
     case Orthogonalization::MGS:
-      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
+      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j, dot_op);
       break;
     case Orthogonalization::CGS:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, false, dot_op);
       break;
     case Orthogonalization::CGS2:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true, dot_op);
       break;
   }
 }
@@ -182,17 +198,16 @@ inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
 
 }  // namespace
 
-MinimalRationalInterpolation::MinimalRationalInterpolation(int max_size)
+MinimalRationalInterpolation::MinimalRationalInterpolation(std::size_t max_size)
 {
+  z.reserve(max_size);
   Q.resize(max_size, ComplexVector());
 }
 
 void MinimalRationalInterpolation::AddSolutionSample(double omega, const ComplexVector &u,
-                                                     const SpaceOperator &space_op,
+                                                     MPI_Comm comm,
                                                      Orthogonalization orthog_type)
 {
-  MPI_Comm comm = space_op.GetComm();
-
   // Compute the coefficients for the minimal rational interpolation of the state u used
   // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
   // stored by its QR decomposition.
@@ -201,7 +216,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
   {
     std::vector<const ComplexVector *> blocks = {&u, &u};
-    std::vector<std::complex<double>> s = {1.0, 1i * omega};
+    std::vector<std::complex<double>> s = {{1.0, 0.0}, {0.0, omega}};
     Q[dim_Q].SetSize(2 * u.Size());
     Q[dim_Q].UseDevice(true);
     Q[dim_Q].SetBlocks(blocks, s);
@@ -218,7 +233,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   z.push_back(omega);
 }
 
-std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
+std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -230,8 +245,8 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
   double start = *std::min_element(z.begin(), z.end());
   double end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-  std::vector<std::complex<double>> z_star(N, 0.0);
 
+  // std::vector<std::complex<double>> z_star(N, 0.0);
   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
   //          samples at complex-valued points (yet).
 
@@ -275,46 +290,155 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(int N) const
   // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  if (std::abs(z_star[0]) == 0.0)
+  //
+  // TODO: Currently we always use this brute for sampling and we could optimize this more.
+  // Also, the case of N>1 samples is not very useful below. It will typically give us
+  // multiple sample points right next to each other in the same local maximum, rather than
+  // N separate local maxima.
+
+  // We could use priority queue here to keep the N lowest values. However, we don't use
+  // std::priority_queue class since we want to have access to the vector and also binary
+  // tree structure of heap class as rebalancing is excessive overhead for tiny size N.
+  using q_t = std::pair<std::complex<double>, double>;
+  std::vector<q_t> queue{};
+  queue.reserve(N);
+
+  // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
+  // Consider making configurable or scaling with the parameter range, so that it is e.g.
+  // always 1 kHz.
+  const std::size_t nr_sample = 1.0e6;  // must be >= N
+  MFEM_VERIFY(N < nr_sample,
+              fmt::format("Number of location of error maximum N={} needs to be less than "
+                          "the fine sampling grid nr_sample={}.",
+                          N, nr_sample));
+  const auto delta = (end - start) / nr_sample;
+  for (double z_sample = start; z_sample <= end; z_sample += delta)
   {
-    const auto delta = (end - start) / 1.0e6;
-    std::vector<double> Q_star(N, mfem::infinity());
-    while (start <= end)
+    const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
+
+    bool partial_full = (queue.size() < N);
+    if (partial_full || Q_sample < queue.back().second)
     {
-      const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
-      for (int i = 0; i < N; i++)
+      auto it_loc = std::upper_bound(queue.begin(), queue.end(), Q_sample,
+                                     [](double q, const q_t &p2) { return q < p2.second; });
+      queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
+      if (!partial_full)
       {
-        if (Q < Q_star[i])
-        {
-          for (int j = i + 1; j < N; j++)
-          {
-            z_star[j] = z_star[j - 1];
-            Q_star[j] = Q_star[j - 1];
-          }
-          z_star[i] = start;
-          Q_star[i] = Q;
-        }
+        queue.pop_back();
       }
-      start += delta;
     }
-    MFEM_VERIFY(
-        N == 0 || std::abs(z_star[0]) > 0.0,
-        fmt::format("Could not locate a maximum error in the range [{}, {}]!", start, end));
   }
-  std::vector<double> vals(z_star.size());
-  std::transform(z_star.begin(), z_star.end(), vals.begin(),
-                 [](std::complex<double> z) { return std::real(z); });
+  MFEM_VERIFY(queue.size() == N,
+              fmt::format("Internal failure: queue should be size should be N={} (got {})",
+                          N, queue.size()));
+
+  std::vector<double> vals(N);
+  std::transform(queue.begin(), queue.end(), vals.begin(),
+                 [](const q_t &p) { return p.first.real(); });
   return vals;
 }
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
-                         int max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.linear.gs_orthog)
+// Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port
+// boundaries summed together. However:
+// - We zero out the domain mass matrix on the dof of the boundary, leaving on the boundary
+//   mass matrix.
+// - We weight the mass matrix by 1 / \eta with reference impedance \vert Z_R \vert = 1, so
+//   that power orthogonality of modes is enforced.
+// - We don't weight by material coefficients so that is fully real and corresponds to to
+//   full space overlap (except excised bulk part).
+//
+// Zero out port dofs of bulk in ctor.
+HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
+    const SpaceOperator &space_op, DomainOrthogonalizationWeight domain_orthog_type)
 {
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. The damping matrix may be nullptr.
+  const auto &mat_op = space_op.GetMaterialOp();
+
+  // Port attrs: To zero out true dof corresponding to attrs in bulk
+  mfem::Array<int> port_attr_list_local{};
+
+  // Ports:
+  BilinearForm w_port(space_op.GetNDSpace());
+  MaterialPropertyCoefficient fb_port(mat_op.MaxCeedBdrAttribute());
+
+  for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+  {
+    for (const auto &elem : data.elems)
+    {
+      // Want to add eta corresponding to a nominal Z_r = 1
+      double eta_norm = data.GetToSquare(*elem);
+      fb_port.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
+                                  1.0 / eta_norm);
+      port_attr_list_local.Append(elem->GetAttrList());
+    }
+  }
+  // Need to check this as this per MPI rank. Ranks where the material property is empty
+  // should not add this integrator.
+  if (!fb_port.empty())
+  {
+    w_port.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_port);
+  }
+  auto w_port_assemble = w_port.Assemble(false);
+  W_inner_product_weight_port =
+      std::make_unique<ParOperator>(std::move(w_port_assemble), space_op.GetNDSpace());
+
+  // Convert port_attr_list into essential tdof
+  int bdr_attr_max = (space_op.GetMesh().Get().bdr_attributes.Size() != 0)
+                         ? space_op.GetMesh().Get().bdr_attributes.Max()
+                         : 0;
+  auto port_attr_marker = mesh::AttrToMarker(bdr_attr_max, port_attr_list_local);
+  space_op.GetNDSpace().Get().GetEssentialTrueDofs(port_attr_marker, port_tdof_list);
+
+  // Bulk, based on configuration (skip for FE_BASIS_IDENTITY)
+  if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY ||
+      domain_orthog_type == DomainOrthogonalizationWeight::SPACE_OVERLAP)
+  {
+    MaterialPropertyCoefficient epsilon_func = [&mat_op, &domain_orthog_type]()
+    {
+      if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY)
+      {
+        return MaterialPropertyCoefficient{mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal()};
+      }
+      // SPACE_OVERLAP: Integrate \int dx E(x) E(x)
+      // Use Palace existing palace machinery, but make a trivial bulk material.
+      MaterialPropertyCoefficient eps_func_local(mat_op.MaxCeedAttribute());
+      const auto &eps_ref = mat_op.GetPermittivityReal();
+      mfem::DenseTensor eps_id(eps_ref.SizeI(), eps_ref.SizeJ(), eps_ref.SizeK());
+      eps_id = 0.0;
+      for (int k = 0; k < eps_id.SizeK(); k++)
+      {
+        for (int i = 0; i < eps_id.SizeI(); i++)
+        {
+          eps_id(i, i, k) = 1.0;
+        }
+      }
+      eps_func_local.AddCoefficient(mat_op.GetAttributeToMaterial(), eps_id, 1.0);
+      return eps_func_local;
+    }();
+
+    BilinearForm w_bulk(space_op.GetNDSpace());
+    // Need to check this as this per MPI rank. Ranks where the material property is empty
+    // should not add this integrator.
+    if (!epsilon_func.empty())
+    {
+      w_bulk.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    }
+    auto w_bulk_assemble = w_bulk.Assemble(false);
+    W_inner_product_weight_bulk =
+        std::make_unique<ParOperator>(std::move(w_bulk_assemble), space_op.GetNDSpace());
+  }
+  // Zero out port dofs of bulk in validation.
+  validate_operators_zero_bulk_tdof();
+}
+
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
+                         std::size_t max_size_per_excitation)
+  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
+{
+  // Construct the system matrices defining the linear operator. PEC boundaries are
+  // handled simply by setting diagonal entries of the system matrix for the corresponding
+  // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
+  // required on the RHS. The damping matrix may be nullptr.
   K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -331,17 +455,24 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                            &space_op.GetH1Spaces());
 
-  auto excitation_helper = space_op.GetPortExcitations();
+  MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
-  // The initial PROM basis is empty. The provided maximum dimension is the number of sample
-  // points (2 basis vectors per point). Basis orthogonalization method is configured using
-  // GMRES/FGMRES settings.
-  MFEM_VERIFY(max_size_per_excitation * excitation_helper.Size() > 0,
-              "Reduced order basis storage must have > 0 columns!");
-  V.resize(2 * max_size_per_excitation * excitation_helper.Size(), Vector());
+  auto max_prom_size = 2 * max_size_per_excitation * space_op.GetPortExcitations().Size();
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
 
-  // Set up MRI.
-  for (const auto &[excitation_idx, data] : excitation_helper)
+    // Build inner-product weight matrix.
+    weight_op_W = HybridBulkBoundaryOperator{
+        space_op, iodata.solver.driven.adaptive_circuit_synthesis_domain_orthog};
+  }
+
+  // Reserve empty vectors.
+  V.reserve(max_prom_size);
+  v_node_label.reserve(max_prom_size);
+
+  // Set up MinimalRationalInterpolation.
+  for (const auto &[excitation_idx, data] : space_op.GetPortExcitations())
   {
     mri.emplace(excitation_idx, MinimalRationalInterpolation(max_size_per_excitation));
   }
@@ -349,9 +480,19 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
-  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
-  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
+  // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid
+  // excitation index, so this is triggered the first time it is called in
+  // drivensolver.cpp.
+  if (excitation_idx_cache == excitation_idx)
+  {
+    return;
+  }
+
+  // Set up RHS vector (linear in frequency part) for the incident field at port
+  // boundaries, and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
   excitation_idx_cache = excitation_idx;
+  // Reset has_RHS2 so SolveHDM re-checks, since it may differ per excited port.
+  has_RHS2 = true;
   has_RHS1 = space_op.GetExcitationVector1(excitation_idx_cache, RHS1);
   if (!has_RHS1)
   {
@@ -360,9 +501,10 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   else
   {
     // Project RHS1 to RHS1r with current PROM.
+    auto dim_V = V.size();
     if (dim_V > 0)
     {
-      auto comm = space_op.GetComm();
+      MPI_Comm comm = space_op.GetComm();
       RHS1r.conservativeResize(dim_V);
       ProjectVecInternal(comm, V, RHS1, RHS1r, 0);
     }
@@ -371,10 +513,8 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
+
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -405,78 +545,175 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u)
+void RomOperator::AddLumpedPortModesForSynthesis()
 {
+  // Add modes for lumped port to use them a circuit matrices.
+  //
+  // The excitation vector that we expect to add to the PROM is just the GridFunction
+  // (primary vector) E_t which is the tangential electric field associated with that
+  // port. The field is normalized according with an effective reference impedance of
+  // \vert Z_R
+  // \vert = 1, see SpaceOp::GetLumpedPortExcitationVectorPrimaryEt &
+  // LumpedPortData::GetExcitationFieldEtNormSqWithUnityZR().
+  //
+  // The lumped ports currently implemented (rectangular and coax) are purely real.
+  //
+  // The hybrid weight matrix used for normalization weight_op_W will guarantee that the
+  // generic vectors added to the ROM will be orthogonal with respect to the boundary
+  // bilinear v_rom * g_port_boundary * e_t = 0 (unless v_rom == e_t). If we used a
+  // conventional mass matrix of the space, this orthogonality would not be true as DoFs
+  // of the boundary also contribute the bulk integral ('leak into the bulk').
+  //
+  // To have a sensible scattering matrix, we ensure port modes are orthogonal. Ports that
+  // neighbor each other in space could fail this since they share DoFs on the finite
+  // element mesh, even if they would be orthogonal in continuous space.
 
-  // Update V. The basis is always real (each complex solution adds two basis vectors if it
-  // has a nonzero real and imaginary parts).
+  ComplexVector vec;  // Workspace vector:  UpdatePROM interface requires ComplexVectors
+  vec.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  vec.UseDevice(true);
+  vec = 0.0;
+
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec, true);
+    UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
+  }
+
+  // Check that the ports don't have any overlap. These should be exactly zero, if the ports
+  // are distinct. But add this here for future case where lumped ports could on same attrs.
+  // Mix orthogonalization error and reduction error.
+  auto diag_tol = std::max(ORTHOG_TOL, std::numeric_limits<double>::epsilon() *
+                                           std::sqrt(Mpi::Size(space_op.GetComm())));
+  MFEM_VERIFY(orth_R.isDiagonal(diag_tol),
+              "Lumped port fields on the mesh should have exactly zero overlap. This may "
+              "be non-zero if attributes share edges.");
+}
+
+void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+{
+  // Update PROM basis V. The basis is always real (each complex solution adds two basis
+  // vectors, if it has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
-  const double normr = linalg::Norml2(comm, u.Real());
-  const double normi = linalg::Norml2(comm, u.Imag());
-  const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
-              "Unable to increase basis storage size, increase maximum number of vectors!");
-  const std::size_t dim_V0 = dim_V;
-  std::vector<double> H(dim_V + static_cast<std::size_t>(has_real) +
-                        static_cast<std::size_t>(has_imag));
-  if (has_real)
+
+  const auto norm_re = linalg::Norml2(comm, u.Real());
+  const auto norm_im = linalg::Norml2(comm, u.Imag());
+  const auto norm_tol = ORTHOG_TOL * std::sqrt(norm_re * norm_re + norm_im * norm_im);
+  const bool has_real = (norm_re > norm_tol);
+  const bool has_imag = (norm_im > norm_tol);
+
+  const std::size_t dim_V_old = V.size();
+  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
+
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
+
+  // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
+  // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
+  // lambda. This is done for MPI syncronization reasons. If the MFEM_VERIFY throws / aborts
+  // on one rank why others are in an inconsistent state, this could lead to MPI
+  // communication failures in the memory unwinding and global MPI hard crash (e.g. in the
+  // unit tests).
+  auto add_real_vector_to_basis = [this](const Vector &vector,
+                                         std::string_view node_label) -> bool
   {
-    V[dim_V] = u.Real();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    dim_V++;
+    auto dim_V = V.size();
+    MFEM_VERIFY(dim_V < V.capacity(),
+                "PROM basis storage exceeded. Please increase maximum number of prom "
+                "vector per excitation using AdaptiveMaxSamples.");
+    auto &v = V.emplace_back(vector);
+    double pre_norm;
+    if (weight_op_W.has_value())
+    {
+      auto pre_norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
+      pre_norm = std::sqrt(std::abs(pre_norm_sq));
+      OrthogonalizeColumn(
+          orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(), dim_V,
+          [&W = *(this->weight_op_W), &r = this->r](const Vector &x, const Vector &y)
+          { return W.InnerProduct(x, y, r.Real()); });
+      auto norm_sq = weight_op_W->InnerProduct(space_op.GetComm(), v, v, r.Real());
+      orth_R(dim_V, dim_V) = std::sqrt(std::abs(norm_sq));
+    }
+    else
+    {
+      pre_norm = linalg::Norml2(space_op.GetComm(), v);
+      OrthogonalizeColumn(orthog_type, space_op.GetComm(), V, v, orth_R.col(dim_V).data(),
+                          dim_V);
+      orth_R(dim_V, dim_V) = linalg::Norml2(space_op.GetComm(), v);
+    }
+
+    if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
+    {
+      return false;
+    }
+
+    v *= 1.0 / orth_R(dim_V, dim_V);
+    v_node_label.emplace_back(node_label);
+    return true;
+  };
+
+  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  {
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
   }
-  if (has_imag)
+  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
   {
-    V[dim_V] = u.Imag();
-    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
-    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
-    V[dim_V] *= 1.0 / H[dim_V];
-    dim_V++;
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
+  }
+
+  if (dim_V_new == dim_V_old)
+  {
+    return;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
-  Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
+  Kr.conservativeResize(dim_V_new, dim_V_new);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
   if (C)
   {
-    Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
+    Cr.conservativeResize(dim_V_new, dim_V_new);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
   }
-  Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
-  Ar.resize(dim_V, dim_V);
+  Mr.conservativeResize(dim_V_new, dim_V_new);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
   if (RHS1.Size())
   {
-    RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
+    RHS1r.conservativeResize(dim_V_new);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
-  RHSr.resize(dim_V);
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op, orthog_type);
+  mri.at(excitation_idx).AddSolutionSample(omega, u, space_op.GetComm(), orthog_type);
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
-  if (excitation_idx_cache != excitation_idx)
-  {
-    SetExcitationIndex(excitation_idx);
-  }
+  SetExcitationIndex(excitation_idx);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
   // only nonzero on boundaries, will be empty if not needed.
-  if (has_A2 && Ar.rows() > 0)
+
+  // No basis states ill-defined: return zero vector to match current behaviour.
+  if (V.empty())
+  {
+    u = 0.0;
+    return;
+  }
+
+  Ar.resize(V.size(), V.size());
+  RHSr.resize(V.size());
+
+  if (has_A2)
   {
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
@@ -492,7 +729,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   Ar += (-omega * omega) * Mr;
 
-  if (has_RHS2 && RHSr.size() > 0)
+  if (has_RHS2)
   {
     space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
     ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
@@ -518,10 +755,12 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   else
   {
-    // LU solve.
-    RHSr = Ar.partialPivLu().solve(RHSr);
+    // QR solve, for maximal stability. The small system is cheap to compute but can be
+    // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
+    // into separate columns.
+    RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
   }
-  ProlongatePROMSolution(dim_V, V, RHSr, u);
+  ProlongatePROMSolution(V.size(), V, RHSr, u);
 }
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
@@ -529,6 +768,124 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   // XX TODO: Not yet implemented
   MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
   return {};
+}
+
+std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
+           std::unique_ptr<Eigen::MatrixXcd>>
+RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
+{
+  using mat_t = Eigen::MatrixXcd;
+  std::unique_ptr<mat_t> inductance_L_inv = {};
+  std::unique_ptr<mat_t> resistance_R_inv = {};
+  std::unique_ptr<mat_t> capacitance_C = {};
+
+  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
+
+  // We will only scale the rows and columns corresponding to ports by orth_R(j,j). This
+  // will correctly give back the port-port block of the circuit matrices, which is
+  // independent of the HDM solutions. The normalization of the rows and columns of the HDM
+  // solutions (synthesized nodes) are not relevant for port quantities. We choose v_conc =
+  // 1.0, since for nearly degenerate vectors orth_R(j,j) could be tiny, which may lead to
+  // poor condition of the circuit matrices.
+  //
+  // Lumped ports are real, at the beginning and in order
+  for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
+  {
+    // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
+    // = sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).
+    v_conc[j] = orth_R(j, j);
+  }
+
+  // Lazy diagonal representation
+  auto v_d = v_conc.asDiagonal();
+
+  auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  inductance_L_inv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
+
+  auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  capacitance_C = std::make_unique<mat_t>(((unit_farad * v_d) * Mr * v_d).eval());
+
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
+  {
+    auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    resistance_R_inv = std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr * v_d).eval());
+  }
+
+  return std::make_tuple(std::move(inductance_L_inv), std::move(resistance_R_inv),
+                         std::move(capacitance_C));
+}
+
+void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  Mpi::Print(" Printing PROM Matrices to disk.\n");
+
+  if (!Mpi::Root(space_op.GetComm()))
+  {
+    return;
+  }
+  auto print_table = [post_dir, labels = this->v_node_label](const Eigen::MatrixXd &mat,
+                                                             std::string_view filename)
+  {
+    MFEM_VERIFY((labels.size() == mat.cols()) && (labels.size() == mat.rows()),
+                "Inconsistent PROM size!");
+
+    auto out = TableWithCSVFile(post_dir / filename);
+    out.table.col_options.float_precision = 17;
+    for (long i = 0; i < mat.cols(); i++)
+    {
+      out.table.insert(labels[i], labels[i]);
+      auto &col = out.table[i];
+      for (long j = 0; j < mat.rows(); j++)
+      {
+        col << mat(j, i);
+      }
+    }
+    out.WriteFullTableTrunc();
+  };
+
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      CalculateNormalizedPROMMatrices(units);
+
+  // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is
+  // a nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
+
+  if (K->Real())
+  {
+    print_table(inductance_L_inv->real(), "rom-Linv-re.csv");
+  }
+  if (K->Imag())
+  {
+    print_table(inductance_L_inv->imag(), "rom-Linv-im.csv");
+  }
+
+  if (M->Real())
+  {
+    print_table(capacitance_C->real(), "rom-C-re.csv");
+  }
+  if (M->Imag())
+  {
+    print_table(capacitance_C->imag(), "rom-C-im.csv");
+  }
+
+  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
+  // since we need dissipative ports for a driven response, but this may change.
+  if (C)
+  {
+    if (C->Real())
+    {
+      print_table(resistance_R_inv->real(), "rom-Rinv-re.csv");
+    }
+    if (C->Imag())
+    {
+      print_table(resistance_R_inv->imag(), "rom-Rinv-im.csv");
+    }
+  }
+
+  // Print orth-R. Don't divide by diagonal to keep state normalization info.
+  print_table(orth_R, "rom-orthogonalization-matrix-R.csv");
 }
 
 }  // namespace palace
