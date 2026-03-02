@@ -26,7 +26,7 @@ inputs:
     required: false
     default: 'Default'
   test-cases:
-    description: 'Test cases: "default", "nightly", or space-separated list'
+    description: 'Test cases: "default", "long", or space-separated list'
     required: false
     default: 'default'
   additional-test-cases:
@@ -94,7 +94,7 @@ runs:
         fi
 
         TEST_CASES="${{ inputs.test-cases }}"
-        if [[ "$TEST_CASES" == "nightly" ]]; then
+        if [[ "$TEST_CASES" == "long" ]]; then
           TEST_CASES="transmon/transmon_amr"
         elif [[ "$TEST_CASES" == "default" ]]; then
           TEST_CASES=""

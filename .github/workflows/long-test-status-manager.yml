@@ -1,14 +1,14 @@
-# Manages nightly test status for PRs based on labels and file changes.
+# Manages long test status for PRs based on labels and file changes.
 #
 # 1. Label-based bypass:
-#    - When 'no-nightly' label is added: sets nightly-tests status to success
-#    - When 'no-nightly' label is removed: sets status to pending
+#    - When 'no-long-tests' label is added: sets long-tests status to success
+#    - When 'no-long-tests' label is removed: sets status to pending
 #
 # 2. Automatic bypass for trivial changes:
 #    - When PR only modifies non-code files (docs, README, etc.), automatically
-#      sets nightly-tests status to success without running expensive tests
+#      sets long-tests status to success without running expensive tests
 
-name: Nightly Status Manager
+name: Long Test Status Manager
 
 on:
   pull_request:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 jobs:
-  # Filter to detect if PR contains non-trivial changes requiring nightly tests
+  # Filter to detect if PR contains non-trivial changes requiring long tests
   filter:
     runs-on: ubuntu-latest
     if: |
@@ -28,7 +28,7 @@ jobs:
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened'
     outputs:
-      needs_nightly: ${{ steps.filter.outputs.test }}
+      needs_long: ${{ steps.filter.outputs.test }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -44,16 +44,15 @@ jobs:
               - 'test/unit/**'
               - 'spack_repo/**'
               - '.github/actions/**'
-              - '.github/workflows/nightly.yml'
-              - '.github/workflows/nightly-status-manager.yml'
+              - '.github/workflows/long-test*.yml'
 
-  # Automatically bypass nightly tests for trivial changes
+  # Automatically bypass long tests for trivial changes
   handle-trivial-changes:
     needs: filter
     if: |
-      needs.filter.outputs.needs_nightly == 'false' &&
-      !contains(github.event.pull_request.labels.*.name, 'trigger-nightly') &&
-      !contains(github.event.pull_request.labels.*.name, 'no-nightly')
+      needs.filter.outputs.needs_long == 'false' &&
+      !contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
+      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
     runs-on: ubuntu-latest
     steps:
       - name: Set bypass status for trivial changes
@@ -61,17 +60,17 @@ jobs:
           gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             --method POST \
             --field state=success \
-            --field context=nightly-tests \
-            --field description="Nightly tests bypassed (trivial changes)"
+            --field context=long-tests \
+            --field description="Long tests bypassed (trivial changes)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Require nightly tests when non-trivial changes are detected
+  # Require long tests when non-trivial changes are detected
   handle-non-trivial-changes:
     needs: filter
     if: |
-      needs.filter.outputs.needs_nightly == 'true' &&
-      !contains(github.event.pull_request.labels.*.name, 'no-nightly')
+      needs.filter.outputs.needs_long == 'true' &&
+      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
     runs-on: ubuntu-latest
     steps:
       - name: Set pending status for non-trivial changes
@@ -79,36 +78,36 @@ jobs:
           gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             --method POST \
             --field state=pending \
-            --field context=nightly-tests \
-            --field description="Waiting for nightly tests"
+            --field context=long-tests \
+            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Handle adding/removing 'no-nightly' label
-  handle-no-nightly:
-    if: contains(github.event.label.name, 'no-nightly')
+  # Handle adding/removing 'no-long-tests' label
+  handle-no-long-tests:
+    if: github.event.label.name == 'no-long-tests'
     runs-on: ubuntu-latest
     steps:
-      # When label is added: bypass nightly requirement
+      # When label is added: bypass long test requirement
       - name: Set bypass status
         if: github.event.action == 'labeled'
         run: |
           gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             --method POST \
             --field state=success \
-            --field context=nightly-tests \
-            --field description="Nightly tests bypassed"
+            --field context=long-tests \
+            --field description="Long tests bypassed"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # When label is removed: require nightly testing again
+      # When label is removed: require long tests again
       - name: Remove bypass status
         if: github.event.action == 'unlabeled'
         run: |
           gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             --method POST \
             --field state=pending \
-            --field context=nightly-tests \
-            --field description="Waiting for nightly tests"
+            --field context=long-tests \
+            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
