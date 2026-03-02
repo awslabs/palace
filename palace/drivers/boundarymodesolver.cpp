@@ -10,6 +10,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
@@ -129,23 +130,12 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   MaterialOperator &mat_op = *owned_mat_op;
 
-  // Construct FE spaces: ND for tangential E, H1 for normal (out-of-plane) E.
-  auto nd_fec =
-      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, solve_mesh->Dimension());
-  auto h1_fec =
-      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, solve_mesh->Dimension());
-  FiniteElementSpace nd_fespace(*solve_mesh, nd_fec.get());
-  FiniteElementSpace h1_fespace(*solve_mesh, h1_fec.get());
-
-  // Essential (Dirichlet) BCs: PEC + AuxPEC boundaries. For submesh mode analysis, other
-  // wave port boundaries on the cross-section are also treated as PEC. Impedance,
-  // conductivity, and absorbing BCs are handled separately through their respective
-  // boundary operators in the eigenvalue problem.
-  mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
+  // Collect Dirichlet boundary attributes (PEC + AuxPEC, plus other wave port boundaries
+  // on the cross-section when using submesh extraction).
+  mfem::Array<int> dbc_bcs;
   {
     const auto &pmesh = solve_mesh->Get();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> dbc_bcs;
     for (auto attr : iodata.boundaries.pec.attributes)
     {
       if (attr > 0 && attr <= bdr_attr_max)
@@ -162,7 +152,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     if (use_submesh)
     {
-      // Other wave port boundaries become PEC on this cross-section.
       for (const auto &[idx, data] : iodata.boundaries.waveport)
       {
         for (auto attr : data.attributes)
@@ -181,11 +170,64 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     dbc_bcs.Sort();
     dbc_bcs.Unique();
-
-    auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
-    nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-    h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
   }
+
+  // Construct FE space hierarchies for p-multigrid. For solver order p, this builds spaces
+  // at p, p-1, ..., 1 (linear coarsening) or logarithmic coarsening. When mg_max_levels <=
+  // 1, each hierarchy has a single level (no multigrid — falls back to sparse direct).
+  // Wrap the solve mesh in a single-element vector for
+  // ConstructFiniteElementSpaceHierarchy. For the submesh case, temporarily move ownership;
+  // for the non-submesh case, use a non-owning raw pointer wrapper (released after
+  // hierarchy construction).
+  std::vector<std::unique_ptr<Mesh>> solve_mesh_vec;
+  if (use_submesh)
+  {
+    solve_mesh_vec.push_back(std::move(submesh_holder));
+  }
+  else
+  {
+    solve_mesh_vec.emplace_back(solve_mesh);  // Non-owning
+  }
+
+  const auto &mg = iodata.solver.linear;
+  auto nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
+      iodata.solver.order, solve_mesh->Dimension(), mg.mg_max_levels, mg.mg_coarsening,
+      false);
+  auto h1_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
+      iodata.solver.order, solve_mesh->Dimension(), mg.mg_max_levels, mg.mg_coarsening,
+      false);
+
+  std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists;
+  auto nd_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
+      mg.mg_max_levels, solve_mesh_vec, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
+  auto h1_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
+      mg.mg_max_levels, solve_mesh_vec, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
+
+  // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
+  auto h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
+      iodata.solver.order, solve_mesh->Dimension(), mg.mg_max_levels, mg.mg_coarsening,
+      false);
+  std::vector<mfem::Array<int>> h1_aux_dbc_tdof_lists;
+  auto h1_aux_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
+      mg.mg_max_levels, solve_mesh_vec, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
+
+  // Restore mesh ownership.
+  if (use_submesh)
+  {
+    submesh_holder = std::move(solve_mesh_vec[0]);
+  }
+  else
+  {
+    solve_mesh_vec[0].release();  // Release the non-owning wrapper.
+  }
+
+  // Get finest-level spaces (used by the rest of the code).
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &h1_fespace = h1_fespaces.GetFinestFESpace();
+
+  // Get finest-level DBC tdof lists.
+  const auto &nd_dbc_tdof_list = nd_dbc_tdof_lists.back();
+  const auto &h1_dbc_tdof_list = h1_dbc_tdof_lists.back();
 
   const int nd_size = nd_fespace.GetTrueVSize();
   const int h1_size = h1_fespace.GetTrueVSize();
@@ -205,17 +247,18 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     post_op.ProjectVoltagePaths(submesh_centroid, submesh_e1, submesh_e2);
   }
 
-  // Error estimator setup.
+  // Error estimator setup. These are single-level hierarchies (no p-multigrid) wrapping the
+  // finest-level FE spaces for the error estimation flux recovery.
   auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
                                                         solve_mesh->Dimension());
-  FiniteElementSpaceHierarchy nd_fespaces(
-      std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fec.get()));
-  FiniteElementSpaceHierarchy rt_fespaces(
+  FiniteElementSpaceHierarchy nd_fespaces_est(
+      std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fecs.back().get()));
+  FiniteElementSpaceHierarchy rt_fespaces_est(
       std::make_unique<FiniteElementSpace>(*solve_mesh, rt_fec.get()));
   FiniteElementSpaceHierarchy h1_fespaces_est(
-      std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fec.get()));
+      std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fecs.back().get()));
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(
-      mat_op, nd_fespaces, rt_fespaces, iodata.solver.linear.estimator_tol,
+      mat_op, nd_fespaces_est, rt_fespaces_est, iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
       &mode_op.GetCurlSpace(), &h1_fespaces_est);
   ErrorIndicator indicator;
@@ -282,9 +325,31 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
   }
 
-  // Construct the boundary mode solver.
+  // Construct the boundary mode solver. When the FE space hierarchy has multiple levels,
+  // configure p-multigrid preconditioning with block-diagonal GMG (ND + H1).
+  std::unique_ptr<BoundaryModeMultigridConfig> mg_config_ptr;
+  if (nd_fespaces.GetNumLevels() > 1)
+  {
+    mg_config_ptr = std::make_unique<BoundaryModeMultigridConfig>();
+    mg_config_ptr->nd_fespaces = &nd_fespaces;
+    mg_config_ptr->h1_fespaces = &h1_fespaces;
+    mg_config_ptr->h1_aux_fespaces = &h1_aux_fespaces;
+    mg_config_ptr->nd_dbc_tdof_lists = &nd_dbc_tdof_lists;
+    mg_config_ptr->h1_dbc_tdof_lists = &h1_dbc_tdof_lists;
+    mg_config_ptr->h1_aux_dbc_tdof_lists = &h1_aux_dbc_tdof_lists;
+    for (std::size_t l = 0; l < nd_fespaces.GetNumLevels(); l++)
+    {
+      int nd_dbc = nd_dbc_tdof_lists[l].Size();
+      int h1_dbc = h1_dbc_tdof_lists[l].Size();
+      Mpi::Print(" MG level {:d}: ND DOFs={:d} (DBC={:d}), H1 DOFs={:d} (DBC={:d})\n",
+                 static_cast<int>(l), nd_fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize(),
+                 nd_dbc, h1_fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize(), h1_dbc);
+    }
+    Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
+               static_cast<int>(nd_fespaces.GetNumLevels()));
+  }
   BoundaryModeOperator mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,
-                                   solve_mesh->GetComm());
+                                   solve_mesh->GetComm(), mg_config_ptr.get());
 
   // Store Btt for impedance postprocessing.
   mode_op.SetBttMatrix(std::make_unique<mfem::HypreParMatrix>(*mode_solver.GetBtt()));

@@ -544,11 +544,15 @@ linear systems of equations arising for each simulation type. The available opti
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"MGMaxLevels" [100]` : When greater than 1, enable the [geometric multigrid
+`"MGMaxLevels" [100]` : When greater than 1, enable [geometric multigrid
 preconditioning](https://en.wikipedia.org/wiki/Multigrid_method), which uses p-
 and h-multigrid coarsening as available to construct the multigrid hierarchy.
 The solver specified by `"Type"` is used on the coarsest level. Relaxation on
-the fine levels is performed with Chebyshev smoothing.
+the fine levels is performed with Chebyshev smoothing. For `"BoundaryMode"`
+problems, the default is `1` (multigrid disabled); set to a value greater than
+`1` to enable block-diagonal p-multigrid preconditioning for the coupled Nedelec
+
+  - H1 system.
 
 `"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
 
@@ -579,7 +583,10 @@ performed for the coarsest multigrid level regardless of the setting of `"PCMatR
 `"PCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a positive definite approximation of the system matrix by flipping
 the sign for the mass matrix contribution, which can help performance at high frequencies
-(relative to the lowest nonzero eigenfrequencies of the model).
+(relative to the lowest nonzero eigenfrequencies of the model). Defaults to `true` for
+`"BoundaryMode"` problems when multigrid is enabled (`"MGMaxLevels"` > 1), since the
+shift-and-invert transformation can produce near-zero mass terms that degrade the
+preconditioner quality.
 
 `"ComplexCoarseSolve" [false]` : When set to `true`, the coarse-level solver uses the true
 complex-valued system matrix. When set to `false`, the real-valued approximation is used.
