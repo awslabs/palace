@@ -173,9 +173,6 @@ public:
 
   // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
   // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
-  // for eigenvalue solver warm-starting.
-  // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
-  // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
   // for eigenvalue solver warm-starting. When has_solver is true (default), the calling
   // process participates in the eigenvalue solve; when false (wave port non-port process),
   // only assembly is performed.
