@@ -606,7 +606,6 @@ if "cavity2d/eigenmode" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -629,7 +628,6 @@ if "cavity2d/driven" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -666,7 +664,6 @@ if "cavity2d/magnetostatic" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -684,7 +681,6 @@ if "cavity2d/transient" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
-        paraview_fields=false,
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
@@ -712,7 +708,6 @@ if "cpw2d/thin" in cases
             "Im{kn} (1/m)",
             "Im{n_eff}"
         ],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -739,7 +734,6 @@ if "cpw2d/thick_impedance" in cases
             "Im{kn} (1/m)",
             "Im{n_eff}"
         ],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
@@ -760,7 +754,6 @@ if "cpw/wave_2dmode" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
-        paraview_fields=false,
         skip_rowcount=true,
         device=device,
         linear_solver="Default",
