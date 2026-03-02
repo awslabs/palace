@@ -152,6 +152,7 @@ catch_discover_tests(unit-tests
   TEST_SPEC "[Serial]"
   EXTRA_ARGS --skip-benchmarks
   PROPERTIES
+    SKIP_RETURN_CODE 4
     # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
 )
@@ -164,20 +165,28 @@ catch_discover_tests(unit-tests
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
     PROCESSORS 2
+    SKIP_RETURN_CODE 4
     # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
 # GPU tests (if available)
+if(PALACE_WITH_CUDA)
+  set(PALACE_GPU_DEVICE cuda)
+elseif(PALACE_WITH_HIP)
+  set(PALACE_GPU_DEVICE hip)
+endif()
+
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
     TEST_SPEC "[GPU]"
-    EXTRA_ARGS --device cuda --skip-benchmarks
+    EXTRA_ARGS --device ${PALACE_GPU_DEVICE} --skip-benchmarks
     PROPERTIES
-      # Don't allow one more than GPU test at the time.
+      # Don't allow more than one GPU test at a time.
       # In theory, we could allow one per GPU, but that's much harder to implement.
       RESOURCE_LOCK gpu
+      SKIP_RETURN_CODE 4
 
       # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
       ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"

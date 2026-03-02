@@ -142,7 +142,10 @@ These benchmarks can be accelerated using MPI and/or OpenMP parallelism (when
 configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are only testing
 the local operator assembly on each process.
 
-CTest skips all the benchmarks.
+CTest is set up to skip all the benchmarks. More specifically, CTest uses Catch2's
+`--skip-benchmarks` flag which skips the `BENCHMARK` sections within tests but still
+runs the test logic itself (unlike the `~[Benchmark]` tag filter, which would exclude
+those tests entirely).
 
 ### Adding unit tests
 
@@ -242,7 +245,9 @@ execution, and report generation.
     lcov --version
     ```
 
-    You need a version newer than 1.15. For LLVM, you will also need `llvm-profdata`
+    `lcov` 2.0 or newer is recommended (for `--ignore-errors inconsistent`
+    support); older versions will still work but may report non-fatal
+    inconsistency warnings. For LLVM, you will also need `llvm-profdata`
     and `llvm-cov`. For GCC, you will need `gcov-tool` (which comes with GCC).
 
     Also make sure that *Palace* was build with `PALACE_BUILD_WITH_COVERAGE`.
@@ -278,7 +283,9 @@ You can control test parallelism with the `-j` flag:
 ```
 
 Note that MPI tests run with 2 processes each, so `-j8` allows up to 4 MPI tests
-simultaneously.
+simultaneously. As noted in [Running tests with CTest](#Running-tests-with-CTest),
+if *Palace* was built with OpenMP, account for the additional threads when choosing
+the parallelism level.
 
 The `measure-test-coverage` allows for more control, for example:
 

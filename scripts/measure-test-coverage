@@ -14,13 +14,18 @@ log() { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# Portable nproc (works on macOS and Linux).
+# Portable nproc (works on macOS and Linux), divided by OMP_NUM_THREADS.
 num_procs() {
     if command -v nproc >/dev/null 2>&1; then
-        nproc
+        local cores
+        cores=$(nproc)
     else
-        sysctl -n hw.ncpu
+        local cores
+        cores=$(sysctl -n hw.ncpu)
     fi
+    local omp=${OMP_NUM_THREADS:-1}
+    local result=$(( cores / omp ))
+    echo $(( result > 0 ? result : 1 ))
 }
 
 help()
@@ -32,11 +37,12 @@ multiple builds.
 
 Commands:
   generate [BUILD_DIR]             Run tests and generate coverage_filtered.info
-                                   (default: ../build)
+                                   (default: \$PALACE_ROOT/build, where PALACE_ROOT
+                                   is the repository root)
   merge COVERAGE_FILE ...          Merge multiple coverage files into coverage_filtered.info
   report [BUILD_DIR|COVERAGE_FILE]
                                    Generate HTML report from build directory or coverage file
-                                   (default: ../build)
+                                   (default: \$PALACE_ROOT/build)
 
 Options:
   -j NUM_PROC                      Maximum number of processes for running tests (default: $(num_procs))
@@ -122,9 +128,14 @@ resolve_build_dir() {
 # BUILD_DIR is the superbuild root (where ctest runs from).
 # PALACE_BUILD_DIR is the inner Palace build (where coverage data lives).
 # UNIT_TEST_EXEC is derived from BUILD_DIR.
+BUILD_DIR=""
+PALACE_BUILD_DIR=""
+UNIT_TEST_EXEC=""
+COVERAGE_FILES=()
+
 case "$COMMAND" in
     generate)
-        BUILD_DIR="$(resolve_build_dir "${1:-$PALACE_ROOT/build}")"
+        BUILD_DIR="$(resolve_build_dir "${1:-"$PALACE_ROOT/build"}")"
         PALACE_BUILD_DIR="$BUILD_DIR/palace-build"
         UNIT_TEST_EXEC="$PALACE_BUILD_DIR/test/unit/palace-unit-tests"
         ;;
@@ -171,7 +182,18 @@ detect_compiler_type() {
     fi
 }
 
-# Check prerequisites.
+# Return "--ignore-errors inconsistent" if the installed lcov supports it (>= 2.0),
+# or empty string otherwise. The "inconsistent" error type was added in lcov 2.0.
+lcov_ignore_inconsistent() {
+    local version
+    version=$(lcov --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    local major="${version%%.*}"
+    if [[ "$major" -ge 2 ]] 2>/dev/null; then
+        echo "--ignore-errors inconsistent"
+    fi
+}
+
+# Check prerequisites. Additional checks are performed after the compiler is detected.
 check_prerequisites() {
     log "Checking prerequisites..."
 
@@ -267,9 +289,9 @@ generate_gcc_coverage() {
     # compiled functions. This can lead to minor inconsistencies in the coverage
     # files. These are not fatal, and ignoring them still produces good reports.
     # For this reason, most `lcov` commands have the `--ignore-errors
-    # inconsistent` flag.
+    # inconsistent` flag (lcov >= 2.0).
 
-    lcov --capture --directory . --ignore-errors inconsistent --output-file "$BUILD_DIR/coverage.info"
+    lcov --capture --directory . $(lcov_ignore_inconsistent) --output-file "$BUILD_DIR/coverage.info"
 }
 
 # Generate coverage for LLVM.
@@ -289,7 +311,7 @@ generate_llvm_coverage() {
     llvm-cov export -format text -instr-profile "$BUILD_DIR/coverage.profdata" "$UNIT_TEST_EXEC" > "$BUILD_DIR/coverage_llvm.json"
 
     # Convert to LCOV format.
-    llvm2lcov --ignore-errors inconsistent --output "$BUILD_DIR/coverage.info" "$BUILD_DIR/coverage_llvm.json"
+    llvm2lcov $(lcov_ignore_inconsistent) --output "$BUILD_DIR/coverage.info" "$BUILD_DIR/coverage_llvm.json"
 }
 
 # Filter coverage to Palace source only.
@@ -311,7 +333,7 @@ filter_coverage() {
         '*/palace/models/*' \
         '*/palace/utils/*' \
         '*/test/unit/*' \
-        --ignore-errors inconsistent \
+        $(lcov_ignore_inconsistent) \
         --output-file coverage_filtered.info
 }
 
@@ -338,7 +360,7 @@ EOF
         --title "Palace Coverage Report" \
         --show-details \
         --legend \
-        --ignore-errors inconsistent
+        $(lcov_ignore_inconsistent)
 
     # Print summary.
     log "Coverage Summary:"
@@ -396,7 +418,7 @@ main() {
                 add_args+=(--add-tracefile "$f")
             done
 
-            lcov "${add_args[@]}" --ignore-errors inconsistent --output-file coverage_filtered.info
+            lcov "${add_args[@]}" $(lcov_ignore_inconsistent) --output-file coverage_filtered.info
             log "Merged coverage data: $BUILD_DIR/coverage_filtered.info"
             ;;
 

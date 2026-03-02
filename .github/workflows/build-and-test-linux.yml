@@ -403,6 +403,9 @@ jobs:
         env:
           CMAKE_BUILD_TYPE: Release
           NUM_PROC_BUILD_MAX: '32'
+          # Catch2 runs the binary as part of the cmake test discovery step. So,
+          # we want to avoid reporting leaks.
+          ASAN_OPTIONS: detect_leaks=0
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
@@ -506,31 +509,33 @@ jobs:
             export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/test/unit/lsan_suppressions.txt"
           fi
 
-          cd $(pwd)/palace-build/palace-build/test/unit
-
           # We don't compute coverage for the entire matrix because it slows
           # everything down.
           if [[ "${{ matrix.with-coverage }}" == 'true' ]]; then
             scripts/measure-test-coverage report $(pwd)/palace-build
           else
+            cd $(pwd)/palace-build/palace-build/test/unit
             ctest -j $NUM_PROC_TEST_MAX --output-on-failure
           fi
 
       - name: Deploy coverage to gh-pages
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage && github.event_name == 'pull_request'
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: palace-build/coverage_html
-          destination_dir: previews/PR${{ github.event.pull_request.number }}/coverage
+          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
           keep_files: true
 
       - name: Add coverage link to summary
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
         run: |
-          PR_NUM=${{ github.event.pull_request.number }}
-          COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUM}/coverage/"
-          echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${{ github.event.pull_request.number }}/coverage/"
+          else
+            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${{ github.sha }}/"
+          fi
+          echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage report

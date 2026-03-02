@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
   // TODO: Create a palace::Device class that takes care of all of this.
   hypre::Initialize();
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize(argc, argv, nullptr, nullptr);
+  slepc::Initialize();
   if (PETSC_COMM_WORLD != Mpi::World())
   {
     Mpi::Print(Mpi::World(), "Error: Problem during MPI initialization!\n\n");

@@ -297,9 +297,10 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        eval $(spack -e . load --sh palace)
+        eval "$(spack -e . load --sh palace)"
 
         # Use nproc, but halve to account for hyperthreading.
+        # NOTE: This CI action only runs on Linux runners (lscpu/nproc are Linux-specific).
         LOGICAL_CORES=$(nproc)
         THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
         if [ "$THREADS_PER_CORE" = "2" ]; then
@@ -315,7 +316,7 @@ runs:
           export OMP_NUM_THREADS=1
         fi
 
-        cd $(spack -e . location -b palace)
+        cd "$(spack -e . location -b palace)"
 
         # Skip serial/mpi libCEED tests on CUDA builds due to umpire host memory
         # allocation bug.
@@ -334,6 +335,7 @@ runs:
         export PRTE_MCA_hwloc_default_binding_policy=none
         export OMPI_MCA_hwloc_base_binding_policy=none
 
+        # Runs all hardware-compatible tests, skipping Catch2 benchmarks.
         ctest -j $NUM_PROC_TEST --output-on-failure $CTEST_EXCLUDE
 
         end_timer "Run Unit Tests"
