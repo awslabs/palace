@@ -92,6 +92,9 @@ runs:
               # We add a lot of padding to support better cache relocation
               # https://spack.readthedocs.io/en/latest/binary_caches.html#relocation
               padded_length: 256
+            template_dirs:
+              - $PWD/spack_repo
+              - \$spack/share/spack/templates
           concretizer:
             reuse: false
             unify: true
@@ -132,6 +135,27 @@ runs:
         INTELEOF
         fi
 
+        # MPI fabric configuration: always require libfabric with EFA support
+        cat << FABEOF >> spack.yaml
+            libfabric:
+              require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+        FABEOF
+
+        if [[ "${MPI_IMPL}" == "openmpi" ]]; then
+          cat << MPIEOF >> spack.yaml
+            openmpi:
+              require: fabrics=ofi
+        MPIEOF
+        elif [[ "${MPI_IMPL}" == "intel-oneapi-mpi" ]]; then
+          cat << MPIEOF >> spack.yaml
+            intel-oneapi-mpi:
+              require: +external-libfabric
+        MPIEOF
+        else
+          echo "Error: unsupported MPI implementation '${MPI_IMPL}'. Only openmpi and intel-oneapi-mpi are supported."
+          exit 1
+        fi
+
         if [[ "${{ inputs.use-develop-deps }}" == "true" ]]; then
           cat << DEVEOF >> spack.yaml
             hypre:
@@ -156,6 +180,8 @@ runs:
         CUDAEOF
         fi
 
+        SPACK_SHA=$(git -C spack rev-parse HEAD)
+
         cat << EOF >> spack.yaml
           repos:
           - spack_repo/local
@@ -170,6 +196,14 @@ runs:
               access_pair:
                 id_variable: GITHUB_USER
                 secret_variable: GITHUB_TOKEN
+          container:
+            format: docker
+            template: container/PalaceDockerfile
+            images:
+              os: "ubuntu:24.04"
+              spack:
+                url: https://github.com/spack/spack
+                ref: ${SPACK_SHA}
         EOF
 
     - name: Configure Compilers

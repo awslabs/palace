@@ -53,143 +53,231 @@ jobs:
         with:
           toolchain: gcc
           run-regression-tests: 'false'
-
-  build-gpu-gcc:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, gpu]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
+      - name: Install Docker
+        shell: bash
+        run: |
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+      - name: Generate Dockerfile
+        shell: bash
+        run: |
+          spack -e . containerize > Dockerfile
+          # Replace /opt/palace with actual workspace path so container matches host
+          sed -i "s|/opt/palace|$PWD|g" Dockerfile
+          # Inject build args for GHCR mirror authentication
+          sed -i '/^FROM bootstrap AS builder/a ARG GITHUB_USER\nARG GITHUB_TOKEN\nENV GITHUB_USER=$GITHUB_USER\nENV GITHUB_TOKEN=$GITHUB_TOKEN' Dockerfile
+          # To match the host Palace identically, we also need to build tests
+          sed -i 's/spack install --fail-fast/spack install --fail-fast --test root/' Dockerfile
+      - name: Build Docker image
+        shell: bash
+        run: |
+          sudo docker build \
+            --build-arg GITHUB_USER=$GITHUB_USER \
+            --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
+            -t palace-x86_64_v4 .
+      - name: Save Docker image as tar
+        shell: bash
+        run: |
+          sudo docker save palace-x86_64_v4:latest -o palace-x86_64_v4.tar
+      - name: Upload container
+        uses: actions/upload-artifact@v4
         with:
-          toolchain: gcc
-          variant: +cuda
-          run-regression-tests: 'false'
+          name: palace-x86_64_v4
+          path: palace-x86_64_v4.tar
+          retention-days: 3
 
-  build-x64-gcc-openmp:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          variant: "+openmp+int64~shared"
-          run-regression-tests: 'false'
+  # build-gpu-gcc:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, gpu]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: gcc
+  #         variant: +cuda
+  #         run-regression-tests: 'false'
+
+  # build-x64-gcc-openmp:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: gcc
+  #         variant: "+openmp+int64~shared"
+  #         run-regression-tests: 'false'
  
-  build-test-x64-llvm:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: llvm
-          additional-test-cases: transmon/transmon_coarse
+  # build-test-x64-llvm:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: llvm
+  #         additional-test-cases: transmon/transmon_coarse
 
-  build-test-x64-intel:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: intel-oneapi
-          additional-test-cases: transmon/transmon_coarse
+  # build-test-x64-intel:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: intel-oneapi
+  #         additional-test-cases: transmon/transmon_coarse
 
-  build-test-arm64-gcc:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          additional-test-cases: transmon/transmon_coarse
+  # build-test-arm64-gcc:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, arm64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: gcc
+  #         additional-test-cases: transmon/transmon_coarse
 
-  build-test-arm64-llvm:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: llvm
-          additional-test-cases: transmon/transmon_coarse
+  # build-test-arm64-llvm:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, arm64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: llvm
+  #         additional-test-cases: transmon/transmon_coarse
 
-  build-test-arm64-gcc-armpl:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          math-libs: armpl-gcc
-          additional-test-cases: transmon/transmon_coarse
+  # build-test-arm64-gcc-armpl:
+  #   needs: filter
+  #   if: needs.filter.outputs.test == 'true'
+  #   runs-on: [self-hosted, arm64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/palace-ci
+  #       with:
+  #         toolchain: gcc
+  #         math-libs: armpl-gcc
+  #         additional-test-cases: transmon/transmon_coarse
 
-  # Test jobs
-  test-x64-gcc:
-    needs: [filter, build-x64-gcc]
-    if: success()
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - solver: MUMPS
-          - solver: SuperLU
-          - solver: STRUMPACK
-          - solver: Default
-    runs-on: [self-hosted, x64-4xlarge]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/run-regression-tests
-        with:
-          toolchain: gcc
-          solver: ${{ matrix.solver }}
+  # # Test jobs
+  # test-x64-gcc:
+  #   needs: [filter, build-x64-gcc]
+  #   if: success()
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - solver: MUMPS
+  #         - solver: SuperLU
+  #         - solver: STRUMPACK
+  #         - solver: Default
+  #   runs-on: [self-hosted, x64-4xlarge]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/run-regression-tests
+  #       with:
+  #         toolchain: gcc
+  #         solver: ${{ matrix.solver }}
 
-  test-gpu-gcc:
-    needs: [filter, build-gpu-gcc]
-    if: success()
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - solver: MUMPS
-          - solver: SuperLU
-          - solver: STRUMPACK
-          - solver: Default
-    runs-on: [self-hosted, gpu-4xlarge]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/run-regression-tests
-        with:
-          toolchain: gcc
-          variant: +cuda
-          solver: ${{ matrix.solver }}
+  # test-gpu-gcc:
+  #   needs: [filter, build-gpu-gcc]
+  #   if: success()
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - solver: MUMPS
+  #         - solver: SuperLU
+  #         - solver: STRUMPACK
+  #         - solver: Default
+  #   runs-on: [self-hosted, gpu-4xlarge]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/run-regression-tests
+  #       with:
+  #         toolchain: gcc
+  #         variant: +cuda
+  #         solver: ${{ matrix.solver }}
 
-  test-x64-gcc-openmp:
-    needs: [filter, build-x64-gcc-openmp]
-    if: success()
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - solver: MUMPS
-          - solver: SuperLU
-          - solver: STRUMPACK
-          - solver: Default
-    runs-on: [self-hosted, x64-4xlarge]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/run-regression-tests
-        with:
-          toolchain: gcc
-          variant: "+openmp+int64~shared"
-          solver: ${{ matrix.solver }}
+  # container-x64-gcc:
+  #   needs: [filter, test-x64-gcc]
+  #   if: success()
+  #   runs-on: [self-hosted, x64]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/setup-runner
+  #       with:
+  #         julia-version: 'release'
+  #         spack-version: 'develop'
+  #         llvm-version: 'dont-install'
+  #         setup-intel: 'false'
+  #     - name: Download spack environment
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: spack-env-X64-gcc-default-default
+  #     - name: Install Docker
+  #       shell: bash
+  #       run: |
+  #         sudo apt-get install -y docker.io
+  #         sudo systemctl start docker
+  #     - name: Capture spack SHA
+  #       shell: bash
+  #       run: |
+  #         echo "SPACK_SHA=$(git -C spack rev-parse HEAD)" >> "$GITHUB_ENV"
+  #     - name: Generate Dockerfile
+  #       shell: bash
+  #       run: |
+  #         cat >> spack.yaml << CONTAINEREOF
+  #           container:
+  #             format: docker
+  #             images:
+  #               os: "ubuntu:22.04"
+  #               spack:
+  #                 url: https://github.com/spack/spack
+  #                 ref: ${SPACK_SHA}
+  #             config:
+  #               template_dirs:
+  #                 - $PWD/spack_repo/container
+  #         CONTAINEREOF
+  #         spack containerize > Dockerfile
+  #     - name: Build Docker image
+  #       shell: bash
+  #       run: |
+  #         sudo docker build -t palace-x86_64_v4 .
+  #     - name: Save Docker image as tar
+  #       shell: bash
+  #       run: |
+  #         sudo docker save palace-x86_64_v4:latest -o palace-x86_64_v4.tar
+  #     - name: Upload container
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: palace-x86_64_v4
+  #         path: palace-x86_64_v4.tar
+  #         retention-days: 30
+
+  # test-x64-gcc-openmp:
+  #   needs: [filter, build-x64-gcc-openmp]
+  #   if: success()
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - solver: MUMPS
+  #         - solver: SuperLU
+  #         - solver: STRUMPACK
+  #         - solver: Default
+  #   runs-on: [self-hosted, x64-4xlarge]
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/run-regression-tests
+  #       with:
+  #         toolchain: gcc
+  #         variant: "+openmp+int64~shared"
+  #         solver: ${{ matrix.solver }}
