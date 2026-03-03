@@ -361,6 +361,39 @@ Regression tests based on the provided example applications in the
 and verify that the code reproduces results in reference files stored in
 [`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
 
+## Tests in CI
+
+*Palace* runs three tiers of CI checks on every pull request:
+
+ 1. Static analysis (`style.yml`): Code formatting (clang-format, Julia
+    formatter), JSON schema validation, and test tag checks.
+ 2. Unit + regression tests (`build-and-test-linux.yml`,
+    `build-and-test-macos.yml`, `spack.yml`, `singularity.yml`): Builds *Palace*
+    using CMake, Spack, and Singularity with a matrix of compilers (GCC, Clang,
+    Intel), MPI implementations (Open MPI, MPICH, Intel MPI), math libraries
+    (OpenBLAS, ARMPL, MKL), and link/integer options across x86, ARM, macOS, and
+    GPU runners. Each configuration runs the full unit test suite (serial +
+    parallel) and all default regression tests.
+ 3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
+    `transmon/transmon_amr`) that are too slow to run on every push.
+
+Long tests are a required check for merging non-trivial pull requests and are
+not run by default. To run the Long tests, add the `trigger-long-tests` GitHub
+label. The typical workflow is:
+
+ 1. Develop and iterate using the default (short) tests that run automatically.
+ 2. When the PR is ready to merge, add the **`trigger-long-tests`** label.
+ 3. The long tests run and the `long-tests` status is updated.
+ 4. If you push new commits while the label is present, the long tests re-run
+    automatically.
+
+Two special cases bypass the long test requirement:
+
+  - Trivial changes: If a PR only touches documentation, README files, or
+    other non-code files, the long test status is automatically set to success.
+  - `no-long-tests` label: Adding this label bypasses the long test requirement
+    entirely.
+
 ### Building and running example tests
 
 #### Prerequisites
